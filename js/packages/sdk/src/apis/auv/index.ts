@@ -38,6 +38,7 @@ export type {
   CaptureTarget,
   FindDisplayTextOptions,
   FindWindowTextOptions,
+  PointTarget,
   PressKeyOptions,
   RecognitionSource,
   RecognizeTextOptions,
@@ -53,6 +54,8 @@ export type {
   WindowPressKeysOptions,
   WindowTarget,
 } from './driver'
+export { center, contains, intersect, Position } from './geometry'
+export type { PointLike, RectLike } from './geometry'
 export { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 export type { InvokeDuplexOptions, InvokeServerStreamOptions, InvokeUnaryOptions } from './invoke'
 export { protobufJsonSchema } from './json'

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use auv::AuvContext;
 use auv_driver::WindowInput as _;
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
-use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
+use auv_driver::geometry::{NormalizedRect, Point, Rect, WindowPoint};
 use auv_driver::input::{ClickOptions, InputPolicy};
 use auv_driver::selector::{App, Window};
 use auv_driver::vision::TextRecognitionOptions;
@@ -1014,7 +1014,7 @@ struct ObjectReadEvidence {
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_frame: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  hover_ocr_region: Option<RatioRect>,
+  hover_ocr_region: Option<NormalizedRect>,
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_error: Option<String>,
 }
@@ -1030,7 +1030,7 @@ struct PackReadChoice {
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_frame: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  hover_ocr_region: Option<RatioRect>,
+  hover_ocr_region: Option<NormalizedRect>,
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_error: Option<String>,
 }
@@ -1080,7 +1080,7 @@ impl CardReadValue {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct CardReadEvidence {
   frame: String,
-  ocr_region: RatioRect,
+  ocr_region: NormalizedRect,
   corner_crop: Option<PathBuf>,
   source: String,
 }
@@ -4100,7 +4100,7 @@ fn read_card_from_capture(
   let corner_capture = card_corner_capture(capture, state, card);
   let recognition = session.vision().recognize_text_in_capture_with_options(
     &corner_capture,
-    RatioRect::new(0.0, 0.0, 1.0, 1.0),
+    NormalizedRect::new(0.0, 0.0, 1.0, 1.0),
     TextRecognitionOptions::default().with_custom_words(card_ocr_words()).with_recognition_languages(["zh-Hans", "en-US"]),
   )?;
   let crop = save_capture_to_temp(&corner_capture, "card-corner")?;
@@ -5121,12 +5121,12 @@ fn pack_choice_hint(label: &str) -> &'static str {
   }
 }
 
-fn pack_choice_hover_ocr_region() -> RatioRect {
-  RatioRect::new(0.20, 0.02, 0.70, 0.72)
+fn pack_choice_hover_ocr_region() -> NormalizedRect {
+  NormalizedRect::new(0.20, 0.02, 0.70, 0.72)
 }
 
-fn object_hover_ocr_region() -> RatioRect {
-  RatioRect::new(0.16, 0.02, 0.72, 0.78)
+fn object_hover_ocr_region() -> NormalizedRect {
+  NormalizedRect::new(0.16, 0.02, 0.72, 0.78)
 }
 
 fn pack_ocr_words() -> Vec<&'static str> {
@@ -5195,12 +5195,12 @@ fn select_pack_choice(choices: &[PackChoice], index: u32) -> Result<&PackChoice,
   choices.get(index as usize).ok_or_else(|| CliError::Message(format!("could not find pack:{index}")))
 }
 
-fn ocr_region_for_card(state: &BalatroState, card: &CardSlot) -> RatioRect {
+fn ocr_region_for_card(state: &BalatroState, card: &CardSlot) -> NormalizedRect {
   let width = f64::from(state.frame.image_size.width).max(1.0);
   let height = f64::from(state.frame.image_size.height).max(1.0);
   let card_w = f64::from(card.bbox.width().max(1.0));
   let card_h = f64::from(card.bbox.height().max(1.0));
-  RatioRect::new(f64::from(card.bbox.x1) / width, f64::from(card.bbox.y1) / height, (card_w * 0.38) / width, (card_h * 0.46) / height)
+  NormalizedRect::new(f64::from(card.bbox.x1) / width, f64::from(card.bbox.y1) / height, (card_w * 0.38) / width, (card_h * 0.46) / height)
 }
 
 #[cfg(target_os = "macos")]

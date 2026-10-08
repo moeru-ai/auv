@@ -13,7 +13,7 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
-use auv_driver_common::geometry::{Point, RatioRect};
+use auv_driver_common::geometry::{NormalizedRect, Point};
 use auv_driver_common::input::{Click, ClickModifiers, KeyPressOptions, MouseButton, Scroll};
 use auv_driver_common::vision::TextRecognitionOptions;
 
@@ -402,7 +402,7 @@ fn bench_ocr_path(samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) 
 
   let img_w = initial.capture.image.width() as f64;
   let img_h = initial.capture.image.height() as f64;
-  let roi = RatioRect::new(0.05, 0.05, 400.0 / img_w, 100.0 / img_h);
+  let roi = NormalizedRect::new(0.05, 0.05, 400.0 / img_w, 100.0 / img_h);
   let options = TextRecognitionOptions::default();
 
   // Warmup

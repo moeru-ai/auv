@@ -59,7 +59,7 @@ fn resized_or_empty_viewports_never_look_stuck() {
 #[test]
 fn crop_ratio_selects_the_normalized_region() {
   let image = striped(100, 50, 0, ScrollAxis::Vertical);
-  let cropped = crop_ratio(&image, Some(auv_driver::RatioRect::new(0.5, 0.2, 0.5, 0.4)));
+  let cropped = crop_ratio(&image, Some(auv_driver::NormalizedRect::new(0.5, 0.2, 0.5, 0.4)));
   assert_eq!(cropped.dimensions(), (50, 20));
   assert_eq!(cropped.get_pixel(0, 0), image.get_pixel(50, 10));
   assert_eq!(crop_ratio(&image, None).dimensions(), (100, 50));

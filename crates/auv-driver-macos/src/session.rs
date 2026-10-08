@@ -7,7 +7,7 @@ use std::time::Duration;
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::geometry::{CoordinateSpace, Point, Positional, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::geometry::{CoordinateSpace, NormalizedRect, Point, Positional, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
   InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, PasteTextOptions, PrepareForInputOptions,
@@ -295,7 +295,7 @@ impl WindowApi<'_> {
     capture_window(window, options.resolution)
   }
 
-  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn find_text(&self, window: &Window, query: &str, region: NormalizedRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let started = std::time::Instant::now();
     loop {
       let capture = self.capture(window)?;
@@ -307,7 +307,7 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn wait_text(&self, window: &Window, query: &str, region: NormalizedRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let matches = self.find_text(window, query, region, wait)?;
     if matches.matches.is_empty() {
       Err(not_found(format!("text {query:?} before timeout")))
@@ -988,18 +988,18 @@ impl ClipboardApi<'_> {
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: NormalizedRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
   pub fn recognize_text_in_capture_with_options(
     &self,
     capture: &Capture,
-    region: RatioRect,
+    region: NormalizedRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<TextRecognition> {
     let _ = self.session;
-    let crop = ratio_rect_to_observed(capture, region);
+    let crop = normalized_rect_to_observed(capture, region);
     let native = crate::native::ocr::find_text_in_rgba(
       capture.image.clone().into_raw(),
       i64::from(capture.image.width()),
@@ -1016,7 +1016,7 @@ impl VisionApi<'_> {
     Ok(text_recognition_from_native(&native, capture))
   }
 
-  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: NormalizedRect) -> DriverResult<OcrMatches> {
     self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 
@@ -1024,7 +1024,7 @@ impl VisionApi<'_> {
     &self,
     capture: &Capture,
     query: &str,
-    region: RatioRect,
+    region: NormalizedRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<OcrMatches> {
     let recognition = self.recognize_text_in_capture_with_options(capture, region, options)?;
@@ -2239,7 +2239,7 @@ fn capture_window(_window: &Window, _resolution: CaptureResolution) -> DriverRes
   Err(DriverError::unsupported("capture_window"))
 }
 
-fn ratio_rect_to_observed(capture: &Capture, region: RatioRect) -> ObservedRect {
+fn normalized_rect_to_observed(capture: &Capture, region: NormalizedRect) -> ObservedRect {
   let image_width = f64::from(capture.image.width());
   let image_height = f64::from(capture.image.height());
   ObservedRect {

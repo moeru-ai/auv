@@ -1790,7 +1790,7 @@ fn scroll_until_request_from_proto(request: proto::ScrollUntilBegin) -> Result<a
     Some(proto::scroll_until_begin::Condition::TextVisible(text)) => auv_scan::ScrollUntilCondition::TextVisible { query: text.query },
     None => return Err(Status::invalid_argument("condition is required")),
   };
-  let motion_region = request.motion_region.map(|region| ratio_rect_from_proto(Some(region))).transpose()?;
+  let motion_region = request.motion_region.map(|region| normalized_rect_from_proto(Some(region))).transpose()?;
   Ok(auv_scan::ScrollUntilRequest {
     step,
     condition,
@@ -2153,7 +2153,7 @@ fn stored_capture(captures: &CaptureStore, reference: proto::CaptureRef) -> Resu
 /// Crops, bounds and encodes a stored capture's pixels for `GetCaptureImage`.
 fn capture_image_to_proto(
   capture: &auv_driver::Capture,
-  region: auv_driver::RatioRect,
+  region: auv_driver::NormalizedRect,
   max_size: Option<auv_api_proto::auv::api::image::v1::PixelSize>,
   encoding: auv_api_proto::auv::api::image::v1::ImageEncoding,
 ) -> Result<proto::GetCaptureImageResponse, Status> {
@@ -2255,9 +2255,9 @@ fn image_region_from_proto(
   region: Option<auv_api_proto::auv::api::image::v1::NormalizedRect>,
   screen_region: Option<proto::ScreenRect>,
   bounds: auv_driver::Rect,
-) -> Result<auv_driver::RatioRect, Status> {
+) -> Result<auv_driver::NormalizedRect, Status> {
   let Some(screen_region) = screen_region else {
-    return ratio_rect_from_proto(region);
+    return normalized_rect_from_proto(region);
   };
   if region.is_some() {
     return Err(Status::invalid_argument("region and screen_region are exclusive"));
@@ -2273,7 +2273,7 @@ fn image_region_from_proto(
   if right <= left || bottom <= top {
     return Err(Status::invalid_argument("screen_region does not overlap the image"));
   }
-  Ok(auv_driver::RatioRect::new(
+  Ok(auv_driver::NormalizedRect::new(
     (left - bounds.origin.x) / bounds.size.width,
     (top - bounds.origin.y) / bounds.size.height,
     (right - left) / bounds.size.width,
@@ -2281,11 +2281,13 @@ fn image_region_from_proto(
   ))
 }
 
-fn ratio_rect_from_proto(region: Option<auv_api_proto::auv::api::image::v1::NormalizedRect>) -> Result<auv_driver::RatioRect, Status> {
+fn normalized_rect_from_proto(
+  region: Option<auv_api_proto::auv::api::image::v1::NormalizedRect>,
+) -> Result<auv_driver::NormalizedRect, Status> {
   let Some(region) = region else {
-    return Ok(auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0));
+    return Ok(auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0));
   };
-  let region = auv_driver::RatioRect::new(region.x, region.y, region.width, region.height);
+  let region = auv_driver::NormalizedRect::new(region.x, region.y, region.width, region.height);
   if !region.is_normalized() {
     return Err(Status::invalid_argument("region must be a finite, positive rectangle inside normalized image bounds"));
   }

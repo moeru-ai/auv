@@ -64,29 +64,16 @@ impl CapabilityError {
   }
 }
 
-/// A normalized rectangle whose coordinates are relative to an image.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct NormalizedRegion {
-  /// Horizontal origin in normalized coordinates.
-  pub x: f64,
-  /// Vertical origin in normalized coordinates.
-  pub y: f64,
-  /// Normalized width.
-  pub width: f64,
-  /// Normalized height.
-  pub height: f64,
-}
-
 /// Part of an image: fractions of its size, or a logical screen rectangle
 /// that the Runner clips to the image.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ImageRegion {
-  Normalized(NormalizedRegion),
+  Normalized(auv_driver::NormalizedRect),
   Screen(auv_driver::Rect),
 }
 
-impl From<NormalizedRegion> for ImageRegion {
-  fn from(region: NormalizedRegion) -> Self {
+impl From<auv_driver::NormalizedRect> for ImageRegion {
+  fn from(region: auv_driver::NormalizedRect) -> Self {
     Self::Normalized(region)
   }
 }

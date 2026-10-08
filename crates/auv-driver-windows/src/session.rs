@@ -3,7 +3,7 @@ use std::thread;
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::geometry::{NormalizedRect, Point, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
   ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
@@ -204,7 +204,7 @@ impl WindowApi<'_> {
   /// Polls `window`'s capture for `query` text until it appears or `wait`'s
   /// timeout elapses, returning whatever matches (possibly none) were last
   /// observed.
-  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn find_text(&self, window: &Window, query: &str, region: NormalizedRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let started = std::time::Instant::now();
     loop {
       let capture = self.capture(window)?;
@@ -218,7 +218,7 @@ impl WindowApi<'_> {
 
   /// Like [`Self::find_text`], but fails with `NotFound` when the timeout
   /// elapses without a match instead of returning an empty result.
-  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn wait_text(&self, window: &Window, query: &str, region: NormalizedRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let matches = self.find_text(window, query, region, wait)?;
     if matches.matches.is_empty() {
       Err(not_found(format!("text {query:?} before timeout")))
@@ -398,20 +398,20 @@ fn scroll_attempt_candidates(policy: InputPolicy, delivery_strategy: &ScrollDeli
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: NormalizedRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
   pub fn recognize_text_in_capture_with_options(
     &self,
     capture: &Capture,
-    region: RatioRect,
+    region: NormalizedRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<TextRecognition> {
     recognize_text_in_capture(capture, region, &options)
   }
 
-  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: NormalizedRect) -> DriverResult<OcrMatches> {
     self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 
@@ -419,7 +419,7 @@ impl VisionApi<'_> {
     &self,
     capture: &Capture,
     query: &str,
-    region: RatioRect,
+    region: NormalizedRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<OcrMatches> {
     find_text_in_capture(capture, query, region, &options)

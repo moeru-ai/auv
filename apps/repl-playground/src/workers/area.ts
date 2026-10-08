@@ -1,5 +1,7 @@
 import type { Area, AreaEdges, AreaLength, AreaSource, Point, Rect } from '../script-api/api'
 
+import { contains } from '@auv-js/sdk'
+
 /**
  * Script-side implementation of `Area`: an immutable screen-space rectangle
  * derived from handles or other areas. It crosses to the host as a plain
@@ -34,10 +36,7 @@ class ScreenArea implements Area {
   }
 
   contains(target: Point | Rect): boolean {
-    const width = 'width' in target ? target.width : 0
-    const height = 'height' in target ? target.height : 0
-    return target.x >= this.x && target.y >= this.y
-      && target.x + width <= this.x + this.width && target.y + height <= this.y + this.height
+    return contains(this, target)
   }
 
   inset(by: number | Partial<Record<'bottom' | 'left' | 'right' | 'top', number>>): Area {

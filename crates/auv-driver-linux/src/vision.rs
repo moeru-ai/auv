@@ -6,14 +6,18 @@
 
 use auv_driver_common::capture::Capture;
 use auv_driver_common::error::DriverResult;
-use auv_driver_common::geometry::{RatioRect, Rect};
+use auv_driver_common::geometry::{NormalizedRect, Rect};
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 
 use crate::error::backend;
 use crate::ocr::{find_text_in_rgba, recognize_text_in_rgba};
 
-pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
+pub fn recognize_text_in_capture(
+  capture: &Capture,
+  region: NormalizedRect,
+  options: &TextRecognitionOptions,
+) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
   if crop.width == 0 || crop.height == 0 {
     return Ok(TextRecognition {
@@ -30,7 +34,7 @@ pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: 
 pub fn find_text_in_capture(
   capture: &Capture,
   query: &str,
-  region: RatioRect,
+  region: NormalizedRect,
   options: &TextRecognitionOptions,
 ) -> DriverResult<OcrMatches> {
   let crop = crop_pixels(capture, region);
@@ -50,7 +54,7 @@ struct CropPixels {
   height: u32,
 }
 
-fn crop_pixels(capture: &Capture, region: RatioRect) -> CropPixels {
+fn crop_pixels(capture: &Capture, region: NormalizedRect) -> CropPixels {
   let image_width = capture.image.width();
   let image_height = capture.image.height();
   let x = ratio_to_pixel(region.x, image_width);

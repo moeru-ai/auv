@@ -329,7 +329,7 @@ struct PlaylistPlayArgs {
   scroll: ScrollArgs,
   /// Normalized sidebar rectangle as x,y,width,height.
   #[arg(long = "sidebar-region", value_parser = parse_ratio_region)]
-  sidebar_region: Option<auv_driver::RatioRect>,
+  sidebar_region: Option<auv_driver::NormalizedRect>,
   /// Maximum upward scroll steps used only by `daily-recommended`.
   #[arg(long = "max-top-scrolls")]
   max_top_scrolls: Option<NonZeroUsize>,
@@ -380,7 +380,7 @@ struct PlaylistLsArgs {
   scroll: ScrollArgs,
   /// Normalized sidebar rectangle as x,y,width,height.
   #[arg(long = "sidebar-region", value_parser = parse_ratio_region)]
-  sidebar_region: Option<auv_driver::RatioRect>,
+  sidebar_region: Option<auv_driver::NormalizedRect>,
   #[command(flatten)]
   ocr: OcrHintArgs,
 }
@@ -399,7 +399,7 @@ struct PlaylistSelectArgs {
   scroll: ScrollArgs,
   /// Normalized sidebar rectangle as x,y,width,height.
   #[arg(long = "sidebar-region", value_parser = parse_ratio_region)]
-  sidebar_region: Option<auv_driver::RatioRect>,
+  sidebar_region: Option<auv_driver::NormalizedRect>,
   #[command(flatten)]
   ocr: OcrHintArgs,
 }

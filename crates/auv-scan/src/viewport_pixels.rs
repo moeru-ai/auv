@@ -112,7 +112,7 @@ fn shifted_diff(before: &RgbaImage, after: &RgbaImage, axis: ScrollAxis, shift: 
 }
 
 /// Crops `image` to a normalized region; `None` keeps the whole image.
-pub(crate) fn crop_ratio(image: &RgbaImage, region: Option<auv_driver::RatioRect>) -> RgbaImage {
+pub(crate) fn crop_ratio(image: &RgbaImage, region: Option<auv_driver::NormalizedRect>) -> RgbaImage {
   let Some(region) = region else {
     return image.clone();
   };

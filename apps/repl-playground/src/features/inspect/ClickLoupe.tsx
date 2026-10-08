@@ -1,6 +1,7 @@
-import type { Point, Rect } from '../../script-api/api'
+import type { Point } from '../../script-api/api'
 import type { Resource } from '../../store'
 
+import { contains } from '@auv-js/sdk'
 import { useEffect, useRef } from 'react'
 
 import { usePlayground } from '../../store'
@@ -47,10 +48,6 @@ export function ClickLoupe({ compact = false, resource }: { compact?: boolean, r
       <Loupe frame={after} label="after" point={point} width={width} />
     </div>
   )
-}
-
-function contains(rect: Rect, point: Point): boolean {
-  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
 }
 
 function Loupe({ frame, label, point, width }: { frame?: FrameResource, label: string, point: Point, width: number }) {

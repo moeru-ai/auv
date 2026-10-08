@@ -3,6 +3,8 @@ import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, KeyboardOpt
 import type { Effect, Resource, WindowData } from '../store'
 import type { WireValue } from './protocol'
 
+import { intersect } from '@auv-js/sdk'
+
 import { decodeThumbHash, revealStart } from '../preview'
 import { actions, nowMs, usePlayground } from '../store'
 
@@ -300,15 +302,12 @@ function searchArea(options: WireValue, bounds: Rect): undefined | { area: Rect 
     return undefined
   if (typeof within.x !== 'number' || typeof within.y !== 'number' || typeof within.width !== 'number' || typeof within.height !== 'number')
     throw new TypeError('within: expected an area or { x, y, width, height }')
-  const x = Math.max(within.x, bounds.x)
-  const y = Math.max(within.y, bounds.y)
-  const right = Math.min(within.x + within.width, bounds.x + bounds.width)
-  const bottom = Math.min(within.y + within.height, bounds.y + bounds.height)
-  if (right <= x || bottom <= y)
-    throw new RangeError('within: the area does not overlap the searched window, display or frame')
   // The device takes the screen area directly (`screenRegion`); clipping here
   // gives the same area for drawing the search on the canvas.
-  return { area: { height: bottom - y, width: right - x, x, y } }
+  const area = intersect({ height: within.height, width: within.width, x: within.x, y: within.y }, bounds)
+  if (!area)
+    throw new RangeError('within: the area does not overlap the searched window, display or frame')
+  return { area }
 }
 
 /** Screen frame of a window handle as last reported by the device. */

@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use auv_driver::{Capture, CaptureResolution, DriverError, DriverResult, InputActionResult, RatioRect, Rect, Scroll, TextRecognition};
+use auv_driver::{Capture, CaptureResolution, DriverError, DriverResult, InputActionResult, NormalizedRect, Rect, Scroll, TextRecognition};
 use serde::{Deserialize, Serialize};
 
 use crate::viewport_pixels::{ScrollAxis, ViewportPixelMotion, ViewportPixelPolicy, compare_viewport_pixels, crop_ratio};
@@ -61,7 +61,7 @@ pub struct ScrollUntilRequest {
   /// Consecutive no-motion updates that count as the end, 1..=10.
   pub no_motion_confirmations: u32,
   /// Normalized region of the window compared for motion; `None` is the whole window.
-  pub motion_region: Option<RatioRect>,
+  pub motion_region: Option<NormalizedRect>,
   /// What each update carries. Everything is included unless opted out.
   #[serde(default)]
   pub output: ScrollUntilOutputOptions,
@@ -300,7 +300,7 @@ pub fn scroll_until(
 /// NOTICE(scroll-until-logical-motion): `ViewportPixelPolicy` defaults (±24 px
 /// search, stride 4) were validated on 1x captures, so motion is compared per
 /// logical point whatever resolution the capture was taken at.
-fn motion_frame(capture: &Capture, region: Option<RatioRect>) -> image::RgbaImage {
+fn motion_frame(capture: &Capture, region: Option<NormalizedRect>) -> image::RgbaImage {
   let crop = crop_ratio(&capture.image, region);
   if !capture.scale_factor.is_finite() || capture.scale_factor <= 1.0 {
     return crop;
@@ -369,7 +369,7 @@ impl ScrollUntilSurface for WindowScrollUntilSurface<'_> {
   }
 
   fn recognize_text(&mut self, capture: &Capture) -> DriverResult<TextRecognition> {
-    self.session.vision().recognize_text_in_capture(capture, RatioRect::new(0.0, 0.0, 1.0, 1.0))
+    self.session.vision().recognize_text_in_capture(capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0))
   }
 
   fn wait(&mut self, duration: Duration) -> DriverResult<()> {

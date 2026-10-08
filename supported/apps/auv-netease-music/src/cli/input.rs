@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use auv_driver::RatioRect;
+use auv_driver::NormalizedRect;
 use auv_driver::vision::TextRecognitionOptions;
 use clap::Args;
 
@@ -80,7 +80,7 @@ pub(super) fn zero_to_one(raw: &str) -> Result<f64, String> {
   Ok(parsed)
 }
 
-pub(super) fn parse_ratio_region(value: &str) -> Result<RatioRect, String> {
+pub(super) fn parse_ratio_region(value: &str) -> Result<NormalizedRect, String> {
   let parts = value
     .split(',')
     .map(str::trim)
@@ -96,7 +96,7 @@ pub(super) fn parse_ratio_region(value: &str) -> Result<RatioRect, String> {
   if parts[2] <= 0.0 || parts[3] <= 0.0 {
     return Err("--sidebar-region width and height must be greater than 0".to_string());
   }
-  Ok(RatioRect::new(parts[0], parts[1], parts[2], parts[3]))
+  Ok(NormalizedRect::new(parts[0], parts[1], parts[2], parts[3]))
 }
 
 fn push_trimmed(values: &mut Vec<String>, value: String) {

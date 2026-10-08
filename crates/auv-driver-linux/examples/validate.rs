@@ -47,7 +47,7 @@ use std::error::Error;
 
 use auv_driver_common::Driver;
 use auv_driver_common::capture::CaptureOptions;
-use auv_driver_common::geometry::{Point, RatioRect, Rect, WindowPoint};
+use auv_driver_common::geometry::{NormalizedRect, Point, Rect, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, KeyPressOptions, PasteTextOptions, Scroll, ScrollOptions, TypeTextOptions, WaitOptions,
 };
@@ -281,7 +281,7 @@ fn capture_window(session: &LinuxDriverSession, substr: &str, out: Option<&str>)
 fn ocr(session: &LinuxDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
   let captured = session.window().capture(&window)?;
-  let recognition = session.vision().recognize_text_in_capture(&captured, RatioRect::new(0.0, 0.0, 1.0, 1.0))?;
+  let recognition = session.vision().recognize_text_in_capture(&captured, NormalizedRect::new(0.0, 0.0, 1.0, 1.0))?;
   println!("recognized {} regions:", recognition.regions.len());
   for region in recognition.regions.iter().take(80) {
     println!("  {:?} conf={:?} bounds={:?}", region.text, region.confidence, region.bounds);
@@ -294,7 +294,7 @@ fn ocr(session: &LinuxDriverSession, substr: &str) -> Run {
 
 fn find_window_text(session: &LinuxDriverSession, substr: &str, query: &str, wait: bool) -> Run {
   let window = find_window(session, substr)?;
-  let region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let region = NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
   let wait_options = WaitOptions::default();
   let matches = if wait {
     session.window().wait_text(&window, query, region, wait_options)?

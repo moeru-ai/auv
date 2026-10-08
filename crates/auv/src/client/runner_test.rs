@@ -700,7 +700,7 @@ fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
       max_steps: 30,
       settle: std::time::Duration::from_millis(500),
       no_motion_confirmations: 3,
-      motion_region: Some(auv_driver::RatioRect::new(0.0, 0.2, 1.0, 0.6)),
+      motion_region: Some(auv_driver::NormalizedRect::new(0.0, 0.2, 1.0, 0.6)),
       output: auv_scan::ScrollUntilOutputOptions { text: false },
     },
     auv_driver::ScrollOptions::default(),

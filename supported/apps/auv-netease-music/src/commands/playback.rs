@@ -316,7 +316,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   use crate::views::screen;
   use auv_driver::selector::{App, Window};
   use auv_driver::{
-    ActivationPolicy, Click, ClickOptions, InputPolicy, PrepareForInputOptions, RatioRect, Size, WindowClickStrategy, WindowPoint,
+    ActivationPolicy, Click, ClickOptions, InputPolicy, NormalizedRect, PrepareForInputOptions, Size, WindowClickStrategy, WindowPoint,
   };
   use auv_view::ViewBounds;
 
@@ -347,7 +347,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   crate::telemetry::capture_artifact("auv.netease.playback.before_capture", &before_capture);
   let before_recognition = session
     .vision()
-    .recognize_text_in_capture_with_options(&before_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
+    .recognize_text_in_capture_with_options(&before_capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("initial playback OCR failed: {error}"))?;
   let before_recognition = before_recognition.relative_to(&before_capture).map_err(|error| error.to_string())?;
   let before_screen = screen::classify_screen(&before_recognition, window_size);
@@ -422,7 +422,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   crate::telemetry::capture_artifact("auv.netease.playback.after_click_capture", &after_capture);
   let mut recognition = session
     .vision()
-    .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
+    .recognize_text_in_capture_with_options(&after_capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("post-click detail OCR failed: {error}"))?;
   recognition = recognition.relative_to(&after_capture).map_err(|error| error.to_string())?;
   let mut screen = screen::classify_screen(&recognition, window_size);
@@ -465,7 +465,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     crate::telemetry::capture_artifact("auv.netease.playback.after_foreground_click_capture", &after_capture);
     recognition = session
       .vision()
-      .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
+      .recognize_text_in_capture_with_options(&after_capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
       .map_err(|error| format!("post-foreground-click detail OCR failed: {error}"))?;
     recognition = recognition.relative_to(&after_capture).map_err(|error| error.to_string())?;
     screen = screen::classify_screen(&recognition, window_size);

@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use auv_driver_common::Driver;
 use auv_driver_common::capture::CaptureOptions;
-use auv_driver_common::geometry::{Point, RatioRect, WindowPoint};
+use auv_driver_common::geometry::{NormalizedRect, Point, WindowPoint};
 use auv_driver_common::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
 use auv_driver_common::window::{Window, WindowMutationOptions};
 use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
@@ -152,7 +152,7 @@ fn capture_window(session: &WindowsDriverSession, substr: &str, out: Option<&str
 fn ocr(session: &WindowsDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
   let captured = session.window().capture(&window)?;
-  let full = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let full = NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
   let recognition = session.vision().recognize_text_in_capture(&captured, full)?;
   println!("recognized {} regions:", recognition.regions.len());
   for region in &recognition.regions {

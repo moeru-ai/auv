@@ -328,18 +328,18 @@ fn playlist_select_verification_ratio(
   tier: PlaylistSelectTitleOcrTier,
   sidebar_bounds: ViewBounds,
   window_size: auv_driver::Size,
-) -> auv_driver::RatioRect {
+) -> auv_driver::NormalizedRect {
   if tier == PlaylistSelectTitleOcrTier::FullWindow {
-    return auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0);
+    return auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
   }
 
   let (x_start, width) = playlist_select_verification_horizontal_ratio(sidebar_bounds, window_size);
   match tier {
     // NOTICE(a6c-11): narrow band aligned with main_pane_guard nav floor (12% height).
-    PlaylistSelectTitleOcrTier::TitleBand => auv_driver::RatioRect::new(x_start, 0.12, width, 0.22),
+    PlaylistSelectTitleOcrTier::TitleBand => auv_driver::NormalizedRect::new(x_start, 0.12, width, 0.22),
     // NOTICE(a6c-12): hero header above metadata line (1812 live y≈139 on 890px window).
-    PlaylistSelectTitleOcrTier::HeroHeader => auv_driver::RatioRect::new(x_start, 0.08, width, 0.10),
-    PlaylistSelectTitleOcrTier::MainBand => auv_driver::RatioRect::new(x_start, 0.10, width, 0.45),
+    PlaylistSelectTitleOcrTier::HeroHeader => auv_driver::NormalizedRect::new(x_start, 0.08, width, 0.10),
+    PlaylistSelectTitleOcrTier::MainBand => auv_driver::NormalizedRect::new(x_start, 0.10, width, 0.45),
     PlaylistSelectTitleOcrTier::FullWindow => unreachable!("full-window OCR ratio returns before main-pane geometry"),
   }
 }
@@ -859,7 +859,7 @@ fn verify_playlist_select_title(
       sidebar_echo_attempted = true;
       let window_width = window_size.width.max(1.0);
       let window_height = window_size.height.max(1.0);
-      let sidebar_ratio = auv_driver::RatioRect::new(
+      let sidebar_ratio = auv_driver::NormalizedRect::new(
         sidebar_bounds.x / window_width,
         sidebar_bounds.y / window_height,
         sidebar_bounds.width / window_width,
@@ -951,7 +951,7 @@ fn run_playlist_play_resolved(
   use crate::commands::daily_recommended::best_text_match;
   use crate::telemetry::PlaylistPlayInputDelivered;
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ClickOptions, InputPolicy, RatioRect};
+  use auv_driver::{ClickOptions, InputPolicy, NormalizedRect};
 
   let select = run_playlist_select_resolved(inputs, query, scan, target)?;
   if !select.verification.passed() {
@@ -972,7 +972,7 @@ fn run_playlist_play_resolved(
   crate::telemetry::capture_artifact("auv.netease.playlist_play.target_capture", &capture);
   let recognition = session
     .vision()
-    .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
+    .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("playlist play-all OCR failed: {error}"))?;
   let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
   let before_bottom_text = recognize_playlist_bottom_text(&session, &capture, inputs);
@@ -1083,11 +1083,11 @@ fn recognize_playlist_bottom_text(
   capture: &auv_driver::Capture,
   inputs: &Inputs,
 ) -> Option<String> {
-  use auv_driver::RatioRect;
+  use auv_driver::NormalizedRect;
 
   session
     .vision()
-    .recognize_text_in_capture_with_options(capture, RatioRect::new(0.0, 0.88, 0.46, 0.12), inputs.ocr_options.clone())
+    .recognize_text_in_capture_with_options(capture, NormalizedRect::new(0.0, 0.88, 0.46, 0.12), inputs.ocr_options.clone())
     .ok()
     .map(|recognition| recognition.text.trim().to_string())
     .filter(|text| !text.is_empty())

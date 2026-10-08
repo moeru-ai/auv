@@ -3,6 +3,7 @@ import type { Point, Rect } from '../../script-api/api'
 import type { CallRecord, FocusEvent, Mark, PlaygroundState, Resource } from '../../store'
 import type { CameraFlight, View } from './camera'
 
+import { contains } from '@auv-js/sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { confidenceAlpha } from '../../ocr'
@@ -228,10 +229,6 @@ export function DesktopCanvas() {
 /** Latest `focus()` at the time cursor (or overall while following). */
 function activeFocus(state: PlaygroundState, { cursor, timeTravel }: Scene): FocusEvent | undefined {
   return timeTravel ? state.focuses.findLast(focus => focus.seq <= cursor) : state.focuses.at(-1)
-}
-
-function contains(outer: Rect, inner: Rect): boolean {
-  return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height
 }
 
 function fit(v: View, rects: Rect[], width: number, height: number): void {

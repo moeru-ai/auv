@@ -1137,7 +1137,7 @@ fn scroll_until_cli_and_protocol_inputs_decode_to_the_same_request() {
     );
     assert_eq!(plan.request.settle, std::time::Duration::from_millis(600));
     assert_eq!((plan.request.max_steps, plan.request.no_motion_confirmations), (50, 2));
-    assert_eq!(plan.request.motion_region, Some(auv_driver::RatioRect::new(0.0, 0.1, 1.0, 0.8)));
+    assert_eq!(plan.request.motion_region, Some(auv_driver::NormalizedRect::new(0.0, 0.1, 1.0, 0.8)));
     let auv_scan::ScrollUntilStep::Motion { motion } = plan.request.step else {
       panic!("timed step");
     };

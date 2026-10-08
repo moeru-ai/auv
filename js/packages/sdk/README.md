@@ -281,11 +281,24 @@ current frame on the Runner, so OCR results need no manual offset:
 const { matches } = await window.findText('Continue', { signal })
 await window.click(matches[0]!) // delivered to this window
 await runner.input.click({ x: 640, y: 400 }) // a global click in screen space
-await runner.input.click({ coordinateSpace: { case: 'displayId', value: displays[0]!.id }, x: 10, y: 10 })
+await runner.input.click(Position.display(displays[0]!, 10, 10)) // relative to the display's origin
 ```
 
 A global click (screen or display position on `input`) has no target window,
 so the Runner rejects `policy` and `windowStrategy` there.
+
+Small pure helpers cover the geometry these calls return. They take any
+object with the right fields (`ScreenRect`, a window `frame`, a match's
+`bounds`) and never convert coordinate spaces:
+
+```ts
+import { center, contains, intersect, Position } from '@auv-js/sdk'
+
+Position.screen(640, 400) // also Position.window(window, x, y), Position.display(display, x, y)
+center(matches[0]!.bounds!) // { x, y }
+contains(window.window.frame!, center(matches[0]!.bounds!)) // edges count as inside
+intersect(area, window.window.frame!) // the overlap, or undefined
+```
 
 Keyboard input can name its window too. `typeText`, `pressKeys` and
 `pasteText` on a `WindowClient` send `InputService/InputKeyboard` with that

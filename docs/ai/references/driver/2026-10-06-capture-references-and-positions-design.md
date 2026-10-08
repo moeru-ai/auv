@@ -331,17 +331,21 @@ The wire and the SDK still split everything by space. Proposal:
    rectangle into the image and clips it; a rectangle that misses the image is
    `INVALID_ARGUMENT`. The Rust client takes `ImageRegion::{Normalized,
    Screen}`; the playground passes its areas directly.
-4. **One normalized rectangle.**
-   - Delete `auv-core`'s `NormalizedRegion` in favor of `auv-driver-common`'s
-     type.
-   - Rename `RatioRect` to `NormalizedRect` (*provisional*), so that Rust,
-     Protobuf and TypeScript use one name.
+4. **One normalized rectangle.** Done (2026-10-09):
+   - `auv-core`'s `NormalizedRegion` is deleted; `ImageRegion::Normalized`
+     takes `auv_driver::NormalizedRect`.
+   - `RatioRect` is renamed `NormalizedRect` (*provisional*), so Rust and
+     Protobuf use one name. The fields and their serde names are unchanged.
    - `auv-view`'s `ViewBounds` stays for its documented dependency direction.
-5. **SDK geometry helpers.** The JS SDK exports small pure helpers that both
-   apps and the playground use instead of local copies:
+5. **SDK geometry helpers.** Done (2026-10-09). `@auv-js/sdk` exports:
    - `center(rect)`;
-   - `Position.screen(x, y)` and `Position.window(windowOrRef, x, y)`;
-   - `contains`, and `intersect`/`clip`.
+   - `Position.screen(x, y)`, `Position.window(windowTarget, x, y)` and
+     `Position.display(display, x, y)`;
+   - `contains(rect, pointOrRect)`;
+   - `intersect(a, b)`, which also clips.
+
+   The playground's `area().contains()`, its `within` clipping and the mock
+   desktop's hit tests use them instead of local copies.
 
    The playground's `area()` builds on these.
 

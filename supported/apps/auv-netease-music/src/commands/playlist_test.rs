@@ -150,7 +150,7 @@ fn playlist_select_verification_hero_header_ratio_covers_metadata_line() {
 
   assert_eq!((title.y, title.height), (0.12, 0.22));
   assert_eq!((main.y, main.height), (0.10, 0.45));
-  assert_eq!(full, auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0));
+  assert_eq!(full, auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0));
   let y_start = hero.y * window.height;
   let y_end = y_start + hero.height * window.height;
   assert!(y_start < 139.0);

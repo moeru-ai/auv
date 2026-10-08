@@ -1,6 +1,8 @@
 import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
 import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
+import { contains, intersect } from '@auv-js/sdk'
+
 interface MockWindow extends WindowInfo {
   background: string
   /** Window-specific painting under the widgets (e.g. a player bar or scrollbar). */
@@ -75,13 +77,6 @@ const DISPLAYS: DisplayInfo[] = [
 ]
 
 const FONT = '"Inter", "Helvetica Neue", Arial, sans-serif'
-
-/** `rect` clipped to `to`; callers check the areas overlap. */
-function clip(rect: Rect, to: Rect): Rect {
-  const x = Math.max(rect.x, to.x)
-  const y = Math.max(rect.y, to.y)
-  return { height: Math.min(rect.y + rect.height, to.y + to.height) - y, width: Math.min(rect.x + rect.width, to.x + to.width) - x, x, y }
-}
 
 function includes(text: string, query: string): boolean {
   return text.toLowerCase().includes(query.toLowerCase())
@@ -449,7 +444,7 @@ export class MockBackend implements Backend {
     for (const widget of window.widgets()) {
       const r = offset(widget.rect, f)
       const clip = widget.clip && offset(widget.clip, f)
-      if (clip && !intersects(clip, r))
+      if (clip && !intersect(clip, r))
         continue
       ctx.save()
       if (clip) {
@@ -525,17 +520,17 @@ export class MockBackend implements Backend {
     return moved
   }
 
-  /** OCR ground truth: every widget label intersecting `area`, in screen space. */
-  /** Text visible in `bounds`, or only in its `region` (fractions of `bounds`) when given. */
-  /** Text visible in `bounds`, limited to the screen-space `within` area. */
+  /** OCR ground truth: text visible in `bounds`, limited to the screen-space `within` area. */
   #text(bounds: Rect, within?: Rect): TextMatch[] {
-    const area = within ? clip(within, bounds) : bounds
+    const area = within ? intersect(within, bounds) : bounds
+    if (!area)
+      return []
     const matches: TextMatch[] = []
     const measure = new OffscreenCanvas(1, 1).getContext('2d')!
     for (const window of this.#windows) {
       measure.font = `600 14px ${FONT}`
       const titleRect = { height: 18, width: measure.measureText(window.title ?? '').width, x: window.frame.x + 90, y: window.frame.y + 8 }
-      if (intersects(area, titleRect))
+      if (intersect(area, titleRect))
         matches.push({ bounds: titleRect, confidence: 0.99, text: window.title ?? '' })
       for (const widget of window.widgets()) {
         const r = offset(widget.rect, window.frame)
@@ -547,9 +542,9 @@ export class MockBackend implements Backend {
           : { height: fontSize + 4, width, x: r.x + 10, y: r.y + (r.height - fontSize) / 2 - 2 }
         // Text cut off by a scroll viewport is not readable.
         const clip = widget.clip && offset(widget.clip, window.frame)
-        if (clip && (!contains(clip, textRect) || !contains(clip, { x: textRect.x + textRect.width, y: textRect.y + textRect.height })))
+        if (clip && !contains(clip, textRect))
           continue
-        if (widget.label && intersects(area, textRect))
+        if (widget.label && intersect(area, textRect))
           matches.push({ bounds: textRect, confidence: this.#confidence(widget), text: widget.label })
       }
     }
@@ -578,16 +573,8 @@ export class MockBackend implements Backend {
   }
 }
 
-function contains(rect: Rect, point: Point): boolean {
-  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
-}
-
 async function delay(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function intersects(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
 function offset(rect: Rect, by: Rect): Rect {

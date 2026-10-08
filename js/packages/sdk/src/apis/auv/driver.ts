@@ -60,6 +60,7 @@ import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
+import { center } from './geometry'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 
 /** Pixels fetched from the Runner. `data` is RGBA8 rows for `ImageEncoding.RGBA`, otherwise PNG, JPEG or lossless WebP bytes. */
@@ -647,7 +648,7 @@ function positionOf(target: PointTarget, plain: CoordinateSpaceInit): Init<typeo
     if (!bounds)
       throw new TypeError('point target has no bounds')
     const { height = 0, width = 0, x = 0, y = 0 } = bounds
-    return { coordinateSpace: { case: 'screen', value: true }, x: x + width / 2, y: y + height / 2 }
+    return { coordinateSpace: { case: 'screen', value: true }, ...center({ height, width, x, y }) }
   }
   if (!('x' in target) || !('y' in target) || target.x === undefined || target.y === undefined)
     throw new TypeError('point target needs a coordinateSpace, bounds, or x and y')

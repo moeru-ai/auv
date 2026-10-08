@@ -1,7 +1,7 @@
 //! Capture-driven text recognition that backs the session `VisionApi`.
 //!
 //! Bridges the capture surface to the system OCR engine: a caller hands in a
-//! shared [`Capture`] plus a [`RatioRect`] sub-region and receives recognized
+//! shared [`Capture`] plus a [`NormalizedRect`] sub-region and receives recognized
 //! text whose bounds are mapped back into the capture's coordinate space
 //! (screen for display captures, window for window captures). This mirrors the
 //! macOS driver's `VisionApi`, keeping pixel<->capture-space mapping out of
@@ -10,7 +10,7 @@
 
 use auv_driver_common::capture::Capture;
 use auv_driver_common::error::DriverResult;
-use auv_driver_common::geometry::{RatioRect, Rect};
+use auv_driver_common::geometry::{NormalizedRect, Rect};
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 
@@ -19,7 +19,11 @@ use crate::ocr::recognize_text_in_rgba;
 
 /// Recognizes text inside `region` of `capture`, returning bounds in the
 /// capture's coordinate space.
-pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
+pub fn recognize_text_in_capture(
+  capture: &Capture,
+  region: NormalizedRect,
+  options: &TextRecognitionOptions,
+) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
   if crop.width == 0 || crop.height == 0 {
     // An empty sub-region has no pixels to recognize; return an empty result
@@ -47,7 +51,7 @@ pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: 
 pub fn find_text_in_capture(
   capture: &Capture,
   query: &str,
-  region: RatioRect,
+  region: NormalizedRect,
   options: &TextRecognitionOptions,
 ) -> DriverResult<OcrMatches> {
   let recognition = recognize_text_in_capture(capture, region, options)?;
@@ -63,7 +67,7 @@ struct CropPixels {
   height: u32,
 }
 
-fn crop_pixels(capture: &Capture, region: RatioRect) -> CropPixels {
+fn crop_pixels(capture: &Capture, region: NormalizedRect) -> CropPixels {
   let image_width = capture.image.width();
   let image_height = capture.image.height();
   let x = ratio_to_pixel(region.x, image_width);

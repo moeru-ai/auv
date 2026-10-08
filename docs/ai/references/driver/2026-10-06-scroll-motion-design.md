@@ -1,5 +1,10 @@
 # Scroll Motion, Live Scroll Control, and Scroll-Until
 
+> **Migration (2026-10-09):** `RatioRect` is now `NormalizedRect` in
+> `auv-driver-common`, with the same fields; `auv-core`'s `NormalizedRegion` is
+> removed in its favor. See Part B.4 of
+> `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.
+
 > Naming migration (2026-10-08): `ScrollUntilObservation` → `ScrollUntilUpdate`; `ScrollUntilObserve` → `ScrollUntilOutputOptions`; `onObservation` → `onUpdate`.
 > This dated note may retain the former names. Prefer concrete domain results;
 > reserve `observation` for information used to decide the next action.

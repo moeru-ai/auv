@@ -5,7 +5,7 @@ use auv_driver::geometry::{Point, WindowPoint};
 use auv_driver::window::Window;
 
 pub(crate) fn detect_sidebar_region(
-  manual: Option<RatioRect>,
+  manual: Option<NormalizedRect>,
   window_size: Size,
   recognition: &TextRecognition,
 ) -> Result<ViewRegionRecord, ParserDiagnostic> {
@@ -185,7 +185,7 @@ pub(crate) fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
   }
 }
 
-pub(crate) fn ratio_to_window_bounds(region: RatioRect, window_size: Size) -> ViewBounds {
+pub(crate) fn ratio_to_window_bounds(region: NormalizedRect, window_size: Size) -> ViewBounds {
   ViewBounds::new(
     region.x * window_size.width,
     region.y * window_size.height,
