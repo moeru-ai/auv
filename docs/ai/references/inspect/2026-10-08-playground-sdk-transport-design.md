@@ -49,9 +49,10 @@ exec worker                                host (main thread)
   RunnerClass) come from the SDK route in the worker, which the host passes in
   the run request.
 - **Recording by type, not by method.** The host records each RPC as a call
-  (`rpc:<Service>/<Method>`). Its effect (`input` vs `read`) comes from the
-  Runner's method annotations via `discoverRunner`; request JSON comes from the
-  SDK call (`jsonBody`); responses decode through the discovered descriptors.
+  (`<Service>/<Method>`, without the package). Its effect (`input` vs `read`)
+  comes from the Runner's method annotations via `discoverRunner`; request JSON
+  comes from the SDK call (`jsonBody`); responses decode through the discovered
+  descriptors.
   Visualization (thumbnails for `CapturedFrame`, boxes for recognized text,
   receipts for `InputActionResult`) keys on message type names, so a new RPC
   returning a known type is drawn without new code.

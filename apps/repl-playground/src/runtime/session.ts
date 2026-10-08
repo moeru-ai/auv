@@ -272,7 +272,10 @@ class ExecSession {
           effect: described?.effect === 'input' ? 'input' : 'read',
           hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
           line,
-          method: `rpc:${start.method.slice(1)}`,
+          // `Service/Method` without the package, e.g. `WindowService/ListWindows`.
+          // TODO(discovered-tool-presentation): show the method's API name
+          // (`windows.list`) once the protobuf method annotations carry one.
+          method: start.method.slice(start.method.lastIndexOf('.') + 1),
           seq,
           startedAt: nowMs(),
         })

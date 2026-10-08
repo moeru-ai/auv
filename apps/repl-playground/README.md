@@ -219,7 +219,7 @@ const playing = await device.macos.media.nowPlaying()
 ```
 
 Calls cross to the page encoded, where the device credential is added; each one
-is recorded in the timeline as `rpc:<Service>/<Method>` with ProtoJSON request and
+is recorded in the timeline as `<Service>/<Method>` with ProtoJSON request and
 response. Results are drawn by message type, like `auv.*` handles: captures as
 frames, text matches and recognized text as boxes, input results as receipts at
 the delivered point, windows and displays as outlines. Offline replay answers
