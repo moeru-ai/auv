@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: **proposed**, with a prototype (`sdk` and `device` script globals)
+Status: **accepted** (owner decisions below), with a prototype (`sdk` and `device` script globals)
 behind the existing script API. Names marked *provisional* are open.
 
 ## Problem
@@ -71,10 +71,10 @@ Implemented:
 
 Deferred, each marked in code:
 
-- `TODO(playground-sdk-mock)`: the mock desktop answers SDK RPCs. It needs an
-  RPC-level mock Runner (`defineInvokeHandlers` keyed by method).
+- `TODO(playground-sdk-mock)`: the mock desktop answers SDK RPCs through an
+  RPC-level mock Runner in `@auv-js/sdk` (see Decisions).
 - `TODO(playground-sdk-replay)`: replay of SDK calls. The recording becomes the
-  ordered request/response frames; existing recordings would not replay.
+  ordered request/response frames; current recordings are not read.
 - `TODO(playground-sdk-visualize)`: canvas and inspector rendering of RPC
   results by message type. The prototype records method, effect, JSON and
   timing only.
@@ -91,8 +91,11 @@ Deferred, each marked in code:
    joins the approved SDK geometry-helper work (B.4/B.5).
 3. Remove the per-method bindings once `auv.*` is a thin layer over `device`.
 
-## Open questions
+## Decisions (owner, 2026-10-08)
 
-- Whether `auv` itself becomes the SDK client once `device` covers it.
-- Whether replay keeps old recordings (migration) or starts fresh.
-- Whether the mock desktop stays, or the playground requires a device.
+- `auv` becomes the SDK client once `device` covers what scripts use today.
+- Replay does not read the current recordings. Those are kept in page memory
+  only (the last live run), so nothing persisted needs migrating.
+- The mock desktop stays. It moves to the SDK layer: a mock Runner that
+  answers SDK RPCs, usable from Node tests and the playground alike. Its
+  design is a separate slice (`TODO(playground-sdk-mock)`).
