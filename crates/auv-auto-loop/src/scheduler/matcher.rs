@@ -167,6 +167,7 @@ impl<'a> FastLoopScheduler<'a> {
 
     // Step 3: Candidate -> Strict Preconditions Check
     let mut had_mode_mismatch = false;
+    let mut had_mode_compatible_candidate = false;
     for candidate in candidates {
       if let Some(req_mode) = request.requested_mode
         && req_mode != candidate.execution_mode
@@ -190,6 +191,7 @@ impl<'a> FastLoopScheduler<'a> {
         had_mode_mismatch = true;
         continue;
       }
+      had_mode_compatible_candidate = true;
       let pre_check = evaluate_preconditions(&candidate.preconditions, &request.current_context);
       if pre_check.passed {
         self.logger.log(
@@ -221,7 +223,7 @@ impl<'a> FastLoopScheduler<'a> {
       }
     }
 
-    if had_mode_mismatch {
+    if had_mode_mismatch && !had_mode_compatible_candidate {
       self.logger.log(
         DecisionCategory::Scheduling,
         DecisionAction::Escalated,

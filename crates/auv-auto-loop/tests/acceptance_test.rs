@@ -12,7 +12,7 @@
 use auv_auto_loop::compiler::AutoCompiler;
 use auv_auto_loop::decision_log::DecisionLogger;
 use auv_auto_loop::models::{
-  CompilationMetadata, ExecutionMode, OPERATION_SCHEMA_VERSION, OperationDef, OperationStepDef, ReasonCode, TargetMetadata,
+  CompilationMetadata, ExecutionMode, OPERATION_SCHEMA_VERSION, OperationDef, OperationStepDef, PreconditionDef, ReasonCode, TargetMetadata,
   TrajectoryRecord, TrajectoryStep, VerificationGateDef,
 };
 use auv_auto_loop::runtime::{ExecutionResult, RuntimeEnvironment, RuntimeExecutor};
@@ -962,4 +962,77 @@ fn test_20_scheduler_candidate_mode_mismatch_preserves_typed_reason_code() {
     ReasonCode::ModeMismatchEscalateVlm,
     "Outcome must preserve typed ReasonCode::ModeMismatchEscalateVlm rather than generic scheduler miss"
   );
+}
+
+#[test]
+fn test_21_scheduler_mixed_mode_and_precondition_failures_preserve_scheduler_miss() {
+  let logger = DecisionLogger::new();
+  let scheduler = FastLoopScheduler::new(&logger);
+  let mut catalog = OperationCatalog::new();
+
+  let verified_op = OperationDef {
+    schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+    name: "qqmusic.verified_skip_mixed".to_string(),
+    description: "Skip next track".to_string(),
+    execution_mode: ExecutionMode::Verified,
+    compilation_metadata: CompilationMetadata {
+      compiler: "test".to_string(),
+      source_record: "test".to_string(),
+      date: "2026-10-08".to_string(),
+      crux_goal: "test".to_string(),
+    },
+    target: TargetMetadata {
+      app_name: "QQMusic.exe".to_string(),
+      backend: "windows.smtc".to_string(),
+    },
+    preconditions: vec![],
+    parameters: vec![],
+    steps: vec![OperationStepDef {
+      id: "step_verified".to_string(),
+      name: "Skip next".to_string(),
+      description: "Skip next track".to_string(),
+      action: serde_json::json!({ "type": "skip_next" }),
+      verification_gate: VerificationGateDef::TitleChangeGate {
+        require_title_change: true,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "vlm".to_string(),
+      },
+      is_unverified: false,
+    }],
+    tags: vec![],
+  };
+  catalog.register_active(verified_op.clone()).unwrap();
+
+  let mut fast_op = verified_op;
+  fast_op.name = "qqmusic.fast_skip_mixed".to_string();
+  fast_op.execution_mode = ExecutionMode::Fast;
+  fast_op.preconditions = vec![PreconditionDef {
+    key: "App.ProcessName".to_string(),
+    expected_value: serde_json::json!("QQMusic.exe"),
+  }];
+  fast_op.steps[0].verification_gate = VerificationGateDef::CustomAssertion {
+    expression: "true".to_string(),
+    timeout_ms: 100,
+    escalate_on_mismatch: "none".to_string(),
+  };
+  catalog.register_active(fast_op).unwrap();
+
+  let req = TaskRequest {
+    app_name: "QQMusic.exe".to_string(),
+    task_name: "long_tail_skip_mixed".to_string(),
+    instruction: "skip next track".to_string(),
+    requested_mode: Some(ExecutionMode::Fast),
+    current_context: HashMap::new(),
+    embedding_vector: Some(vec![0.5, 0.5, 0.5, 0.5]),
+  };
+
+  let outcome = scheduler.schedule(&req, &catalog);
+  assert!(outcome.selected_operation.is_none());
+  assert!(outcome.embedding_called);
+  assert_eq!(
+    outcome.reason_code,
+    ReasonCode::SchedulerMissEscalateVlm,
+    "A mode mismatch plus a precondition failure is not an all-mode-mismatch outcome"
+  );
+  assert!(outcome.message.contains("strict preconditions"));
 }
