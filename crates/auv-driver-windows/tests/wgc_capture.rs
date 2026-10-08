@@ -299,10 +299,42 @@ fn test_wgc_health_cached_and_liveness() {
   assert!(cached_health.alive, "test window must be alive");
   assert!(cached_dur < Duration::from_millis(15), "cached check should be fast");
 
+  // A retained HWND must never reuse cached health after its live process ID
+  // no longer matches the process that produced the Window snapshot.
+  let mut stale_pid_window = driver_win.clone();
+  stale_pid_window.process_id = Some(std::process::id().wrapping_add(1));
+  assert!(
+    capture_window_health_cached(&stale_pid_window).is_err(),
+    "health lookup must reject a stale expected PID before consulting cache"
+  );
+
   // 4. Strict health check should succeed with fresh sample
   let strict_health = capture_window_health_strict(&driver_win).expect("capture_window_health_strict should succeed");
   assert!(strict_health.is_fresh, "strict health must be fresh");
   assert!(strict_health.alive, "test window must be alive");
+
+  // Requests for distinct HWNDs are explicitly serialized while a single
+  // health-session/cache target is active; neither request may evict the other.
+  let second_class = w!("AuvWgcHealthSecondTest");
+  let (_second_test_win, second_driver_win) =
+    create_test_window("AUV WGC Health Second Test", second_class, 650, 220, 400, 300, 0x0033_2211);
+  let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+  let first_barrier = std::sync::Arc::clone(&barrier);
+  let first_window = driver_win.clone();
+  let first = std::thread::spawn(move || {
+    auv_driver_windows::desktop::ensure_input_desktop();
+    first_barrier.wait();
+    capture_window_health_strict(&first_window)
+  });
+  let second_barrier = std::sync::Arc::clone(&barrier);
+  let second = std::thread::spawn(move || {
+    auv_driver_windows::desktop::ensure_input_desktop();
+    second_barrier.wait();
+    capture_window_health_strict(&second_driver_win)
+  });
+  barrier.wait();
+  assert!(first.join().expect("first health request panicked").expect("first target health failed").is_fresh);
+  assert!(second.join().expect("second health request panicked").expect("second target health failed").is_fresh);
 }
 
 #[test]

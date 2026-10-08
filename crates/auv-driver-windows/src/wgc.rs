@@ -239,6 +239,7 @@ mod native {
 
   struct CachedSession {
     target_id: isize,
+    target_pid: Option<u32>,
     frame_pool: Direct3D11CaptureFramePool,
     session: windows::Graphics::Capture::GraphicsCaptureSession,
     size: windows::Graphics::SizeInt32,
@@ -366,7 +367,7 @@ mod native {
     let mut session_guard = ACTIVE_SESSION.lock().map_err(|_| backend("active session mutex poisoned"))?;
 
     let is_match = match &*session_guard {
-      Some(s) => s.target_id == target_id && s.size.Width == size.Width && s.size.Height == size.Height,
+      Some(s) => s.target_id == target_id && s.target_pid.is_none() && s.size.Width == size.Width && s.size.Height == size.Height,
       None => false,
     };
 
@@ -398,6 +399,7 @@ mod native {
 
       *session_guard = Some(CachedSession {
         target_id,
+        target_pid: None,
         frame_pool,
         session,
         size,
@@ -489,10 +491,15 @@ mod native {
 
   /// Lightweight health check: checks window dimensions, pixel activity, and freshness
   /// without allocating and decoding full RGBA image.
-  pub fn capture_item_health(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<WindowHealth> {
+  pub fn capture_item_health(
+    target_id: isize,
+    target_pid: u32,
+    item: &GraphicsCaptureItem,
+    timeout: Duration,
+  ) -> DriverResult<WindowHealth> {
     let d3d = get_or_init_d3d_context()?;
     capture_with_device_lost_recovery(
-      || capture_item_health_impl(&d3d, target_id, item, timeout),
+      || capture_item_health_impl(&d3d, target_id, target_pid, item, timeout),
       |error| {
         let reason = unsafe { d3d.device.GetDeviceRemovedReason() };
         is_device_lost_reason(reason) || is_device_lost_error_msg(error)
@@ -503,6 +510,7 @@ mod native {
   fn capture_item_health_impl(
     d3d: &D3dContext,
     target_id: isize,
+    target_pid: u32,
     item: &GraphicsCaptureItem,
     timeout: Duration,
   ) -> DriverResult<WindowHealth> {
@@ -518,7 +526,7 @@ mod native {
     let mut session_guard = HEALTH_SESSION.lock().map_err(|_| backend("health session mutex poisoned"))?;
 
     let is_match = match &*session_guard {
-      Some(s) => s.target_id == target_id && s.size.Width == size.Width && s.size.Height == size.Height,
+      Some(s) => s.target_id == target_id && s.target_pid == Some(target_pid) && s.size.Width == size.Width && s.size.Height == size.Height,
       None => false,
     };
 
@@ -548,6 +556,7 @@ mod native {
 
       *session_guard = Some(CachedSession {
         target_id,
+        target_pid: Some(target_pid),
         frame_pool,
         session,
         size,
@@ -709,12 +718,17 @@ mod native {
     pub last_requested: Instant,
     pub last_refresh_duration: Duration,
     pub spawn_count: usize,
+    pub active_workers: usize,
     /// Monotonically identifies the current worker. Old workers must not be
     /// allowed to clear state belonging to a replacement worker.
     pub worker_generation: u64,
   }
 
   static HEALTH_STATE: Mutex<Option<HealthManagerState>> = Mutex::new(None);
+  /// Health capture currently owns one reusable WGC session. Serialize public
+  /// health requests so a second target cannot evict the first request while
+  /// it is waiting for its sample.
+  static HEALTH_REQUEST_SERIAL: Mutex<()> = Mutex::new(());
   pub static HEALTH_CONDVAR: Condvar = Condvar::new();
 
   pub fn lock_health_state() -> std::sync::MutexGuard<'static, Option<HealthManagerState>> {
@@ -730,8 +744,48 @@ mod native {
       last_requested: Instant::now(),
       last_refresh_duration: Duration::ZERO,
       spawn_count: 0,
+      active_workers: 0,
       worker_generation: 0,
     })
+  }
+
+  pub fn lock_health_request() -> std::sync::MutexGuard<'static, ()> {
+    HEALTH_REQUEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+  }
+
+  fn close_health_session_for_key(session_guard: &mut std::sync::MutexGuard<'_, Option<CachedSession>>, key: &HealthCacheKey) {
+    if session_guard.as_ref().is_some_and(|session| {
+      session.target_id == key.hwnd
+        && session.target_pid == Some(key.pid)
+        && session.size.Width == key.width as i32
+        && session.size.Height == key.height as i32
+    }) {
+      session_guard.take();
+    }
+  }
+
+  fn stop_idle_worker(key: &HealthCacheKey, worker_generation: u64) -> bool {
+    // Keep the lock order consistent with reset_d3d_context (HEALTH_SESSION,
+    // then HEALTH_STATE) so idle cleanup cannot deadlock device recovery.
+    let mut session_guard = HEALTH_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state_guard = lock_health_state();
+    let stopped = if let Some(ref mut state) = *state_guard
+      && state.target_key.as_ref() == Some(key)
+      && state.worker_generation == worker_generation
+      && state.last_requested.elapsed() >= Duration::from_millis(250)
+    {
+      state.worker_running = false;
+      close_health_session_for_key(&mut session_guard, key);
+      true
+    } else {
+      false
+    };
+    drop(state_guard);
+    drop(session_guard);
+    if stopped {
+      HEALTH_CONDVAR.notify_all();
+    }
+    stopped
   }
 
   #[allow(dead_code)]
@@ -755,47 +809,96 @@ mod native {
   }
 
   pub fn ensure_worker_started(key: &HealthCacheKey) -> DriverResult<()> {
-    let mut guard = lock_health_state();
-    let state = get_or_init_state(&mut guard);
+    loop {
+      let mut guard = lock_health_state();
+      let state = get_or_init_state(&mut guard);
+      state.last_requested = Instant::now();
 
-    state.last_requested = Instant::now();
+      if state.target_key.as_ref() != Some(key) {
+        state.stop_requested.store(true, Ordering::SeqCst);
+        state.target_key = Some(key.clone());
+        state.cached_entry = None;
+        state.worker_running = false;
+        state.worker_generation = state.worker_generation.wrapping_add(1);
+        state.stop_requested = Arc::new(AtomicBool::new(false));
+      }
 
-    if state.target_key.as_ref() != Some(key) {
-      state.stop_requested.store(true, Ordering::SeqCst);
-      state.target_key = Some(key.clone());
-      state.cached_entry = None;
-      state.worker_running = false;
+      if state.worker_running {
+        return Ok(());
+      }
+
+      if state.active_workers > 0 {
+        let (new_guard, _) = HEALTH_CONDVAR.wait_timeout(guard, Duration::from_millis(500)).unwrap();
+        drop(new_guard);
+        continue;
+      }
+
+      // No worker is using the session now. Drop any session left by the
+      // previous target before creating the replacement worker.
+      drop(guard);
+      if let Ok(mut session) = HEALTH_SESSION.lock() {
+        session.take();
+      }
+
+      let mut guard = lock_health_state();
+      let state = get_or_init_state(&mut guard);
+      if state.target_key.as_ref() != Some(key) {
+        continue;
+      }
+      if state.worker_running || state.active_workers > 0 {
+        continue;
+      }
+
+      state.worker_running = true;
+      state.spawn_count += 1;
       state.worker_generation = state.worker_generation.wrapping_add(1);
-      state.stop_requested = Arc::new(AtomicBool::new(false));
-    }
+      let worker_generation = state.worker_generation;
+      let stop_flag = Arc::clone(&state.stop_requested);
+      let worker_key = key.clone();
+      state.active_workers += 1;
 
-    if state.worker_running {
+      let spawn_result = std::thread::Builder::new().name("wgc-health-worker".to_string()).spawn(move || {
+        health_worker_loop(worker_key, stop_flag, worker_generation);
+      });
+      if let Err(error) = spawn_result {
+        state.active_workers = state.active_workers.saturating_sub(1);
+        state.worker_running = false;
+        HEALTH_CONDVAR.notify_all();
+        return Err(backend(format!("failed to spawn wgc health worker: {error}")));
+      }
+
       return Ok(());
     }
+  }
 
-    state.worker_running = true;
-    state.spawn_count += 1;
-    state.worker_generation = state.worker_generation.wrapping_add(1);
-    let worker_generation = state.worker_generation;
-    let stop_flag = Arc::clone(&state.stop_requested);
-    let worker_key = key.clone();
-
-    let spawn_result = std::thread::Builder::new().name("wgc-health-worker".to_string()).spawn(move || {
-      health_worker_loop(worker_key, stop_flag, worker_generation);
-    });
-    if let Err(error) = spawn_result {
-      if let Some(ref mut state) = *guard
-        && state.worker_generation == worker_generation
-      {
+  fn worker_exited(key: &HealthCacheKey, worker_generation: u64) {
+    let mut guard = lock_health_state();
+    if let Some(ref mut state) = *guard {
+      state.active_workers = state.active_workers.saturating_sub(1);
+      if state.target_key.as_ref() == Some(key) && state.worker_generation == worker_generation {
         state.worker_running = false;
       }
-      return Err(backend(format!("failed to spawn wgc health worker: {error}")));
     }
+    HEALTH_CONDVAR.notify_all();
+  }
 
-    Ok(())
+  struct HealthWorkerExit {
+    key: HealthCacheKey,
+    worker_generation: u64,
+  }
+
+  impl Drop for HealthWorkerExit {
+    fn drop(&mut self) {
+      worker_exited(&self.key, self.worker_generation);
+    }
   }
 
   fn health_worker_loop(key: HealthCacheKey, stop_flag: Arc<AtomicBool>, worker_generation: u64) {
+    let _exit = HealthWorkerExit {
+      key: key.clone(),
+      worker_generation,
+    };
+    crate::desktop::ensure_input_desktop();
     let hwnd = HWND(key.hwnd as _);
     let item = match item_for_window(hwnd) {
       Ok(it) => it,
@@ -814,24 +917,33 @@ mod native {
 
     while !stop_flag.load(Ordering::SeqCst) {
       // 1. Idle timeout check (250ms)
+      let mut superseded = false;
+      let mut idle = false;
       {
         let mut guard = lock_health_state();
         if let Some(ref mut state) = *guard {
           if state.target_key.as_ref() != Some(&key) || state.worker_generation != worker_generation {
-            break;
-          }
-          if state.last_requested.elapsed() >= Duration::from_millis(250) {
-            state.worker_running = false;
-            break;
+            superseded = true;
+          } else if state.last_requested.elapsed() >= Duration::from_millis(250) {
+            idle = true;
           }
         } else {
+          superseded = true;
+        }
+      }
+      if superseded {
+        break;
+      }
+      if idle {
+        if stop_idle_worker(&key, worker_generation) {
           break;
         }
+        continue;
       }
 
       // 2. Perform health check sample
       let sample_start = Instant::now();
-      let res = capture_item_health(key.hwnd, &item, Duration::from_millis(500));
+      let res = capture_item_health(key.hwnd, key.pid, &item, Duration::from_millis(500));
       let sample_dur = sample_start.elapsed();
 
       match res {
@@ -875,14 +987,6 @@ mod native {
 
       std::thread::sleep(Duration::from_millis(12));
     }
-
-    let mut guard = lock_health_state();
-    if let Some(ref mut state) = *guard {
-      if state.target_key.as_ref() == Some(&key) && state.worker_generation == worker_generation {
-        state.worker_running = false;
-      }
-    }
-    HEALTH_CONDVAR.notify_all();
   }
 }
 
@@ -932,10 +1036,15 @@ pub fn capture_window_wgc(_window: &Window) -> DriverResult<Capture> {
 /// without full RGBA image decoding and memory allocation.
 #[cfg(target_os = "windows")]
 pub fn capture_window_health(window: &Window) -> DriverResult<WindowHealth> {
+  let _request_guard = native::lock_health_request();
+  capture_window_health_unserialized(window)
+}
+
+#[cfg(target_os = "windows")]
+fn capture_window_health_unserialized(window: &Window) -> DriverResult<WindowHealth> {
   let start_time = Instant::now();
-  let hwnd = window_handle(window)?;
-  let item = native::item_for_window(hwnd)?;
-  let health = native::capture_item_health(hwnd.0 as isize, &item, Duration::from_millis(1000))?;
+  let (hwnd, key, item) = resolve_window_key(window)?;
+  let health = native::capture_item_health(hwnd.0 as isize, key.pid, &item, Duration::from_millis(1000))?;
 
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let target_name = window.app_name.as_deref().or(window.title.as_deref());
@@ -960,11 +1069,19 @@ pub fn capture_window_health(_window: &Window) -> DriverResult<WindowHealth> {
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_window_key(window: &Window) -> DriverResult<(windows::Win32::Foundation::HWND, HealthCacheKey)> {
+fn resolve_window_key(
+  window: &Window,
+) -> DriverResult<(windows::Win32::Foundation::HWND, HealthCacheKey, windows::Graphics::Capture::GraphicsCaptureItem)> {
   let hwnd = window_handle(window)?;
-  let mut pid = window.process_id.unwrap_or(0);
-  if pid == 0 {
-    unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+  let mut current_pid = 0u32;
+  let thread_id = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut current_pid)) };
+  if thread_id == 0 || current_pid == 0 {
+    return Err(backend("failed to resolve the live process id for the target HWND"));
+  }
+  if let Some(expected_pid) = window.process_id
+    && expected_pid != current_pid
+  {
+    return Err(backend(format!("target HWND process changed from expected PID {expected_pid} to live PID {current_pid}")));
   }
   let item = native::item_for_window(hwnd)?;
   let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
@@ -976,11 +1093,11 @@ fn resolve_window_key(window: &Window) -> DriverResult<(windows::Win32::Foundati
   }
   let key = HealthCacheKey {
     hwnd: hwnd.0 as isize,
-    pid,
+    pid: current_pid,
     width: size.Width as u32,
     height: size.Height as u32,
   };
-  Ok((hwnd, key))
+  Ok((hwnd, key, item))
 }
 
 /// Lightweight liveness check for a target window.
@@ -1030,8 +1147,9 @@ pub fn check_window_liveness(_window: &Window) -> DriverResult<bool> {
 /// If stale or absent, ensures worker is active and waits for worker refresh.
 #[cfg(target_os = "windows")]
 pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealth> {
+  let _request_guard = native::lock_health_request();
   let start_time = Instant::now();
-  let (_hwnd, key) = resolve_window_key(window)?;
+  let (_hwnd, key, _item) = resolve_window_key(window)?;
 
   let mut sample_age_ms = 0.0;
   let mut sample_refresh_ms = 0.0;
@@ -1118,7 +1236,7 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
     (Ok(h), false, Some("stale_sample".to_string()))
   } else {
     drop(guard);
-    let health = capture_window_health(window)?;
+    let health = capture_window_health_unserialized(window)?;
     if !health.is_fresh {
       return Err(backend("fresh WGC health sample unavailable"));
     }
@@ -1168,8 +1286,9 @@ pub fn capture_window_health_cached(_window: &Window) -> DriverResult<WindowHeal
 /// Fails if unable to obtain a fresh sample within deadline.
 #[cfg(target_os = "windows")]
 pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealth> {
+  let _request_guard = native::lock_health_request();
   let start_time = Instant::now();
-  let (_hwnd, key) = resolve_window_key(window)?;
+  let (_hwnd, key, _item) = resolve_window_key(window)?;
 
   // 1. Fast path: check if cache has fresh sample (age <= 30ms)
   {
@@ -1341,8 +1460,9 @@ pub fn prewarm_wgc() -> DriverResult<Duration> {
 /// and starting the background health worker, caching the initial health sample.
 #[cfg(target_os = "windows")]
 pub fn prewarm_wgc_window(window: &Window) -> DriverResult<Duration> {
+  let _request_guard = native::lock_health_request();
   let start = Instant::now();
-  let (_hwnd, key) = resolve_window_key(window)?;
+  let (_hwnd, key, _item) = resolve_window_key(window)?;
 
   native::ensure_worker_started(&key)?;
 
@@ -1366,7 +1486,7 @@ pub fn prewarm_wgc_window(window: &Window) -> DriverResult<Duration> {
 
   // Fallback to synchronous capture if worker did not populate cache within deadline
   drop(guard);
-  let _ = capture_window_health(window)?;
+  let _ = capture_window_health_unserialized(window)?;
   Ok(start.elapsed())
 }
 
