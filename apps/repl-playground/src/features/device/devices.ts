@@ -4,8 +4,9 @@ import type { Backend } from '../../backend/types'
 
 import { create } from 'zustand'
 
-import { createAuvBackend } from '../../backend/auv'
-import { MockBackend } from '../../backend/mock'
+import { connectBackend, createAuvBackend } from '../../backend/auv'
+import { MockDesktop } from '../../backend/mock-desktop'
+import { mockRunner } from '../../backend/mock-runner'
 import { activateBackend, session } from '../../runtime/session'
 
 const STORAGE_KEY = 'auv-playground:devices'
@@ -200,7 +201,16 @@ async function backendFor(connectionId: string, deviceId: string): Promise<Backe
     return open
   let backend: Backend
   if (connectionId === MOCK_ID) {
-    backend = new MockBackend()
+    // The mock desktop is a mock Runner: `auv.*` and direct SDK calls reach it
+    // through the same SDK client as a device.
+    const desktop = new MockDesktop()
+    backend = (await connectBackend({
+      // TODO(auv-ax-tree): no AX snapshot RPC exists, so the scene supplies the tree directly.
+      accessibilityTree: async () => desktop.accessibilityTree(),
+      kind: 'mock',
+      label: 'Mock desktop',
+      transport: mockRunner(desktop),
+    })).backend
   }
   else {
     const connection = savedConnection(connectionId)

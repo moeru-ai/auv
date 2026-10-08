@@ -32,6 +32,17 @@ export interface AuvBackendOptions {
   endpoint: string
 }
 
+/** How a backend reaches its Runner, beyond the AUV connection itself. */
+interface BackendOptions {
+  /** Desktop accessibility tree, for a backend with no AX snapshot RPC. */
+  accessibilityTree?: Backend['accessibilityTree']
+  credential?: string
+  kind?: Backend['kind']
+  label?: string
+  /** The transport scripts' direct SDK calls are forwarded to. */
+  transport: Transport
+}
+
 /** Screen point of a window-local point, when the response reported the window frame. */
 function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point | undefined {
   const rect = toRect(frame)
@@ -39,7 +50,8 @@ function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point |
 }
 
 class AuvBackend implements Backend {
-  readonly kind = 'auv'
+  readonly accessibilityTree?: Backend['accessibilityTree']
+  readonly kind: Backend['kind']
   readonly label: string
   #discovered?: Promise<DiscoveredRunner | undefined>
   #runId?: string
@@ -49,10 +61,12 @@ class AuvBackend implements Backend {
     private readonly connection: AuvConnection,
     private readonly client: AuvClient,
     private readonly device: Device,
-    private readonly http: { credential?: string, transport: Transport },
+    private readonly http: BackendOptions,
   ) {
+    this.accessibilityTree = http.accessibilityTree
+    this.kind = http.kind ?? 'auv'
     // NOTICE(device-name): a local daemon may report an empty Device name.
-    this.label = `${device.name || device.labels.hostname || device.id.slice(0, 12)} (${device.platform})`
+    this.label = http.label ?? `${device.name || device.labels.hostname || device.id.slice(0, 12)} (${device.platform})`
     this.#runner = this.#bind()
   }
 
@@ -240,17 +254,24 @@ class AuvBackend implements Backend {
   }
 }
 
-export async function createAuvBackend(options: AuvBackendOptions): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
-  const transport = createHttpTransport({ endpoint: options.endpoint })
-  const connection = await connect({ credential: options.credential, transport })
+/**
+ * A backend over any AUV transport: a daemon over HTTP, or an in-memory mock
+ * Runner. `auv.*` bindings and scripts' direct SDK calls both go through it.
+ */
+export async function connectBackend(options: BackendOptions, deviceId?: string): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
+  const connection = await connect({ credential: options.credential, transport: options.transport })
   const client = createAuv(connection)
   const devices = await client.devices.list()
-  const device = devices.find(candidate => candidate.id === options.deviceId)
+  const device = devices.find(candidate => candidate.id === deviceId)
     ?? devices.find(candidate => candidate.local)
     ?? devices[0]
   if (!device)
     throw new Error('The daemon reported no Devices')
-  return { backend: withReadableErrors(new AuvBackend(connection, client, device, { credential: options.credential, transport })), device, devices }
+  return { backend: withReadableErrors(new AuvBackend(connection, client, device, options)), device, devices }
+}
+
+export async function createAuvBackend(options: AuvBackendOptions): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
+  return await connectBackend({ credential: options.credential, transport: createHttpTransport({ endpoint: options.endpoint }) }, options.deviceId)
 }
 
 /** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */

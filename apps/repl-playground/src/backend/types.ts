@@ -68,8 +68,8 @@ export interface Backend {
    */
   scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => Promise<ScrollUntilOutcome>
   /**
-   * Serves scripts' direct `@auv-js/sdk` calls: the device, or a replay of a
-   * run that made them. Absent on the mock desktop: TODO(playground-sdk-mock).
+   * Serves scripts' direct `@auv-js/sdk` calls: a device, the mock desktop's
+   * mock Runner, or a replay of a run that made them.
    */
   sdk?: () => SdkAccess
   typeText: (text: string) => Promise<InputReceipt>

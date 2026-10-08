@@ -38,7 +38,10 @@ controlled desktop.
   divergence error at the first call that differs.
 - **Mock desktop**: a deterministic in-browser desktop (todo app, counter, and
   a music app with a 40-song list that scrolls and plays on click) whose state
-  changes on input, so everything works without a device.
+  changes on input, so everything works without a device. It is a mock Runner
+  (`createMockTransport` from `@auv-js/sdk`): it answers the same Runner RPCs
+  as a device, so `auv.*`, direct `device.*` calls, the timeline and replay
+  behave the same on it.
 
 ## Quick start
 
@@ -223,8 +226,9 @@ is recorded in the timeline as `<Service>/<Method>` with ProtoJSON request and
 response. Results are drawn by message type, like `auv.*` handles: captures as
 frames, text matches and recognized text as boxes, input results as receipts at
 the delivered point, windows and displays as outlines. Offline replay answers
-SDK calls from the live run's recording too. The mock desktop does not serve SDK
-calls yet, and the editor types `device` and `sdk` as `any`. See
+SDK calls from the live run's recording too. The mock desktop serves SDK calls
+as well (see "Mock desktop" above). The editor types `device` and `sdk` as
+`any`. See
 `docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md`.
 
 Captures carry a ThumbHash (`CapturedFrame.thumbhash`): frames, and the first
@@ -244,7 +248,7 @@ CodeMirror ── hover/lint/complete ──▶ TS 6 language service
                                       + magic-string (stepper) ──▶ instrumented JS
 session ◀── onStep/onPause/onVars/onLog ─────────────────────────── await __step(id)
         ◀── call('windows.findText', …) ─────────────────────────── auv.* proxy
-bindings ─▶ Backend (AUV via @auv-js/sdk | MockBackend)
+bindings ─▶ Backend (AUV via @auv-js/sdk, over a daemon or the mock Runner)
 store (zustand) ─▶ canvas, timeline, inspector, editor decorations
 ```
 

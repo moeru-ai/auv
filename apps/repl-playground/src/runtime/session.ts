@@ -307,10 +307,8 @@ class ExecSession {
           })
         }
       },
-      // TODO(playground-sdk-mock): the mock desktop answers SDK calls once it
-      // is a mock Runner; see docs/ai/references/session-api/2026-10-08-mock-runner-design.md.
       target: () => this.#runBackend?.sdk?.().target
-        ?? 'Direct SDK calls need a connected device, or a replay of a run that made them; the mock desktop does not serve them yet',
+        ?? 'Direct SDK calls need a device, the mock desktop, or a replay of a run that made them',
     })
     const host: HostApi = {
       call: async (method, args, stepId) => {

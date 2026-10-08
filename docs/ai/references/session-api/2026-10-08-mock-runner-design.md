@@ -2,8 +2,8 @@
 
 Date: 2026-10-08
 
-Status: **accepted direction**, first slice not started. Names marked *provisional*
-are open.
+Status: **accepted direction**; the first slice is implemented (2026-10-09,
+see "Implemented"). Names marked *provisional* are open.
 
 ## Why
 
@@ -133,7 +133,55 @@ verdict. Episodes export as a dataset row:
 - **Keep it simple.** Benchmark tasks, episode export and fidelity knobs
   (above) are the long-term direction, not current work.
 
-## Suggested first slice
+## Implemented (2026-10-09)
+
+The first slice follows the plan below, with these choices:
+
+- **Registration** follows Connect-ES's `createRouterTransport`
+  (`connectrpc/connect-es` `packages/connect/src/router-transport.ts`), as the
+  owner approved. The mock registers typed implementations per generated
+  service, and methods left out answer `UNIMPLEMENTED`:
+
+  ```ts
+  createMockTransport(({ service }) => {
+    service(WindowService, { listWindows: () => ({ windows }) })
+  })
+  ```
+
+- **`@auv-js/sdk` exports** (from the main entry point, not a `/mock` subpath):
+  - `createMockTransport`, which also answers gRPC Reflection for the
+    registered services, so `discoverRunner` and method `presentation` work
+    as on a device;
+  - `serveMockDaemon`: one local Device and the Run lifecycle;
+  - the Runner's generated service descriptors, such as `WindowService` and
+    `InputService`.
+- **Scene and Runner** stay in the playground:
+  - `backend/mock-desktop.ts` (`MockDesktop`) is the scene: state, painting,
+    hit testing and OCR ground truth. It was already deterministic, so no
+    seed was needed.
+  - `backend/mock-runner.ts` serves the scene with the Runner's rules:
+    positions in any space, window-only input inside the window, global clicks
+    without window options, captures by reference with a ThumbHash, and
+    `GetCaptureImage` crop, fit and encode.
+- **Backend.** The playground's mock backend is `AuvBackend` over the mock
+  transport, so `auv.*`, direct SDK calls, the timeline and replay use one
+  path. The per-method `MockBackend` is deleted.
+
+Deferred, marked in code:
+
+- **`TODO(mock-runner-tasks)`:** scene variation, task goal checks and
+  episode export.
+- **`TODO(mock-runner-image-ocr)`:** `RecognizeText` on caller-owned images
+  answers `UNIMPLEMENTED`.
+- **Method docs:** `MethodDocsService` is not served, so docs resolve
+  `undefined`; the presentation still comes through reflection.
+- **AX tree:** the scene supplies the tree directly (`TODO(auv-ax-tree)`).
+- **Node tests:** Node has no `OffscreenCanvas`
+  (`NOTICE(mock-runner-node-tests)`). Node tests cover Runner rules and scene
+  state. Captures, OCR, scroll-until and image encoding were checked in a
+  headless Chromium.
+
+## First slice plan (as proposed)
 
 This slice is the minimum that replaces today's mock and leaves the benchmark
 path open. It does not build the benchmark itself.

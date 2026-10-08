@@ -15,6 +15,7 @@ namespaced client over the same functions.
 - [Call Runner capabilities](#call-runner-capabilities)
 - [Typed capability invocation](#typed-capability-invocation)
 - [Discover extension operations](#discover-extension-operations)
+- [Mock Runner](#mock-runner)
 - [Cancellation](#cancellation)
 - [Tests](#tests)
 
@@ -464,6 +465,36 @@ const findText = core.describeMethod('/auv.api.driver.v1.TextRecognitionService/
 findText?.presentation // { name: 'window.find_text', title: 'Find text in a window', description: '…' }
 const docs = await findText?.docs() // { markdown, examples: [{ language: 'ts', title, code }, …] }
 ```
+
+## Mock Runner
+
+`createMockTransport` builds a Runner in memory: an ordinary `Transport` that
+answers Runner RPCs from typed implementations of the generated services, so
+clients, discovery and tests run without a device. Methods you leave out
+answer `UNIMPLEMENTED`; throw `AuvRpcError` to fail a call. The registration
+style follows Connect-ES's `createRouterTransport`.
+
+```ts
+import { AuvRpcError, connect, createAuv, createMockTransport, serveMockDaemon, WindowService } from '@auv-js/sdk'
+
+const transport = createMockTransport((router) => {
+  serveMockDaemon(router, { id: 'mock', name: 'Mock desktop' }) // one Device and Runs
+  router.service(WindowService, {
+    listWindows: () => ({ windows: [{ ref: { windowId: 'w-1' }, title: 'Inbox' }] }),
+    resolveWindow: () => {
+      throw new AuvRpcError(5, 'no window matches')
+    },
+  })
+})
+const runner = createAuv(await connect({ transport })).runner({ runnerClass: 'auv.core.local' })
+await runner.windows.list() // [WindowClient for w-1]
+```
+
+Requests arrive decoded and typed, results are checked against the response
+message type, and streaming methods are async generators. The mock also
+answers gRPC Reflection for the services it registers, so `discoverRunner`
+reports their effects and `presentation`. The REPL playground's mock desktop
+is built this way (`apps/repl-playground/src/backend/mock-runner.ts`).
 
 ## Cancellation
 

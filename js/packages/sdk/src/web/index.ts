@@ -1,4 +1,5 @@
 export * from '../apis'
+export * from '../mock'
 export * from '../transport'
 export { connect } from './connect'
 export { AuvHttpError, AuvWebSocketError, createHttpTransport } from './http'

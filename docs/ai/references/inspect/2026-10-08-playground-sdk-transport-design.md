@@ -102,9 +102,9 @@ Timeline and replay (2026-10-08):
 
 Deferred, each marked in code:
 
-- `TODO(playground-sdk-mock)`: the mock desktop answers SDK RPCs through an
-  RPC-level mock Runner in `@auv-js/sdk` (see Decisions and
-  `../session-api/2026-10-08-mock-runner-design.md`).
+- ~~`TODO(playground-sdk-mock)`~~ Done (2026-10-09): the mock desktop is a
+  mock Runner (`createMockTransport`), so it serves SDK RPCs too; see
+  `../session-api/2026-10-08-mock-runner-design.md`.
 - `TODO(playground-sdk-stream-progress)`: a stream's resources appear when it
   ends; scroll-until steps could appear as they arrive.
 - `TODO(playground-sdk-input-kinds)`: mouse primitives and held keys record
@@ -128,5 +128,5 @@ Deferred, each marked in code:
 - Replay does not read the current recordings. Those are kept in page memory
   only (the last live run), so nothing persisted needs migrating.
 - The mock desktop stays. It moves to the SDK layer: a mock Runner that
-  answers SDK RPCs, usable from Node tests and the playground alike. Its
-  design is a separate slice (`TODO(playground-sdk-mock)`).
+  answers SDK RPCs, usable from Node tests and the playground alike
+  (implemented 2026-10-09).

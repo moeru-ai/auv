@@ -1,9 +1,9 @@
-import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
-import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
+import type { Point, Rect, ScrollDelta, TextMatch } from '../script-api/api'
+import type { AxNode, DisplayInfo, WindowInfo } from './types'
 
 import { contains, intersect } from '@auv-js/sdk'
 
-interface MockWindow extends WindowInfo {
+export interface MockWindow extends WindowInfo {
   background: string
   /** Window-specific painting under the widgets (e.g. a player bar or scrollbar). */
   decorate?: (ctx: OffscreenCanvasRenderingContext2D, frame: Rect) => void
@@ -78,22 +78,13 @@ const DISPLAYS: DisplayInfo[] = [
 
 const FONT = '"Inter", "Helvetica Neue", Arial, sans-serif'
 
-function includes(text: string, query: string): boolean {
-  return text.toLowerCase().includes(query.toLowerCase())
-}
-
 /**
- * A deterministic in-browser desktop: two displays, a todo app, a counter and
- * a music app whose song list scrolls.
- * Clicks and keys mutate the scene so scripts output real state changes;
- * OCR returns exact text geometry from the scene graph.
+ * A deterministic desktop scene: two displays, a todo app, a counter and a
+ * music app whose song list scrolls. Clicks and keys change its state, and
+ * `text()` returns exact text geometry from the scene graph as OCR ground
+ * truth. The mock Runner (`mock-runner.ts`) serves it through the Runner API.
  */
-export class MockBackend implements Backend {
-  readonly kind = 'mock'
-  readonly label = 'Mock desktop'
-  #captureCount = 0
-  /** Rendered captures by reference, newest last. */
-  readonly #captures = new Map<string, OffscreenCanvas>()
+export class MockDesktop {
   #count = 0
   #draft = ''
   #focused = false
@@ -144,9 +135,7 @@ export class MockBackend implements Backend {
     },
   ]
 
-  /** Scene graph as an accessibility tree, the shape a real AX snapshot would have. */
-  async accessibilityTree(): Promise<AxNode | null> {
-    await delay(20)
+  accessibilityTree(): AxNode {
     const ROLE = { button: 'AXButton', input: 'AXTextField', text: 'AXStaticText' } as const
     return {
       children: this.#windows.map((window, w) => ({
@@ -171,158 +160,126 @@ export class MockBackend implements Backend {
     }
   }
 
-  async activateApp(bundleId: string): Promise<InputReceipt> {
-    await delay(20)
-    if (!this.#windows.some(window => window.bundleId === bundleId))
-      throw new Error(`No running application with bundle ID ${bundleId}`)
-    // NOTICE(mock-activation): mock windows never overlap, so activation has
-    // nothing to reorder; it only validates the bundle ID like AUV would.
-    return { path: 'verifiedForeground' }
+  click(point: Point): void {
+    for (const window of [...this.#windows].reverse()) {
+      if (!contains(window.frame, point))
+        continue
+      for (const widget of window.widgets()) {
+        const rect = offset(widget.rect, window.frame)
+        if (!widget.action || !contains(rect, point) || (widget.clip && !contains(offset(widget.clip, window.frame), point)))
+          continue
+        this.#focused = widget.action === 'focus'
+        if (widget.action === 'play' && widget.songIndex !== undefined)
+          this.#nowPlaying = widget.songIndex
+        if (widget.action === 'increment')
+          this.#count += 1
+        if (widget.action === 'done' && widget.rowIndex !== undefined)
+          this.#todos[widget.rowIndex]!.done = !this.#todos[widget.rowIndex]!.done
+        return
+      }
+      this.#focused = false
+      return
+    }
   }
 
-  async beginRun(): Promise<string | undefined> {
-    return undefined
+  display(id?: string): DisplayInfo {
+    return DISPLAYS.find(display => display.id === id) ?? DISPLAYS.find(display => display.primary)!
   }
 
-  async captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
-    const display = this.#display(displayId)
-    await delay(40)
-    return this.#render(display.frame, options?.logical ? 1 : display.scale, `display:${display.id}`)
+  displayAt(rect: Rect): DisplayInfo {
+    const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    return DISPLAYS.find(display => contains(display.frame, center)) ?? DISPLAYS[0]!
   }
 
-  async captureImage(frame: CapturedFrame, maxSize: { height: number, width: number }): Promise<Blob> {
-    const source = this.#captures.get(frame.ref)
-    if (!source)
-      throw new Error(`capture ${frame.ref} was not found: it was evicted; capture again`)
-    const fit = Math.min(1, maxSize.width / source.width, maxSize.height / source.height)
-    const canvas = new OffscreenCanvas(Math.max(1, Math.round(source.width * fit)), Math.max(1, Math.round(source.height * fit)))
-    canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height)
-    return await canvas.convertToBlob({ type: 'image/png' })
-  }
-
-  async captureWindow(windowId: string): Promise<CapturedFrame> {
-    const window = this.#window(windowId)
-    const display = this.#displayAt(window.frame)
-    await delay(30)
-    return this.#render(window.frame, display.scale, `window:${window.id}`)
-  }
-
-  async clickScreen(point: Point): Promise<InputReceipt> {
-    await delay(25)
-    this.#hit(point)
-    return { path: 'mock-pointer', point }
-  }
-
-  async clickWindow(windowId: string, point: Point, _options?: ClickOptions): Promise<InputReceipt> {
-    const frame = this.#window(windowId).frame
-    return this.clickScreen({ x: frame.x + point.x, y: frame.y + point.y })
-  }
-
-  async dispose(): Promise<void> {}
-
-  async endRun(): Promise<void> {}
-
-  async findDisplayText(query: string, displayId?: string, area?: Rect): Promise<TextSearchResult> {
-    const capture = await this.captureDisplay(displayId)
-    await delay(120)
-    return { capture, matches: this.#text(capture.bounds, area).filter(match => includes(match.text, query)) }
-  }
-
-  async findWindowText(windowId: string, query: string, area?: Rect): Promise<TextSearchResult> {
-    const capture = await this.captureWindow(windowId)
-    await delay(90)
-    return { capture, matches: this.#text(capture.bounds, area).filter(match => includes(match.text, query)) }
-  }
-
-  async listDisplays(): Promise<DisplayInfo[]> {
+  displays(): DisplayInfo[] {
     return structuredClone(DISPLAYS)
   }
 
-  async listWindows(): Promise<WindowInfo[]> {
-    return this.#windows.map(toInfo)
+  /** Scene graph as an accessibility tree, the shape a real AX snapshot would have. */
+  /** Whether an application with this bundle ID is running. */
+  hasApplication(bundleId: string): boolean {
+    // NOTICE(mock-activation): mock windows never overlap, so activation has
+    // nothing to reorder; the Runner only validates the bundle ID.
+    return this.#windows.some(window => window.bundleId === bundleId)
   }
 
-  async pressKey(key: string): Promise<InputReceipt> {
-    await delay(15)
+  /** Presses a key: Return adds the drafted todo while the input is focused. */
+  pressKey(key: string): void {
     if (this.#focused && /^(?:return|enter)$/i.test(key) && this.#draft.trim()) {
       this.#todos.push({ done: false, text: this.#draft.trim() })
       this.#draft = ''
     }
-    return { path: 'mock-keyboard' }
   }
 
-  async pressKeyWindow(windowId: string, key: string, _options?: KeyboardOptions): Promise<InputReceipt> {
-    this.#window(windowId)
-    return this.pressKey(key)
+  /** Paints `bounds` (logical screen space) at `scale` pixels per point. */
+  render(bounds: Rect, scale: number): OffscreenCanvas {
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(bounds.width * scale)), Math.max(1, Math.round(bounds.height * scale)))
+    const ctx = canvas.getContext('2d')!
+    ctx.scale(scale, scale)
+    ctx.translate(-bounds.x, -bounds.y)
+    this.#paintDesktop(ctx, bounds)
+    for (const window of this.#windows)
+      this.#paintWindow(ctx, window)
+    return canvas
   }
 
-  async recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
-    await delay(100)
-    const matches = this.#text(frame.bounds, area)
-    return { matches, text: matches.map(match => match.text).join('\n') }
+  /** Applies a wheel delta; only the Music song list scrolls. Returns whether it moved. */
+  scroll(windowId: string, point: Point, delta: ScrollDelta): boolean {
+    if (windowId !== 'w-music' || !contains(MUSIC_VIEW, point))
+      return false
+    const max = SONGS.length * SONG_ROW - MUSIC_VIEW.height
+    const next = Math.min(max, Math.max(0, this.#musicScroll + (delta.dy ?? 0)))
+    const moved = next !== this.#musicScroll
+    this.#musicScroll = next
+    return moved
   }
 
-  async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
-    await delay(10)
-    const window = this.#windows.find(candidate =>
-      (!selector.bundleId || candidate.bundleId === selector.bundleId)
-      && (!selector.appName || candidate.app === selector.appName)
-      && (!selector.pid || candidate.pid === selector.pid)
-      && (!selector.title || candidate.title === selector.title)
-      && (!selector.titleContains || candidate.title?.includes(selector.titleContains)))
-    if (!window)
-      throw new Error(`No mock window matches ${JSON.stringify(selector)}`)
-    return toInfo(window)
-  }
-
-  async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
-    const frame = this.#window(windowId).frame
-    await delay(20)
-    this.#scroll(windowId, point, delta)
-    return { path: 'mock-wheel', point: { x: frame.x + point.x, y: frame.y + point.y } }
-  }
-
-  /**
-   * Same stop order as the AUV Runner: the built-in condition, then the end
-   * and the budget, then the client predicate. Only the Music song list
-   * scrolls; elsewhere every step observes no motion.
-   */
-  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
-    let streak = 0
-    let receipt: InputReceipt | undefined
-    for (let steps = 1; ; steps++) {
-      const before = this.#musicScroll
-      const delivered = await this.scrollWindow(windowId, point, request.delta)
-      const moved = this.#musicScroll !== before
-      receipt ??= delivered
-      await delay(Math.min(request.settleMs, 60))
-      const capture = await this.captureWindow(windowId)
-      const matches = this.#text(capture.bounds)
-      const recognized = { matches, text: matches.map(match => match.text).join('\n') }
-      streak = moved ? 0 : streak + 1
-      const match = request.text ? matches.find(candidate => includes(candidate.text, request.text!)) : undefined
-      const outcome = { capture, receipt, recognized, steps }
-      if (match)
-        return { ...outcome, match, reason: 'text-visible' }
-      if (streak >= request.confirmations)
-        return { ...outcome, reason: 'end' }
-      if (steps >= request.maxSteps)
-        return { ...outcome, reason: 'budget' }
-      if (decide && await decide({ moved, steps, text: recognized.text }))
-        return { ...outcome, reason: 'until' }
+  /** OCR ground truth: text visible in `bounds`, limited to the screen-space `within` area. */
+  text(bounds: Rect, within?: Rect): TextMatch[] {
+    const area = within ? intersect(within, bounds) : bounds
+    if (!area)
+      return []
+    const matches: TextMatch[] = []
+    const measure = new OffscreenCanvas(1, 1).getContext('2d')!
+    for (const window of this.#windows) {
+      measure.font = `600 14px ${FONT}`
+      const titleRect = { height: 18, width: measure.measureText(window.title ?? '').width, x: window.frame.x + 90, y: window.frame.y + 8 }
+      if (intersect(area, titleRect))
+        matches.push({ bounds: titleRect, confidence: 0.99, text: window.title ?? '' })
+      for (const widget of window.widgets()) {
+        const r = offset(widget.rect, window.frame)
+        measure.font = `${widget.role === 'button' ? '600 14px' : widget.id === 'count' ? '700 30px' : '16px'} ${FONT}`
+        const width = measure.measureText(widget.label).width
+        const fontSize = widget.id === 'count' ? 30 : 16
+        const textRect = widget.role === 'button'
+          ? { height: fontSize + 4, width, x: r.x + (r.width - width) / 2, y: r.y + (r.height - fontSize) / 2 - 2 }
+          : { height: fontSize + 4, width, x: r.x + 10, y: r.y + (r.height - fontSize) / 2 - 2 }
+        // Text cut off by a scroll viewport is not readable.
+        const clip = widget.clip && offset(widget.clip, window.frame)
+        if (clip && !contains(clip, textRect))
+          continue
+        if (widget.label && intersect(area, textRect))
+          matches.push({ bounds: textRect, confidence: this.#confidence(widget), text: widget.label })
+      }
     }
+    return matches
   }
 
-  async typeText(text: string): Promise<InputReceipt> {
-    await delay(8 * text.length)
+  /** Types into the focused todo input; elsewhere text is ignored. */
+  typeText(text: string): void {
     if (this.#focused)
       this.#draft += text
-    return { path: 'mock-keyboard' }
   }
 
-  async typeTextWindow(windowId: string, text: string, _options?: KeyboardOptions): Promise<InputReceipt> {
-    this.#window(windowId)
-    return this.typeText(text)
+  window(id: string): MockWindow {
+    const window = this.#windows.find(candidate => candidate.id === id)
+    if (!window)
+      throw new Error(`Mock window ${id} does not exist`)
+    return window
+  }
+
+  windows(): WindowInfo[] {
+    return this.#windows.map(toInfo)
   }
 
   /**
@@ -354,37 +311,6 @@ export class MockBackend implements Backend {
     ctx.fillStyle = 'rgba(100, 116, 139, 0.45)'
     roundRect(ctx, { height: thumb, width: 5, x: view.x + view.width - 7, y: top }, 3)
     ctx.fill()
-  }
-
-  #display(id?: string): DisplayInfo {
-    return DISPLAYS.find(display => display.id === id) ?? DISPLAYS.find(display => display.primary)!
-  }
-
-  #displayAt(rect: Rect): DisplayInfo {
-    const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-    return DISPLAYS.find(display => contains(display.frame, center)) ?? DISPLAYS[0]!
-  }
-
-  #hit(point: Point): void {
-    for (const window of [...this.#windows].reverse()) {
-      if (!contains(window.frame, point))
-        continue
-      for (const widget of window.widgets()) {
-        const rect = offset(widget.rect, window.frame)
-        if (!widget.action || !contains(rect, point) || (widget.clip && !contains(offset(widget.clip, window.frame), point)))
-          continue
-        this.#focused = widget.action === 'focus'
-        if (widget.action === 'play' && widget.songIndex !== undefined)
-          this.#nowPlaying = widget.songIndex
-        if (widget.action === 'increment')
-          this.#count += 1
-        if (widget.action === 'done' && widget.rowIndex !== undefined)
-          this.#todos[widget.rowIndex]!.done = !this.#todos[widget.rowIndex]!.done
-        return
-      }
-      this.#focused = false
-      return
-    }
   }
 
   #musicWidgets(): Widget[] {
@@ -487,70 +413,6 @@ export class MockBackend implements Backend {
     }
   }
 
-  #render(bounds: Rect, scale: number, source: string): CapturedFrame {
-    const width = Math.round(bounds.width * scale)
-    const height = Math.round(bounds.height * scale)
-    const canvas = new OffscreenCanvas(width, height)
-    const ctx = canvas.getContext('2d')!
-    ctx.scale(scale, scale)
-    ctx.translate(-bounds.x, -bounds.y)
-    this.#paintDesktop(ctx, bounds)
-    for (const window of this.#windows)
-      this.#paintWindow(ctx, window)
-    const ref = `mock-cap-${++this.#captureCount}`
-    this.#captures.set(ref, canvas)
-    // NOTICE(mock-capture-store): like the Runner's capture store, keep only
-    // recent captures; live mode renders a display every 900 ms.
-    for (const old of this.#captures.keys()) {
-      if (this.#captures.size <= 64)
-        break
-      this.#captures.delete(old)
-    }
-    return { bounds: { ...bounds }, height, ref, scale, source, width }
-  }
-
-  /** Applies a wheel delta; only the Music song list scrolls. Returns whether it moved. */
-  #scroll(windowId: string, point: Point, delta: ScrollDelta): boolean {
-    if (windowId !== 'w-music' || !contains(MUSIC_VIEW, point))
-      return false
-    const max = SONGS.length * SONG_ROW - MUSIC_VIEW.height
-    const next = Math.min(max, Math.max(0, this.#musicScroll + (delta.dy ?? 0)))
-    const moved = next !== this.#musicScroll
-    this.#musicScroll = next
-    return moved
-  }
-
-  /** OCR ground truth: text visible in `bounds`, limited to the screen-space `within` area. */
-  #text(bounds: Rect, within?: Rect): TextMatch[] {
-    const area = within ? intersect(within, bounds) : bounds
-    if (!area)
-      return []
-    const matches: TextMatch[] = []
-    const measure = new OffscreenCanvas(1, 1).getContext('2d')!
-    for (const window of this.#windows) {
-      measure.font = `600 14px ${FONT}`
-      const titleRect = { height: 18, width: measure.measureText(window.title ?? '').width, x: window.frame.x + 90, y: window.frame.y + 8 }
-      if (intersect(area, titleRect))
-        matches.push({ bounds: titleRect, confidence: 0.99, text: window.title ?? '' })
-      for (const widget of window.widgets()) {
-        const r = offset(widget.rect, window.frame)
-        measure.font = `${widget.role === 'button' ? '600 14px' : widget.id === 'count' ? '700 30px' : '16px'} ${FONT}`
-        const width = measure.measureText(widget.label).width
-        const fontSize = widget.id === 'count' ? 30 : 16
-        const textRect = widget.role === 'button'
-          ? { height: fontSize + 4, width, x: r.x + (r.width - width) / 2, y: r.y + (r.height - fontSize) / 2 - 2 }
-          : { height: fontSize + 4, width, x: r.x + 10, y: r.y + (r.height - fontSize) / 2 - 2 }
-        // Text cut off by a scroll viewport is not readable.
-        const clip = widget.clip && offset(widget.clip, window.frame)
-        if (clip && !contains(clip, textRect))
-          continue
-        if (widget.label && intersect(area, textRect))
-          matches.push({ bounds: textRect, confidence: this.#confidence(widget), text: widget.label })
-      }
-    }
-    return matches
-  }
-
   #todoWidgets(): Widget[] {
     const widgets: Widget[] = [
       { action: 'focus', id: 'input', label: this.#draft || 'Add a todo…', rect: { height: 40, width: 700, x: 30, y: 54 }, role: 'input' },
@@ -564,17 +426,6 @@ export class MockBackend implements Backend {
     })
     return widgets
   }
-
-  #window(id: string): MockWindow {
-    const window = this.#windows.find(candidate => candidate.id === id)
-    if (!window)
-      throw new Error(`Mock window ${id} does not exist`)
-    return window
-  }
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function offset(rect: Rect, by: Rect): Rect {
