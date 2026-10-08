@@ -1,3 +1,4 @@
+import type { RevealedImage } from '../../preview'
 import type { Point, Rect } from '../../script-api/api'
 import type { CallRecord, FocusEvent, Mark, PlaygroundState, Resource } from '../../store'
 import type { CameraFlight, View } from './camera'
@@ -257,6 +258,16 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { cursor, focusCall, timeTravel }: Scene, k: number): boolean {
   const px = (n: number) => n / k
   let fading = false
+  // Areas already showing real pixels. A newer frame whose pixels are still
+  // loading keeps them on screen and fades in over them, instead of covering
+  // them with its blurred ThumbHash preview.
+  const painted: Rect[] = []
+  const paintFrame = (image: RevealedImage, b: Rect) => {
+    const covered = painted.some(area => contains(area, b))
+    fading = paintRevealed(ctx, covered ? { ...image, preview: undefined } : image, b.x, b.y, b.width, b.height) || fading
+    if (image.bitmap)
+      painted.push(b)
+  }
 
   // 1. Displays. When following the latest event, show live pixels; when time
   //    travelling, only what had been captured by the cursor.
@@ -266,7 +277,7 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
     ctx.fillRect(f.x, f.y, f.width, f.height)
     const live = state.liveFrames[display.id]
     if (live && !timeTravel)
-      fading = paintRevealed(ctx, live, live.bounds.x, live.bounds.y, live.bounds.width, live.bounds.height) || fading
+      paintFrame(live, live.bounds)
     ctx.strokeStyle = COLORS.display
     ctx.lineWidth = px(1)
     ctx.strokeRect(f.x, f.y, f.width, f.height)
@@ -280,8 +291,7 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
     const liveIsNewer = !timeTravel && Object.values(state.liveFrames).some(candidate => candidate.capturedAt > frame.capturedAt && contains(candidate.bounds, frame.handle.bounds))
     if (liveIsNewer)
       continue
-    const b = frame.handle.bounds
-    fading = paintRevealed(ctx, frame, b.x, b.y, b.width, b.height) || fading
+    paintFrame(frame, frame.handle.bounds)
   }
 
   // 3. The focused call's own frame (hovered, or at the cursor) is what that
@@ -289,10 +299,8 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
   if (focusCall) {
     for (const ref of focusCall.refs) {
       const resource = state.resources[ref]
-      if (resource?.kind === 'frame') {
-        const b = resource.handle.bounds
-        fading = paintRevealed(ctx, resource, b.x, b.y, b.width, b.height) || fading
-      }
+      if (resource?.kind === 'frame')
+        paintFrame(resource, resource.handle.bounds)
     }
   }
   return fading
