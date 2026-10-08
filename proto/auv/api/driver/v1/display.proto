@@ -10,6 +10,11 @@ service DisplayService {
   rpc ListDisplays(ListDisplaysRequest) returns (ListDisplaysResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "displays.list"
+      title: "List displays"
+      description: "Lists the connected displays with their frames in logical screen coordinates and their scale factors."
+    };
   }
 }
 

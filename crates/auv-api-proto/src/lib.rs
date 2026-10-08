@@ -1,6 +1,8 @@
 /// Encoded descriptor closure for every schema compiled by this crate.
 pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("auv.api");
 
+include!(concat!(env!("OUT_DIR"), "/method_docs.rs"));
+
 /// Tonic requires a numeric message ceiling even when the application does not
 /// impose one. Use the platform's representable maximum instead of an
 /// AUV-specific capture or protobuf admission policy.

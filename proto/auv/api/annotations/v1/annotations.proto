@@ -13,9 +13,24 @@ enum MethodEffect {
   METHOD_EFFECT_ADMINISTRATION = 4;
 }
 
+// How a method is presented to people and tools. Long-form docs and examples
+// live in Markdown next to the schema (`docs/<name>.md`) and are served by
+// `MethodDocsService`.
+message MethodPresentation {
+  // Dotted API name with lower_snake_case segments, e.g. "window.find_text".
+  // Clients derive other casings (camelCase "window.findText") from it.
+  string name = 1;
+  // A short title, e.g. "Find text in a window".
+  string title = 2;
+  // One plain-text paragraph, usable as a JSDoc comment or a Python
+  // docstring; no Markdown and no internal notes.
+  string description = 3;
+}
+
 // Optional DevTools/Inspector discovery metadata. These options do not define
 // routing, authentication, Device context, or Run context.
 extend google.protobuf.MethodOptions {
   bool discoverable = 51001;
   MethodEffect effect = 51002;
+  MethodPresentation presentation = 51003;
 }

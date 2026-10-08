@@ -14,20 +14,40 @@ service CaptureService {
   rpc CaptureWindow(CaptureWindowRequest) returns (CaptureWindowResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.capture"
+      title: "Capture a window"
+      description: "Captures one window. Returns a reference to the capture held by the Runner and its metadata (screen bounds, pixel size, scale and a ThumbHash preview), not pixels; fetch pixels with captures.image."
+    };
   }
   rpc CaptureDisplay(CaptureDisplayRequest) returns (CaptureDisplayResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "displays.capture"
+      title: "Capture a display"
+      description: "Captures a whole display, the primary one unless a selector names another. Returns a capture reference and metadata, not pixels."
+    };
   }
   rpc CaptureRegion(CaptureRegionRequest) returns (CaptureRegionResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "displays.capture_region"
+      title: "Capture a screen region"
+      description: "Captures a rectangle in logical screen coordinates from the display that contains it. Returns a capture reference and metadata, not pixels."
+    };
   }
   // Returns the pixels of a stored capture, optionally cropped, bounded and
   // encoded. This is the only call that moves AUV-produced pixels to a client.
   rpc GetCaptureImage(GetCaptureImageRequest) returns (GetCaptureImageResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "captures.image"
+      title: "Get capture pixels"
+      description: "Returns the pixels of a capture the Runner holds, optionally cropped to a region, fitted inside a maximum size and encoded as RGBA, PNG, JPEG or WebP. This is the only call that moves captured pixels to the client."
+    };
   }
 }
 

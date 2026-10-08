@@ -1,0 +1,35 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.annotations.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+
+// Serves the long-form docs and examples of the methods a Runner serves, on
+// request. Short presentation (name, title, description) travels with the
+// method descriptors instead (`presentation`).
+service MethodDocsService {
+  // NOT_FOUND when the method has no docs.
+  rpc GetMethodDocs(GetMethodDocsRequest) returns (GetMethodDocsResponse) {
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message GetMethodDocsRequest {
+  // gRPC path, `/package.Service/Method`.
+  string method = 1;
+}
+
+message GetMethodDocsResponse {
+  // The docs as Markdown, without the examples.
+  string markdown = 1;
+  repeated MethodExample examples = 2;
+}
+
+message MethodExample {
+  // Title of the example, e.g. "Click the first match".
+  string title = 1;
+  // Code fence language, e.g. "ts", "rust" or "sh".
+  string language = 2;
+  string code = 3;
+}

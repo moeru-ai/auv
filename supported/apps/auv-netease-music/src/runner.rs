@@ -456,6 +456,11 @@ pub async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<PlaylistServiceServer<Service>>().await;
   health_reporter.set_serving::<RecommendationServiceServer<Service>>().await;
   health_reporter.set_serving::<SongServiceServer<Service>>().await;
+  // TODO(app-runner-method-docs): this Runner's methods carry no
+  // `presentation` and it serves no `MethodDocsService` yet. Annotate them and
+  // register `auv_api_server::method_docs::service` with app docs when the
+  // NetEase methods get docs; see
+  // docs/ai/references/session-api/2026-10-09-method-presentation-and-docs.md.
   let reflection = auv_api_server::reflection::service(crate::api::FILE_DESCRIPTOR_SET)
     .map_err(|error| format!("failed to build NetEase Runner reflection: {error}"))?;
   tonic::transport::Server::builder()

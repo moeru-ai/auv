@@ -19,7 +19,7 @@ export { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 export { createAuv } from './client'
 
 export type { AuvClient, CreateClientOptions } from './client'
-export { discoverRunner } from './discover'
+export { camelCaseName, discoverRunner } from './discover'
 export type {
   DescribedRpcMethod,
   DiscoveredMethodEffect,
@@ -27,6 +27,8 @@ export type {
   DiscoveredRunner,
   DiscoverRunnerOptions,
   InvokeDiscoveredOptions,
+  MethodDocs,
+  MethodPresentation,
 } from './discover'
 export { createRunnerClient } from './driver'
 export type {

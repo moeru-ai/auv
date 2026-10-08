@@ -15,14 +15,29 @@ service RecentFramesService {
   rpc OpenFrameBuffer(OpenFrameBufferRequest) returns (OpenFrameBufferResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "frames.open_buffer"
+      title: "Open a frame buffer"
+      description: "Starts capturing a window, display or region repeatedly into a buffer that keeps the newest frames."
+    };
   }
   rpc GetRecentFrames(GetRecentFramesRequest) returns (GetRecentFramesResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "frames.recent"
+      title: "Get recent frames"
+      description: "Returns the frames a buffer captured after a given sequence number, oldest first."
+    };
   }
   rpc CloseFrameBuffer(CloseFrameBufferRequest) returns (CloseFrameBufferResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "frames.close_buffer"
+      title: "Close a frame buffer"
+      description: "Stops a frame buffer and frees its frames."
+    };
   }
 }
 

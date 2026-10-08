@@ -11,26 +11,56 @@ service MediaControlService {
   rpc GetNowPlaying(GetNowPlayingRequest) returns (GetNowPlayingResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.now_playing"
+      title: "Get now playing"
+      description: "Returns the track the system media session reports as now playing, and whether it is playing."
+    };
   }
   rpc Play(PlayRequest) returns (PlayResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.play"
+      title: "Play media"
+      description: "Resumes playback in the app that owns the system media session."
+    };
   }
   rpc Pause(PauseRequest) returns (PauseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.pause"
+      title: "Pause media"
+      description: "Pauses playback in the app that owns the system media session."
+    };
   }
   rpc TogglePlayPause(TogglePlayPauseRequest) returns (TogglePlayPauseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.toggle_play_pause"
+      title: "Toggle play and pause"
+      description: "Toggles playback in the app that owns the system media session."
+    };
   }
   rpc NextTrack(NextTrackRequest) returns (NextTrackResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.next_track"
+      title: "Next track"
+      description: "Skips to the next track in the app that owns the system media session."
+    };
   }
   rpc PreviousTrack(PreviousTrackRequest) returns (PreviousTrackResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.media.previous_track"
+      title: "Previous track"
+      description: "Goes back to the previous track in the app that owns the system media session."
+    };
   }
 }
 

@@ -792,6 +792,19 @@ remain callable through their generated typed clients. Device authentication
 and authorization remain independent of these developer-tool annotations. The
 optional Run association is also independent.
 
+**Method presentation** (*provisional*) is how a method describes itself to
+people and tools. The `presentation` annotation carries three fields:
+- an API name in dotted lower_snake_case that follows the SDK path, such as
+  `window.find_text`, with other casings derived from it;
+- a short title;
+- a one-paragraph, plain-text description that can become a JSDoc comment or
+  a Python docstring.
+
+Long-form **method docs** are Markdown files named by that API name. The
+fenced blocks in their `## Examples` section are examples, one per language. A
+Runner serves the docs on request through `MethodDocsService`. See
+`docs/ai/references/session-api/2026-10-09-method-presentation-and-docs.md`.
+
 ## Driver API
 
 The Driver API is the typed protobuf projection of `auv-driver` capabilities.

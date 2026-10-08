@@ -10,10 +10,20 @@ service WindowService {
   rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "windows.list"
+      title: "List windows"
+      description: "Lists the visible windows with their applications, titles, process IDs and frames in logical screen coordinates."
+    };
   }
   rpc ResolveWindow(ResolveWindowRequest) returns (ResolveWindowResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "windows.resolve"
+      title: "Find a window"
+      description: "Finds one window by application (bundle ID, name, process ID or the frontmost app) and optionally by title."
+    };
   }
 }
 

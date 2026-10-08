@@ -12,6 +12,11 @@ service ApplicationService {
     option (auv.api.annotations.v1.discoverable) = true;
     // Foreground activation changes the focus context used by later input.
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.applications.activate_bundle_id"
+      title: "Activate an application"
+      description: "Brings a macOS application to the front by bundle ID and reports whether it became active."
+    };
   }
 }
 

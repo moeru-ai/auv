@@ -2,6 +2,7 @@ version: v2
 inputs:
   - directory: .
     paths:
+      - auv/api/annotations/v1
       - auv/api/daemon/v1
       - auv/api/driver
       - auv/api/transport/websocket/v1

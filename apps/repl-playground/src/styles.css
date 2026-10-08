@@ -293,3 +293,33 @@ body {
   background: var(--c-surface-1);
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
 }
+
+/* Method docs from a Runner (`MethodDocs`): compact Markdown in hover cards
+   and the inspector. */
+.method-docs > :first-child {
+  margin-top: 0;
+}
+
+.method-docs h1,
+.method-docs h2,
+.method-docs h3 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-fg);
+}
+
+.method-docs p,
+.method-docs ul {
+  margin: 4px 0;
+}
+
+.method-docs ul {
+  padding-left: 18px;
+}
+
+.method-docs code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--c-fg);
+}

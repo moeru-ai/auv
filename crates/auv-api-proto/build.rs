@@ -7,6 +7,7 @@ const SCHEMA_PATHS: &[&str] = &[
   "auv/api/daemon/v1/device_local.proto",
   "auv/api/daemon/v1/pairing.proto",
   "auv/api/annotations/v1/annotations.proto",
+  "auv/api/annotations/v1/method_docs.proto",
   "auv/api/daemon/v1/run.proto",
   "auv/api/daemon/v1/runner.proto",
   "auv/api/transport/websocket/v1/websocket.proto",
@@ -179,8 +180,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let schemas = SCHEMA_PATHS.iter().map(|relative| package_proto.join(relative)).collect::<Vec<_>>();
   let includes = [package_proto.clone(), package_proto.join("vendor")];
   builder.compile_protos(&schemas, &includes)?;
+  write_method_docs(&package_proto.join("auv/api"), &out_dir.join("method_docs.rs"))?;
 
   println!("cargo:rerun-if-changed={}", package_proto.join("auv/api").display());
   println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/api").display());
+  Ok(())
+}
+
+/// Embeds every `docs/<api name>.md` under `root` as a `(name, markdown)` table
+/// for `MethodDocsService`. The name is the method's `presentation.name`.
+fn write_method_docs(root: &std::path::Path, out: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+  let mut docs = Vec::new();
+  let mut pending = vec![root.to_path_buf()];
+  while let Some(dir) = pending.pop() {
+    for entry in std::fs::read_dir(&dir)? {
+      let path = entry?.path();
+      if path.is_dir() {
+        pending.push(path);
+      } else if path.extension().is_some_and(|extension| extension == "md")
+        && path.parent().and_then(|parent| parent.file_name()).is_some_and(|name| name == "docs")
+      {
+        let name = path.file_stem().and_then(|stem| stem.to_str()).ok_or("method doc file name is not UTF-8")?.to_string();
+        println!("cargo:rerun-if-changed={}", path.display());
+        docs.push((name, std::fs::canonicalize(&path)?));
+      }
+    }
+  }
+  docs.sort();
+  let mut source =
+    String::from("/// Method docs by API name, embedded from `proto/auv/api/**/docs/*.md`.\npub const METHOD_DOCS: &[(&str, &str)] = &[\n");
+  for (name, path) in docs {
+    source.push_str(&format!("  ({name:?}, include_str!({:?})),\n", path.display().to_string()));
+  }
+  source.push_str("];\n");
+  std::fs::write(out, source)?;
   Ok(())
 }

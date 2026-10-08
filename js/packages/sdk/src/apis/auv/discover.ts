@@ -6,9 +6,10 @@ import type { OperationOptions } from '../../transport/types'
 import { create, createFileRegistry, fromBinary, fromJson, getOption, hasOption, toJson } from '@bufbuild/protobuf'
 import { FileDescriptorProtoSchema, FileDescriptorSetSchema } from '@bufbuild/protobuf/wkt'
 
-import { discoverable, effect, MethodEffect } from '../../gen/auv/api/annotations/v1/annotations_pb'
+import { discoverable, effect, MethodEffect, presentation } from '../../gen/auv/api/annotations/v1/annotations_pb'
+import { GetMethodDocsRequestSchema, GetMethodDocsResponseSchema, MethodDocsService } from '../../gen/auv/api/annotations/v1/method_docs_pb'
 import { ServerReflection, ServerReflectionRequestSchema, ServerReflectionResponseSchema } from '../../gen/grpc/reflection/v1/reflection_pb'
-import { AuvProtocolError } from '../../transport/errors'
+import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 import { protobufJsonSchema } from './json'
 
@@ -18,19 +19,23 @@ export interface DescribedRpcMethod {
   decodeRequest: (body: Uint8Array) => JsonValue
   /** ProtoJSON of an encoded response message, for inspection. */
   decodeResponse: (body: Uint8Array) => JsonValue
+  /**
+   * Long-form Markdown docs and examples, fetched from the Runner on request.
+   * `undefined` when the method has none or the Runner does not serve docs.
+   */
+  docs: (options?: OperationOptions) => Promise<MethodDocs | undefined>
   readonly effect: DiscoveredMethodEffect
   /** Reflected request message, for decoding with `fromBinary` and walking by type. */
   readonly input: DescMessage
   readonly methodKind: DescMethod['methodKind']
   /** Reflected response message. */
   readonly output: DescMessage
+  /** How the method presents itself, when its schema says. */
+  readonly presentation?: MethodPresentation
 }
 
 export type DiscoveredMethodEffect = 'administration' | 'input' | 'mutation' | 'read_only' | 'unspecified'
 
-// TODO(discovered-tool-presentation): The annotation contract has no title or
-// description fields. Add them here after the owning protobuf contract defines
-// their source and override rules.
 export interface DiscoveredRpcMethod {
   readonly effect: DiscoveredMethodEffect
   readonly id: string
@@ -38,6 +43,7 @@ export interface DiscoveredRpcMethod {
   readonly method: string
   readonly methodKind: DescMethod['methodKind']
   readonly outputSchema: Readonly<Record<string, unknown>>
+  readonly presentation?: MethodPresentation
   readonly service: string
 }
 
@@ -65,11 +71,37 @@ export interface InvokeDiscoveredOptions extends OperationOptions {
   method: DiscoveredRpcMethod | string
 }
 
+/** A method's long-form docs (`MethodDocsService`). */
+export interface MethodDocs {
+  examples: Array<{ code: string, language: string, title: string }>
+  markdown: string
+}
+
+/**
+ * How a method presents itself (`auv.api.annotations.v1.presentation`).
+ * `name` is dotted lower_snake_case, e.g. `window.find_text`; see `camelCaseName`.
+ */
+export interface MethodPresentation {
+  /** One plain-text paragraph. */
+  description: string
+  name: string
+  title: string
+}
+
+// gRPC status codes.
+const GRPC_NOT_FOUND = 5
+const GRPC_UNIMPLEMENTED = 12
+
 type ReflectedFileDescriptor = ReturnType<typeof fromBinary<typeof FileDescriptorProtoSchema>>
 
 // TODO(discovered-streaming-tools): client-streaming and bidi business-method
 // projection is deferred until a concrete tool host defines incremental input
 // and cancellation UX. Callers can still use the typed invoke.duplex surface.
+
+/** `window.find_text` → `window.findText`: a presentation name as JavaScript spells it. */
+export function camelCaseName(name: string): string {
+  return name.replace(/_([a-z0-9])/g, (_, letter: string) => letter.toUpperCase())
+}
 
 /** Discovers one registered RunnerClass through AUV's routed gRPC proxy. */
 export async function discoverRunner(connection: AuvConnection, options: DiscoverRunnerOptions): Promise<DiscoveredRunner> {
@@ -204,6 +236,7 @@ function discoveredMethod(method: DescMethod): DiscoveredRpcMethod {
     method: method.name,
     methodKind: method.methodKind,
     outputSchema: protobufJsonSchema(method.output),
+    presentation: presentationOf(method),
     service: method.parent.typeName,
   }
 }
@@ -248,10 +281,33 @@ function discoveredRunner(
       return {
         decodeRequest: body => toJson(descriptor.input, fromBinary(descriptor.input, body), { registry }),
         decodeResponse: body => toJson(descriptor.output, fromBinary(descriptor.output, body), { registry }),
+        async docs(options) {
+          try {
+            const response = await invokeUnary(connection, {
+              deviceId: route.deviceId,
+              input: GetMethodDocsRequestSchema,
+              method: MethodDocsService.method.getMethodDocs.name,
+              output: GetMethodDocsResponseSchema,
+              request: { method: id },
+              runId: route.runId,
+              runnerClass: route.runnerClass,
+              service: MethodDocsService.typeName,
+              signal: options?.signal,
+            })
+            return { examples: response.examples.map(({ code, language, title }) => ({ code, language, title })), markdown: response.markdown }
+          }
+          catch (error) {
+            // NOT_FOUND: no docs for this method; UNIMPLEMENTED: a Runner that serves none.
+            if (error instanceof AuvRpcError && (error.rpcCode === GRPC_NOT_FOUND || error.rpcCode === GRPC_UNIMPLEMENTED))
+              return undefined
+            throw error
+          }
+        },
         effect: discoveredEffect(hasOption(descriptor, effect) ? getOption(descriptor, effect) : MethodEffect.UNSPECIFIED),
         input: descriptor.input,
         methodKind: descriptor.methodKind,
         output: descriptor.output,
+        presentation: presentationOf(descriptor),
       }
     },
     async invokeServerStreamJson(options) {
@@ -308,6 +364,13 @@ function methodPartsFrom(id: string): [string, string] {
   if (parts.length !== 2 || parts.some(part => part.length === 0))
     throw new AuvProtocolError(`invalid discovered gRPC method ID: ${id}`)
   return [parts[0], parts[1]]
+}
+
+function presentationOf(method: DescMethod): MethodPresentation | undefined {
+  if (!hasOption(method, presentation))
+    return undefined
+  const { description, name, title } = getOption(method, presentation)
+  return { description, name, title }
 }
 
 async function reflectionRequest(

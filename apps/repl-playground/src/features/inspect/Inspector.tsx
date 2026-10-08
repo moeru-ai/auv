@@ -11,6 +11,7 @@ import { refHint } from '../../handles'
 import { session } from '../../runtime/session'
 import { actions, usePlayground } from '../../store'
 import { bindingsOf, consumersOf, cursorSeq, varsAt } from '../../timeline'
+import { MethodDocs } from './MethodDocs'
 import { ResourcePreview } from './ResourcePreview'
 import { RefChip, ValueView } from './ValueView'
 
@@ -204,6 +205,7 @@ function CallPanel() {
         <div className="text-[11.5px] text-fg-subtle font-mono">
           {`${call.status}${duration === undefined ? '' : ` · ${duration}ms`} · ${call.effect}`}
         </div>
+        <MethodDocs call={call} key={call.id} />
         {call.args.length > 0 && (
           <div className="flex flex-col gap-1">
             <div className="panel-title">Arguments</div>

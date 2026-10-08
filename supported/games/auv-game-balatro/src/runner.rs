@@ -340,6 +340,11 @@ pub async fn serve_inherited() -> Result<(), String> {
     .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let (health_reporter, health) = tonic_health::server::health_reporter();
   health_reporter.set_serving::<BalatroDetectionServiceServer<Service>>().await;
+  // TODO(app-runner-method-docs): this Runner's methods carry no
+  // `presentation` and it serves no `MethodDocsService` yet. Annotate them and
+  // register `auv_api_server::method_docs::service` with app docs when the
+  // Balatro methods get docs; see
+  // docs/ai/references/session-api/2026-10-09-method-presentation-and-docs.md.
   let descriptor = crate::api::FILE_DESCRIPTOR_SET;
   let reflection =
     auv_api_server::reflection::service(descriptor).map_err(|error| format!("failed to build Balatro Runner reflection: {error}"))?;

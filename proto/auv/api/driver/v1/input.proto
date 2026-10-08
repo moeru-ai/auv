@@ -19,26 +19,51 @@ service InputService {
   rpc CreateMouse(CreateMouseRequest) returns (CreateMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.create_mouse"
+      title: "Create a mouse"
+      description: "Creates a logical mouse in this Runner for pointer primitives such as mouse_down and drag_mouse. It does not create a cursor on screen."
+    };
   }
   // Releases owned input before removing state; mouse zero cannot be deleted.
   rpc RemoveMouse(RemoveMouseRequest) returns (RemoveMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.remove_mouse"
+      title: "Remove a mouse"
+      description: "Releases any button a logical mouse still holds, then removes it. The default mouse cannot be removed."
+    };
   }
   // Retains a desktop resource through MouseUp or timeout. Runs share mouse zero.
   rpc MouseDown(MouseDownRequest) returns (MouseDownResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.mouse_down"
+      title: "Press a mouse button"
+      description: "Presses a mouse button at a screen point and keeps it down until mouse_up or a release deadline."
+    };
   }
   // Retries uncertain release; a known released mouse returns a Noop action.
   rpc MouseUp(MouseUpRequest) returns (MouseUpResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.mouse_up"
+      title: "Release a mouse button"
+      description: "Releases a held mouse button. Releasing a button that is already up does nothing."
+    };
   }
   // Complete press/movement/release. Cancellation attempts release on the same route.
   rpc DragMouse(DragMouseRequest) returns (DragMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.drag_mouse"
+      title: "Drag the mouse"
+      description: "Presses a button, moves along a path and releases, as one complete drag. Cancelling it still releases the button."
+    };
   }
 
   // Validate the complete action list, then execute in order. Recipient identity
@@ -47,25 +72,50 @@ service InputService {
   rpc InputKeyboard(InputKeyboardRequest) returns (InputKeyboardResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.keyboard"
+      title: "Run keyboard actions"
+      description: "Runs an ordered list of keyboard actions (key presses, typed text and pasted text) on one explicit recipient: a window, an application or the foreground. The recipient is checked before every action, and input never falls back to another app."
+    };
   }
   // One key combination, optionally repeated. Uses the InputKeyboard execution contract.
   rpc PressKeys(PressKeysRequest) returns (PressKeysResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.press_keys"
+      title: "Press a key combination"
+      description: "Presses one key combination, such as cmd+a, optionally several times, on an explicit recipient."
+    };
   }
   // A bounded combination remains down until KeyUp or its release deadline.
   rpc KeyDown(KeyDownRequest) returns (KeyDownResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.key_down"
+      title: "Hold keys down"
+      description: "Presses a key combination and keeps it down until key_up or a release deadline."
+    };
   }
   rpc KeyUp(KeyUpRequest) returns (KeyUpResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.key_up"
+      title: "Release held keys"
+      description: "Releases a key combination held by key_down."
+    };
   }
   // One call owns both transitions and the dwell between them.
   rpc HoldKeys(HoldKeysRequest) returns (HoldKeysResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.hold_keys"
+      title: "Hold keys for a while"
+      description: "Presses a key combination, holds it for a duration and releases it, in one call."
+    };
   }
 
   // Clicks at a position in any coordinate space. A window position, or any
@@ -75,6 +125,11 @@ service InputService {
   rpc ClickPoint(ClickPointRequest) returns (ClickPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.click"
+      title: "Click at a point"
+      description: "Clicks at a position in screen, display or window coordinates. A window position, or any position with a target window, is delivered to that window, in the background when the policy allows; a screen or display position is a global click."
+    };
   }
   // Wheel-style scroll in a window, at a position in its space or in screen or
   // display space. Delivery evidence only: a delivered wheel event does not
@@ -85,6 +140,11 @@ service InputService {
   rpc ScrollWindowPoint(ScrollWindowPointRequest) returns (ScrollWindowPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scroll"
+      title: "Scroll in a window"
+      description: "Sends one wheel scroll at a point in a window. Deltas are logical pixels, positive toward later content. The result proves delivery, not that the view moved."
+    };
   }
   // Spreads one window scroll over time with a timing function and streams
   // started, progress, and completed events. Invalid input ends the RPC with a
@@ -94,6 +154,11 @@ service InputService {
   rpc ScrollWindowPointMotion(ScrollWindowPointMotionRequest) returns (stream ScrollWindowPointMotionResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scroll_motion"
+      title: "Scroll smoothly in a window"
+      description: "Spreads one scroll over time with a timing function and streams its progress."
+    };
   }
   // Live window scroll steered by caller velocity updates. The client sends one
   // begin event, then set_velocity events (each renews the lease), then stop
@@ -104,6 +169,11 @@ service InputService {
   rpc StreamScroll(stream StreamScrollRequest) returns (stream StreamScrollResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scroll_stream"
+      title: "Steer a live scroll"
+      description: "Opens a live scroll in a window whose velocity the caller steers. Each velocity update renews a lease; without renewal the scroll slows to a stop."
+    };
   }
   // Scrolls a window in steps and observes after each step (one capture per
   // update) until consecutive steps show no visual motion, the text query
@@ -117,6 +187,11 @@ service InputService {
   rpc ScrollUntil(stream ScrollUntilRequest) returns (stream ScrollUntilResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scroll_until"
+      title: "Scroll until a condition"
+      description: "Scrolls a window in steps and captures after each one, until the view stops moving, a text query becomes visible, the caller decides to stop, or the step budget runs out. Every step is streamed with its capture and recognized text."
+    };
   }
   // Accepts one complete motion and streams delivery progress. Invalid input
   // ends the RPC with a gRPC status before the first pointer event.
@@ -124,6 +199,11 @@ service InputService {
   rpc MoveMouse(MoveMouseRequest) returns (stream MoveMouseStreamResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.move_mouse"
+      title: "Move the pointer"
+      description: "Moves the pointer along a complete path, optionally over a duration, and streams delivery progress."
+    };
   }
   // Accepts one begin packet, ordered append packets, then finish or cancel.
   // Acceptance events can precede finish. Delivery starts only after finish,
@@ -131,20 +211,40 @@ service InputService {
   rpc StreamMouseMotion(stream StreamMouseMotionRequest) returns (stream StreamMouseMotionResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.stream_mouse_motion"
+      title: "Stream a pointer path"
+      description: "Accepts a pointer path in pieces, then moves along it once the caller finishes the path."
+    };
   }
   rpc TypeText(TypeTextRequest) returns (TypeTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.type_text"
+      title: "Type text"
+      description: "Types text into whichever app has keyboard focus."
+    };
   }
   rpc PasteText(PasteTextRequest) returns (PasteTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.paste_text"
+      title: "Paste text"
+      description: "Pastes text through the clipboard into whichever app has keyboard focus, then restores the clipboard."
+    };
   }
   // Legacy foreground convenience. Also accepts shortcut strings for released
   // callers; new key combinations use PressKeys. Implemented through InputKeyboard.
   rpc PressKey(PressKeyRequest) returns (PressKeyResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.press_key"
+      title: "Press a key"
+      description: "Presses a key or shortcut string in whichever app has keyboard focus. New code should use press_keys with an explicit recipient."
+    };
   }
 }
 

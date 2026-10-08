@@ -14,14 +14,29 @@ service TextRecognitionService {
   rpc RecognizeText(RecognizeTextRequest) returns (RecognizeTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "recognize_text"
+      title: "Recognize text"
+      description: "Recognizes the text in a capture the Runner holds, or in an image the caller sends. Text bounds are logical screen rectangles."
+    };
   }
   rpc FindWindowText(FindWindowTextRequest) returns (FindWindowTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.find_text"
+      title: "Find text in a window"
+      description: "Captures a window and returns every match of a text query, with screen bounds and confidence, plus the capture they came from."
+    };
   }
   rpc FindDisplayText(FindDisplayTextRequest) returns (FindDisplayTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "displays.find_text"
+      title: "Find text on a display"
+      description: "Captures a display and returns every match of a text query, with screen bounds and confidence, plus the capture they came from."
+    };
   }
 }
 

@@ -11,6 +11,11 @@ service PermissionService {
   rpc ProbePermissions(ProbePermissionsRequest) returns (ProbePermissionsResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "macos.permissions.probe"
+      title: "Check permissions"
+      description: "Reports whether AUV has the macOS permissions it needs, such as Accessibility and Screen Recording."
+    };
   }
 }
 

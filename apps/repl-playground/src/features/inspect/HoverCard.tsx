@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { confidenceAlpha } from '../../ocr'
 import { actions, usePlayground } from '../../store'
 import { bindHistory, cursorSeq, framesOf, refOf, sampleIndexAt } from '../../timeline'
+import { MethodDocs } from './MethodDocs'
 import { FrameView, ResourcePreview } from './ResourcePreview'
 import { TimeTicks } from './TimeTicks'
 import { RefChip, ValueView } from './ValueView'
@@ -91,6 +92,7 @@ export function HoverCard({ info, line, name }: { info: HoverInfo | null, line: 
           title={`line ${line} · ${calls.length} call${calls.length === 1 ? '' : 's'}`}
         >
           <TimeTicks cursor={cursor} onSelect={setCallPick} selected={callIndex} ticks={callTicks} />
+          <MethodDocs call={call} />
           <CallSummary call={call} previewCall={previewCall} />
         </Section>
       )}

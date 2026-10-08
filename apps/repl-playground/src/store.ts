@@ -1,3 +1,5 @@
+import type { MethodPresentation } from '@auv-js/sdk'
+
 import type { AxNode, Backend, CapturedFrame, DisplayInfo } from './backend/types'
 import type { RevealedImage } from './preview'
 import type { LogLevel, RunOutcome, WireValue } from './runtime/protocol'
@@ -29,6 +31,8 @@ export interface CallRecord {
   /** Resource refs produced by this call, in creation order. */
   refs: string[]
   result?: WireValue
+  /** A direct SDK call: its gRPC path and how the method presents itself. */
+  rpc?: { path: string, presentation?: MethodPresentation }
   /** Event-log position when the call started. */
   seq: number
   startedAt: number

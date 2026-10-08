@@ -101,6 +101,7 @@ catalog:
   publint: ^0.3.23
   react: ^19.3.0
   react-dom: ^19.3.0
+  react-markdown: ^10.1.0
   react-resizable-panels: ^4.14.2
   simple-git-hooks: ^2.13.1
 

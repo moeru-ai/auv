@@ -33,6 +33,7 @@
     "magic-string": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "catalog:",
     "react-resizable-panels": "catalog:",
     "thumbhash": "catalog:",
     "ts-blank-space": "catalog:",

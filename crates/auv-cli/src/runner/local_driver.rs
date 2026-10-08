@@ -2659,6 +2659,9 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let (health_reporter, health) = tonic_health::server::health_reporter();
   health_reporter.set_serving::<DisplayServiceServer<LocalDisplayService>>().await;
+  health_reporter
+    .set_serving::<auv_api_proto::auv::api::annotations::v1::method_docs_service_server::MethodDocsServiceServer<auv_api_server::method_docs::Service>>()
+    .await;
   health_reporter.set_serving::<WindowServiceServer<LocalWindowService>>().await;
   health_reporter.set_serving::<CaptureServiceServer<LocalCaptureService>>().await;
   health_reporter.set_serving::<RecentFramesServiceServer<super::recent_frames::Service>>().await;
@@ -2692,6 +2695,14 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   served_services.push("auv.api.driver.macos.v1.MediaControlService");
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.v1.OverlayService");
+  // Long-form docs for the methods above; the docs service itself is served
+  // and reflected too, so clients can discover it.
+  let method_docs = auv_api_server::method_docs::service(
+    &auv_api_proto::descriptor_set_for_services(&served_services)?,
+    &served_services,
+    auv_api_proto::METHOD_DOCS,
+  )?;
+  served_services.push("auv.api.annotations.v1.MethodDocsService");
   let descriptor_set = auv_api_proto::descriptor_set_for_services(&served_services)?;
   let reflection =
     auv_api_server::reflection::service(&descriptor_set).map_err(|error| format!("failed to build local Runner reflection: {error}"))?;
@@ -2699,6 +2710,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   let serve_result = tonic::transport::Server::builder()
     .add_service(health)
     .add_service(reflection)
+    .add_service(method_docs)
     .add_service(display)
     .add_service(window)
     .add_service(capture)

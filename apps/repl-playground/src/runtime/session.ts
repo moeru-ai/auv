@@ -7,6 +7,7 @@ import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
 import type { ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
 
+import { camelCaseName } from '@auv-js/sdk'
 import { fromBinary, fromJsonString } from '@bufbuild/protobuf'
 import { createContext as createWorkerChannel } from '@moeru/eventa/adapters/webworkers'
 import { createBirpc } from 'birpc'
@@ -272,10 +273,10 @@ class ExecSession {
           effect: described?.effect === 'input' ? 'input' : 'read',
           hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
           line,
-          // `Service/Method` without the package, e.g. `WindowService/ListWindows`.
-          // TODO(discovered-tool-presentation): show the method's API name
-          // (`windows.list`) once the protobuf method annotations carry one.
-          method: start.method.slice(start.method.lastIndexOf('.') + 1),
+          // The method's API name as JavaScript spells it (`windows.list`), or
+          // `Service/Method` without the package for a method that has none.
+          method: described?.presentation ? camelCaseName(described.presentation.name) : start.method.slice(start.method.lastIndexOf('.') + 1),
+          rpc: { path: start.method, presentation: described?.presentation },
           seq,
           startedAt: nowMs(),
         })

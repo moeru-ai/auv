@@ -7,6 +7,7 @@ import { FileDescriptorProtoSchema } from '@bufbuild/protobuf/wkt'
 import { describe, expect, it } from 'vitest'
 
 import { file_auv_api_annotations_v1_annotations } from '../../gen/auv/api/annotations/v1/annotations_pb'
+import { GetMethodDocsRequestSchema, GetMethodDocsResponseSchema, MethodDocsService } from '../../gen/auv/api/annotations/v1/method_docs_pb'
 import {
   DisplayService,
   file_auv_api_driver_v1_display,
@@ -19,7 +20,11 @@ import {
 } from '../../gen/grpc/reflection/v1/reflection_pb'
 import { AsyncQueue } from '../../transport/async-queue'
 import { connectTransport } from '../../transport/connection'
+import { AuvRpcError } from '../../transport/errors'
 import { createAuv } from './client'
+import { camelCaseName } from './discover'
+
+const listDisplays = `/${DisplayService.typeName}/${DisplayService.method.listDisplays.name}`
 
 describe('runner discovery', () => {
   it('discovers annotated tools and invokes a discovered unary method as ProtoJSON', async () => {
@@ -68,8 +73,17 @@ describe('runner discovery', () => {
         }
       },
       async unary(call) {
-        expect(call.method).toBe(`/${DisplayService.typeName}/${DisplayService.method.listDisplays.name}`)
         expect(call.headers.get('auv-runner-class')).toBe('auv.test.discovered')
+        if (call.method === `/${MethodDocsService.typeName}/${MethodDocsService.method.getMethodDocs.name}`) {
+          const { method } = fromBinary(GetMethodDocsRequestSchema, call.body)
+          if (method !== listDisplays)
+            throw new AuvRpcError(5, `no docs for ${method}`)
+          return toBinary(GetMethodDocsResponseSchema, create(GetMethodDocsResponseSchema, {
+            examples: [{ code: 'await device.displays.list()', language: 'ts', title: 'List' }],
+            markdown: '# List displays',
+          }))
+        }
+        expect(call.method).toBe(listDisplays)
         return toBinary(ListDisplaysResponseSchema, create(ListDisplaysResponseSchema, {
           displays: [{ displayId: 'display-main', name: 'Main', primary: true, scaleFactor: 2 }],
         }))
@@ -88,6 +102,7 @@ describe('runner discovery', () => {
       effect: 'read_only',
       id: `/${DisplayService.typeName}/${DisplayService.method.listDisplays.name}`,
       methodKind: 'unary',
+      presentation: { name: 'displays.list', title: 'List displays' },
     })
     expect(discovered.apis[0]?.inputSchema).toMatchObject({
       $ref: '#/$defs/auv.api.driver.v1.ListDisplaysRequest',
@@ -107,6 +122,19 @@ describe('runner discovery', () => {
     expect(described?.decodeResponse(encoded)).toEqual({ displays: [{ displayId: 'display-main' }] })
     expect([described?.input.typeName, described?.output.typeName]).toEqual([ListDisplaysRequestSchema.typeName, ListDisplaysResponseSchema.typeName])
     expect(discovered.describeMethod('/auv.api.driver.v1.DisplayService/Missing')).toBeUndefined()
+
+    // Short presentation travels with the descriptors; long docs are fetched on request.
+    expect(described?.presentation?.description).toMatch(/displays/)
+    await expect(described?.docs()).resolves.toEqual({
+      examples: [{ code: 'await device.displays.list()', language: 'ts', title: 'List' }],
+      markdown: '# List displays',
+    })
+  })
+
+  it('spells presentation names the way JavaScript does', () => {
+    expect(camelCaseName('window.find_text')).toBe('window.findText')
+    expect(camelCaseName('macos.media.toggle_play_pause')).toBe('macos.media.togglePlayPause')
+    expect(camelCaseName('windows.list')).toBe('windows.list')
   })
 })
 
