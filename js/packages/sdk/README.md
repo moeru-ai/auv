@@ -304,7 +304,7 @@ inset(frame, 8) // or { top, right, bottom, left }
 offset(frame, 0, 20)
 at(frame, 0.5, 0.25) // the point a quarter down the middle
 // Per axis, two of start, end and size; percentages are of `frame`.
-region(frame, { top: '10%', height: 80, right: 0, width: '30%' })
+region(frame, { height: 80, right: 0, top: '10%', width: '30%' })
 ```
 
 Keyboard input can name its window too. `typeText`, `pressKeys` and
