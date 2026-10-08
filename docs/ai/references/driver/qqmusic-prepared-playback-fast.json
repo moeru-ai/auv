@@ -1,0 +1,79 @@
+{
+  "schema_version": "auv.operation.v2",
+  "name": "qqmusic.prepare_playback_fast",
+  "description": "Prepare QQ Music playback (Fast mode): volume 40%, skip next, ensure playing (fire-and-forget)",
+  "execution_mode": "fast",
+  "compilation_metadata": {
+    "compiler": "human-manual-compilation",
+    "source_record": "2026-10-04-qqmusic-vlm-record.json",
+    "date": "2026-10-08",
+    "crux_goal": "fast dispatch with eventual consistency"
+  },
+  "target": {
+    "app_name": "QQMusic.exe",
+    "backend": "windows.smtc+coreaudio+wgc"
+  },
+  "steps": [
+    {
+      "id": "step_1_query_state",
+      "name": "Query Playback State",
+      "description": "Query current playback state and track metadata via SMTC",
+      "action": {
+        "type": "smtc_query",
+        "app_id": "QQMusic.exe"
+      },
+      "verification_gate": {
+        "type": "custom_assertion",
+        "expression": "true",
+        "timeout_ms": 100,
+        "escalate_on_mismatch": "none"
+      }
+    },
+    {
+      "id": "step_2_ensure_playing_and_volume",
+      "name": "Ensure Playing & Volume 40%",
+      "description": "Set process volume to 40% via CoreAudio and trigger play if not playing",
+      "action": {
+        "type": "ensure_playing_and_volume",
+        "app_id": "QQMusic.exe",
+        "volume": 0.40
+      },
+      "verification_gate": {
+        "type": "custom_assertion",
+        "expression": "true",
+        "timeout_ms": 100,
+        "escalate_on_mismatch": "none"
+      }
+    },
+    {
+      "id": "step_3_skip_next_track",
+      "name": "Skip Next Track",
+      "description": "Skip to next track via SMTC",
+      "action": {
+        "type": "skip_next",
+        "app_id": "QQMusic.exe"
+      },
+      "verification_gate": {
+        "type": "custom_assertion",
+        "expression": "true",
+        "timeout_ms": 100,
+        "escalate_on_mismatch": "none"
+      }
+    },
+    {
+      "id": "step_4_verify_window_alive",
+      "name": "Verify Window Alive (WGC)",
+      "description": "Capture QQ Music window via WGC",
+      "action": {
+        "type": "wgc_capture",
+        "app_id": "QQMusic.exe"
+      },
+      "verification_gate": {
+        "type": "custom_assertion",
+        "expression": "true",
+        "timeout_ms": 100,
+        "escalate_on_mismatch": "none"
+      }
+    }
+  ]
+}

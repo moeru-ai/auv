@@ -45,13 +45,19 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, SW_RESTORE, ShowWindow};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ExecutionMode {
+  Fast,
+  Verified,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct CompiledOperation {
   schema_version: String,
   name: String,
   description: String,
-  #[serde(default)]
-  execution_mode: Option<String>,
+  execution_mode: ExecutionMode,
   compilation_metadata: CompilationMetadata,
   target: TargetMetadata,
   steps: Vec<OperationStepDef>,
@@ -1075,6 +1081,7 @@ pub(super) fn main() {
   let mut replays_count = 20usize;
   let mut mode = "verified".to_string(); // "baseline", "verified", "fast"
   let mut output_file: Option<String> = None;
+  let mut user_op_file: Option<String> = None;
   let mut fault_inject: Option<String> = None;
   let mut allow_restore = false;
   let mut pacing_delay_ms = 50.0;
@@ -1087,6 +1094,12 @@ pub(super) fn main() {
       "--mode" => {
         if i + 1 < args.len() {
           mode = args[i + 1].to_lowercase();
+          i += 1;
+        }
+      }
+      "--op" | "--operation" => {
+        if i + 1 < args.len() {
+          user_op_file = Some(args[i + 1].clone());
           i += 1;
         }
       }
@@ -1161,12 +1174,40 @@ pub(super) fn main() {
     _ => "docs/ai/references/driver/2026-10-08-wgc-health-warm-verified-20x.jsonl".to_string(),
   });
 
-  let op_file_path = "docs/ai/references/driver/qqmusic-prepared-playback.json";
+  let default_op_path = match mode.as_str() {
+    "fast" => "docs/ai/references/driver/qqmusic-prepared-playback-fast.json",
+    _ => "docs/ai/references/driver/qqmusic-prepared-playback.json",
+  };
+  let op_file_path = user_op_file.as_deref().unwrap_or(default_op_path);
   let op_json = fs::read_to_string(op_file_path)
     .or_else(|_| fs::read_to_string(Path::new("..").join("..").join(op_file_path)))
     .unwrap_or_else(|e| panic!("Failed to read compiled operation JSON at {op_file_path}: {e}"));
   let compiled_op: CompiledOperation =
-    serde_json::from_str(&op_json).unwrap_or_else(|e| panic!("Failed to parse compiled operation JSON: {e}"));
+    serde_json::from_str(&op_json).unwrap_or_else(|e| panic!("Failed to parse compiled operation JSON at {op_file_path}: {e}"));
+
+  if compiled_op.schema_version != "auv.operation.v2" {
+    panic!(
+      "Compiled operation schema mismatch at {}: expected 'auv.operation.v2', got '{}' (fail-closed)",
+      op_file_path, compiled_op.schema_version
+    );
+  }
+
+  // Validate execution mode compatibility between CLI and operation declaration
+  match (mode.as_str(), compiled_op.execution_mode) {
+    ("fast", ExecutionMode::Verified) => {
+      panic!(
+        "Mode conflict: CLI requested 'fast' mode, but compiled operation '{}' requires 'verified' mode (fail-closed)",
+        compiled_op.name
+      );
+    }
+    ("verified", ExecutionMode::Fast) => {
+      panic!(
+        "Mode conflict: CLI requested 'verified' mode, but compiled operation '{}' declares 'fast' mode (fail-closed)",
+        compiled_op.name
+      );
+    }
+    _ => {}
+  }
 
   println!("================================================================================");
   println!("QQ Music Hotpath Profiling & Replay Harness (Zero VLM / Zero Token)");
