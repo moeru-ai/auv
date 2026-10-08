@@ -733,3 +733,71 @@ fn test_15_legacy_schema_v1_rejected_fail_closed() {
   // Must not have admitted any active operation
   assert!(catalog.get_active("qqmusic.legacy_v1_op").is_none());
 }
+
+#[test]
+fn test_16_confirm_volume_not_blacklisted_and_safe_fast_compilation() {
+  let step_confirm_volume = OperationStepDef {
+    id: "step_1".to_string(),
+    name: "confirm_volume".to_string(),
+    description: "Confirm and set volume".to_string(),
+    action: serde_json::json!({ "type": "set_volume", "value": 0.40 }),
+    verification_gate: VerificationGateDef::CustomAssertion {
+      expression: "true".to_string(),
+      timeout_ms: 100,
+      escalate_on_mismatch: "none".to_string(),
+    },
+    is_unverified: false,
+  };
+
+  // 1. Blast-radius gate must NOT reject "confirm_volume" as "rm"
+  let blast_eval = auv_auto_loop::compiler::compile_gate::evaluate_blast_radius_gate(std::slice::from_ref(&step_confirm_volume));
+  assert!(blast_eval.passed, "confirm_volume must NOT be falsely rejected by blast-radius gate: {:?}", blast_eval);
+
+  // 2. Execution-mode gate must NOT bar "confirm_volume" from Fast mode as "rm"
+  let fast_eval = auv_auto_loop::compiler::compile_gate::evaluate_execution_mode_gate(ExecutionMode::Fast, &[step_confirm_volume], &[]);
+  assert!(fast_eval.passed, "confirm_volume must NOT be barred from Fast mode: {:?}", fast_eval);
+
+  // 3. Genuine "rm -rf" action MUST be rejected by blast-radius gate
+  let rm_eval = auv_auto_loop::compiler::compile_gate::evaluate_blast_radius_gate(&[OperationStepDef {
+    id: "step_bad".to_string(),
+    name: "remove cache".to_string(),
+    description: "Destructive rm".to_string(),
+    action: serde_json::json!({ "command": "rm -rf /cache" }),
+    verification_gate: VerificationGateDef::CustomAssertion {
+      expression: "true".to_string(),
+      timeout_ms: 100,
+      escalate_on_mismatch: "none".to_string(),
+    },
+    is_unverified: false,
+  }]);
+  assert!(!rm_eval.passed, "rm -rf MUST be rejected by blast-radius gate");
+  assert_eq!(rm_eval.reason_code, ReasonCode::RejectBlastRadiusViolation);
+}
+
+#[test]
+fn test_17_execution_mode_gate_aligned_with_derive_rejects_status_and_volume_gate_for_fast_mode() {
+  let steps = vec![OperationStepDef {
+    id: "step_status_volume".to_string(),
+    name: "Volume and status check".to_string(),
+    description: "Check volume and status".to_string(),
+    action: serde_json::json!({ "type": "set_volume", "value": 0.40 }),
+    verification_gate: VerificationGateDef::StatusAndVolumeGate {
+      expected_status: "Playing".to_string(),
+      expected_volume: 0.40,
+      volume_tolerance: 0.05,
+      timeout_ms: 1000,
+      escalate_on_mismatch: "vlm".to_string(),
+    },
+    is_unverified: false,
+  }];
+
+  // derive_mode_from_steps derives Verified
+  let derived = auv_auto_loop::compiler::gate_derive::derive_mode_from_steps(&steps);
+  assert_eq!(derived, ExecutionMode::Verified);
+
+  // evaluate_execution_mode_gate MUST also reject Fast mode for StatusAndVolumeGate
+  let gate_eval = auv_auto_loop::compiler::compile_gate::evaluate_execution_mode_gate(ExecutionMode::Fast, &steps, &[]);
+  assert!(!gate_eval.passed, "StatusAndVolumeGate must be rejected for Fast mode");
+  assert_eq!(gate_eval.reason_code, ReasonCode::RejectModeConflict);
+  assert!(gate_eval.message.contains("StatusAndVolumeGate"));
+}

@@ -186,33 +186,8 @@ fn extract_volume_from_step(step: &TrajectoryStep) -> Option<f64> {
 /// - Pure action dispatch with zero effect verification gates is a candidate for `ExecutionMode::Fast`.
 pub fn derive_mode_from_steps(steps: &[OperationStepDef]) -> ExecutionMode {
   for step in steps {
-    if step.is_unverified {
+    if step.is_unverified || step.verification_gate.requires_verified_mode().is_some() {
       return ExecutionMode::Verified;
-    }
-    match &step.verification_gate {
-      VerificationGateDef::TitleChangeGate {
-        require_title_change: true,
-        ..
-      } => {
-        return ExecutionMode::Verified;
-      }
-      VerificationGateDef::StatusAndVolumeGate { .. } => {
-        return ExecutionMode::Verified;
-      }
-      VerificationGateDef::WgcAliveGate { .. } => {
-        return ExecutionMode::Verified;
-      }
-      VerificationGateDef::SmtcSessionPresent { .. } => {
-        return ExecutionMode::Verified;
-      }
-      VerificationGateDef::UnverifiedFallback { .. } => {
-        return ExecutionMode::Verified;
-      }
-      VerificationGateDef::TitleChangeGate {
-        require_title_change: false,
-        ..
-      } => {}
-      VerificationGateDef::CustomAssertion { .. } => {}
     }
   }
   ExecutionMode::Fast

@@ -11,7 +11,7 @@
 
 use crate::compiler::anti_unify::ParameterLiftingOutcome;
 use crate::compiler::cleaner::CleaningOutcome;
-use crate::models::{ExecutionMode, OperationStepDef, ReasonCode, VerificationGateDef};
+use crate::models::{ExecutionMode, OperationStepDef, ReasonCode};
 
 /// Whitelist of safe, allowed domain action types.
 const ACTION_WHITELIST: &[&str] = &[
@@ -92,6 +92,20 @@ pub fn evaluate_parameter_gate(lifting: &ParameterLiftingOutcome) -> Compilation
 }
 
 /// Evaluates Sub-gate 3: Blast-Radius Gate.
+/// Checks if text matches a blacklisted term.
+///
+/// For short identifiers like "rm", enforces a strict word-boundary match (`\brm\b`)
+/// to prevent false positives on harmless words like "confirm_volume", "perform",
+/// "platform", "firmware", or "harm".
+pub fn matches_blacklisted_pattern(haystack: &str, blacklisted: &str) -> bool {
+  if blacklisted == "rm" {
+    haystack.split(|c: char| !c.is_alphanumeric()).any(|token| token == "rm")
+  } else {
+    haystack.contains(blacklisted)
+  }
+}
+
+/// Evaluates Sub-gate 3: Blast-Radius Gate.
 pub fn evaluate_blast_radius_gate(steps: &[OperationStepDef]) -> CompilationGateEvaluation {
   for step in steps {
     let action_val = &step.action;
@@ -100,7 +114,7 @@ pub fn evaluate_blast_radius_gate(steps: &[OperationStepDef]) -> CompilationGate
 
     // 1. Check blacklist
     for blacklisted in ACTION_BLACKLIST {
-      if action_str.contains(blacklisted) || name_str.contains(blacklisted) {
+      if matches_blacklisted_pattern(&action_str, blacklisted) || matches_blacklisted_pattern(&name_str, blacklisted) {
         return CompilationGateEvaluation {
           passed: false,
           reason_code: ReasonCode::RejectBlastRadiusViolation,
@@ -132,7 +146,7 @@ pub fn evaluate_blast_radius_gate(steps: &[OperationStepDef]) -> CompilationGate
 ///
 /// Enforces:
 /// - Fast mode requires pure action dispatch with zero effect verification gates.
-/// - `TitleChangeGate(require_title_change=true)` requires Verified mode.
+/// - Any effect verification gate (`StatusAndVolumeGate`, `TitleChangeGate`, `WgcAliveGate`, etc.) requires Verified mode.
 /// - `unverified-step` cannot be combined with Fast mode (only Verified is permitted).
 /// - Destructive / high-risk actions constructively barred from Fast mode.
 pub fn evaluate_execution_mode_gate(mode: ExecutionMode, steps: &[OperationStepDef], tags: &[String]) -> CompilationGateEvaluation {
@@ -157,7 +171,7 @@ pub fn evaluate_execution_mode_gate(mode: ExecutionMode, steps: &[OperationStepD
         let action_str = step.action.to_string().to_lowercase();
         let name_str = step.name.to_lowercase();
         for blacklisted in ACTION_BLACKLIST {
-          if action_str.contains(blacklisted) || name_str.contains(blacklisted) {
+          if matches_blacklisted_pattern(&action_str, blacklisted) || matches_blacklisted_pattern(&name_str, blacklisted) {
             return CompilationGateEvaluation {
               passed: false,
               reason_code: ReasonCode::RejectModeConflict,
@@ -170,17 +184,13 @@ pub fn evaluate_execution_mode_gate(mode: ExecutionMode, steps: &[OperationStepD
         }
       }
 
-      // 3. Effect verification gates require Verified mode
+      // 3. Effect verification gates require Verified mode (aligned with derive_mode_from_steps)
       for step in steps {
-        if let VerificationGateDef::TitleChangeGate {
-          require_title_change: true,
-          ..
-        } = &step.verification_gate
-        {
+        if let Some(gate_name) = step.verification_gate.requires_verified_mode() {
           return CompilationGateEvaluation {
             passed: false,
             reason_code: ReasonCode::RejectModeConflict,
-            message: format!("Step '{}' requires TitleChangeGate verification; cannot be executed in Fast mode", step.id),
+            message: format!("Step '{}' requires {} verification; cannot be executed in Fast mode", step.id, gate_name),
           };
         }
       }
@@ -191,5 +201,33 @@ pub fn evaluate_execution_mode_gate(mode: ExecutionMode, steps: &[OperationStepD
         message: "Fast mode approved: action dispatch only with zero effect verification conflicts".to_string(),
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_blacklist_rm_does_not_false_positive_on_harmless_words() {
+    assert!(!matches_blacklisted_pattern("confirm_volume", "rm"));
+    assert!(!matches_blacklisted_pattern("perform", "rm"));
+    assert!(!matches_blacklisted_pattern("platform", "rm"));
+    assert!(!matches_blacklisted_pattern("firmware", "rm"));
+    assert!(!matches_blacklisted_pattern("harm", "rm"));
+    assert!(!matches_blacklisted_pattern("confirm", "rm"));
+
+    // Genuine rm commands / tokens MUST match
+    assert!(matches_blacklisted_pattern("rm", "rm"));
+    assert!(matches_blacklisted_pattern("rm -rf /cache", "rm"));
+    assert!(matches_blacklisted_pattern("rm_cache", "rm"));
+    assert!(matches_blacklisted_pattern("run rm now", "rm"));
+  }
+
+  #[test]
+  fn test_other_blacklist_words_match() {
+    assert!(matches_blacklisted_pattern("delete user folder", "delete"));
+    assert!(matches_blacklisted_pattern("format d:", "format"));
+    assert!(matches_blacklisted_pattern("drop table", "drop"));
   }
 }

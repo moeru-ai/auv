@@ -296,6 +296,27 @@ pub enum VerificationGateDef {
   },
 }
 
+impl VerificationGateDef {
+  /// Returns the gate identifier if this verification gate requires `ExecutionMode::Verified`.
+  pub fn requires_verified_mode(&self) -> Option<&'static str> {
+    match self {
+      Self::TitleChangeGate {
+        require_title_change: true,
+        ..
+      } => Some("TitleChangeGate(require_title_change=true)"),
+      Self::StatusAndVolumeGate { .. } => Some("StatusAndVolumeGate"),
+      Self::WgcAliveGate { .. } => Some("WgcAliveGate"),
+      Self::SmtcSessionPresent { .. } => Some("SmtcSessionPresent"),
+      Self::UnverifiedFallback { .. } => Some("UnverifiedFallback"),
+      Self::TitleChangeGate {
+        require_title_change: false,
+        ..
+      } => None,
+      Self::CustomAssertion { .. } => None,
+    }
+  }
+}
+
 // ==============================================================================
 // Manual Review Queue Items
 // ==============================================================================
