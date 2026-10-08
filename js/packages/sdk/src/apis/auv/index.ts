@@ -30,7 +30,7 @@ export type {
   MethodDocs,
   MethodPresentation,
 } from './discover'
-export { createRunnerClient } from './driver'
+export { createRunnerClient, splitKeyCombination } from './driver'
 export type {
   CaptureImage,
   CaptureImageOptions,
@@ -52,10 +52,11 @@ export type {
   WindowClient,
   WindowPasteTextOptions,
   WindowPressKeysOptions,
+  WindowQuery,
   WindowTarget,
 } from './driver'
-export { center, contains, intersect, Position } from './geometry'
-export type { PointLike, RectLike } from './geometry'
+export { above, at, below, center, contains, inset, intersect, leftOf, offset, Position, region, rightOf } from './geometry'
+export type { Edges, Insets, Length, PointLike, RectLike } from './geometry'
 export { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 export type { InvokeDuplexOptions, InvokeServerStreamOptions, InvokeUnaryOptions } from './invoke'
 export { protobufJsonSchema } from './json'

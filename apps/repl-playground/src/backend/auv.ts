@@ -171,7 +171,7 @@ class AuvBackend implements Backend {
   }
 
   async pressKeyWindow(windowId: string, key: string, options?: KeyboardOptions): Promise<InputReceipt> {
-    const action = await this.#runner.windows.from(windowId).pressKeys(keyCombination(key), { policy: keyboardPolicy(options) })
+    const action = await this.#runner.windows.from(windowId).pressKeys(key, { policy: keyboardPolicy(options) })
     return { path: deliveryPath(action) }
   }
 
@@ -180,7 +180,7 @@ class AuvBackend implements Backend {
   }
 
   async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
-    return toWindow((await this.#runner.windows.resolve(toSelector(selector))).window)
+    return toWindow((await this.#runner.windows.resolve(selector)).window)
   }
 
   async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
@@ -347,11 +347,6 @@ function keyboardPolicy(options: KeyboardOptions | undefined): InputPolicy {
   return options?.background ? InputPolicy.BACKGROUND_ONLY : InputPolicy.FOREGROUND_PREFERRED
 }
 
-/** `cmd+a` → `['cmd', 'a']`; a trailing `+` is the plus key (`cmd++`). */
-function keyCombination(key: string): string[] {
-  return key.split(/\+(?=.)/).map(part => part.trim()).filter(part => part.length > 0)
-}
-
 /**
  * NOTICE(grpc-message-percent-encoding): gRPC percent-encodes `grpc-message`,
  * and AUV 0.0.28's REST proxy copies it into the problem `detail` without
@@ -388,22 +383,6 @@ function toClick(options: ClickOptions | undefined) {
 /** `google.protobuf.Duration` from milliseconds. */
 function toDuration(ms: number) {
   return { nanos: Math.round((ms % 1000) * 1e6), seconds: BigInt(Math.floor(ms / 1000)) }
-}
-
-function toSelector(selector: WindowSelector): Parameters<RunnerClient['windows']['resolve']>[0] {
-  const application = selector.bundleId
-    ? { case: 'applicationBundleId' as const, value: selector.bundleId }
-    : selector.appName
-      ? { case: 'applicationName' as const, value: selector.appName }
-      : selector.pid
-        ? { case: 'processId' as const, value: selector.pid }
-        : { case: 'frontmostApplication' as const, value: true }
-  const window = selector.title
-    ? { case: 'titleExact' as const, value: selector.title }
-    : selector.titleContains
-      ? { case: 'titleContains' as const, value: selector.titleContains }
-      : { case: 'mainVisible' as const, value: true }
-  return { application, window }
 }
 
 /**

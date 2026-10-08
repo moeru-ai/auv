@@ -307,11 +307,7 @@ impl From<KeyPressOptions> for PressKeysOptions {
   /// conversion until a versioned migration makes PressKey strictly single-key.
   /// Validation remains in the keyboard driver before any input or activation.
   fn from(options: KeyPressOptions) -> Self {
-    let keys = if options.key.trim() == "+" {
-      vec!["+".into()]
-    } else {
-      options.key.split('+').map(|key| key.trim().to_string()).collect()
-    };
+    let keys = crate::keyboard::split_key_combination(&options.key);
     Self {
       keys,
       settle: options.settle,

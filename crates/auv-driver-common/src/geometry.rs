@@ -243,6 +243,152 @@ impl Rect {
   pub fn center(self) -> Point {
     Point::new(self.origin.x + self.size.width / 2.0, self.origin.y + self.size.height / 2.0)
   }
+
+  // Geometry helpers, the same as `@auv-js/sdk`'s (`below(rect, 40)` there is
+  // `rect.below(40.0, 0.0)` here). They never convert coordinate spaces; see
+  // docs/ai/references/session-api/2026-10-09-sdk-ergonomics-design.md.
+
+  /// The point at a fraction of the rectangle: `at(0.0, 0.0)` is the
+  /// top-left and `at(0.5, 0.5)` the center.
+  pub fn at(self, fx: f64, fy: f64) -> Point {
+    Point::new(self.origin.x + self.size.width * fx, self.origin.y + self.size.height * fy)
+  }
+
+  /// The strip of `height` above this rectangle, `gap` away.
+  pub fn above(self, height: f64, gap: f64) -> Self {
+    Self::new(self.origin.x, self.origin.y - gap - height, self.size.width, height)
+  }
+
+  /// The strip of `height` below this rectangle, `gap` away.
+  pub fn below(self, height: f64, gap: f64) -> Self {
+    Self::new(self.origin.x, self.origin.y + self.size.height + gap, self.size.width, height)
+  }
+
+  /// The strip of `width` left of this rectangle, `gap` away.
+  pub fn left_of(self, width: f64, gap: f64) -> Self {
+    Self::new(self.origin.x - gap - width, self.origin.y, width, self.size.height)
+  }
+
+  /// The strip of `width` right of this rectangle, `gap` away.
+  pub fn right_of(self, width: f64, gap: f64) -> Self {
+    Self::new(self.origin.x + self.size.width + gap, self.origin.y, width, self.size.height)
+  }
+
+  /// Shrinks by the same amount on every side, or per side.
+  pub fn inset(self, by: impl Into<Insets>) -> Self {
+    let by = by.into();
+    Self::new(self.origin.x + by.left, self.origin.y + by.top, self.size.width - by.left - by.right, self.size.height - by.top - by.bottom)
+  }
+
+  pub fn offset(self, dx: f64, dy: f64) -> Self {
+    Self::new(self.origin.x + dx, self.origin.y + dy, self.size.width, self.size.height)
+  }
+
+  /// A box inside this rectangle by distances from its edges. Per axis give
+  /// two of start, end and size (`left`/`right`/`width`,
+  /// `top`/`bottom`/`height`): a missing start is 0 and a missing size fills
+  /// the rest. Percentages are of this rectangle. All three on one axis is an
+  /// error.
+  pub fn region(self, edges: Edges) -> DriverResult<Self> {
+    let (x, width) = region_axis("left, right and width", edges.left, edges.right, edges.width, self.size.width)?;
+    let (y, height) = region_axis("top, bottom and height", edges.top, edges.bottom, edges.height, self.size.height)?;
+    Ok(Self::new(self.origin.x + x, self.origin.y + y, width, height))
+  }
+
+  /// Whether `point` lies inside; edges count as inside.
+  pub fn contains_point(self, point: Point) -> bool {
+    point.x >= self.origin.x
+      && point.y >= self.origin.y
+      && point.x <= self.origin.x + self.size.width
+      && point.y <= self.origin.y + self.size.height
+  }
+
+  /// Whether `other` lies wholly inside; edges count as inside.
+  pub fn contains_rect(self, other: Rect) -> bool {
+    self.contains_point(other.origin)
+      && self.contains_point(Point::new(other.origin.x + other.size.width, other.origin.y + other.size.height))
+  }
+
+  /// The overlap of two rectangles, or `None` when they share no area
+  /// (touching edges do not).
+  pub fn intersect(self, other: Rect) -> Option<Self> {
+    let x = self.origin.x.max(other.origin.x);
+    let y = self.origin.y.max(other.origin.y);
+    let width = (self.origin.x + self.size.width).min(other.origin.x + other.size.width) - x;
+    let height = (self.origin.y + self.size.height).min(other.origin.y + other.size.height) - y;
+    (width > 0.0 && height > 0.0).then(|| Self::new(x, y, width, height))
+  }
+}
+
+/// A length along one axis of a rectangle: logical points, or a percentage
+/// of that axis. A plain `f64` converts to points.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Length {
+  Points(f64),
+  Percent(f64),
+}
+
+impl Length {
+  fn resolve(self, total: f64) -> f64 {
+    match self {
+      Self::Points(points) => points,
+      Self::Percent(percent) => total * percent / 100.0,
+    }
+  }
+}
+
+impl From<f64> for Length {
+  fn from(points: f64) -> Self {
+    Self::Points(points)
+  }
+}
+
+/// Where a `Rect::region` box sits: distances from the parent's edges, and
+/// sizes. Unset fields follow the rules of `Rect::region`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Edges {
+  pub top: Option<Length>,
+  pub right: Option<Length>,
+  pub bottom: Option<Length>,
+  pub left: Option<Length>,
+  pub width: Option<Length>,
+  pub height: Option<Length>,
+}
+
+/// Per-side amounts for `Rect::inset`. A plain `f64` insets every side.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Insets {
+  pub top: f64,
+  pub right: f64,
+  pub bottom: f64,
+  pub left: f64,
+}
+
+impl From<f64> for Insets {
+  fn from(by: f64) -> Self {
+    Self {
+      top: by,
+      right: by,
+      bottom: by,
+      left: by,
+    }
+  }
+}
+
+/// One axis of `Rect::region` as `(offset, size)` inside `total`.
+fn region_axis(names: &str, start: Option<Length>, end: Option<Length>, size: Option<Length>, total: f64) -> DriverResult<(f64, f64)> {
+  let [start, end, size] = [start, end, size].map(|length| length.map(|length| length.resolve(total)));
+  match (start, end, size) {
+    (Some(_), Some(_), Some(_)) => Err(crate::DriverError::InvalidInput {
+      message: format!("region: {names} over-constrain the box; give two of them"),
+    }),
+    (start, end, Some(size)) => Ok((start.unwrap_or_else(|| end.map_or(0.0, |end| total - end - size)), size)),
+    (start, end, None) => {
+      let start = start.unwrap_or(0.0);
+      Ok((start, total - start - end.unwrap_or(0.0)))
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

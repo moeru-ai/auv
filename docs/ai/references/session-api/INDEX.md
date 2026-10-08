@@ -20,6 +20,7 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 
 Count: **42**
 
+- [`2026-10-09-sdk-ergonomics-design.md`](2026-10-09-sdk-ergonomics-design.md) — shared ergonomic SDK API in Rust and JS (rectangle builders and `region()` with percentages, `windows.resolve` short form, `pressKeys('cmd+a')`, Rust `WindowClient` keyboard methods), then playground lineage by IDs and the `auv` global becoming the SDK client.
 - [`2026-10-09-method-presentation-and-docs.md`](2026-10-09-method-presentation-and-docs.md) — `presentation` method option (API name, title, plain-text description), per-method Markdown docs with examples served by `MethodDocsService`, SDK `describeMethod().docs()`, and playground hover docs.
 - [`2026-10-08-mock-runner-design.md`](2026-10-08-mock-runner-design.md) — the playground mock desktop is a JS mock Runner: `createMockTransport` (Connect-style typed service registration, reflection included) and `serveMockDaemon` in `@auv-js/sdk`; synthetic benchmark tasks and episode export are the long-term direction, not current work.
 - [`2026-10-06-windows-helper-daemon-split.md`](2026-10-06-windows-helper-daemon-split.md) — Windows Helper Host (`auv-helper.exe --service`, LocalSystem) split from the per-user `auv serve` daemon: private `\\.\pipe\auv-helper` protocol, caller-SID authorization, daemon-owned policy/audit/pairing, 0.0.28 `AuvDevice` migration, and installed-gate evidence.

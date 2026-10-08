@@ -779,3 +779,18 @@ fn scroll_until_update_event_decodes_capture_ref_text_and_decision_flag() {
     })
   ));
 }
+
+#[test]
+fn text_matches_and_screen_rects_click_at_their_center() {
+  // Match bounds and `Rect` helper areas are logical screen rectangles, so
+  // they target the screen at their center; the Runner converts the point
+  // with the window's current frame.
+  let matched = auv_driver::OcrMatch {
+    text: "Play".to_string(),
+    confidence: 0.9,
+    bounds: auv_driver::Rect::new(300.0, 200.0, 60.0, 20.0),
+  };
+  let expected = PointerTarget::Position(auv_driver::Position::in_screen(auv_driver::ScreenPoint::new(330.0, 210.0)));
+  assert_eq!(PointerTarget::from(&matched), expected);
+  assert_eq!(PointerTarget::from(matched.bounds), expected);
+}

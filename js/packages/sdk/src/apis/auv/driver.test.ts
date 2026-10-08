@@ -11,6 +11,7 @@ import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowRes
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
+import { splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
   it('recognizes Runner captures by reference and fetches pixels only on request', async () => {
@@ -582,6 +583,35 @@ describe('window clients', () => {
     await connection.close()
   })
 
+  it('resolves a window from a short query or the full selector', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await windowConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await runner.windows.resolve({ bundleId: 'com.example.App' })
+    await runner.windows.resolve({ appName: 'Music', titleContains: 'Liked' })
+    await runner.windows.resolve({})
+    await runner.windows.resolve({ application: { case: 'processId', value: 42 } })
+    const selectors = calls.map(call => fromBinary(ResolveWindowRequestSchema, call.body).selector)
+    expect(selectors.map(selector => [selector?.application, selector?.window])).toEqual([
+      [{ case: 'applicationBundleId', value: 'com.example.App' }, { case: 'mainVisible', value: true }],
+      [{ case: 'applicationName', value: 'Music' }, { case: 'titleContains', value: 'Liked' }],
+      [{ case: 'frontmostApplication', value: true }, { case: 'mainVisible', value: true }],
+      [{ case: 'processId', value: 42 }, { case: undefined }],
+    ])
+    // Two application fields are ambiguous, so they fail before any call.
+    await expect(runner.windows.resolve({ appName: 'Music', bundleId: 'com.apple.Music' })).rejects.toThrow(TypeError)
+    expect(calls).toHaveLength(4)
+    await connection.close()
+  })
+
+  it('splits key combinations on plus, unless it is the last key', () => {
+    expect(splitKeyCombination('cmd+a')).toEqual(['cmd', 'a'])
+    expect(splitKeyCombination(' cmd + shift + z ')).toEqual(['cmd', 'shift', 'z'])
+    expect(splitKeyCombination('cmd++')).toEqual(['cmd', '+'])
+    expect(splitKeyCombination('++')).toEqual(['+'])
+    expect(splitKeyCombination('return')).toEqual(['return'])
+  })
+
   it('clicks a window at a screen position, a display position, or the center of screen bounds', async () => {
     const calls: UnaryCall[] = []
     const connection = await windowConnection(calls)
@@ -691,13 +721,15 @@ describe('window keyboard', () => {
     await music!.typeText('Reply')
     await music!.pressKeys(['cmd', 'a'], { count: 2, interval: { nanos: 50_000_000 } })
     await music!.pasteText('Reply', { policy: InputPolicy.BACKGROUND_ONLY })
+    await music!.pressKeys('cmd+shift+z')
 
     const requests = calls.slice(1).map(call => fromBinary(InputKeyboardRequestSchema, call.body))
     for (const request of requests) {
       expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242, ref: expect.objectContaining({ windowId: 'w-7' }) }) })
       expect(request.inputs).toHaveLength(1)
     }
-    const [typed, pressed, pasted] = requests.map(request => request.inputs[0]!.action)
+    const [typed, pressed, pasted, pressedString] = requests.map(request => request.inputs[0]!.action)
+    expect(pressedString).toMatchObject({ case: 'press', value: { options: { keys: ['cmd', 'shift', 'z'] } } })
     expect(typed).toMatchObject({ case: 'typeText', value: { options: { policy: InputPolicy.FOREGROUND_PREFERRED }, text: 'Reply' } })
     expect(pressed).toMatchObject({ case: 'press', value: { options: { count: 2, keys: ['cmd', 'a'] }, policy: InputPolicy.FOREGROUND_PREFERRED } })
     expect(pasted).toMatchObject({ case: 'pasteText', value: { policy: InputPolicy.BACKGROUND_ONLY, text: 'Reply' } })

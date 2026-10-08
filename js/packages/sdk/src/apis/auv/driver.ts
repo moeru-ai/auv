@@ -203,7 +203,12 @@ export interface RunnerClient {
     get: (target: WindowTarget, options?: OperationOptions) => Promise<WindowClient>
     /** Lists windows as ready-to-use clients carrying their metadata. */
     list: (options?: OperationOptions) => Promise<readonly WindowClient[]>
-    resolve: (selector: Init<typeof WindowSelectorSchema>, options?: OperationOptions) => Promise<WindowClient>
+    /**
+     * The window a selector names, such as `{ bundleId: 'com.apple.TextEdit' }`
+     * for that app's main visible window. Takes a `WindowQuery` or the full
+     * `WindowSelector`.
+     */
+    resolve: (selector: Init<typeof WindowSelectorSchema> | WindowQuery, options?: OperationOptions) => Promise<WindowClient>
   }
 }
 
@@ -262,11 +267,11 @@ export interface WindowClient {
    */
   pasteText: (text: string, pasteOptions?: WindowPasteTextOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
-   * Presses one key combination in this window, e.g. `['cmd', 'a']` or
-   * `['return']`, optionally repeated. Same policy default and focus rules as
-   * `typeText`.
+   * Presses one key combination in this window, e.g. `'cmd+a'`, `['cmd', 'a']`
+   * or `'return'`, optionally repeated. Strings split as `splitKeyCombination`
+   * does. Same policy default and focus rules as `typeText`.
    */
-  pressKeys: (keys: readonly string[], pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
+  pressKeys: (keys: readonly string[] | string, pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
    * Wheel-scrolls at a point in this window. Deltas are logical pixels: positive
    * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
@@ -327,6 +332,22 @@ export type WindowPasteTextOptions = Init<typeof PasteTextOptionsSchema> & { pol
 export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 'keys'> & { policy?: InputPolicy }
 // gRPC status code NOT_FOUND.
 const GRPC_NOT_FOUND = 5
+
+/**
+ * The short form of a `WindowSelector`: at most one application field and at
+ * most one title field. With no application the frontmost app is used; with
+ * no title, its main visible window.
+ */
+export interface WindowQuery {
+  appName?: string
+  bundleId?: string
+  /** The frontmost app; the default when no application field is given. */
+  frontmost?: boolean
+  pid?: number
+  /** The exact window title. */
+  title?: string
+  titleContains?: string
+}
 
 /** Anything that names one window: a client, a `Window`, a `WindowRef`, or a window ID. */
 export type WindowTarget = string | Window | WindowClient | WindowRef
@@ -437,7 +458,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         action: { case: 'pasteText', value: { options: pasteOptions, policy: policy || InputPolicy.FOREGROUND_PREFERRED, text } },
       }, options),
       pressKeys: (keys, { policy, ...pressOptions } = {}, options) => keyboard({
-        action: { case: 'press', value: { options: { ...pressOptions, keys: [...keys] }, policy: policy || InputPolicy.FOREGROUND_PREFERRED } },
+        action: { case: 'press', value: { options: { ...pressOptions, keys: typeof keys === 'string' ? splitKeyCombination(keys) : [...keys] }, policy: policy || InputPolicy.FOREGROUND_PREFERRED } },
       }, options),
       scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
         options: scrollOptions,
@@ -586,13 +607,22 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       get: async (target, options) => window(await findWindow(windowOf(target).ref?.windowId, options)),
       list: async options => (await unary(WindowService.method.listWindows, {}, options)).windows.map(window),
       resolve: async (selector, options) => {
-        const response = await unary(WindowService.method.resolveWindow, { selector }, options)
+        const response = await unary(WindowService.method.resolveWindow, { selector: windowSelectorOf(selector) }, options)
         if (!response.window)
           throw new AuvProtocolError('ResolveWindowResponse omitted window')
         return window(response.window)
       },
     },
   }
+}
+
+/**
+ * Splits a key combination such as `cmd+a` into its keys. A `+` separates
+ * keys only when another character follows, so `cmd++` is Command and the
+ * plus key. Matches Rust's `split_key_combination`.
+ */
+export function splitKeyCombination(combination: string): string[] {
+  return combination.split(/\+(?=.)/).map(key => key.trim()).filter(key => key.length > 0)
 }
 
 function captureRefOf(target: CaptureTarget): Init<typeof CaptureRefSchema> {
@@ -664,4 +694,28 @@ function windowOf(target: WindowTarget): Window {
   if ('windowId' in target)
     return create(WindowSchema, { ref: { windowId: target.windowId } })
   return target
+}
+
+function windowSelectorOf(selector: Init<typeof WindowSelectorSchema> | WindowQuery): Init<typeof WindowSelectorSchema> {
+  if ('application' in selector || 'window' in selector || '$typeName' in selector)
+    return selector as Init<typeof WindowSelectorSchema>
+  const query = selector as WindowQuery
+  const applications = [
+    query.bundleId === undefined ? undefined : { case: 'applicationBundleId' as const, value: query.bundleId },
+    query.appName === undefined ? undefined : { case: 'applicationName' as const, value: query.appName },
+    query.pid === undefined ? undefined : { case: 'processId' as const, value: query.pid },
+    query.frontmost ? { case: 'frontmostApplication' as const, value: true } : undefined,
+  ].filter(value => value !== undefined)
+  const windows = [
+    query.title === undefined ? undefined : { case: 'titleExact' as const, value: query.title },
+    query.titleContains === undefined ? undefined : { case: 'titleContains' as const, value: query.titleContains },
+  ].filter(value => value !== undefined)
+  if (applications.length > 1)
+    throw new TypeError('WindowQuery takes one of bundleId, appName, pid and frontmost')
+  if (windows.length > 1)
+    throw new TypeError('WindowQuery takes one of title and titleContains')
+  return {
+    application: applications[0] ?? { case: 'frontmostApplication', value: true },
+    window: windows[0] ?? { case: 'mainVisible', value: true },
+  }
 }

@@ -27,8 +27,8 @@ pub use capture::{Activation, Capture, CaptureOptions, CaptureResolution, Displa
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{
-  CameraPoint, CoordinateSpace, PixelSize, Point, Point3, Position, Positional, Positioned, ProjectionBasis, ProjectionDerivationFamily,
-  ProjectionSourceSpace, Rect, RelativeRect, ScreenPoint, Size, WindowPoint, WorldPoint,
+  CameraPoint, CoordinateSpace, Edges, Insets, Length, PixelSize, Point, Point3, Position, Positional, Positioned, ProjectionBasis,
+  ProjectionDerivationFamily, ProjectionSourceSpace, Rect, RelativeRect, ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
   ActivationPolicy, Click, ClickModifiers, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt,
@@ -36,7 +36,7 @@ pub use input::{
   KeyboardInputProgress, MouseButton, PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll, ScrollDeliveryCandidate,
   ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
 };
-pub use keyboard::{Key, Keysym, Modifier};
+pub use keyboard::{Key, Keysym, Modifier, split_key_combination};
 pub use keyboard_input::{KeyboardBackend, KeyboardHold, KeyboardHoldController, KeyboardHoldId, keyboard_hold_controller};
 pub use mouse::{
   MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionSample, MouseSamples, MouseStart, MoveMouseRequest,

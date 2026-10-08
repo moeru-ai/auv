@@ -87,9 +87,44 @@ impl FromStr for Key {
   }
 }
 
+/// Splits a key combination such as `cmd+a` into its keys. A `+` separates
+/// keys only when another character follows, so `cmd++` is Command and the
+/// plus key, and `+` alone is the plus key. Keys are trimmed; empty parts are
+/// dropped. This only splits; keys are validated by the keyboard driver.
+pub fn split_key_combination(combination: &str) -> Vec<String> {
+  let mut keys = Vec::new();
+  let mut current = String::new();
+  let mut chars = combination.chars().peekable();
+  while let Some(char) = chars.next() {
+    if char == '+' && chars.peek().is_some() {
+      if !current.trim().is_empty() {
+        keys.push(current.trim().to_string());
+      }
+      current.clear();
+    } else {
+      current.push(char);
+    }
+  }
+  if !current.trim().is_empty() {
+    keys.push(current.trim().to_string());
+  }
+  keys
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn key_combinations_split_on_plus_unless_it_is_the_last_key() {
+    assert_eq!(split_key_combination("cmd+a"), ["cmd", "a"]);
+    assert_eq!(split_key_combination(" cmd + shift + a "), ["cmd", "shift", "a"]);
+    // A trailing `+` is the plus key, as in the playground and the JS SDK.
+    assert_eq!(split_key_combination("cmd++"), ["cmd", "+"]);
+    assert_eq!(split_key_combination("+"), ["+"]);
+    assert_eq!(split_key_combination("++"), ["+"]);
+    assert_eq!(split_key_combination("return"), ["return"]);
+  }
 
   #[test]
   fn aliases_share_modifier_identity() {

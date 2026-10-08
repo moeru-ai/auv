@@ -373,6 +373,21 @@ impl From<auv_driver::ScreenPoint> for PointerTarget {
   }
 }
 
+/// The center of a logical screen rectangle, such as an area built with the
+/// `Rect` helpers.
+impl From<auv_driver::Rect> for PointerTarget {
+  fn from(rect: auv_driver::Rect) -> Self {
+    Self::from(auv_driver::ScreenPoint::from(rect.center()))
+  }
+}
+
+/// The center of a text match; match bounds are logical screen rectangles.
+impl From<&auv_driver::OcrMatch> for PointerTarget {
+  fn from(matched: &auv_driver::OcrMatch) -> Self {
+    Self::from(matched.bounds)
+  }
+}
+
 /// Typed result of a delivered window click.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowPointClick {
@@ -1107,6 +1122,71 @@ impl WindowClient {
       scroll: auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y),
       action: input_action_result_from_proto(required(response.action, "ScrollWindowPoint response omitted InputActionResult")?)?,
     })
+  }
+
+  /// Types text into this window. The policy defaults to
+  /// `ForegroundPreferred`: the window is brought to the front and focused
+  /// first, so the text cannot land in another app. Background policies post
+  /// to the window's process, so the control must already have keyboard focus.
+  pub async fn type_text(&self, text: impl Into<String>) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    self
+      .type_text_with(
+        text,
+        auv_driver::TypeTextOptions {
+          policy: auv_driver::InputPolicy::ForegroundPreferred,
+          ..Default::default()
+        },
+      )
+      .await
+  }
+
+  /// Types text into this window with explicit options, including the policy.
+  pub async fn type_text_with(
+    &self,
+    text: impl Into<String>,
+    options: auv_driver::TypeTextOptions,
+  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    self
+      .keyboard(auv_driver::KeyboardInput::TypeText {
+        text: text.into(),
+        options,
+      })
+      .await
+  }
+
+  /// Presses one key combination in this window, e.g. `"cmd+a"` or
+  /// `"return"` (see `auv_driver::split_key_combination`). Same policy
+  /// default and focus rules as [`Self::type_text`].
+  pub async fn press_keys(&self, combination: &str) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    self
+      .press_keys_with(
+        auv_driver::PressKeysOptions {
+          keys: auv_driver::split_key_combination(combination),
+          ..Default::default()
+        },
+        auv_driver::InputPolicy::ForegroundPreferred,
+      )
+      .await
+  }
+
+  /// Presses keys in this window with explicit options and policy, e.g. to
+  /// repeat a combination.
+  pub async fn press_keys_with(
+    &self,
+    options: auv_driver::PressKeysOptions,
+    policy: auv_driver::InputPolicy,
+  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    self.keyboard(auv_driver::KeyboardInput::PressKeys { options, policy }).await
+  }
+
+  /// Delivers one keyboard action with this window as the recipient. The
+  /// Runner checks the recipient's identity before delivery.
+  async fn keyboard(&self, input: auv_driver::KeyboardInput) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    let target = auv_driver::InputTarget::Window(self.window.clone());
+    let actions = self.runner.input().input_keyboard(&target, vec![input], false).await?;
+    actions
+      .and_then(|mut actions| (!actions.is_empty()).then(|| actions.remove(0)))
+      .ok_or_else(|| CapabilityError::InvalidResponse("InputKeyboard returned no action result".into()))
   }
 }
 

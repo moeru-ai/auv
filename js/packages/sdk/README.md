@@ -251,12 +251,9 @@ const runner = auv.runner({
 })
 
 const displays = await runner.displays.list({ signal })
-const window = await runner.windows.resolve({
-  application: {
-    case: 'applicationBundleId',
-    value: 'com.example.App',
-  },
-}, { signal })
+// The app's main visible window. Also `appName`, `pid` or `frontmost`, with
+// `title` or `titleContains`; the full `WindowSelector` works too.
+const window = await runner.windows.resolve({ bundleId: 'com.example.App' }, { signal })
 
 const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
@@ -290,15 +287,24 @@ so the Runner rejects `policy` and `windowStrategy` there.
 
 Small pure helpers cover the geometry these calls return. They take any
 object with the right fields (`ScreenRect`, a window `frame`, a match's
-`bounds`) and never convert coordinate spaces:
+`bounds`) and never convert coordinate spaces. The rectangle builders match
+Rust's `Rect` methods in `auv-driver-common`:
 
 ```ts
-import { center, contains, intersect, Position } from '@auv-js/sdk'
+import { above, at, below, center, contains, inset, intersect, offset, Position, region } from '@auv-js/sdk'
 
 Position.screen(640, 400) // also Position.window(window, x, y), Position.display(display, x, y)
 center(matches[0]!.bounds!) // { x, y }
 contains(window.window.frame!, center(matches[0]!.bounds!)) // edges count as inside
 intersect(area, window.window.frame!) // the overlap, or undefined
+
+const frame = window.window.frame!
+below(matches[0]!.bounds!, 40, 4) // the 40pt strip under a match, 4pt away; also above, leftOf, rightOf
+inset(frame, 8) // or { top, right, bottom, left }
+offset(frame, 0, 20)
+at(frame, 0.5, 0.25) // the point a quarter down the middle
+// Per axis, two of start, end and size; percentages are of `frame`.
+region(frame, { top: '10%', height: 80, right: 0, width: '30%' })
 ```
 
 Keyboard input can name its window too. `typeText`, `pressKeys` and
@@ -306,14 +312,16 @@ Keyboard input can name its window too. `typeText`, `pressKeys` and
 window as the recipient. By default (`InputPolicy.FOREGROUND_PREFERRED`) the
 window is brought to the front and focused first, so the input cannot land in
 another app. `input.typeText` and `input.pressKey` go to whichever app has
-keyboard focus when they run:
+keyboard focus when they run. `pressKeys` takes a combination string such as
+`'cmd+shift+z'` (a trailing `+` is the plus key, so `'cmd++'`) or an array of
+keys; `splitKeyCombination` exposes the same split:
 
 ```ts
 import { InputPolicy } from '@auv-js/sdk'
 
 await music?.typeText('Reply')
-await music?.pressKeys(['return'])
-await music?.pressKeys(['cmd', 'a'], { policy: InputPolicy.BACKGROUND_ONLY }) // control must already have focus
+await music?.pressKeys('return')
+await music?.pressKeys('cmd+a', { policy: InputPolicy.BACKGROUND_ONLY }) // control must already have focus
 ```
 
 Background policies post to the window's process without activating it. The
