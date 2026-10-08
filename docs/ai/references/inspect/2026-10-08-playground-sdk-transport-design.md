@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: **proposed**, with a prototype (`sdk` and `runner` script globals)
+Status: **proposed**, with a prototype (`sdk` and `device` script globals)
 behind the existing script API. Names marked *provisional* are open.
 
 ## Problem
@@ -36,7 +36,8 @@ exec worker                                host (main thread)
 
 - **Same script in Node and the playground.** Only the connection differs:
   Node calls `connect(...)`; the playground hands the script a connected
-  `runner` (and `sdk`, the SDK module) bound to the current Device and Run.
+  `device` (the Runner client for the selected Device and the current Run)
+  and `sdk` (the SDK module), injected before every run.
 - **No per-method host code.** Any Runner RPC the SDK can call works, and is
   recorded, without a binding.
 - **Transport bridge: `@moeru/eventa`.** One unary invoke and one
@@ -61,7 +62,8 @@ Implemented:
 
 1. `runtime/sdk-bridge.ts` (*provisional* name): eventa definitions, the
    worker-side `Transport`, and the host forwarder with call recording.
-2. Script globals `sdk` and `runner` (*provisional*), next to `auv`.
+2. Script globals `sdk` and `device`, next to `auv`. `device` was chosen over
+   `local` because the selected Device may be remote.
 3. Host forwarding for the `auv` backend, including JSON-encoded HTTP
    bindings (the response text is decoded back in the worker, where the
    SDK's `decodeJson` lives).
@@ -77,20 +79,20 @@ Deferred, each marked in code:
   results by message type. The prototype records method, effect, JSON and
   timing only.
 - `TODO(playground-sdk-types)`: SDK types in the editor's language service, so
-  `runner.` completes.
+  `device.` completes.
 - Moving the bridge into `@auv-js/sdk` when a second host (Electron, iframe)
   needs it.
 
 ## Migration (after the prototype)
 
-1. Keep `auv.*` working while `runner` gains mock, replay and visualization.
+1. Keep `auv.*` working while `device` gains mock, replay and visualization.
 2. Move the ergonomic pieces of `auv.*` (`area()`, `region()`, key strings,
    receipts) into a helper package both Node and the playground import. This
    joins the approved SDK geometry-helper work (B.4/B.5).
-3. Remove the per-method bindings once `auv.*` is a thin layer over `runner`.
+3. Remove the per-method bindings once `auv.*` is a thin layer over `device`.
 
 ## Open questions
 
-- Global names: `runner` and `sdk`, or one `auv` that *is* the SDK client?
+- Whether `auv` itself becomes the SDK client once `device` covers it.
 - Whether replay keeps old recordings (migration) or starts fresh.
 - Whether the mock desktop stays, or the playground requires a device.

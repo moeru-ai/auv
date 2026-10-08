@@ -13,7 +13,7 @@ This contract wins if a historical record conflicts with it.
 
 - [`2026-10-08-playground-sdk-transport-design.md`](2026-10-08-playground-sdk-transport-design.md)
   (proposed: playground scripts on `@auv-js/sdk` over an eventa transport
-  bridge, with host-side recording; prototype behind `sdk` / `runner`)
+  bridge, with host-side recording; prototype behind `sdk` / `device`)
 
 ## Historical / Superseded Pre-V1 Records
 

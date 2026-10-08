@@ -53,7 +53,7 @@ const api: ExecWorkerApi = {
     resumeWaiter?.(next)
   },
   async run(request) {
-    globals.runner = await sdkRunner(request.sdkRoute)
+    globals.device = await deviceRunner(request.sdkRoute)
     return await runCell(request)
   },
   setBreakpoints(lines) {
@@ -77,9 +77,9 @@ const host = createBirpc<HostApi, ExecWorkerApi>(api, {
 })
 
 // ---- Direct SDK -------------------------------------------------------------
-// Scripts may also use `@auv-js/sdk` directly: `sdk` is the module and `runner`
-// is a Runner client bound to the current Device and Run, the same object a
-// Node script gets from `createAuv(await connect(...)).runner(route)`. Calls
+// Scripts may also use `@auv-js/sdk` directly: `sdk` is the module and `device`
+// is the Runner client for the selected Device and the current Run, the same
+// object a Node script gets from `createAuv(await connect(...)).runner(route)`. Calls
 // cross to the host encoded, on their own port (`runtime/sdk-bridge.ts`).
 
 let sdkConnection: Promise<sdk.AuvConnection> | undefined
@@ -94,12 +94,12 @@ addEventListener('message', (event) => {
   sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep) })
 })
 
-async function sdkRunner(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
+async function deviceRunner(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
   if (!route || !sdkConnection) {
-    // Fails on first use, with the reason, rather than as `runner is undefined`.
+    // Fails on first use, with the reason, rather than as `device is undefined`.
     return new Proxy({} as sdk.RunnerClient, {
       get() {
-        throw new Error('runner needs a connected device; the mock desktop and replays do not serve SDK calls yet')
+        throw new Error('`device` needs a connected device; the mock desktop and replays do not serve SDK calls yet')
       },
     })
   }
