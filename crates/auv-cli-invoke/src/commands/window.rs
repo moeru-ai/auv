@@ -460,7 +460,7 @@ async fn click_recognized_window_text_with_session(
   let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
   let matches = session
     .vision()
-    .find_text_in_capture(&capture, &query, auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0))
+    .find_text_in_capture(&capture, &query, auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
     .map_err(|error| error.to_string())?;
   let matched = selected_window_text_match(&matches, &query, index)?;
   let point =
@@ -500,7 +500,7 @@ async fn recognize_window_text_with_session(
   query: String,
   wait: bool,
 ) -> Result<WindowTextRecognition, String> {
-  use auv_driver::{NormalizedRect, WaitOptions};
+  use auv_driver::{RelativeRect, WaitOptions};
   use std::{thread, time::Instant};
 
   let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
@@ -509,7 +509,7 @@ async fn recognize_window_text_with_session(
   loop {
     let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
     let matches =
-      session.vision().find_text_in_capture(&capture, &query, NormalizedRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
+      session.vision().find_text_in_capture(&capture, &query, RelativeRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
     if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
       if wait && matches.matches.is_empty() {
         return Err(format!("window.waitForText did not find text {query:?} before timeout"));

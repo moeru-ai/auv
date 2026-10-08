@@ -344,7 +344,7 @@ fn text_recognition_image_rejects_malformed_rgba_before_ocr() {
 
 #[test]
 fn text_recognition_region_must_stay_inside_normalized_bounds() {
-  let error = normalized_rect_from_proto(Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+  let error = relative_rect_from_proto(Some(auv_api_proto::auv::api::image::v1::RelativeRect {
     x: 0.8,
     y: 0.0,
     width: 0.3,
@@ -352,7 +352,7 @@ fn text_recognition_region_must_stay_inside_normalized_bounds() {
   }))
   .expect_err("out-of-bounds region");
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
-  assert_eq!(normalized_rect_from_proto(None).unwrap(), auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0));
+  assert_eq!(relative_rect_from_proto(None).unwrap(), auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0));
 }
 
 #[test]
@@ -1083,7 +1083,7 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
       nanos: 400_000_000,
     }),
     no_motion_confirmations: 2,
-    motion_region: Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+    motion_region: Some(auv_api_proto::auv::api::image::v1::RelativeRect {
       x: 0.0,
       y: 0.1,
       width: 1.0,
@@ -1105,7 +1105,7 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
     }
   );
   assert_eq!(request.settle, std::time::Duration::from_millis(400));
-  assert_eq!(request.motion_region, Some(auv_driver::NormalizedRect::new(0.0, 0.1, 1.0, 0.8)));
+  assert_eq!(request.motion_region, Some(auv_driver::RelativeRect::new(0.0, 0.1, 1.0, 0.8)));
   assert_eq!(request.output, auv_scan::ScrollUntilOutputOptions { text: true }, "payloads are opt-out");
   assert!(request.validate().is_ok());
 
@@ -1139,7 +1139,7 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
         delta_y: 10.0,
       })),
       condition: Some(proto::scroll_until_begin::Condition::End(proto::ScrollUntilEnd {})),
-      motion_region: Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+      motion_region: Some(auv_api_proto::auv::api::image::v1::RelativeRect {
         x: 0.5,
         y: 0.0,
         width: 0.6,
@@ -1217,14 +1217,14 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
   use auv_api_proto::auv::api::image::v1 as image_proto;
   let capture = gradient_capture(10, 4);
   // x 0.25..0.55 of 10 px covers pixels 2.5..5.5, rounded outward to 2..6.
-  let region = auv_driver::NormalizedRect::new(0.25, 0.5, 0.3, 0.5);
+  let region = auv_driver::RelativeRect::new(0.25, 0.5, 0.3, 0.5);
   let response = capture_image_to_proto(&capture, region, None, image_proto::ImageEncoding::Rgba).unwrap();
   let frame = response.image.expect("image");
   assert_eq!(frame.encoding, image_proto::ImageEncoding::Rgba as i32, "RGBA is an encoding like the others");
   assert_eq!((frame.width, frame.height), (4, 2));
   assert_eq!(&frame.data[..4], &[2, 2, 0, 255], "the crop starts at the outward-rounded pixel");
 
-  let full = auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
+  let full = auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0);
   let bounded = capture_image_to_proto(
     &capture,
     full,
@@ -1277,7 +1277,7 @@ fn stored_capture_carries_a_thumbhash_preview_of_the_whole_image() {
 fn capture_image_webp_is_lossless() {
   use auv_api_proto::auv::api::image::v1 as image_proto;
   let capture = gradient_capture(10, 4);
-  let full = auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
+  let full = auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0);
   let response = capture_image_to_proto(&capture, full, None, image_proto::ImageEncoding::Webp).unwrap();
   let webp = response.image.expect("image");
   assert_eq!((webp.encoding, webp.width, webp.height), (image_proto::ImageEncoding::Webp as i32, 10, 4));
@@ -1420,19 +1420,19 @@ fn screen_regions_map_into_the_image_and_clip_to_it() {
 
   assert_eq!(
     image_region_from_proto(None, screen(200.0, 260.0, 100.0, 150.0), bounds).unwrap(),
-    auv_driver::NormalizedRect::new(0.25, 0.2, 0.25, 0.5)
+    auv_driver::RelativeRect::new(0.25, 0.2, 0.25, 0.5)
   );
   // Clipped to the image: only the overlapping right half remains.
   assert_eq!(
     image_region_from_proto(None, screen(400.0, 200.0, 400.0, 300.0), bounds).unwrap(),
-    auv_driver::NormalizedRect::new(0.75, 0.0, 0.25, 1.0)
+    auv_driver::RelativeRect::new(0.75, 0.0, 0.25, 1.0)
   );
-  assert_eq!(image_region_from_proto(None, None, bounds).unwrap(), auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0));
+  assert_eq!(image_region_from_proto(None, None, bounds).unwrap(), auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0));
 
   let outside = image_region_from_proto(None, screen(0.0, 0.0, 50.0, 50.0), bounds).unwrap_err();
   assert_eq!(outside.code(), tonic::Code::InvalidArgument);
   let both = image_region_from_proto(
-    Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+    Some(auv_api_proto::auv::api::image::v1::RelativeRect {
       x: 0.0,
       y: 0.0,
       width: 1.0,

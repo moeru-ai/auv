@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use auv_driver::{Click, InputActionResult, NormalizedRect, Point};
+use auv_driver::{Click, InputActionResult, Point, RelativeRect};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::QqMusicDriver;
@@ -9,7 +9,7 @@ pub const DEFAULT_APP_ID: &str = "com.tencent.QQMusicMac";
 pub const DEFAULT_SEARCH_SHORTCUT: &str = "cmd+f";
 pub const DEFAULT_SETTLE_MS: u64 = 250;
 pub const DEFAULT_ANCHOR_TIMEOUT_MS: u64 = 5_000;
-pub const DEFAULT_SEARCH_REGION: NormalizedRect = NormalizedRect {
+pub const DEFAULT_SEARCH_REGION: RelativeRect = RelativeRect {
   x: 0.0,
   y: 0.0,
   width: 1.0,

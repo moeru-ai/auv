@@ -634,7 +634,7 @@ message ScrollUntilBegin {
   // Consecutive no-motion updates that count as the end, 1..=10.
   uint32 no_motion_confirmations = 9;
   // Region of the window compared for motion; absence is the whole window.
-  optional auv.api.image.v1.NormalizedRect motion_region = 10;
+  optional auv.api.image.v1.RelativeRect motion_region = 10;
   ScrollOptions options = 11;
   ScrollUntilOutputOptions output = 12;
   // The client runs a predicate and answers each update that has

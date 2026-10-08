@@ -3,7 +3,7 @@ syntax = "proto3";
 
 package auv.api.image.v1;
 
-message NormalizedRect {
+message RelativeRect {
   // Values are relative to the source image and must describe a rectangle
   // inside [0, 1] on both axes.
   double x = 1;

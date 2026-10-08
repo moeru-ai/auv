@@ -68,13 +68,13 @@ impl CapabilityError {
 /// that the Runner clips to the image.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ImageRegion {
-  Normalized(auv_driver::NormalizedRect),
+  Relative(auv_driver::RelativeRect),
   Screen(auv_driver::Rect),
 }
 
-impl From<auv_driver::NormalizedRect> for ImageRegion {
-  fn from(region: auv_driver::NormalizedRect) -> Self {
-    Self::Normalized(region)
+impl From<auv_driver::RelativeRect> for ImageRegion {
+  fn from(region: auv_driver::RelativeRect) -> Self {
+    Self::Relative(region)
   }
 }
 
@@ -491,7 +491,7 @@ impl RunnerClient {
       .max_encoding_message_size(IMAGE_RPC_MESSAGE_SIZE_LIMIT)
       .recognize_text(proto::RecognizeTextRequest {
         source: Some(source),
-        region: normalized_region(region),
+        region: relative_region(region),
         screen_region: screen_region(region),
         custom_words,
         recognition_languages,
@@ -766,7 +766,7 @@ impl DisplaysClient {
       .find_display_text(proto::FindDisplayTextRequest {
         selector: selector.map(display_selector_to_proto),
         query: query.into(),
-        region: normalized_region(options.region),
+        region: relative_region(options.region),
         screen_region: screen_region(options.region),
         custom_words: options.custom_words,
         recognition_languages: options.recognition_languages,
@@ -905,7 +905,7 @@ impl WindowClient {
       .find_window_text(proto::FindWindowTextRequest {
         window: Some(self.window_ref.clone()),
         query: query.into(),
-        region: normalized_region(options.region),
+        region: relative_region(options.region),
         screen_region: screen_region(options.region),
         custom_words: options.custom_words,
         recognition_languages: options.recognition_languages,
@@ -2168,7 +2168,7 @@ fn scroll_until_begin_to_proto(
     max_steps: request.max_steps,
     settle: Some(duration_to_proto(request.settle)?),
     no_motion_confirmations: request.no_motion_confirmations,
-    motion_region: request.motion_region.map(|region| auv_api_proto::auv::api::image::v1::NormalizedRect {
+    motion_region: request.motion_region.map(|region| auv_api_proto::auv::api::image::v1::RelativeRect {
       x: region.x,
       y: region.y,
       width: region.width,
@@ -2287,9 +2287,9 @@ fn rect_to_proto(value: auv_driver::Rect) -> proto::ScreenRect {
 }
 
 /// The `region` field for an image region given as fractions.
-fn normalized_region(region: Option<ImageRegion>) -> Option<auv_api_proto::auv::api::image::v1::NormalizedRect> {
+fn relative_region(region: Option<ImageRegion>) -> Option<auv_api_proto::auv::api::image::v1::RelativeRect> {
   match region? {
-    ImageRegion::Normalized(value) => Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+    ImageRegion::Relative(value) => Some(auv_api_proto::auv::api::image::v1::RelativeRect {
       x: value.x,
       y: value.y,
       width: value.width,
@@ -2303,7 +2303,7 @@ fn normalized_region(region: Option<ImageRegion>) -> Option<auv_api_proto::auv::
 fn screen_region(region: Option<ImageRegion>) -> Option<proto::ScreenRect> {
   match region? {
     ImageRegion::Screen(area) => Some(rect_to_proto(area)),
-    ImageRegion::Normalized(_) => None,
+    ImageRegion::Relative(_) => None,
   }
 }
 

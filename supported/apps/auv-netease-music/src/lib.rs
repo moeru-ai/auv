@@ -65,7 +65,7 @@ use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // reader contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
 // the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
 // crate because they consume NetEase-shaped viewports.
-use auv_driver::{NormalizedRect, Size};
+use auv_driver::{RelativeRect, Size};
 use auv_view::{
   AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParsedViewport, ParserDiagnostic, ReconstructionOutput,
   ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext, ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION,
@@ -121,7 +121,7 @@ pub struct Inputs {
   pub max_scrolls: usize,
   pub scroll_amount: f64,
   pub scroll_settle_ms: u64,
-  pub sidebar_region: Option<NormalizedRect>,
+  pub sidebar_region: Option<RelativeRect>,
   pub ocr_options: TextRecognitionOptions,
   pub category: PlaylistCategory,
 }
@@ -777,10 +777,10 @@ fn draw_overlay(image: &mut RgbaImage, sidebar_bounds: ViewBounds, viewport: &Si
 }
 
 #[cfg(target_os = "macos")]
-fn bounds_to_ratio(bounds: ViewBounds, capture: &Capture) -> NormalizedRect {
+fn bounds_to_ratio(bounds: ViewBounds, capture: &Capture) -> RelativeRect {
   let width = capture.bounds.size.width.max(1.0);
   let height = capture.bounds.size.height.max(1.0);
-  NormalizedRect::new(bounds.x / width, bounds.y / height, bounds.width / width, bounds.height / height)
+  RelativeRect::new(bounds.x / width, bounds.y / height, bounds.width / width, bounds.height / height)
 }
 
 fn section_node(

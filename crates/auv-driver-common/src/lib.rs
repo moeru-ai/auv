@@ -27,8 +27,8 @@ pub use capture::{Activation, Capture, CaptureOptions, CaptureResolution, Displa
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{
-  CameraPoint, CoordinateSpace, NormalizedRect, PixelSize, Point, Point3, Position, Positional, Positioned, ProjectionBasis,
-  ProjectionDerivationFamily, ProjectionSourceSpace, Rect, ScreenPoint, Size, WindowPoint, WorldPoint,
+  CameraPoint, CoordinateSpace, PixelSize, Point, Point3, Position, Positional, Positioned, ProjectionBasis, ProjectionDerivationFamily,
+  ProjectionSourceSpace, Rect, RelativeRect, ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
   ActivationPolicy, Click, ClickModifiers, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt,

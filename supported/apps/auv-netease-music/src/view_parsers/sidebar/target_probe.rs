@@ -6,7 +6,7 @@ use crate::scroll::policies::detection_motion::MotionDetectionPolicy;
 use crate::scroll::policies::detection_motion::MotionEvidence;
 use crate::view_parsers::sidebar::classify_sidebar_text;
 use crate::{SidebarCandidateKind, SidebarViewport, ViewBounds, normalize_identity};
-use auv_driver::NormalizedRect;
+use auv_driver::RelativeRect;
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 
 const OCR_TEXT_PREVIEW_LIMIT: usize = 200;
@@ -78,7 +78,7 @@ pub(crate) struct SidebarTargetProbeCaptureContext {
   pub capture_bounds: ViewBounds,
   pub scale_factor: f64,
   pub sidebar_bounds: ViewBounds,
-  pub sidebar_ratio: NormalizedRect,
+  pub sidebar_ratio: RelativeRect,
   pub crop_pixel_size: (u32, u32),
   pub ocr_region_count: usize,
   pub ocr_text_preview: String,
@@ -194,7 +194,7 @@ pub(crate) fn build_probe_capture_context(
   capture_bounds: ViewBounds,
   scale_factor: f64,
   sidebar_bounds: ViewBounds,
-  sidebar_ratio: NormalizedRect,
+  sidebar_ratio: RelativeRect,
   recognition: &TextRecognition,
   viewport: &SidebarViewport,
   crop_pixel_size: (u32, u32),
@@ -411,7 +411,7 @@ pub(crate) fn capture_sidebar_target_probe(
   let recognition = if sidebar_region_count > 0 {
     sidebar_recognition.relative_to(&capture).map_err(|error| error.to_string())?
   } else {
-    let full_window = NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
+    let full_window = RelativeRect::new(0.0, 0.0, 1.0, 1.0);
     let fallback_recognition = session
       .vision()
       .recognize_text_in_capture_with_options(&capture, full_window, ocr_options)

@@ -112,7 +112,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       ));
     }
   };
-  let full_window = NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
+  let full_window = RelativeRect::new(0.0, 0.0, 1.0, 1.0);
   let mut full_recognition = match session.vision().recognize_text_in_capture_with_options(&capture, full_window, inputs.ocr_options.clone())
   {
     Ok(recognition) => recognition.relative_to(&capture).map_err(|error| error.to_string())?,
@@ -387,7 +387,7 @@ struct LiveSidebarObserver {
   session: LocalDriverSession,
   window: auv_driver::Window,
   sidebar_bounds: ViewBounds,
-  sidebar_ratio: NormalizedRect,
+  sidebar_ratio: RelativeRect,
   ocr_options: TextRecognitionOptions,
   ls_query: Option<String>,
   pending_artifacts: Vec<std::thread::JoinHandle<()>>,
@@ -417,7 +417,7 @@ impl LiveSidebarObserver {
     let sidebar_region_count = sidebar_recognition.regions.len();
     let numeric_query = self.ls_query.as_deref().is_some_and(crate::view_parsers::sidebar::parse::is_single_ascii_digit_query);
     let recognition = if numeric_query && sidebar_region_count == 0 {
-      let full_window = NormalizedRect::new(0.0, 0.0, 1.0, 1.0);
+      let full_window = RelativeRect::new(0.0, 0.0, 1.0, 1.0);
       self.session.vision().recognize_text_in_capture_with_options(&capture, full_window, self.ocr_options.clone()).map_err(|error| {
         ParserDiagnostic {
           code: "sidebar_ocr_full_window_failed".to_string(),

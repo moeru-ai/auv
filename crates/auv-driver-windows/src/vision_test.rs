@@ -28,7 +28,7 @@ fn crop_pixels_clamps_region_to_image_bounds() {
 
   // A region that starts mid-image and extends past the right/bottom edges
   // must be clamped so the crop stays inside the image.
-  let crop = crop_pixels(&capture, NormalizedRect::new(0.5, 0.5, 1.0, 1.0));
+  let crop = crop_pixels(&capture, RelativeRect::new(0.5, 0.5, 1.0, 1.0));
 
   assert_eq!(
     crop,
@@ -45,7 +45,7 @@ fn crop_pixels_clamps_region_to_image_bounds() {
 fn crop_pixels_full_region_covers_whole_image() {
   let capture = capture(64, 48, Rect::new(0.0, 0.0, 64.0, 48.0));
 
-  let crop = crop_pixels(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0));
+  let crop = crop_pixels(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0));
 
   assert_eq!(
     crop,
@@ -127,7 +127,7 @@ fn empty_region_recognizes_nothing_without_calling_ocr() {
 
   // A zero-width region short-circuits before reaching the OCR engine, so
   // this stays valid (and asserts an empty result) on every target.
-  let recognition = recognize_text_in_capture(&capture, NormalizedRect::new(0.0, 0.0, 0.0, 1.0), &Default::default())
+  let recognition = recognize_text_in_capture(&capture, RelativeRect::new(0.0, 0.0, 0.0, 1.0), &Default::default())
     .expect("empty region yields empty recognition");
 
   assert!(recognition.regions.is_empty());

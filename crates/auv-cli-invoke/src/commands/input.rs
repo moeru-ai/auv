@@ -1527,7 +1527,7 @@ impl ScrollUntilArgs {
 }
 
 /// Parses `x,y,width,height` normalized to the window.
-fn parse_normalized_region(value: &str) -> Result<auv_driver::NormalizedRect, String> {
+fn parse_normalized_region(value: &str) -> Result<auv_driver::RelativeRect, String> {
   let numbers = value
     .split(',')
     .map(|part| part.trim().parse::<f64>().map_err(|error| format!("invalid --region value {part:?}: {error}")))
@@ -1535,7 +1535,7 @@ fn parse_normalized_region(value: &str) -> Result<auv_driver::NormalizedRect, St
   let [x, y, width, height] = numbers[..] else {
     return Err("--region requires four values: x,y,width,height".to_string());
   };
-  Ok(auv_driver::NormalizedRect::new(x, y, width, height))
+  Ok(auv_driver::RelativeRect::new(x, y, width, height))
 }
 
 impl ScrollUntilPlan {

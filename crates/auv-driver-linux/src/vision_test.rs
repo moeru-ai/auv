@@ -39,7 +39,7 @@ fn recognized(text: &str, bounds: Rect) -> RecognizedText {
 fn crop_pixels_clamps_region_to_image_bounds() {
   let capture = capture(200, 100, Rect::new(0.0, 0.0, 200.0, 100.0));
 
-  let crop = crop_pixels(&capture, NormalizedRect::new(0.5, 0.5, 1.0, 1.0));
+  let crop = crop_pixels(&capture, RelativeRect::new(0.5, 0.5, 1.0, 1.0));
 
   assert_eq!(
     crop,
@@ -114,7 +114,7 @@ fn ocr_matches_filters_to_query_and_flattens_confidence() {
 fn empty_region_recognizes_nothing_without_calling_ocr() {
   let capture = capture(100, 100, Rect::new(0.0, 0.0, 100.0, 100.0));
 
-  let recognition = recognize_text_in_capture(&capture, NormalizedRect::new(0.0, 0.0, 0.0, 1.0), &Default::default())
+  let recognition = recognize_text_in_capture(&capture, RelativeRect::new(0.0, 0.0, 0.0, 1.0), &Default::default())
     .expect("empty region yields empty recognition");
 
   assert!(recognition.regions.is_empty());

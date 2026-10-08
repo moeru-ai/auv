@@ -140,7 +140,7 @@ impl CapturesClient {
         capture: Some(proto::CaptureRef {
           capture_id: capture.id().to_string(),
         }),
-        region: super::normalized_region(options.region),
+        region: super::relative_region(options.region),
         screen_region: super::screen_region(options.region),
         max_size: options.max_size.map(|size| image_proto::PixelSize {
           width: size.width,

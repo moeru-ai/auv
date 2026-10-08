@@ -201,7 +201,7 @@ async fn recognize_screen_text_with_cancellation(
   wait: bool,
   cancellation: &crate::InvokeCancellation,
 ) -> Result<auv_driver::OcrMatches, String> {
-  use auv_driver::{CaptureOptions, NormalizedRect, WaitOptions};
+  use auv_driver::{CaptureOptions, RelativeRect, WaitOptions};
 
   cancellation.check().map_err(|error| error.to_string())?;
   let session = auv::local::open().map_err(|error| error.to_string())?;
@@ -213,7 +213,7 @@ async fn recognize_screen_text_with_cancellation(
     cancellation.check().map_err(|error| error.to_string())?;
     let matches = session
       .vision()
-      .find_text_in_capture(&capture.capture, &query, NormalizedRect::new(0.0, 0.0, 1.0, 1.0))
+      .find_text_in_capture(&capture.capture, &query, RelativeRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     cancellation.check().map_err(|error| error.to_string())?;
     Ok((matches, capture))
@@ -323,7 +323,7 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
     let capture = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
     let matches = session
       .vision()
-      .find_text_in_capture(&capture.capture, &query, auv_driver::NormalizedRect::new(0.0, 0.0, 1.0, 1.0))
+      .find_text_in_capture(&capture.capture, &query, auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
     let action = session

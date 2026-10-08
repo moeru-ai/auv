@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use auv_driver::{InputActionResult, NormalizedRect, Point, ScreenPoint, TextRecognition};
+use auv_driver::{InputActionResult, Point, RelativeRect, ScreenPoint, TextRecognition};
 use auv_inference_common::{ImageSize, InferenceError};
 use auv_task_object_detection::{BoundingBox, Detection, DetectionResult};
 use image::RgbImage;
@@ -40,7 +40,7 @@ pub enum ReadError {
 #[derive(Clone, Debug)]
 pub struct HoverReadRequest {
   pub point: Point,
-  pub region: NormalizedRect,
+  pub region: RelativeRect,
   pub custom_words: Vec<String>,
 }
 
@@ -190,7 +190,7 @@ pub async fn hover_read_display_frame_points_via_api(
         .recognize_text(
           &capture,
           Some(
-            auv_driver::NormalizedRect {
+            auv_driver::RelativeRect {
               x: request.region.x,
               y: request.region.y,
               width: request.region.width,
@@ -489,7 +489,7 @@ async fn observe_live_with_runners(
   Ok(state)
 }
 
-fn ocr_region_for_ui(ui: &DetectionResult) -> Option<auv_driver::NormalizedRect> {
+fn ocr_region_for_ui(ui: &DetectionResult) -> Option<auv_driver::RelativeRect> {
   if ui.image_size.width == 0 || ui.image_size.height == 0 {
     return None;
   }
@@ -511,7 +511,7 @@ fn ocr_region_for_ui(ui: &DetectionResult) -> Option<auv_driver::NormalizedRect>
   let y1 = (f64::from(y1) / image_height - 0.01).clamp(0.0, 1.0);
   let x2 = (f64::from(x2) / image_width + 0.01).clamp(0.0, 1.0);
   let y2 = (f64::from(y2) / image_height + 0.01).clamp(0.0, 1.0);
-  (x2 > x1 && y2 > y1).then_some(auv_driver::NormalizedRect {
+  (x2 > x1 && y2 > y1).then_some(auv_driver::RelativeRect {
     x: x1,
     y: y1,
     width: x2 - x1,

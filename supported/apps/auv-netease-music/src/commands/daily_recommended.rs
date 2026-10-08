@@ -239,7 +239,7 @@ impl DailyRecommendedRun<'_> {
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
+      .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
     let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
     let Some(target) = best_text_match(&recognition, query, self.window.frame.size, guard)? else {
@@ -279,7 +279,7 @@ impl DailyRecommendedRun<'_> {
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
+      .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
     let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
     let Some(target) = best_text_match(&recognition, query, self.window.frame.size, guard)? else {
@@ -346,7 +346,7 @@ impl DailyRecommendedRun<'_> {
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
+      .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
     let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
     best_text_match(&recognition, "每日推荐", self.window.frame.size, |bounds, size| {
@@ -446,7 +446,7 @@ impl DailyRecommendedRun<'_> {
       let recognition = self
         .session
         .vision()
-        .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
+        .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("daily recommended fallback OCR failed: {error}"))?;
       let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let visible =
@@ -536,7 +536,7 @@ impl DailyRecommendedRun<'_> {
       let bottom_text = self
         .session
         .vision()
-        .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.88, 0.46, 0.12), self.inputs.ocr_options.clone())
+        .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.88, 0.46, 0.12), self.inputs.ocr_options.clone())
         .ok()
         .map(|recognition| recognition.text.trim().to_string())
         .filter(|text| !text.is_empty());

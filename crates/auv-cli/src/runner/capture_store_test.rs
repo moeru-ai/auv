@@ -43,8 +43,8 @@ fn full() -> RegionKey {
   RegionKey::new(None, None)
 }
 
-fn normalized(x: f64, y: f64, width: f64, height: f64) -> auv_api_proto::auv::api::image::v1::NormalizedRect {
-  auv_api_proto::auv::api::image::v1::NormalizedRect {
+fn normalized(x: f64, y: f64, width: f64, height: f64) -> auv_api_proto::auv::api::image::v1::RelativeRect {
+  auv_api_proto::auv::api::image::v1::RelativeRect {
     x,
     y,
     width,

@@ -4,7 +4,7 @@ import type { PositionSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type { WindowTarget } from './driver'
 
 // Small pure helpers for the geometry AUV returns. They take any object with
-// the right fields, so `ScreenRect`, `NormalizedRect`, a window `frame` or a
+// the right fields, so `ScreenRect`, `RelativeRect`, a window `frame` or a
 // text match's `bounds` work as is. Rectangles are logical screen space unless
 // the caller's data says otherwise; the helpers never convert spaces.
 

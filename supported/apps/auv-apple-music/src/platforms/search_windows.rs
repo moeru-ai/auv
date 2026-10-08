@@ -256,7 +256,7 @@ mod platform {
   use std::time::{Duration, Instant};
 
   use auv_driver::LocalDriverSession;
-  use auv_driver::geometry::NormalizedRect;
+  use auv_driver::geometry::RelativeRect;
   use auv_driver::input::{InputPolicy, TextSubmit, TypeTextOptions};
   use auv_driver::window::{Window, WindowMutationOptions, WindowMutationVerification};
 
@@ -376,7 +376,7 @@ mod platform {
       let recognition = self
         .session
         .vision()
-        .recognize_text_in_capture(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0))
+        .recognize_text_in_capture(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0))
         .map_err(|error| format!("search fallback OCR failed: {error}"))?;
       let verified = normalized(&recognition.text).contains(&normalized(query));
       crate::tracing::capture_artifact("auv.apple_music.search.verification_capture", &capture);

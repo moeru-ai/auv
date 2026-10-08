@@ -125,7 +125,7 @@ only the marks drawn up to the cursor; they are not device calls and are not
 recorded for replay.
 
 OCR can be limited to an area with `within`. AUV reads only that part of the
-image (`NormalizedRect` region); match bounds stay in screen space, and the
+image (`RelativeRect` region); match bounds stay in screen space, and the
 area is drawn dashed on the result's preview.
 
 ```ts

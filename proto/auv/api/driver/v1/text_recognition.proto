@@ -62,7 +62,7 @@ message RecognizeTextRequest {
     ImageFrame image = 7;
   }
   // Part of the image as fractions of its size.
-  optional auv.api.image.v1.NormalizedRect region = 3;
+  optional auv.api.image.v1.RelativeRect region = 3;
   // The same area in logical screen coordinates, clipped to the capture.
   // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
   ScreenRect screen_region = 8;
@@ -82,7 +82,7 @@ message FindWindowTextRequest {
   reserved "lease";
   WindowRef window = 2;
   string query = 3;
-  optional auv.api.image.v1.NormalizedRect region = 4;
+  optional auv.api.image.v1.RelativeRect region = 4;
   // The same area in logical screen coordinates, clipped to the capture.
   // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
   ScreenRect screen_region = 7;
@@ -104,7 +104,7 @@ message FindDisplayTextRequest {
   // Absence selects the primary display.
   DisplaySelector selector = 2;
   string query = 3;
-  optional auv.api.image.v1.NormalizedRect region = 4;
+  optional auv.api.image.v1.RelativeRect region = 4;
   // The same area in logical screen coordinates, clipped to the capture.
   // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
   ScreenRect screen_region = 7;

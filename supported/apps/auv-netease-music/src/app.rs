@@ -16,7 +16,7 @@ use crate::{SongListScanResult, models::SongSource};
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{NormalizedRect, Size};
+use auv_driver::{RelativeRect, Size};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewReuse {
@@ -327,7 +327,7 @@ impl LiveViewProvider {
     let (screen, main) = if scope.screen || scope.main {
       let recognition = session
         .vision()
-        .recognize_text_in_capture_with_options(&capture, NormalizedRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
+        .recognize_text_in_capture_with_options(&capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("live viewport full-window OCR failed: {error}"))?;
       let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let window_size = Size::new(window.frame.size.width, window.frame.size.height);

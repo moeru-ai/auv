@@ -118,7 +118,7 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
-  use auv_driver::geometry::NormalizedRect;
+  use auv_driver::geometry::RelativeRect;
   use auv_driver::vision::TextRecognitionOptions;
 
   use super::{BOTTOM_BAR_TOP, MetadataSource, PlaybackState, PlaybackStatus, PlaybackStatusInputs};
@@ -280,7 +280,7 @@ mod platform {
     capture: &auv_driver::capture::Capture,
     diagnostics: &mut Vec<String>,
   ) -> (Option<String>, Option<String>) {
-    let region = NormalizedRect::new(0.0, BOTTOM_BAR_TOP, 1.0, 1.0 - BOTTOM_BAR_TOP);
+    let region = RelativeRect::new(0.0, BOTTOM_BAR_TOP, 1.0, 1.0 - BOTTOM_BAR_TOP);
     let recognition = match session.vision().recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default()) {
       Ok(r) => r,
       Err(e) => {

@@ -121,7 +121,7 @@ service CaptureService {
 
 message GetCaptureImageRequest {
   CaptureRef capture = 1;
-  optional auv.api.image.v1.NormalizedRect region = 2; // crop first
+  optional auv.api.image.v1.RelativeRect region = 2; // crop first
   auv.api.image.v1.PixelSize max_size = 3;             // fit inside; absent = native
   ImageEncoding encoding = 4;                          // RGBA (default), PNG, JPEG, WEBP
 }
@@ -331,11 +331,13 @@ The wire and the SDK still split everything by space. Proposal:
    rectangle into the image and clips it; a rectangle that misses the image is
    `INVALID_ARGUMENT`. The Rust client takes `ImageRegion::{Normalized,
    Screen}`; the playground passes its areas directly.
-4. **One normalized rectangle.** Done (2026-10-09):
-   - `auv-core`'s `NormalizedRegion` is deleted; `ImageRegion::Normalized`
-     takes `auv_driver::NormalizedRect`.
-   - `RatioRect` is renamed `NormalizedRect` (*provisional*), so Rust and
-     Protobuf use one name. The fields and their serde names are unchanged.
+4. **One relative rectangle.** Done (2026-10-09):
+   - The owner named it `RelativeRect`: a rectangle in 0–1 fractions of the
+     image or area it belongs to, beside `ScreenRect` in logical screen space.
+   - Rust's `RatioRect` and Protobuf's `NormalizedRect` are both renamed
+     `RelativeRect`. The fields, field numbers and serde names are unchanged.
+   - `auv-core`'s `NormalizedRegion` is deleted. `ImageRegion::Normalized`
+     becomes `ImageRegion::Relative` and takes `auv_driver::RelativeRect`.
    - `auv-view`'s `ViewBounds` stays for its documented dependency direction.
 5. **SDK geometry helpers.** Done (2026-10-09). `@auv-js/sdk` exports:
    - `center(rect)`;

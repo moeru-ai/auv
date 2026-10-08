@@ -1,7 +1,7 @@
 use auv_driver_common::Driver;
 use auv_driver_common::capture::{Activation, CaptureOptions};
 #[cfg(target_os = "windows")]
-use auv_driver_common::geometry::NormalizedRect;
+use auv_driver_common::geometry::RelativeRect;
 use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
 use auv_driver_common::input::{ClickOptions, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollOptions, WaitOptions, WindowInput};
 use auv_driver_common::window::{Window, WindowRef};
@@ -207,7 +207,7 @@ fn find_text_returns_no_match_for_unmatchable_query_on_a_live_window() {
 
   let matches = session
     .window()
-    .find_text(&window, "auv-driver-windows-find-text-query-that-never-matches", NormalizedRect::new(0.0, 0.0, 1.0, 1.0), short_wait())
+    .find_text(&window, "auv-driver-windows-find-text-query-that-never-matches", RelativeRect::new(0.0, 0.0, 1.0, 1.0), short_wait())
     .expect("find_text succeeds even without a match");
 
   assert!(matches.matches.is_empty());
@@ -223,7 +223,7 @@ fn wait_text_fails_with_not_found_for_unmatchable_query_on_a_live_window() {
 
   let error = session
     .window()
-    .wait_text(&window, "auv-driver-windows-wait-text-query-that-never-matches", NormalizedRect::new(0.0, 0.0, 1.0, 1.0), short_wait())
+    .wait_text(&window, "auv-driver-windows-wait-text-query-that-never-matches", RelativeRect::new(0.0, 0.0, 1.0, 1.0), short_wait())
     .expect_err("wait_text fails when the query never matches before the timeout");
 
   assert!(error.to_string().contains("before timeout"));

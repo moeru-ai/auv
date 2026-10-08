@@ -1363,13 +1363,14 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   fetched images are cached on the pixels; pixels idle for 30 s are packed
   losslessly (QOI). Over budget, the store drops cached results first, then
   packs, then evicts.
-- **Image regions.** OCR, find-text and image fetches take `region` (fractions
-  of the image) or `screen_region` (a logical screen rectangle, clipped to the
-  image; exclusive with `region`). OCR result bounds are screen rectangles on
+- **Image regions.** OCR, find-text and image fetches take `region`, a
+  `RelativeRect` in 0–1 fractions of the image, or
+  `screen_region`, a `ScreenRect` in logical screen coordinates that is clipped
+  to the image. The two are exclusive. OCR result bounds are screen rectangles on
   every driver, in the space of the capture's `bounds`; `origin` maps them
   into the capture's owning space.
 - **Capture image fetch** (`GetCaptureImage`): the explicit call that moves
-  pixels to a client, optionally cropped to a normalized region, fit inside a
+  pixels to a client, optionally cropped to a relative region, fit inside a
   maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.
 - **Image evidence artifacts** (screenshots, OCR sources, overlays) are
   lossless WebP (`image/webp`), encoded by `auv_tracing::image_artifact`.

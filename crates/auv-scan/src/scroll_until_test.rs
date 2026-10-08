@@ -260,7 +260,7 @@ fn invalid_requests_are_rejected_before_any_input() {
   confirmations.no_motion_confirmations = 0;
   cases.push(confirmations);
   let mut region = base.clone();
-  region.motion_region = Some(auv_driver::NormalizedRect::new(0.5, 0.0, 0.6, 1.0));
+  region.motion_region = Some(auv_driver::RelativeRect::new(0.5, 0.0, 0.6, 1.0));
   cases.push(region);
   cases.push(request(ScrollUntilCondition::TextVisible {
     query: "  ".to_string(),

@@ -99,7 +99,7 @@ message ImageFrame {
 message GetCaptureImageRequest {
   CaptureRef capture = 1;
   // Crop before resizing; absence keeps the whole capture.
-  optional auv.api.image.v1.NormalizedRect region = 2;
+  optional auv.api.image.v1.RelativeRect region = 2;
   // The same area in logical screen coordinates, clipped to the capture.
   // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
   ScreenRect screen_region = 5;

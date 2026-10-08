@@ -95,7 +95,7 @@ pub(super) struct RegionKey {
 
 impl RegionKey {
   pub(super) fn new(
-    normalized: Option<&auv_api_proto::auv::api::image::v1::NormalizedRect>,
+    normalized: Option<&auv_api_proto::auv::api::image::v1::RelativeRect>,
     screen: Option<&auv_api_proto::auv::api::driver::v1::ScreenRect>,
   ) -> Self {
     Self {
