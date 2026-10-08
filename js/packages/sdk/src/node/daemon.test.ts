@@ -219,7 +219,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
     })).rejects.toBeInstanceOf(AuvDaemonStartError)
   })
 
-  it.skipIf(isWindows)('lets tinyexec stop the daemon when its lifecycle signal aborts', async () => {
+  // tinyexec stops the child with SIGTERM. Since #290 the daemon handles
+  // SIGTERM like Ctrl-C: it shuts down gracefully, removes its socket, and
+  // exits 0 instead of being killed by the signal.
+  it.skipIf(isWindows)('lets tinyexec stop the daemon gracefully when its lifecycle signal aborts', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-abort-'))
     const controller = new AbortController()
@@ -233,7 +236,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
 
     try {
       controller.abort()
-      await expect(daemon.exited).resolves.toMatchObject({ code: null })
+      await expect(daemon.exited).resolves.toEqual({ code: 0, signal: null })
+      await expect(access(join(workingDirectory, 'auv.sock'))).rejects.toThrow()
     }
     finally {
       await daemon.stop()
