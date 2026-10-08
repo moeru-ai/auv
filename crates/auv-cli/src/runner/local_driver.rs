@@ -1330,7 +1330,7 @@ fn scroll_stream_stop_reason_to_proto(reason: auv_driver::ScrollStreamStopReason
 /// (latest value) and the completion. Dropping this future (client
 /// disconnect) aborts the native task, whose cancellation guard stops the
 /// next wait.
-/// Runs the observation loop on the blocking input pool. Every observation is
+/// Runs the update loop on the blocking input pool. Every update is
 /// sent with backpressure (captures are large and each one matters to a
 /// predicate). With `await_decisions`, the loop blocks on the client's decision;
 /// a half-closed request stream or a dropped relay counts as a stop.
@@ -1368,13 +1368,13 @@ async fn relay_scroll_until(
       }
     }
   };
-  let observations = sender.clone();
+  let updates = sender.clone();
   let task = run_input_blocking(move || {
     let mut surface = auv_scan::WindowScrollUntilSurface::new(&session, window, point, options);
-    auv_scan::scroll_until(&mut surface, &until, &mut |observation| {
-      let awaiting_decision = await_decisions && observation.stop.is_none();
-      let event = response(Event::Observation(scroll_until_observation_to_proto(observation, awaiting_decision, &captures)));
-      if observations.blocking_send(Ok(event)).is_err() {
+    auv_scan::scroll_until(&mut surface, &until, &mut |update| {
+      let awaiting_decision = await_decisions && update.stop.is_none();
+      let event = response(Event::Update(scroll_until_update_to_proto(update, awaiting_decision, &captures)));
+      if updates.blocking_send(Ok(event)).is_err() {
         return Err(auv_driver::DriverError::Backend {
           message: "scroll-until client disconnected".to_string(),
         });
@@ -1417,22 +1417,22 @@ async fn relay_scroll_until(
   let _ = sender.send(event).await;
 }
 
-fn scroll_until_observation_to_proto(
-  observation: auv_scan::ScrollUntilObservation,
+fn scroll_until_update_to_proto(
+  update: auv_scan::ScrollUntilUpdate,
   awaiting_decision: bool,
   captures: &CaptureStore,
-) -> proto::ScrollUntilObservation {
-  proto::ScrollUntilObservation {
-    steps: observation.steps,
+) -> proto::ScrollUntilUpdate {
+  proto::ScrollUntilUpdate {
+    steps: update.steps,
     delivered: Some(proto::Scroll {
-      delta_x: observation.delivered.delta_x,
-      delta_y: observation.delivered.delta_y,
+      delta_x: update.delivered.delta_x,
+      delta_y: update.delivered.delta_y,
     }),
-    motion: observation.motion.map(viewport_pixel_motion_to_proto),
-    no_motion_streak: observation.no_motion_streak,
-    capture: Some(stored_capture_to_proto(captures, observation.capture)),
-    text: observation.text.map(recognition_to_proto),
-    stop: observation.stop.map_or(proto::ScrollUntilStopReason::Unspecified, scroll_until_stop_reason_to_proto) as i32,
+    motion: update.motion.map(viewport_pixel_motion_to_proto),
+    no_motion_streak: update.no_motion_streak,
+    capture: Some(stored_capture_to_proto(captures, update.capture)),
+    text: update.text.map(recognition_to_proto),
+    stop: update.stop.map_or(proto::ScrollUntilStopReason::Unspecified, scroll_until_stop_reason_to_proto) as i32,
     awaiting_decision,
   }
 }
@@ -1749,8 +1749,8 @@ fn scroll_until_request_from_proto(request: proto::ScrollUntilBegin) -> Result<a
     settle: duration_from_proto(request.settle, std::time::Duration::ZERO, "settle")?,
     no_motion_confirmations: request.no_motion_confirmations,
     motion_region,
-    observe: auv_scan::ScrollUntilObserve {
-      text: !request.observe.is_some_and(|observe| observe.omit_text),
+    output: auv_scan::ScrollUntilOutputOptions {
+      text: !request.output.is_some_and(|output| output.omit_text),
     },
   })
 }
@@ -2513,7 +2513,7 @@ fn driver_status(error: auv_driver::DriverError) -> Status {
     auv_driver::DriverError::NotFound { .. } => Status::not_found(error.to_string()),
     auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(error.to_string()),
     auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(error.to_string()),
-    auv_driver::DriverError::StaleObservation { .. } | auv_driver::DriverError::RoleMismatch { .. } => {
+    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => {
       Status::failed_precondition(error.to_string())
     }
     auv_driver::DriverError::Backend { .. } => Status::unavailable(error.to_string()),

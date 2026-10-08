@@ -266,7 +266,7 @@ fn classify_ax_native_error(message: Option<String>, recovery: Option<String>) -
   }
   // The recorded path/tree no longer resolves against the live UI.
   if lowered.contains("is out of range") || lowered.contains("tree likely shifted") || lowered.contains("could not resolve target") {
-    return DriverError::StaleObservation { message, recovery };
+    return DriverError::StaleUiReference { message, recovery };
   }
   DriverError::Backend {
     message: join_recovery(message, recovery),

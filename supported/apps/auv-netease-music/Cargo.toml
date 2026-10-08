@@ -24,9 +24,13 @@ required-features = ["tracing"]
 name = "auv-runner-netease-music"
 path = "src/bin/auv-runner-netease-music.rs"
 
-# The test runs the `auv-netease-music` client binary, which needs `tracing`.
+# These tests run the `auv-netease-music` client binary, which needs `tracing`.
 [[test]]
 name = "custom_runner_e2e"
+required-features = ["tracing"]
+
+[[test]]
+name = "remote_context"
 required-features = ["tracing"]
 
 [dependencies]

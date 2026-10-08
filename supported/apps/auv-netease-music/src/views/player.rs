@@ -34,7 +34,7 @@ impl PlayerView {
     }
   }
 
-  /// Build a view when the player was not classified by this observation.
+  /// Build a view when the player was not classified by this viewport.
   pub fn unknown() -> Self {
     Self {
       state: PlayerState::Unknown,

@@ -49,7 +49,7 @@ pub enum StoreNextRoundConfirmationFailure {
   StoreOriginUnconfirmed,
   ExpectedBlindSelection,
   ExpectedKnownStoreExit,
-  ObservationFailed { message: String },
+  ReadFailed { message: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -134,7 +134,7 @@ pub(crate) fn evaluate_store_next_round_confirmation(
         requested,
         before_phase: before.phase,
         after_phase: None,
-        reason: StoreNextRoundConfirmationFailure::ObservationFailed { message },
+        reason: StoreNextRoundConfirmationFailure::ReadFailed { message },
       };
     }
   };

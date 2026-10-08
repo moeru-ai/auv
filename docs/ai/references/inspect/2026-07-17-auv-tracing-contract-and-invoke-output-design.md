@@ -1,5 +1,10 @@
 # AUV Tracing Contract And Invoke Output Design
 
+> Naming migration (2026-10-08): `ViewObservation` → `ParsedViewport`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 Status: draft design direction under review, not implementation-ready
 
 Responsibility: inspect / run recording / invoke output contract

@@ -128,11 +128,11 @@ mod tests {
       let dispatch = configure().tracing_store(store.clone()).build().expect("memory tracing dispatch");
       let context = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
 
-      context.in_scope(|| emit_image_artifact("auv.balatro.observation.capture", "fixture://before", &image::RgbaImage::new(2, 2)));
+      context.in_scope(|| emit_image_artifact("auv.balatro.read.capture", "fixture://before", &image::RgbaImage::new(2, 2)));
       dispatch.flush().await.expect("flush tracing");
 
       assert!(store.records().iter().any(|record| {
-        matches!(record, TraceRecord::Artifact { metadata, .. } if metadata.purpose().as_str() == "auv.balatro.observation.capture")
+        matches!(record, TraceRecord::Artifact { metadata, .. } if metadata.purpose().as_str() == "auv.balatro.read.capture")
       }));
     });
   }

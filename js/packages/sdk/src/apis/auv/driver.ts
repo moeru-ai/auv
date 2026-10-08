@@ -24,7 +24,7 @@ import type {
   ScrollSchema,
   ScrollUntilBeginSchema,
   ScrollUntilCompleted,
-  ScrollUntilObservation,
+  ScrollUntilUpdate,
   ScrollVelocitySchema,
   ScrollWindowPointMotionResponse,
   StreamScrollBeginSchema,
@@ -188,21 +188,21 @@ export interface ScrollStreamController {
 }
 
 export interface ScrollUntilCallOptions extends OperationOptions {
-  /** Receives every observation in order, including the last one. */
-  onObservation?: (observation: ScrollUntilObservation) => Promise<void> | void
+  /** Receives every update in order, including the last one. */
+  onUpdate?: (update: ScrollUntilUpdate) => Promise<void> | void
   /**
    * Client-side stop predicate. Returning `true` stops the loop with reason
    * `predicateSatisfied`. The Runner waits for each answer, and does not ask
-   * about observations it already ends itself (`observation.stop`).
+   * about updates it already ends itself (`update.stop`).
    */
-  until?: (observation: ScrollUntilObservation) => boolean | Promise<boolean>
+  until?: (update: ScrollUntilUpdate) => boolean | Promise<boolean>
 }
 
 /**
  * `scrollUntil` begin fields; the window, point, and decision mode come from
  * the call. Without a `condition`, the loop stops at the end (no visual motion).
- * Observations carry the capture by reference (fetch pixels with
- * `captures.image`) and the recognized text unless `observe.omitText` is set.
+ * Updates carry the capture by reference (fetch pixels with
+ * `captures.image`) and the recognized text unless `output.omitText` is set.
  */
 export type ScrollUntilOptions = InputFields<typeof ScrollUntilBeginSchema, 'awaitDecisions' | 'point' | 'window'>
 
@@ -358,7 +358,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       }, options),
       scrollStream: (begin, options) => openScrollStream(id, begin, options),
       scrollUntil: async (point, request, options = {}) => {
-        const { onObservation, until, ...operation } = options
+        const { onUpdate, until, ...operation } = options
         const call = await duplex(InputService.method.scrollUntil, operation)
         const condition = request.condition?.case === undefined ? { case: 'end' as const, value: {} } : request.condition
         await call.send({
@@ -371,9 +371,9 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
           const event = response.event
           if (event.case === 'completed')
             return event.value
-          if (event.case !== 'observation')
+          if (event.case !== 'update')
             continue
-          await onObservation?.(event.value)
+          await onUpdate?.(event.value)
           if (event.value.awaitingDecision)
             await call.send({ event: { case: 'decision', value: { stop: await until?.(event.value) ?? true } } })
         }

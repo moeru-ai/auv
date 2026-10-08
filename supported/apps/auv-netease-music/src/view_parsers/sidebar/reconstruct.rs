@@ -4,7 +4,7 @@ pub(crate) fn reconstruct_playlist_sidebar(
   app: ScanAppContext,
   window: ScanWindowContext,
   sidebar_region: ViewRegionRecord,
-  observations: Vec<SidebarViewportObservation>,
+  viewports: Vec<SidebarViewport>,
 ) -> PlaylistSidebarScan {
   let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
   let ReconstructionOutput {
@@ -14,14 +14,14 @@ pub(crate) fn reconstruct_playlist_sidebar(
     sections,
     diagnostics,
     boundary,
-  } = reconstruct(&NeteasePolicy, &observations, sidebar_bounds);
+  } = reconstruct(&NeteasePolicy, &viewports, sidebar_bounds);
 
   PlaylistSidebarScan {
     schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
     app,
     window,
     sidebar_region,
-    observations,
+    viewports,
     reconstruction: ViewReconstructionRecord {
       root,
       anchor_index,
@@ -47,13 +47,13 @@ impl ReconstructionPolicy for NeteasePolicy {
   type SectionKey = (SidebarSectionKind, String);
   type SectionProjection = SidebarSection;
   type ItemProjection = PlaylistSidebarItem;
-  type Observation = SidebarViewportObservation;
+  type Viewport = SidebarViewport;
 
-  fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  fn candidates<'a>(&self, viewport: &'a Self::Viewport) -> impl Iterator<Item = &'a Self::Candidate> + 'a
   where
     Self::Candidate: 'a,
   {
-    observation.candidates.iter()
+    viewport.candidates.iter()
   }
 
   fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {
@@ -84,11 +84,11 @@ impl ReconstructionPolicy for NeteasePolicy {
     }
   }
 
-  fn build_section(&self, observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
+  fn build_section(&self, viewport: &Self::Viewport, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
     let label = candidate.label.as_deref().map(str::trim).unwrap_or_default();
     let kind = SidebarSectionKind::from_label(label);
-    let section_id = format!("section.obs{}.{}.{}", observation.observation_index, candidate.id, slug(label));
-    let node = section_node(&section_id, kind, label, candidate, observation);
+    let section_id = format!("section.obs{}.{}.{}", viewport.viewport_index, candidate.id, slug(label));
+    let node = section_node(&section_id, kind, label, candidate, viewport);
     let projection = SidebarSection {
       id: section_id,
       kind,
@@ -125,14 +125,14 @@ impl ReconstructionPolicy for NeteasePolicy {
 
   fn build_item(
     &self,
-    observation: &Self::Observation,
+    viewport: &Self::Viewport,
     candidate: &Self::Candidate,
     section: &Self::SectionProjection,
   ) -> (ViewNodeRecord, Self::ItemProjection) {
     let label = candidate.label.as_deref().map(str::trim).unwrap_or_default();
-    let item_id = format!("item.obs{}.{}.{}", observation.observation_index, candidate.id, slug(label));
+    let item_id = format!("item.obs{}.{}.{}", viewport.viewport_index, candidate.id, slug(label));
     let anchor_id = format!("anchor.{item_id}");
-    let node = item_node(&item_id, &anchor_id, label, candidate, observation);
+    let node = item_node(&item_id, &anchor_id, label, candidate, viewport);
     let projection = PlaylistSidebarItem {
       id: item_id,
       label: label.to_string(),

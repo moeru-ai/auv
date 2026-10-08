@@ -214,7 +214,7 @@ pub enum FailureCode {
   Unsupported,
   PermissionDenied,
   InvalidInput,
-  StaleObservation,
+  StaleUiReference,
   RoleMismatch,
   Backend,
 }
@@ -245,7 +245,7 @@ impl From<auv_driver::DriverError> for InvokeFailure {
       DriverError::NotFound { .. } => FailureCode::NotFound,
       DriverError::PermissionDenied { .. } => FailureCode::PermissionDenied,
       DriverError::InvalidInput { .. } => FailureCode::InvalidInput,
-      DriverError::StaleObservation { .. } => FailureCode::StaleObservation,
+      DriverError::StaleUiReference { .. } => FailureCode::StaleUiReference,
       DriverError::RoleMismatch { .. } => FailureCode::RoleMismatch,
       DriverError::Backend { .. } => FailureCode::Backend,
     };
@@ -271,7 +271,7 @@ impl From<auv::client::runner::CapabilityError> for InvokeFailure {
       Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
       Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
       Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
-      Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleObservation,
+      Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleUiReference,
       _ => FailureCode::Backend,
     };
     let mut failure = Self::new(code, error.to_string());

@@ -121,8 +121,15 @@ fn stream_integrates_velocity_and_stops_on_request() {
   stopper.join().unwrap();
 
   assert_eq!(result.reason, ScrollStreamStopReason::Stopped);
-  // About 200 ms at 1000 px/s; allow scheduler jitter.
-  assert!((150.0..=320.0).contains(&result.delivered.delta_y), "{result:?}");
+  // NOTICE(scroll-stream-test-timing): the stop lands whenever the stopper
+  // thread is scheduled, which on loaded CI runners was well past 200 ms. Check
+  // the integration against the samples' own clock instead of wall time: the
+  // stopping sample moves nothing, so everything delivered happened by the
+  // sample before it, at 1000 px/s.
+  let moving = &progress[progress.len() - 2];
+  assert!(moving.elapsed >= Duration::from_millis(150), "{moving:?}");
+  let expected = 1_000.0 * moving.elapsed.as_secs_f64();
+  assert!((result.delivered.delta_y - expected).abs() <= 1.0, "expected {expected}, {result:?}");
   let total: f64 = input.calls.borrow().iter().map(|(scroll, _)| scroll.delta_y).sum();
   assert_eq!(total, result.delivered.delta_y);
   for (_, options) in &input.calls.borrow()[1..] {
@@ -146,12 +153,20 @@ fn stream_ramps_with_max_acceleration_and_ramps_down_before_completing() {
   let (result, progress) = run(&input, &control, options(Some(4_000.0), 5_000));
   stopper.join().unwrap();
 
-  let peak = progress.iter().map(|update| update.velocity.delta_y_per_second).fold(0.0, f64::max);
-  assert!(peak < 1_000.0, "peak {peak}");
-  assert!(progress[0].velocity.delta_y_per_second <= 4_000.0 * 0.02, "{:?}", progress[0]);
   assert_eq!(result.reason, ScrollStreamStopReason::Stopped);
-  // Ramping down from ~600 px/s at 4000 px/s² takes ~150 ms more.
-  assert!(result.elapsed >= Duration::from_millis(250), "{result:?}");
+  // See NOTICE(scroll-stream-test-timing): bound each sample by the samples'
+  // own clock. Velocity never changes faster than 4000 px/s² in either
+  // direction, so it ramps up from zero and back down to zero.
+  let mut previous = (Duration::ZERO, 0.0);
+  for update in &progress {
+    let dt = (update.elapsed - previous.0).as_secs_f64();
+    let change = (update.velocity.delta_y_per_second - previous.1).abs();
+    assert!(change <= 4_000.0 * dt + 1e-6, "changed {change} in {dt}s: {update:?}");
+    previous = (update.elapsed, update.velocity.delta_y_per_second);
+  }
+  let peak = progress.iter().map(|update| update.velocity.delta_y_per_second).fold(0.0, f64::max);
+  assert!(peak > 0.0 && peak <= 2_000.0, "peak {peak}");
+  assert_eq!(progress.last().unwrap().velocity, ScrollVelocity::ZERO);
 }
 
 #[test]

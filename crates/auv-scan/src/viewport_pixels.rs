@@ -1,4 +1,4 @@
-//! Pixel evidence that a scrolled viewport moved between two observations.
+//! Pixel evidence that a scrolled viewport moved between two captures.
 //!
 //! A bounded shift search along the scroll axis finds the offset with the
 //! smallest sampled difference. "No motion" means the best offset is zero and

@@ -26,6 +26,6 @@ serde_json = "1"
 clap = { version = "4.5", features = ["derive"] }
 
 [dependencies.auv-tracing]
-version = "0.0.30"
+version = "0.0.31"
 path = "../auv-tracing"
 optional = true

@@ -628,3 +628,24 @@ func confirm_input_focus(pid: Int64, window_number: Int64) -> NativeActionRespon
   } while ProcessInfo.processInfo.systemUptime < deadline
   return nativeActionError("target activation or window focus was not confirmed", "resolve and focus the target again")
 }
+
+/// The window's size and minimized state as its application reports them over
+/// Accessibility. Unlike `SCWindow.frame` and `kCGWindowBounds`, this does not
+/// shrink while Mission Control, App Exposé or a minimize animation shows the
+/// window, so window capture uses it to tell a real resize from a transient
+/// presentation transform.
+func window_ax_size(pid: Int64, window_number: Int64) -> NativeWindowAxSizeResponse {
+  let appElement = AXUIElementCreateApplication(pid_t(pid))
+  let windows = windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String)
+  guard let window = windows.first(where: { windowAxCgWindowId($0) == window_number }),
+        let size = windowAxSizeAttribute(window, kAXSizeAttribute as String)
+  else {
+    return NativeWindowAxSizeResponse(found: false, width: 0, height: 0, minimized: false)
+  }
+  return NativeWindowAxSizeResponse(
+    found: true,
+    width: Double(size.width),
+    height: Double(size.height),
+    minimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+  )
+}

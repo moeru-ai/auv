@@ -1,15 +1,15 @@
 use crate::*;
 
 pub(crate) fn scan_sidebar_with_observer(
-  observer: &mut impl SidebarScanObserver,
+  reader: &mut impl SidebarScanReader,
   options: ScanOptions,
   category: PlaylistCategory,
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  let top_seek = scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls));
-  observer.reset_collection_phase();
-  let loop_outcome = scan_with_collection_policy_impl(observer, options, category, None);
+  let top_seek = scroll_to_top_by_motion(reader, top_seek_scroll_budget(options.max_scrolls));
+  reader.reset_collection_phase();
+  let loop_outcome = scan_with_collection_policy_impl(reader, options, category, None);
   finish_sidebar_scan(top_seek, loop_outcome, scroll_amount, scroll_settle_ms)
 }
 
@@ -17,7 +17,7 @@ pub(crate) const QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT: &str = "query_scan_skipped
 pub(crate) const QUERY_SCAN_TOP_REWIND_APPLIED_LIMIT: &str = "query_scan_top_rewind_applied";
 
 pub(crate) fn scan_sidebar_with_observer_until_query(
-  observer: &mut impl SidebarScanObserver,
+  reader: &mut impl SidebarScanReader,
   options: ScanOptions,
   category: PlaylistCategory,
   scroll_amount: f64,
@@ -26,17 +26,17 @@ pub(crate) fn scan_sidebar_with_observer_until_query(
 ) -> PlaylistSidebarScan {
   let normalized_query = normalize_identity(query);
   let query_already_visible =
-    observer.observe_probe().ok().is_some_and(|observation| observation_satisfies_query(&observation, normalized_query.as_str()));
+    reader.read_probe().ok().is_some_and(|viewport| viewport_satisfies_query(&viewport, normalized_query.as_str()));
 
   let top_seek = if query_already_visible {
     // NOTICE(a6c-10b): query-target already in viewport; top rewind would scroll
     // selected numeric labels away before collection starts.
     TopSeekOutcome::default()
   } else {
-    scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls))
+    scroll_to_top_by_motion(reader, top_seek_scroll_budget(options.max_scrolls))
   };
-  observer.reset_collection_phase();
-  let mut loop_outcome = scan_with_collection_policy_impl(observer, options, category, Some(normalized_query.as_str()));
+  reader.reset_collection_phase();
+  let mut loop_outcome = scan_with_collection_policy_impl(reader, options, category, Some(normalized_query.as_str()));
   loop_outcome.known_limits.push(if query_already_visible {
     QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT.to_string()
   } else {
@@ -51,7 +51,7 @@ fn finish_sidebar_scan(
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  crate::telemetry::emit_sidebar_scan_events(&loop_outcome.observations, scroll_amount, scroll_settle_ms, loop_outcome.stop_reason);
+  crate::telemetry::emit_sidebar_scan_events(&loop_outcome.viewports, scroll_amount, scroll_settle_ms, loop_outcome.stop_reason);
 
   let mut scan = reconstruct_playlist_sidebar(
     ScanAppContext {
@@ -65,7 +65,7 @@ fn finish_sidebar_scan(
       bounds: None,
     },
     ViewRegionRecord::default(),
-    loop_outcome.observations,
+    loop_outcome.viewports,
   );
   scan.diagnostics.extend(top_seek.diagnostics);
   scan.diagnostics.extend(loop_outcome.diagnostics);
@@ -128,8 +128,8 @@ pub(crate) fn top_seek_scroll_budget(collection_max_scrolls: usize) -> usize {
   collection_max_scrolls.min(LIVE_TOP_SEEK_MAX_SCROLL_INPUTS)
 }
 
-pub(crate) fn sidebar_rescan_target_seek_budget(max_scrolls: usize, target_observation_index: usize) -> usize {
-  max_scrolls.max(target_observation_index).saturating_add(4)
+pub(crate) fn sidebar_rescan_target_seek_budget(max_scrolls: usize, target_viewport_index: usize) -> usize {
+  max_scrolls.max(target_viewport_index).saturating_add(4)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,7 +148,7 @@ pub(crate) fn next_sidebar_target_seek_step(attempt: usize, max_attempts: usize,
   Some(SidebarTargetSeekStep::ScrollNext(attempt))
 }
 
-pub(crate) trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
+pub(crate) trait SidebarScanReader: ViewportReader<Viewport = SidebarViewport> {
   fn reset_collection_phase(&mut self) {}
 
   fn scroll_seek_batch_size(&self) -> usize {
@@ -159,8 +159,8 @@ pub(crate) trait SidebarScanObserver: ViewObserver<Observation = SidebarViewport
     self.scroll_up()
   }
 
-  fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    self.observe(observation_index)
+  fn observe_scroll_seek(&mut self, viewport_index: usize) -> Result<SidebarViewport, ParserDiagnostic> {
+    self.read_viewport(viewport_index)
   }
 
   fn scroll_down_for_query_recovery(&mut self) -> Result<(), ParserDiagnostic> {
@@ -168,11 +168,11 @@ pub(crate) trait SidebarScanObserver: ViewObserver<Observation = SidebarViewport
   }
 }
 
-pub(crate) fn scroll_to_top_by_motion(observer: &mut impl SidebarScanObserver, max_scrolls: usize) -> TopSeekOutcome {
+pub(crate) fn scroll_to_top_by_motion(reader: &mut impl SidebarScanReader, max_scrolls: usize) -> TopSeekOutcome {
   let mut outcome = TopSeekOutcome::default();
-  observer.reset_collection_phase();
+  reader.reset_collection_phase();
 
-  if let Err(diagnostic) = observer.observe_scroll_seek(0) {
+  if let Err(diagnostic) = reader.observe_scroll_seek(0) {
     outcome.diagnostics.push(diagnostic);
     return outcome;
   }
@@ -180,17 +180,17 @@ pub(crate) fn scroll_to_top_by_motion(observer: &mut impl SidebarScanObserver, m
   let mut scrolls = 0usize;
   let mut sample_index = 1usize;
   while scrolls < max_scrolls {
-    let batch = observer.scroll_seek_batch_size().max(1).min(max_scrolls - scrolls);
+    let batch = reader.scroll_seek_batch_size().max(1).min(max_scrolls - scrolls);
     for _ in 0..batch {
-      if let Err(diagnostic) = observer.scroll_seek_up() {
+      if let Err(diagnostic) = reader.scroll_seek_up() {
         outcome.diagnostics.push(diagnostic);
         return outcome;
       }
       scrolls += 1;
     }
 
-    let observation = match observer.observe_scroll_seek(sample_index) {
-      Ok(observation) => observation,
+    let viewport = match reader.observe_scroll_seek(sample_index) {
+      Ok(viewport) => viewport,
       Err(diagnostic) => {
         outcome.diagnostics.push(diagnostic);
         return outcome;
@@ -198,8 +198,8 @@ pub(crate) fn scroll_to_top_by_motion(observer: &mut impl SidebarScanObserver, m
     };
     sample_index += 1;
 
-    if successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref())
-      && observation.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion)
+    if successful_scroll_delivery_path(viewport.incoming_scroll_delivery_path.as_deref())
+      && viewport.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion)
     {
       outcome.boundary = BoundaryConfidence::Likely;
       return outcome;
@@ -210,11 +210,11 @@ pub(crate) fn scroll_to_top_by_motion(observer: &mut impl SidebarScanObserver, m
   outcome
 }
 
-pub(crate) fn empty_scroll_seek_observation(observation_index: usize, viewport_bounds: ViewBounds) -> SidebarViewportObservation {
-  SidebarViewportObservation {
-    observation_index,
+pub(crate) fn empty_scroll_seek_viewport(viewport_index: usize, viewport_bounds: ViewBounds) -> SidebarViewport {
+  SidebarViewport {
+    viewport_index,
     viewport: ViewViewportRecord {
-      page_index: observation_index,
+      page_index: viewport_index,
       bounds: viewport_bounds,
       axis: ViewAxis::Vertical,
       scroll_offset: None,
@@ -230,20 +230,20 @@ pub(crate) fn empty_scroll_seek_observation(observation_index: usize, viewport_b
 }
 
 pub(crate) struct CollectionLoopOutcome {
-  observations: Vec<SidebarViewportObservation>,
+  viewports: Vec<SidebarViewport>,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
   stop_reason: Option<SidebarScanStopReason>,
 }
 
 fn scan_with_collection_policy_impl(
-  observer: &mut impl SidebarScanObserver,
+  reader: &mut impl SidebarScanReader,
   options: ScanOptions,
   category: PlaylistCategory,
   normalized_query: Option<&str>,
 ) -> CollectionLoopOutcome {
   let mut policy = CollectionPolicy::new(category);
-  let mut observations = Vec::new();
+  let mut viewports = Vec::new();
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
   let mut previous_fingerprint: Option<String> = None;
@@ -256,28 +256,28 @@ fn scan_with_collection_policy_impl(
   let mut stop_reason = None;
 
   loop {
-    let observation_index = observations.len();
-    let observation = match observer.observe(observation_index) {
-      Ok(observation) => observation,
+    let viewport_index = viewports.len();
+    let viewport = match reader.read_viewport(viewport_index) {
+      Ok(viewport) => viewport,
       Err(diagnostic) => {
         diagnostics.push(diagnostic);
         break;
       }
     };
-    let fingerprint = observation.viewport_fingerprint().to_string();
+    let fingerprint = viewport.viewport_fingerprint().to_string();
     let repeated_fingerprint = previous_fingerprint.as_deref().is_some_and(|prev| prev == fingerprint.as_str());
     previous_fingerprint = Some(fingerprint);
-    let ax_scrollbar_boundary = observation.ax_scrollbar_boundary;
-    let observation = policy.apply(observation);
+    let ax_scrollbar_boundary = viewport.ax_scrollbar_boundary;
+    let viewport = policy.apply(viewport);
     if !query_seen {
       if let Some(query) = normalized_query {
-        query_seen = observation_satisfies_query(&observation, query);
+        query_seen = viewport_satisfies_query(&viewport, query);
       }
     }
-    let introduced_new_semantic_candidates = record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
+    let introduced_new_semantic_candidates = record_page_semantic_candidates(&viewport, &mut seen_semantic_candidates);
     let reached_stop_landmark = policy.reached_stop_landmark();
     let started = policy.start_seen();
-    let successful_scroll_input = successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref());
+    let successful_scroll_input = successful_scroll_delivery_path(viewport.incoming_scroll_delivery_path.as_deref());
     if started && !seen_semantic_candidates.is_empty() && successful_scroll_input {
       if introduced_new_semantic_candidates {
         consecutive_no_new_semantic_candidates_after_scroll = 0;
@@ -288,7 +288,7 @@ fn scan_with_collection_policy_impl(
       consecutive_no_new_semantic_candidates_after_scroll = 0;
     }
     if successful_scroll_input {
-      if let Some(motion) = observation.scroll_motion.as_ref() {
+      if let Some(motion) = viewport.scroll_motion.as_ref() {
         if motion.no_motion && observed_scroll_motion_after_successful_input {
           consecutive_no_motion_after_scroll += 1;
         } else if motion.no_motion {
@@ -303,7 +303,7 @@ fn scan_with_collection_policy_impl(
     } else {
       consecutive_no_motion_after_scroll = 0;
     }
-    observations.push(observation);
+    viewports.push(viewport);
 
     if reached_stop_landmark {
       stop_reason = Some(SidebarScanStopReason::ReachedStopLandmark);
@@ -337,7 +337,7 @@ fn scan_with_collection_policy_impl(
 
     // NOTICE(netease-scroll-motion-boundary): identical sidebar pixels only
     // count as bottom evidence after a successful scroll delivery path and at
-    // least one prior post-scroll motion observation. This prevents launch
+    // least one prior post-scroll motion viewport. This prevents launch
     // state, failed/noop input, or already-stuck captures from being promoted
     // into a false bottom boundary.
     if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary)
@@ -359,9 +359,9 @@ fn scan_with_collection_policy_impl(
     let use_query_recovery_scroll =
       !query_seen && (consecutive_no_motion_after_scroll > 0 || consecutive_no_new_semantic_candidates_after_scroll >= 2);
     let scroll_result = if use_query_recovery_scroll {
-      observer.scroll_down_for_query_recovery()
+      reader.scroll_down_for_query_recovery()
     } else {
-      observer.scroll_down()
+      reader.scroll_down()
     };
     if let Err(diagnostic) = scroll_result {
       diagnostics.push(diagnostic);
@@ -377,15 +377,15 @@ fn scan_with_collection_policy_impl(
   }
 
   CollectionLoopOutcome {
-    observations,
+    viewports,
     diagnostics,
     known_limits,
     stop_reason,
   }
 }
 
-fn observation_satisfies_query(observation: &SidebarViewportObservation, query: &str) -> bool {
-  let labels: Vec<&str> = observation
+fn viewport_satisfies_query(viewport: &SidebarViewport, query: &str) -> bool {
+  let labels: Vec<&str> = viewport
     .candidates
     .iter()
     .filter(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem)
@@ -407,11 +407,11 @@ pub(crate) struct SemanticCandidateKey {
   section_hint: Option<SidebarSectionKind>,
 }
 
-pub(crate) fn record_page_semantic_candidates(observation: &SidebarViewportObservation, seen: &mut HashSet<SemanticCandidateKey>) -> bool {
+pub(crate) fn record_page_semantic_candidates(viewport: &SidebarViewport, seen: &mut HashSet<SemanticCandidateKey>) -> bool {
   let mut introduced_new = false;
   let mut current_section = None;
 
-  for candidate in &observation.candidates {
+  for candidate in &viewport.candidates {
     let Some(label) = candidate.label.as_deref().map(str::trim) else {
       continue;
     };
@@ -458,13 +458,13 @@ impl CollectionPolicy {
     }
   }
 
-  fn apply(&mut self, mut observation: SidebarViewportObservation) -> SidebarViewportObservation {
+  fn apply(&mut self, mut viewport: SidebarViewport) -> SidebarViewport {
     if self.category == PlaylistCategory::All {
-      return observation;
+      return viewport;
     }
 
     let mut accepted = Vec::new();
-    for candidate in observation.candidates {
+    for candidate in viewport.candidates {
       if self.stopped {
         break;
       }
@@ -494,8 +494,8 @@ impl CollectionPolicy {
         accepted.push(candidate);
       }
     }
-    observation.candidates = accepted;
-    observation
+    viewport.candidates = accepted;
+    viewport
   }
 
   fn reached_stop_landmark(&self) -> bool {

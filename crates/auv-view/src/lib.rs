@@ -31,6 +31,11 @@ use serde::{Deserialize, Serialize};
 
 /// Current wire-shape version for view-parser IR artifacts.
 ///
+/// NOTICE(domain-result-names): The owner-approved naming migration retains this
+/// experimental label without legacy field aliases. Historical read support is
+/// deferred until a concrete consumer is named; see
+/// `docs/ai/references/runtime/2026-10-08-domain-result-naming-migration.md`.
+///
 /// Product crates must use this value when emitting top-level view IR JSON so
 /// readers can reject unknown shapes before interpreting app-specific fields.
 pub const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
@@ -329,7 +334,7 @@ pub fn slug(value: &str) -> String {
 }
 
 /// Viewport fingerprint = pipe-joined normalized labels of the evidence
-/// nodes that were visible in this observation. Used to detect repeated
+/// nodes that were visible in this viewport. Used to detect repeated
 /// viewports (stuck scroll / loop boundary) per the diagnostic policy.
 pub fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
   nodes.iter().filter_map(|node| node.label.as_deref()).map(normalize_identity).collect::<Vec<_>>().join("|")
@@ -351,7 +356,7 @@ pub fn confidence_from_ocr(confidence: Option<f32>) -> Confidence {
 
 /// Does the viewport bounding box contain the geometric center of the
 /// other box? Used by per-viewport candidate filtering to drop evidence
-/// that drifts outside the visible viewport between observations.
+/// that drifts outside the visible viewport between viewports.
 pub fn viewport_contains_center(viewport: ViewBounds, bounds: ViewBounds) -> bool {
   let center_x = bounds.x + bounds.width * 0.5;
   let center_y = bounds.y + bounds.height * 0.5;
@@ -378,62 +383,62 @@ pub fn collect_landmarks(node: &ViewNodeRecord, landmarks: &mut Vec<ViewLandmark
 }
 
 // --------------------------------------------------------------------------
-// Observer seam. The `ViewObserver` trait is the contract that any view-
-// parser observer (live driver-backed, recorded-fixture-backed, fake test
-// double) must satisfy. The `Observation` associated type stays domain-
-// shaped so the framework crate never names a per-app observation
-// record. Scan loops that consume an observer continue to live in the
-// app crate today because they read app-specific fields off `Observation`
+// Viewport reader seam. The `ViewportReader` trait is the contract that any view-
+// parser reader (live driver-backed, recorded-fixture-backed, fake test
+// double) must satisfy. The `Viewport` associated type stays domain-
+// shaped so the framework crate never names a per-app viewport
+// record. Scan loops that consume a reader continue to live in the
+// app crate today because they read app-specific fields off `Viewport`
 // (e.g. `viewport_fingerprint`); pull them up only when a second app
 // applies the pressure.
 // --------------------------------------------------------------------------
 
-pub trait ViewObserver {
-  /// Domain observation shape (e.g. `SidebarViewportObservation` in
+pub trait ViewportReader {
+  /// Domain viewport shape (e.g. `SidebarViewport` in
   /// `auv-netease-music`). Kept as an associated type so the framework
   /// crate never names a per-app record.
-  type Observation;
+  type Viewport;
 
-  /// Capture the observation for the given scan-loop step.
-  fn observe(&mut self, observation_index: usize) -> Result<Self::Observation, ParserDiagnostic>;
+  /// Capture the viewport for the given scan-loop step.
+  fn read_viewport(&mut self, viewport_index: usize) -> Result<Self::Viewport, ParserDiagnostic>;
 
-  /// Capture a probe observation without advancing the scan-loop index.
+  /// Capture a probe viewport without advancing the scan-loop index.
   /// Used for top-seek and boundary probing.
-  fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic>;
+  fn read_probe(&mut self) -> Result<Self::Viewport, ParserDiagnostic>;
 
-  /// Scroll the underlying view up by the observer's configured amount.
+  /// Scroll the underlying view up by the reader's configured amount.
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
 
-  /// Scroll the underlying view down by the observer's configured amount.
+  /// Scroll the underlying view down by the reader's configured amount.
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
 }
 
-/// Minimum surface a domain observation type must expose so the framework
+/// Minimum surface a domain viewport type must expose so the framework
 /// scan loops can run against it without naming the per-app shape. v0
 /// needs `viewport_fingerprint` (drives repeated-viewport detection) plus
 /// `parser_notes` and `has_evidence` (drive `reconstruct`'s diagnostic
 /// aggregation and the "evidence-but-no-candidates" detector). Default
 /// impls keep existing consumers backwards-compatible.
-pub trait ViewObservation {
+pub trait ParsedViewport {
   fn viewport_fingerprint(&self) -> &str;
 
-  /// Parser notes raised during this observation, forwarded into the
+  /// Parser notes raised during this viewport, forwarded into the
   /// reconstruction's `diagnostics`. Default: empty slice.
   fn parser_notes(&self) -> &[ParserDiagnostic] {
     &[]
   }
 
-  /// Whether the observation gathered any evidence at all. Used by
+  /// Whether the viewport gathered any evidence at all. Used by
   /// `reconstruct` to decide whether to raise a
   /// `parser_no_reliable_candidates` diagnostic when no candidates were
-  /// accepted. Default: false (an observation type with no evidence
+  /// accepted. Default: false (a viewport type with no evidence
   /// notion never participates in that detector).
   fn has_evidence(&self) -> bool {
     false
   }
 }
 
-/// Knobs the scan loop reads to decide when to stop. Cap on observation
+/// Knobs the scan loop reads to decide when to stop. Cap on viewport
 /// count (`max_pages`) is independent from cap on scroll calls
 /// (`max_scrolls`) so apps can prevent runaway parses without coupling
 /// the two dimensions.
@@ -446,7 +451,7 @@ pub struct ScanOptions {
 /// Outcome of the top-seek pre-loop. `boundary` is `Likely` when two
 /// consecutive scroll-up + probe attempts produced the same fingerprint
 /// (the view didn't move, almost certainly at the top). Diagnostics and
-/// known limits carry the observer's reports so callers can attach them
+/// known limits carry the reader's reports so callers can attach them
 /// to whatever scan result they construct.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TopSeekOutcome {
@@ -455,48 +460,48 @@ pub struct TopSeekOutcome {
   pub known_limits: Vec<String>,
 }
 
-/// What `scan_with_observer` returns: the observations the loop captured
+/// What `scan_with_reader` returns: the viewports the loop captured
 /// plus the diagnostics and known limits the loop accumulated. `Obs` is
-/// the observer's `Observation` associated type so the result stays
+/// the reader's `Viewport` associated type so the result stays
 /// per-app even though the loop is framework code.
 #[derive(Clone, Debug)]
 pub struct ScanLoopOutcome<Obs> {
-  pub observations: Vec<Obs>,
+  pub viewports: Vec<Obs>,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
 }
 
-/// Drive the observer back to the top of its scrollable surface. v0
+/// Drive the reader back to the top of its scrollable surface. v0
 /// strategy: probe → scroll up → probe again; if the fingerprint is
 /// unchanged, the view is already (or now) at the top and we report
 /// `BoundaryConfidence::Likely`. Bounded by `max_scrolls` so a broken
-/// observer cannot loop forever.
-pub fn scroll_to_top<O>(observer: &mut O, max_scrolls: usize) -> TopSeekOutcome
+/// reader cannot loop forever.
+pub fn scroll_to_top<O>(reader: &mut O, max_scrolls: usize) -> TopSeekOutcome
 where
-  O: ViewObserver,
-  O::Observation: ViewObservation,
+  O: ViewportReader,
+  O::Viewport: ParsedViewport,
 {
   let mut outcome = TopSeekOutcome::default();
-  let mut previous_fingerprint = match observer.observe_probe() {
-    Ok(observation) => observation.viewport_fingerprint().to_string(),
+  let mut previous_fingerprint = match reader.read_probe() {
+    Ok(viewport) => viewport.viewport_fingerprint().to_string(),
     Err(diagnostic) => {
       outcome.diagnostics.push(diagnostic);
       return outcome;
     }
   };
   for _ in 0..max_scrolls {
-    if let Err(diagnostic) = observer.scroll_up() {
+    if let Err(diagnostic) = reader.scroll_up() {
       outcome.diagnostics.push(diagnostic);
       return outcome;
     }
-    let observation = match observer.observe_probe() {
-      Ok(observation) => observation,
+    let viewport = match reader.read_probe() {
+      Ok(viewport) => viewport,
       Err(diagnostic) => {
         outcome.diagnostics.push(diagnostic);
         return outcome;
       }
     };
-    let fingerprint = observation.viewport_fingerprint();
+    let fingerprint = viewport.viewport_fingerprint();
     if fingerprint == previous_fingerprint {
       outcome.boundary = BoundaryConfidence::Likely;
       return outcome;
@@ -507,45 +512,45 @@ where
   outcome
 }
 
-/// Run the per-observation scan loop: observe, push, check repeated
+/// Run the per-viewport scan loop: read_viewport, push, check repeated
 /// fingerprint (boundary), check page/scroll caps, scroll down, repeat.
-/// The loop stops on the first of: repeated fingerprint, observer error,
+/// The loop stops on the first of: repeated fingerprint, reader error,
 /// `max_pages` cap, `max_scrolls` cap.
-pub fn scan_with_observer<O>(observer: &mut O, options: ScanOptions) -> ScanLoopOutcome<O::Observation>
+pub fn scan_with_reader<O>(reader: &mut O, options: ScanOptions) -> ScanLoopOutcome<O::Viewport>
 where
-  O: ViewObserver,
-  O::Observation: ViewObservation,
+  O: ViewportReader,
+  O::Viewport: ParsedViewport,
 {
-  let mut observations: Vec<O::Observation> = Vec::new();
+  let mut viewports: Vec<O::Viewport> = Vec::new();
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
   let mut previous_fingerprint: Option<String> = None;
   let mut scrolls = 0;
 
   loop {
-    if observations.len() >= options.max_pages {
+    if viewports.len() >= options.max_pages {
       known_limits.push(format!("stopped after max_pages={}", options.max_pages));
       break;
     }
 
-    let observation_index = observations.len();
-    let observation = match observer.observe(observation_index) {
-      Ok(observation) => observation,
+    let viewport_index = viewports.len();
+    let viewport = match reader.read_viewport(viewport_index) {
+      Ok(viewport) => viewport,
       Err(diagnostic) => {
         diagnostics.push(diagnostic);
         break;
       }
     };
-    let fingerprint = observation.viewport_fingerprint().to_string();
+    let fingerprint = viewport.viewport_fingerprint().to_string();
     let repeated_fingerprint = previous_fingerprint.as_deref().is_some_and(|prev| prev == fingerprint.as_str());
     previous_fingerprint = Some(fingerprint);
-    observations.push(observation);
+    viewports.push(viewport);
 
     if repeated_fingerprint {
       break;
     }
 
-    if observations.len() >= options.max_pages {
+    if viewports.len() >= options.max_pages {
       known_limits.push(format!("stopped after max_pages={}", options.max_pages));
       break;
     }
@@ -555,7 +560,7 @@ where
       break;
     }
 
-    if let Err(diagnostic) = observer.scroll_down() {
+    if let Err(diagnostic) = reader.scroll_down() {
       diagnostics.push(diagnostic);
       break;
     }
@@ -563,23 +568,23 @@ where
   }
 
   ScanLoopOutcome {
-    observations,
+    viewports,
     diagnostics,
     known_limits,
   }
 }
 
-/// Derive a `ScrollBoundarySummary` from a slice of observations by
+/// Derive a `ScrollBoundarySummary` from a slice of viewports by
 /// looking for adjacent identical viewport fingerprints. v0 only
 /// populates `bottom = Likely` on a match — top boundaries come from
 /// `scroll_to_top`, not from observing the scan loop's output, because
 /// the loop scrolls downward and never re-probes upward.
-pub fn boundary_summary_from_observations<O>(observations: &[O]) -> ScrollBoundarySummary
+pub fn boundary_summary_from_viewports<O>(viewports: &[O]) -> ScrollBoundarySummary
 where
-  O: ViewObservation,
+  O: ParsedViewport,
 {
   let mut summary = ScrollBoundarySummary::default();
-  if observations.windows(2).any(|pair| pair[0].viewport_fingerprint() == pair[1].viewport_fingerprint()) {
+  if viewports.windows(2).any(|pair| pair[0].viewport_fingerprint() == pair[1].viewport_fingerprint()) {
     summary.bottom = BoundaryConfidence::Likely;
   }
   summary
@@ -634,30 +639,30 @@ pub trait ReconstructionPolicy {
   type SectionKey: std::hash::Hash + Eq + Clone;
   type SectionProjection;
   type ItemProjection;
-  type Observation: ViewObservation;
+  type Viewport: ParsedViewport;
 
-  /// Iterate the candidates carried by one observation. Order is
-  /// observation order (the policy must not re-sort).
+  /// Iterate the candidates carried by one viewport. Order is
+  /// viewport order (the policy must not re-sort).
   ///
   /// Rust 2024 RPITIT: the returned iterator type is implementer-chosen
-  /// and bound to `'a`, so apps can return `observation.candidates.iter()`
+  /// and bound to `'a`, so apps can return `viewport.candidates.iter()`
   /// (or any other zero-allocation iterator) without boxing. The
   /// `Self::Candidate: 'a` bound is required for the `&'a Self::Candidate`
   /// items to be well-formed when the associated type is not `'static`.
-  fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  fn candidates<'a>(&self, viewport: &'a Self::Viewport) -> impl Iterator<Item = &'a Self::Candidate> + 'a
   where
     Self::Candidate: 'a;
 
   /// Decide whether a candidate is a section header, a section item, or
   /// neither. The returned `SectionKey` (for headers) is used to dedup
-  /// across observations; two headers with equal keys merge into one
+  /// across viewports; two headers with equal keys merge into one
   /// section.
   fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey>;
 
   /// Build the section node + the section projection record for a
   /// newly-encountered header candidate. Called the first time a given
   /// section key is seen.
-  fn build_section(&self, observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection);
+  fn build_section(&self, viewport: &Self::Viewport, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection);
 
   /// Build the fallback section that absorbs items appearing before any
   /// header. Called at most once per `reconstruct`, lazily.
@@ -669,7 +674,7 @@ pub trait ReconstructionPolicy {
   /// like `section_hint`.
   fn build_item(
     &self,
-    observation: &Self::Observation,
+    viewport: &Self::Viewport,
     candidate: &Self::Candidate,
     section: &Self::SectionProjection,
   ) -> (ViewNodeRecord, Self::ItemProjection);
@@ -700,41 +705,40 @@ pub trait ReconstructionPolicy {
 
 /// Run the framework reconstruction loop against the policy. The loop:
 ///
-/// 1. Carries forward each observation's `parser_notes` into diagnostics.
-/// 2. Walks every candidate in observation order. Headers create or merge
+/// 1. Carries forward each viewport's `parser_notes` into diagnostics.
+/// 2. Walks every candidate in viewport order. Headers create or merge
 ///    into a section keyed by `policy.classify().section_key`. Items land
 ///    under the current section (or a lazily-built unassigned section if
 ///    no header has appeared yet) after passing a per-section dedup check.
 /// 3. Emits one `parser_no_reliable_candidates` diagnostic if any
-///    observation had evidence but the whole scan produced no projection
+///    viewport had evidence but the whole scan produced no projection
 ///    sections.
 /// 4. Asks the policy to build the root, then walks the resulting tree to
 ///    collect anchors and landmarks in pre-order.
 ///
-/// The boundary returned is `boundary_summary_from_observations(observations)`.
-pub fn reconstruct<P>(policy: &P, observations: &[P::Observation], sidebar_bounds: ViewBounds) -> ReconstructionOutput<P::SectionProjection>
+/// The boundary returned is `boundary_summary_from_viewports(viewports)`.
+pub fn reconstruct<P>(policy: &P, viewports: &[P::Viewport], sidebar_bounds: ViewBounds) -> ReconstructionOutput<P::SectionProjection>
 where
   P: ReconstructionPolicy,
 {
   use std::collections::{HashMap, HashSet};
 
-  let boundary = boundary_summary_from_observations(observations);
+  let boundary = boundary_summary_from_viewports(viewports);
   let mut section_nodes: Vec<ViewNodeRecord> = Vec::new();
   let mut section_projections: Vec<P::SectionProjection> = Vec::new();
-  let mut diagnostics: Vec<ParserDiagnostic> =
-    observations.iter().flat_map(|observation| observation.parser_notes().iter().cloned()).collect();
+  let mut diagnostics: Vec<ParserDiagnostic> = viewports.iter().flat_map(|viewport| viewport.parser_notes().iter().cloned()).collect();
   let mut current_section_index: Option<usize> = None;
   let mut section_indices: HashMap<P::SectionKey, usize> = HashMap::new();
   let mut seen_items_by_section: Vec<HashSet<String>> = Vec::new();
 
-  for observation in observations {
-    for candidate in policy.candidates(observation) {
+  for viewport in viewports {
+    for candidate in policy.candidates(viewport) {
       match policy.classify(candidate) {
         CandidateRole::Header { section_key } => {
           if let Some(&idx) = section_indices.get(&section_key) {
             current_section_index = Some(idx);
           } else {
-            let (node, projection) = policy.build_section(observation, candidate);
+            let (node, projection) = policy.build_section(viewport, candidate);
             section_nodes.push(node);
             section_projections.push(projection);
             seen_items_by_section.push(HashSet::new());
@@ -755,7 +759,7 @@ where
             diagnostics.push(policy.emit_dedup_diagnostic(candidate, &section_projections[section_index]));
             continue;
           }
-          let (item_node, item_projection) = policy.build_item(observation, candidate, &section_projections[section_index]);
+          let (item_node, item_projection) = policy.build_item(viewport, candidate, &section_projections[section_index]);
           policy.attach_item_to_section_node(&mut section_nodes[section_index], item_node);
           policy.append_item_to_section_projection(&mut section_projections[section_index], item_projection);
         }
@@ -764,7 +768,7 @@ where
     }
   }
 
-  let any_evidence = observations.iter().any(|observation| observation.has_evidence());
+  let any_evidence = viewports.iter().any(|viewport| viewport.has_evidence());
   if any_evidence && section_projections.is_empty() {
     diagnostics.push(ParserDiagnostic {
       code: "parser_no_reliable_candidates".to_string(),

@@ -177,16 +177,7 @@ export interface ScrollDelta {
   dy?: number
 }
 
-/** What `scrollUntil` saw after one step, for an `until` predicate. */
-export interface ScrollObservation {
-  /** Whether the viewport moved on this step (false before the first step). */
-  readonly moved: boolean
-  readonly steps: number
-  /** Full recognized window text after this step. */
-  readonly text: string
-}
-
-/** One step per observation; scroll along one axis only. */
+/** One step per update; scroll along one axis only. */
 export interface ScrollUntilOptions extends ScrollDelta {
   /** Consecutive no-motion steps that count as the end, 1–10. Default 2. */
   confirmations?: number
@@ -196,12 +187,12 @@ export interface ScrollUntilOptions extends ScrollDelta {
   settle?: number
   /** Stop when recognized window text contains this (case-insensitive). */
   text?: string
-  /** Stop when this returns `true` for an observation. */
-  until?: (observation: ScrollObservation) => boolean | Promise<boolean>
+  /** Stop when this returns `true` for an update. */
+  until?: (update: ScrollUntilUpdate) => boolean | Promise<boolean>
 }
 
 export interface ScrollUntilResult {
-  /** The last observation's capture, unless nothing was observed. */
+  /** The last update's capture, unless nothing was observed. */
   readonly frame?: FrameHandle
   /** Delivery receipt of the first step; absent if the loop stopped before scrolling. */
   readonly input?: InputHandle
@@ -209,8 +200,17 @@ export interface ScrollUntilResult {
   readonly match?: TextMatch
   readonly reason: 'budget' | 'end' | 'text-visible' | 'until'
   readonly steps: number
-  /** The last observation's OCR result. */
+  /** The last update's OCR result. */
   readonly text?: TextHandle
+}
+
+/** What `scrollUntil` saw after one step, for an `until` predicate. */
+export interface ScrollUntilUpdate {
+  /** Whether the viewport moved on this step (false before the first step). */
+  readonly moved: boolean
+  readonly steps: number
+  /** Full recognized window text after this step. */
+  readonly text: string
 }
 
 /** Result of OCR over a frame, a window or a display. */

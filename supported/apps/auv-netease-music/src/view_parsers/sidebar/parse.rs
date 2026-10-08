@@ -1,10 +1,6 @@
 use crate::*;
 
-pub(crate) fn parse_sidebar_viewport(
-  observation_index: usize,
-  viewport_bounds: ViewBounds,
-  recognition: &TextRecognition,
-) -> SidebarViewportObservation {
+pub(crate) fn parse_sidebar_viewport(viewport_index: usize, viewport_bounds: ViewBounds, recognition: &TextRecognition) -> SidebarViewport {
   let mut evidence_nodes = recognition
     .regions
     .iter()
@@ -16,7 +12,7 @@ pub(crate) fn parse_sidebar_viewport(
       )
     })
     .map(|(index, region)| ViewEvidenceNode {
-      id: format!("obs{observation_index}.ocr{index}"),
+      id: format!("obs{viewport_index}.ocr{index}"),
       source: ViewEvidenceSource::OcrText,
       label: Some(region.text.trim().to_string()),
       bounds: Some(ViewBounds::new(region.bounds.origin.x, region.bounds.origin.y, region.bounds.size.width, region.bounds.size.height)),
@@ -34,13 +30,13 @@ pub(crate) fn parse_sidebar_viewport(
       .then_with(|| left_bounds.x.partial_cmp(&right_bounds.x).unwrap_or(std::cmp::Ordering::Equal))
   });
 
-  let candidates = evidence_nodes.iter().filter_map(|node| candidate_from_evidence(observation_index, node)).collect::<Vec<_>>();
+  let candidates = evidence_nodes.iter().filter_map(|node| candidate_from_evidence(viewport_index, node)).collect::<Vec<_>>();
   let viewport_fingerprint = viewport_fingerprint(&evidence_nodes);
 
-  SidebarViewportObservation {
-    observation_index,
+  SidebarViewport {
+    viewport_index,
     viewport: ViewViewportRecord {
-      page_index: observation_index,
+      page_index: viewport_index,
       bounds: viewport_bounds,
       axis: ViewAxis::Vertical,
       scroll_offset: None,
@@ -59,7 +55,7 @@ pub(crate) fn is_single_ascii_digit_query(query: &str) -> bool {
   query.chars().count() == 1 && query.chars().all(|char| char.is_ascii_digit())
 }
 
-pub(crate) fn candidate_from_evidence(observation_index: usize, node: &ViewEvidenceNode) -> Option<SidebarViewportCandidate> {
+pub(crate) fn candidate_from_evidence(viewport_index: usize, node: &ViewEvidenceNode) -> Option<SidebarViewportCandidate> {
   let label = node.label.as_deref()?.trim();
   let bounds = node.bounds?;
   // NOTICE(a6c-8): live Case B has playlist rows named with a single ASCII
@@ -76,9 +72,9 @@ pub(crate) fn candidate_from_evidence(observation_index: usize, node: &ViewEvide
     return None;
   }
 
-  let source_component = node.id.strip_prefix(&format!("obs{observation_index}.")).unwrap_or(&node.id);
+  let source_component = node.id.strip_prefix(&format!("obs{viewport_index}.")).unwrap_or(&node.id);
   Some(SidebarViewportCandidate {
-    id: format!("obs{observation_index}.candidate.{source_component}.{}", slug(label)),
+    id: format!("obs{viewport_index}.candidate.{source_component}.{}", slug(label)),
     kind,
     label: Some(label.to_string()),
     bounds: Some(bounds),

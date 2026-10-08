@@ -35,6 +35,8 @@ fn union_rect_is_none_for_empty_input() {
   assert_eq!(union_rect(&[]), None);
 }
 
+// Other platforms return `Unsupported` before validating the buffer.
+#[cfg(target_os = "windows")]
 #[test]
 fn rejects_buffer_with_mismatched_length() {
   let result = recognize_text_in_rgba(&[0u8; 7], 2, 2, &TextRecognitionOptions::default());

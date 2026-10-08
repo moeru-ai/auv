@@ -173,9 +173,9 @@ fn classify_malformed_path_as_invalid_input() {
 }
 
 #[test]
-fn classify_out_of_range_path_as_stale_observation() {
+fn classify_out_of_range_path_as_stale_ui_reference() {
   let error = focus_error("AX focus path index 3 is out of range at offset 1; element has 2 child(ren)");
-  assert!(matches!(error, DriverError::StaleObservation { .. }), "got {error:?}");
+  assert!(matches!(error, DriverError::StaleUiReference { .. }), "got {error:?}");
   // recovery hint is preserved in the dedicated field (surfaces via Display)
   assert!(error.to_string().contains("capture a fresh AX tree"));
 }

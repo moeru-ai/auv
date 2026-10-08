@@ -105,7 +105,16 @@ struct History {
   frames: VecDeque<proto::RecentFrame>,
   latest_sequence: u64,
   dropped_frames: u64,
+  pause: Option<Pause>,
   fault: Option<String>,
+}
+
+/// The buffer's target cannot be captured faithfully right now, so captures
+/// are skipped until one succeeds.
+struct Pause {
+  reason: String,
+  skipped_captures: u64,
+  since: std::time::SystemTime,
 }
 
 impl History {
@@ -115,11 +124,13 @@ impl History {
       frames: VecDeque::with_capacity(capacity),
       latest_sequence: 0,
       dropped_frames: 0,
+      pause: None,
       fault: None,
     }
   }
 
   fn push(&mut self, capture: auv_driver::Capture) {
+    self.pause = None;
     self.latest_sequence += 1;
     if self.frames.len() == self.capacity {
       self.frames.pop_front();
@@ -132,6 +143,16 @@ impl History {
       // the planned video stream (capture-references-and-positions design).
       frame: Some(local_driver::image_frame_to_proto(capture)),
     });
+  }
+
+  fn skip(&mut self, reason: String) {
+    let pause = self.pause.get_or_insert_with(|| Pause {
+      reason: String::new(),
+      skipped_captures: 0,
+      since: std::time::SystemTime::now(),
+    });
+    pause.reason = reason;
+    pause.skipped_captures += 1;
   }
 
   fn recent(&self, after_sequence: u64) -> Result<proto::GetRecentFramesResponse, Status> {
@@ -151,6 +172,11 @@ impl History {
       frames,
       latest_sequence: self.latest_sequence,
       dropped_frames: self.dropped_frames,
+      pause: self.pause.as_ref().map(|pause| proto::FrameBufferPause {
+        reason: pause.reason.clone(),
+        skipped_captures: pause.skipped_captures,
+        since: Some(pause.since.into()),
+      }),
     })
   }
 }
@@ -176,7 +202,7 @@ trait FrameSourceFactory: Send + Sync + 'static {
 }
 
 trait FrameSource: Send + 'static {
-  fn capture(&mut self) -> Result<auv_driver::Capture, String>;
+  fn capture(&mut self) -> Result<auv_driver::Capture, auv_driver::DriverError>;
 }
 
 struct DriverFrameSourceFactory {
@@ -212,7 +238,7 @@ struct DriverFrameSource {
 }
 
 impl FrameSource for DriverFrameSource {
-  fn capture(&mut self) -> Result<auv_driver::Capture, String> {
+  fn capture(&mut self) -> Result<auv_driver::Capture, auv_driver::DriverError> {
     match &self.target {
       DriverCaptureTarget::Window(window) => self.session.window().capture(window),
       DriverCaptureTarget::Display(display) => self
@@ -233,7 +259,6 @@ impl FrameSource for DriverFrameSource {
         })
         .map(|captured| captured.capture),
     }
-    .map_err(|error| error.to_string())
   }
 }
 
@@ -252,8 +277,14 @@ fn run_producer(
     }
     match source.capture() {
       Ok(capture) => history.lock().expect("recent-frame history mutex poisoned").push(resize_capture(capture, output_size)),
+      // The target is transiently not capturable (for example a window shown
+      // by Mission Control or minimized). Keep the buffer alive and retry on
+      // the next tick instead of stopping it.
+      Err(error @ auv_driver::DriverError::StaleUiReference { .. }) => {
+        history.lock().expect("recent-frame history mutex poisoned").skip(error.to_string());
+      }
       Err(error) => {
-        history.lock().expect("recent-frame history mutex poisoned").fault = Some(error);
+        history.lock().expect("recent-frame history mutex poisoned").fault = Some(error.to_string());
         return;
       }
     }

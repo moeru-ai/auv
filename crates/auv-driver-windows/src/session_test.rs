@@ -124,6 +124,8 @@ fn capture_region_requires_region() {
   assert!(session().display().capture_region(CaptureOptions::default()).is_err());
 }
 
+// The failure comes from the Win32 call; other platforms return `Unsupported`.
+#[cfg(target_os = "windows")]
 #[test]
 fn window_click_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();

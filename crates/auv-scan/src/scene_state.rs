@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
+use crate::association::{AssociationResult, FrameItem, associate_adjacent_frames};
 use crate::coverage::{CoverageView, build_coverage_view_for_sequence};
 use crate::frame::{ScanBounds, ScanFrame};
 use crate::lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, evaluate_lifecycle};
@@ -41,7 +41,7 @@ impl From<ScanFrame> for SceneFrame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneStateInput {
   pub frames: Vec<SceneFrame>,
-  pub observations_by_frame: Vec<Vec<FrameObservation>>,
+  pub items_by_frame: Vec<Vec<FrameItem>>,
   pub lifecycle_events: Option<Vec<LifecycleEvent>>,
 }
 
@@ -64,7 +64,7 @@ pub enum VisibilityAssessment {
 pub struct SceneTrackState {
   pub track_id: String,
   pub last_seen_frame_id: Option<String>,
-  pub latest_observation_present: bool,
+  pub latest_item_present: bool,
   pub identity_assessment: IdentityAssessment,
   pub visibility_assessment: VisibilityAssessment,
   pub lifecycle_verdict: Option<LifecycleVerdict>,
@@ -78,7 +78,7 @@ pub struct ActionReadiness {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObservationRequest {
+pub struct SceneRecommendation {
   pub code: String,
   pub rationale: String,
 }
@@ -94,7 +94,7 @@ pub struct SceneDraftAnswers<'a> {
   pub as_of_frame_id: &'a str,
   pub tracks: &'a [SceneTrackState],
   pub action_readiness: &'a ActionReadiness,
-  pub recommended_observations: &'a [ObservationRequest],
+  pub recommendations: &'a [SceneRecommendation],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,7 +106,7 @@ pub struct SceneStateProduct {
   pub lifecycle: Option<LifecycleVerdict>,
   pub tracks: Vec<SceneTrackState>,
   pub action_readiness: ActionReadiness,
-  pub recommended_observations: Vec<ObservationRequest>,
+  pub recommendations: Vec<SceneRecommendation>,
   pub diagnostics: Vec<SceneDiagnostic>,
 }
 
@@ -117,7 +117,7 @@ impl SceneStateProduct {
       as_of_frame_id: &self.as_of_frame_id,
       tracks: &self.tracks,
       action_readiness: &self.action_readiness,
-      recommended_observations: &self.recommended_observations,
+      recommendations: &self.recommendations,
     }
   }
 }
@@ -136,13 +136,13 @@ fn label_for_track_id(track_id: &str) -> Option<&str> {
   track_id.strip_prefix("track-")
 }
 
-pub(crate) fn observations_match_frames(frames: &[SceneFrame], observations: &[Vec<FrameObservation>]) -> bool {
-  !frames.is_empty() && !observations.is_empty() && observations.len() == frames.len()
+pub(crate) fn items_match_frames(frames: &[SceneFrame], items: &[Vec<FrameItem>]) -> bool {
+  !frames.is_empty() && !items.is_empty() && items.len() == frames.len()
 }
 
-fn collect_labels(observations_by_frame: &[Vec<FrameObservation>]) -> Vec<String> {
+fn collect_labels(items_by_frame: &[Vec<FrameItem>]) -> Vec<String> {
   let mut labels = Vec::new();
-  for frame_obs in observations_by_frame {
+  for frame_obs in items_by_frame {
     for obs in frame_obs {
       if !labels.contains(&obs.label) {
         labels.push(obs.label.clone());
@@ -153,8 +153,8 @@ fn collect_labels(observations_by_frame: &[Vec<FrameObservation>]) -> Vec<String
   labels
 }
 
-fn last_seen_frame_id(frames: &[SceneFrame], observations_by_frame: &[Vec<FrameObservation>], label: &str) -> Option<String> {
-  for (index, frame_obs) in observations_by_frame.iter().enumerate().rev() {
+fn last_seen_frame_id(frames: &[SceneFrame], items_by_frame: &[Vec<FrameItem>], label: &str) -> Option<String> {
+  for (index, frame_obs) in items_by_frame.iter().enumerate().rev() {
     if frame_obs.iter().any(|obs| obs.label == label) {
       return frames.get(index).map(|frame| frame.frame_id.clone());
     }
@@ -164,12 +164,12 @@ fn last_seen_frame_id(frames: &[SceneFrame], observations_by_frame: &[Vec<FrameO
 
 // NOTICE(s9b-deferral): N-frame adjacent associations are durable in `scan-tracks-v0`;
 // this helper still uses only the last frame pair for scene_state (S5a scope).
-fn associations_for_frames(frames: &[SceneFrame], observations_by_frame: &[Vec<FrameObservation>]) -> Vec<AssociationResult> {
+fn associations_for_frames(frames: &[SceneFrame], items_by_frame: &[Vec<FrameItem>]) -> Vec<AssociationResult> {
   if frames.len() < 2 {
     return Vec::new();
   }
   let last = frames.len() - 1;
-  associate_adjacent_frames(&observations_by_frame[last - 1], &observations_by_frame[last])
+  associate_adjacent_frames(&items_by_frame[last - 1], &items_by_frame[last])
 }
 
 fn identity_for_track(track_id: &str, associations: &[AssociationResult]) -> IdentityAssessment {
@@ -194,7 +194,7 @@ fn identity_for_track(track_id: &str, associations: &[AssociationResult]) -> Ide
 }
 
 fn visibility_for_track(
-  latest_observation_present: bool,
+  latest_item_present: bool,
   identity: &IdentityAssessment,
   coverage: &CoverageView,
   last_seen_frame_id: &Option<String>,
@@ -202,10 +202,10 @@ fn visibility_for_track(
   if matches!(identity, IdentityAssessment::Ambiguous) {
     return VisibilityAssessment::Unknown;
   }
-  if latest_observation_present {
+  if latest_item_present {
     return VisibilityAssessment::Visible;
   }
-  let stale_candidate = coverage.negative_evidence().iter().any(|entry| entry.code == "no_new_observation") && last_seen_frame_id.is_some();
+  let stale_candidate = coverage.negative_evidence().iter().any(|entry| entry.code == "no_new_item") && last_seen_frame_id.is_some();
   if stale_candidate {
     return VisibilityAssessment::StaleCandidate;
   }
@@ -217,7 +217,7 @@ fn lifecycle_verdict_for_track(track_id: &str, lifecycle: &Option<LifecycleVerdi
     Some(LifecycleVerdict::Reacquired { track_id: tid }) if tid == track_id => lifecycle.clone(),
     Some(LifecycleVerdict::Lost { track_id: tid }) if tid == track_id => lifecycle.clone(),
     Some(LifecycleVerdict::AmbiguousReacquire { track_id: tid }) if tid == track_id => lifecycle.clone(),
-    Some(LifecycleVerdict::ObservationFailed { .. }) => lifecycle.clone(),
+    Some(LifecycleVerdict::ReadFailed { .. }) => lifecycle.clone(),
     _ => None,
   }
 }
@@ -243,14 +243,14 @@ fn push_unique(codes: &mut Vec<String>, code: &str) {
 }
 
 fn collect_blocking_codes(
-  observations_valid: bool,
+  items_valid: bool,
   coverage: &CoverageView,
   lifecycle: &Option<LifecycleVerdict>,
   lifecycle_input_error: &Option<String>,
 ) -> Vec<String> {
   let mut codes = Vec::new();
-  if !observations_valid {
-    push_unique(&mut codes, "missing_observations");
+  if !items_valid {
+    push_unique(&mut codes, "missing_items");
     return codes;
   }
   for uncertainty in coverage.open_uncertainty_codes() {
@@ -259,8 +259,8 @@ fn collect_blocking_codes(
     }
   }
   for negative in coverage.negative_evidence() {
-    if negative.code == "no_new_observation" {
-      push_unique(&mut codes, "no_new_observation");
+    if negative.code == "no_new_item" {
+      push_unique(&mut codes, "no_new_item");
     }
   }
   if let Some(code) = lifecycle_input_error {
@@ -269,7 +269,7 @@ fn collect_blocking_codes(
   if let Some(verdict) = lifecycle {
     match verdict {
       LifecycleVerdict::Lost { .. } => push_unique(&mut codes, "lifecycle_lost"),
-      LifecycleVerdict::ObservationFailed { .. } => push_unique(&mut codes, "lifecycle_observation_failed"),
+      LifecycleVerdict::ReadFailed { .. } => push_unique(&mut codes, "lifecycle_read_failed"),
       LifecycleVerdict::Incomplete => push_unique(&mut codes, "lifecycle_incomplete"),
       LifecycleVerdict::Reacquired { .. } | LifecycleVerdict::AmbiguousReacquire { .. } => {}
     }
@@ -277,42 +277,42 @@ fn collect_blocking_codes(
   codes
 }
 
-fn recommended_observations_for_codes(blocking_codes: &[String]) -> Vec<ObservationRequest> {
+fn recommendations_for_codes(blocking_codes: &[String]) -> Vec<SceneRecommendation> {
   let mut requests = Vec::new();
   for code in blocking_codes {
     let request = match code.as_str() {
-      "ambiguous_association" => Some(ObservationRequest {
+      "ambiguous_association" => Some(SceneRecommendation {
         code: "disambiguate_label".into(),
-        rationale: "collect distinguishing observation for duplicate label".into(),
+        rationale: "collect distinguishing item for duplicate label".into(),
       }),
-      "no_new_observation" => Some(ObservationRequest {
+      "no_new_item" => Some(SceneRecommendation {
         code: "rescan_after_motion".into(),
         rationale: "capture frame after viewport motion".into(),
       }),
-      "missing_observations" => Some(ObservationRequest {
-        code: "supply_observations".into(),
-        rationale: "provide per-frame observations matching bundle length".into(),
+      "missing_items" => Some(SceneRecommendation {
+        code: "supply_items".into(),
+        rationale: "provide per-frame items matching bundle length".into(),
       }),
-      "lifecycle_missing_evidence" => Some(ObservationRequest {
+      "lifecycle_missing_evidence" => Some(SceneRecommendation {
         code: "fix_lifecycle_evidence".into(),
         rationale: "repair lifecycle event transition evidence".into(),
       }),
-      "lifecycle_lost" => Some(ObservationRequest {
+      "lifecycle_lost" => Some(SceneRecommendation {
         code: "stop_or_reacquire".into(),
         rationale: "target lost at domain layer; reacquire not in S5a".into(),
       }),
-      "lifecycle_observation_failed" => Some(ObservationRequest {
+      "lifecycle_read_failed" => Some(SceneRecommendation {
         code: "retry_capture".into(),
-        rationale: "infra observation failure".into(),
+        rationale: "infra item failure".into(),
       }),
-      "lifecycle_incomplete" => Some(ObservationRequest {
+      "lifecycle_incomplete" => Some(SceneRecommendation {
         code: "complete_lifecycle_chain".into(),
         rationale: "lifecycle stream lacks terminal verdict".into(),
       }),
       _ => None,
     };
     if let Some(entry) = request {
-      if !requests.iter().any(|existing: &ObservationRequest| existing.code == entry.code) {
+      if !requests.iter().any(|existing: &SceneRecommendation| existing.code == entry.code) {
         requests.push(entry);
       }
     }
@@ -322,26 +322,26 @@ fn recommended_observations_for_codes(blocking_codes: &[String]) -> Vec<Observat
 
 fn build_track_states(
   frames: &[SceneFrame],
-  observations_by_frame: &[Vec<FrameObservation>],
+  items_by_frame: &[Vec<FrameItem>],
   as_of_frame_id: &str,
   associations: &[AssociationResult],
   coverage: &CoverageView,
   lifecycle: &Option<LifecycleVerdict>,
 ) -> Vec<SceneTrackState> {
-  let labels = collect_labels(observations_by_frame);
+  let labels = collect_labels(items_by_frame);
   labels
     .into_iter()
     .map(|label| {
       let track_id = track_id_for_label(&label);
-      let last_seen = last_seen_frame_id(frames, observations_by_frame, &label);
-      let latest_observation_present = last_seen.as_deref() == Some(as_of_frame_id);
+      let last_seen = last_seen_frame_id(frames, items_by_frame, &label);
+      let latest_item_present = last_seen.as_deref() == Some(as_of_frame_id);
       let identity_assessment = identity_for_track(&track_id, associations);
-      let visibility_assessment = visibility_for_track(latest_observation_present, &identity_assessment, coverage, &last_seen);
+      let visibility_assessment = visibility_for_track(latest_item_present, &identity_assessment, coverage, &last_seen);
       let lifecycle_verdict = lifecycle_verdict_for_track(&track_id, lifecycle);
       SceneTrackState {
         track_id,
         last_seen_frame_id: last_seen,
-        latest_observation_present,
+        latest_item_present,
         identity_assessment,
         visibility_assessment,
         lifecycle_verdict,
@@ -371,7 +371,7 @@ fn estimate_scene_motion(frames: &[SceneFrame]) -> Result<MotionResult, MotionEr
   }))
 }
 
-/// Build an in-memory scene state product from frames, observations, and optional lifecycle events.
+/// Build an in-memory scene state product from frames, items, and optional lifecycle events.
 pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStateProduct, SceneStateError> {
   if input.frames.is_empty() {
     return Err(SceneStateError::EmptyBundle);
@@ -387,9 +387,9 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
     }),
   });
 
-  let observations_valid = observations_match_frames(&input.frames, &input.observations_by_frame);
-  let associations = if observations_valid {
-    associations_for_frames(&input.frames, &input.observations_by_frame)
+  let items_valid = items_match_frames(&input.frames, &input.items_by_frame);
+  let associations = if items_valid {
+    associations_for_frames(&input.frames, &input.items_by_frame)
   } else {
     Vec::new()
   };
@@ -397,7 +397,7 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
     build_coverage_view_for_sequence(input.frames.len(), input.frames.last().map(|frame| frame.frame_id.as_str()), &associations);
   let (lifecycle, lifecycle_input_error) = evaluate_lifecycle_optional(&input.lifecycle_events);
 
-  let blocking_codes = collect_blocking_codes(observations_valid, &coverage, &lifecycle, &lifecycle_input_error);
+  let blocking_codes = collect_blocking_codes(items_valid, &coverage, &lifecycle, &lifecycle_input_error);
   let ready = blocking_codes.is_empty();
   let reason = if ready {
     "no blocking codes".into()
@@ -409,10 +409,10 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
     reason,
     blocking_codes: blocking_codes.clone(),
   };
-  let recommended_observations = recommended_observations_for_codes(&blocking_codes);
+  let recommendations = recommendations_for_codes(&blocking_codes);
 
-  let tracks = if observations_valid {
-    build_track_states(&input.frames, &input.observations_by_frame, &as_of_frame_id, &associations, &coverage, &lifecycle)
+  let tracks = if items_valid {
+    build_track_states(&input.frames, &input.items_by_frame, &as_of_frame_id, &associations, &coverage, &lifecycle)
   } else {
     Vec::new()
   };
@@ -432,14 +432,14 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
     lifecycle,
     tracks,
     action_readiness,
-    recommended_observations,
+    recommendations,
     diagnostics,
   })
 }
 
 /// Metadata-only L2 summary (no IO). Full consumption surface uses [`crate::format_scene_state_inspect_text`].
 pub fn summarize_scene_state_text(product: &SceneStateProduct) -> String {
-  let recommended = product.recommended_observations.iter().map(|req| req.code.as_str()).collect::<Vec<_>>().join(",");
+  let recommended = product.recommendations.iter().map(|req| req.code.as_str()).collect::<Vec<_>>().join(",");
   let mut lines = vec![
     format!("as_of_frame_id={}", product.as_of_frame_id),
     format!("action_ready={} blocking={:?}", product.action_readiness.ready, product.action_readiness.blocking_codes),
@@ -449,7 +449,7 @@ pub fn summarize_scene_state_text(product: &SceneStateProduct) -> String {
   for track in &product.tracks {
     lines.push(format!(
       "track_id={} last_seen={:?} latest_present={} identity={:?} visibility={:?}",
-      track.track_id, track.last_seen_frame_id, track.latest_observation_present, track.identity_assessment, track.visibility_assessment,
+      track.track_id, track.last_seen_frame_id, track.latest_item_present, track.identity_assessment, track.visibility_assessment,
     ));
   }
   lines.join("\n")

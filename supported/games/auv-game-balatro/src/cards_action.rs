@@ -354,7 +354,7 @@ mod tests {
     //
     // If one UI detection missed the still-active Play button, normal detector
     // box jitter changed card fingerprints and falsely proved submission.
-    // Fingerprint-only evidence therefore needs repeated observation at the
+    // Fingerprint-only evidence therefore needs repeated read at the
     // command layer; phase and hand-count changes remain immediately strong.
     let fingerprint_only = CardCommitConfirmation::Applied {
       changes: CardCommitChanges::from_observed(vec![CardCommitChange::HandFingerprintsChanged]).unwrap(),

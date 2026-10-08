@@ -1,5 +1,10 @@
 # View Parser IR NetEase Playlist Example Implementation Plan
 
+> Naming migration (2026-10-08): `ViewObservation` → `ParsedViewport`; `SidebarViewportObservation` → `SidebarViewport`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build an example-only `netease_playlist_ls` CLI that uses existing AUV macOS driver APIs to produce a structured NetEase playlist sidebar scan artifact.

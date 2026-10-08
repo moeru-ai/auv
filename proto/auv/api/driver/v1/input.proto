@@ -104,11 +104,11 @@ service InputService {
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
   // Scrolls a window in steps and observes after each step (one capture per
-  // observation) until consecutive steps show no visual motion, the text query
+  // update) until consecutive steps show no visual motion, the text query
   // becomes visible, the client decides to stop, or the step budget runs out.
-  // The first request must be `begin`. Every observation is streamed, with its
+  // The first request must be `begin`. Every update is streamed, with its
   // capture and recognized text unless opted out. With `await_decisions`, the
-  // Runner waits for one `decision` after each observation it does not end
+  // Runner waits for one `decision` after each update it does not end
   // itself; a half-closed request stream counts as a stop.
   // "No visual progress" is not proof that no more content exists.
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
@@ -499,10 +499,10 @@ message ScrollUntilTextVisible {
   string query = 1;
 }
 
-// Opt-outs for observation payloads; everything is included by default.
+// Opt-outs for update payloads; everything is included by default.
 // Motion evidence is always included. A text condition still recognizes text
-// when `omit_text` is set; only the observation omits it.
-message ScrollUntilObserve {
+// when `omit_text` is set; only the update omits it.
+message ScrollUntilOutputOptions {
   // Captures always travel by reference, so there is nothing to omit.
   reserved 1;
   reserved "omit_capture";
@@ -526,18 +526,18 @@ message ScrollUntilBegin {
   uint32 max_steps = 7;
   // Wait after each step before observing, at most 10s. Absence is zero.
   google.protobuf.Duration settle = 8;
-  // Consecutive no-motion observations that count as the end, 1..=10.
+  // Consecutive no-motion updates that count as the end, 1..=10.
   uint32 no_motion_confirmations = 9;
   // Region of the window compared for motion; absence is the whole window.
   optional auv.api.image.v1.NormalizedRect motion_region = 10;
   ScrollOptions options = 11;
-  ScrollUntilObserve observe = 12;
-  // The client runs a predicate and answers each observation that has
+  ScrollUntilOutputOptions output = 12;
+  // The client runs a predicate and answers each update that has
   // `awaiting_decision` set.
   bool await_decisions = 13;
 }
 
-// The client's verdict on the latest observation awaiting a decision.
+// The client's verdict on the latest update awaiting a decision.
 message ScrollUntilDecision {
   bool stop = 1;
 }
@@ -572,7 +572,9 @@ message ScrollUntilTextMatch {
 }
 
 // What the Runner saw before the first step (`steps` 0) and after each step.
-message ScrollUntilObservation {
+// NOTICE(domain-result-names): This is a coordinated breaking rename, without
+// legacy message/field aliases. See the 2026-10-08 domain-result naming migration.
+message ScrollUntilUpdate {
   uint32 steps = 1;
   Scroll delivered = 2;
   // Absent before the first step.
@@ -600,7 +602,7 @@ message ScrollUntilCompleted {
 
 message ScrollUntilResponse {
   oneof event {
-    ScrollUntilObservation observation = 1;
+    ScrollUntilUpdate update = 1;
     ScrollUntilCompleted completed = 2;
   }
 }

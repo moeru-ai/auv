@@ -129,35 +129,35 @@ fn collect_landmarks_walks_tree_in_preorder() {
 }
 
 // ------------------------------------------------------------------------
-// Scan-loop / top-seek coverage. FakeObservation + FakeObserver are
+// Scan-loop / top-seek coverage. FakeViewport + FakeReader are
 // programmable per-test (provide a queue of fingerprints; flag scrolls as
 // failing if needed). These tests lock the loop's termination contract:
 // repeated fingerprint, error handling, and both caps.
 // ------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
-struct FakeObservation {
+struct FakeViewport {
   fingerprint: String,
 }
 
-impl ViewObservation for FakeObservation {
+impl ParsedViewport for FakeViewport {
   fn viewport_fingerprint(&self) -> &str {
     &self.fingerprint
   }
 }
 
 #[derive(Default)]
-struct FakeObserver {
+struct FakeReader {
   fingerprints: Vec<&'static str>,
   cursor: usize,
-  fail_observe_after: Option<usize>,
+  fail_read_after: Option<usize>,
   fail_scroll_down_after: Option<usize>,
   fail_scroll_up_after: Option<usize>,
   scroll_up_calls: usize,
   scroll_down_calls: usize,
 }
 
-impl FakeObserver {
+impl FakeReader {
   fn new(fingerprints: Vec<&'static str>) -> Self {
     Self {
       fingerprints,
@@ -173,32 +173,32 @@ impl FakeObserver {
     }
   }
 
-  fn take_at(&self, index: usize) -> Result<FakeObservation, ParserDiagnostic> {
+  fn take_at(&self, index: usize) -> Result<FakeViewport, ParserDiagnostic> {
     self
       .fingerprints
       .get(index)
-      .map(|fp| FakeObservation {
+      .map(|fp| FakeViewport {
         fingerprint: (*fp).to_string(),
       })
-      .ok_or_else(|| Self::diagnostic("no_more_fake_observations"))
+      .ok_or_else(|| Self::diagnostic("no_more_fake_viewports"))
   }
 }
 
-impl ViewObserver for FakeObserver {
-  type Observation = FakeObservation;
+impl ViewportReader for FakeReader {
+  type Viewport = FakeViewport;
 
-  fn observe(&mut self, _observation_index: usize) -> Result<Self::Observation, ParserDiagnostic> {
-    if let Some(after) = self.fail_observe_after {
+  fn read_viewport(&mut self, _viewport_index: usize) -> Result<Self::Viewport, ParserDiagnostic> {
+    if let Some(after) = self.fail_read_after {
       if self.cursor >= after {
-        return Err(Self::diagnostic("observe_failed"));
+        return Err(Self::diagnostic("read_failed"));
       }
     }
-    let observation = self.take_at(self.cursor)?;
+    let viewport = self.take_at(self.cursor)?;
     self.cursor += 1;
-    Ok(observation)
+    Ok(viewport)
   }
 
-  fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic> {
+  fn read_probe(&mut self) -> Result<Self::Viewport, ParserDiagnostic> {
     self.take_at(self.cursor)
   }
 
@@ -227,87 +227,87 @@ impl ViewObserver for FakeObserver {
 }
 
 #[test]
-fn scan_with_observer_stops_on_repeated_fingerprint() {
-  let mut observer = FakeObserver::new(vec!["a", "b", "b"]);
-  let outcome = scan_with_observer(
-    &mut observer,
+fn scan_with_reader_stops_on_repeated_fingerprint() {
+  let mut reader = FakeReader::new(vec!["a", "b", "b"]);
+  let outcome = scan_with_reader(
+    &mut reader,
     ScanOptions {
       max_pages: 16,
       max_scrolls: 16,
     },
   );
 
-  assert_eq!(outcome.observations.len(), 3);
-  assert_eq!(outcome.observations.iter().map(|o| o.viewport_fingerprint()).collect::<Vec<_>>(), vec!["a", "b", "b"]);
+  assert_eq!(outcome.viewports.len(), 3);
+  assert_eq!(outcome.viewports.iter().map(|o| o.viewport_fingerprint()).collect::<Vec<_>>(), vec!["a", "b", "b"]);
   assert!(outcome.diagnostics.is_empty());
   assert!(outcome.known_limits.is_empty(), "boundary hit, no cap fired");
 }
 
 #[test]
-fn scan_with_observer_stops_at_max_pages_and_records_known_limit() {
-  let mut observer = FakeObserver::new(vec!["a", "b", "c", "d", "e"]);
-  let outcome = scan_with_observer(
-    &mut observer,
+fn scan_with_reader_stops_at_max_pages_and_records_known_limit() {
+  let mut reader = FakeReader::new(vec!["a", "b", "c", "d", "e"]);
+  let outcome = scan_with_reader(
+    &mut reader,
     ScanOptions {
       max_pages: 2,
       max_scrolls: 16,
     },
   );
 
-  assert_eq!(outcome.observations.len(), 2);
+  assert_eq!(outcome.viewports.len(), 2);
   assert!(outcome.diagnostics.is_empty());
   assert_eq!(outcome.known_limits.len(), 1);
   assert!(outcome.known_limits[0].contains("max_pages=2"));
 }
 
 #[test]
-fn scan_with_observer_stops_at_max_scrolls_and_records_known_limit() {
-  let mut observer = FakeObserver::new(vec!["a", "b", "c", "d", "e"]);
-  let outcome = scan_with_observer(
-    &mut observer,
+fn scan_with_reader_stops_at_max_scrolls_and_records_known_limit() {
+  let mut reader = FakeReader::new(vec!["a", "b", "c", "d", "e"]);
+  let outcome = scan_with_reader(
+    &mut reader,
     ScanOptions {
       max_pages: 16,
       max_scrolls: 1,
     },
   );
 
-  // First observation (cursor 0 → "a"), scroll #1 OK; second observation
+  // First viewport (cursor 0 → "a"), scroll #1 OK; second viewport
   // (cursor 1 → "b"), scroll cap exceeded, break before scroll #2.
-  assert_eq!(outcome.observations.len(), 2);
+  assert_eq!(outcome.viewports.len(), 2);
   assert!(outcome.diagnostics.is_empty());
   assert_eq!(outcome.known_limits.len(), 1);
   assert!(outcome.known_limits[0].contains("max_scrolls=1"));
 }
 
 #[test]
-fn scan_with_observer_records_diagnostic_and_breaks_on_observe_error() {
-  let mut observer = FakeObserver::new(vec!["a", "b"]);
-  observer.fail_observe_after = Some(1);
-  let outcome = scan_with_observer(
-    &mut observer,
+fn scan_with_reader_records_diagnostic_and_breaks_on_read_error() {
+  let mut reader = FakeReader::new(vec!["a", "b"]);
+  reader.fail_read_after = Some(1);
+  let outcome = scan_with_reader(
+    &mut reader,
     ScanOptions {
       max_pages: 16,
       max_scrolls: 16,
     },
   );
 
-  // First observation succeeds; second errors before being pushed.
-  assert_eq!(outcome.observations.len(), 1);
+  // First viewport succeeds; second errors before being pushed.
+  assert_eq!(outcome.viewports.len(), 1);
   assert_eq!(outcome.diagnostics.len(), 1);
-  assert_eq!(outcome.diagnostics[0].code, "observe_failed");
+  assert_eq!(outcome.diagnostics[0].code, "read_failed");
 }
 
 #[test]
 fn scroll_to_top_reports_likely_boundary_on_repeated_fingerprint() {
   // Probe sees "a"; after scroll_up, probe sees "a" again — view didn't
   // move, declare top boundary as Likely.
-  let mut observer = FakeObserver::new(vec!["a", "a"]);
-  let outcome = scroll_to_top(&mut observer, 8);
+  let mut reader = FakeReader::new(vec!["a", "a"]);
+  let outcome = scroll_to_top(&mut reader, 8);
 
   assert_eq!(outcome.boundary, BoundaryConfidence::Likely);
   assert!(outcome.diagnostics.is_empty());
   assert!(outcome.known_limits.is_empty());
-  assert_eq!(observer.scroll_up_calls, 1);
+  assert_eq!(reader.scroll_up_calls, 1);
 }
 
 #[test]
@@ -317,15 +317,15 @@ fn scroll_to_top_records_known_limit_when_max_scrolls_exhausted() {
   struct AlwaysNew {
     counter: usize,
   }
-  impl ViewObserver for AlwaysNew {
-    type Observation = FakeObservation;
-    fn observe(&mut self, _: usize) -> Result<Self::Observation, ParserDiagnostic> {
-      unreachable!("top-seek does not call observe")
+  impl ViewportReader for AlwaysNew {
+    type Viewport = FakeViewport;
+    fn read_viewport(&mut self, _: usize) -> Result<Self::Viewport, ParserDiagnostic> {
+      unreachable!("top-seek does not call read_viewport")
     }
-    fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic> {
+    fn read_probe(&mut self) -> Result<Self::Viewport, ParserDiagnostic> {
       let fp = format!("fp-{}", self.counter);
       self.counter += 1;
-      Ok(FakeObservation { fingerprint: fp })
+      Ok(FakeViewport { fingerprint: fp })
     }
     fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
       Ok(())
@@ -335,8 +335,8 @@ fn scroll_to_top_records_known_limit_when_max_scrolls_exhausted() {
     }
   }
 
-  let mut observer = AlwaysNew { counter: 0 };
-  let outcome = scroll_to_top(&mut observer, 3);
+  let mut reader = AlwaysNew { counter: 0 };
+  let outcome = scroll_to_top(&mut reader, 3);
 
   assert_eq!(outcome.boundary, BoundaryConfidence::Unknown);
   assert_eq!(outcome.known_limits.len(), 1);
@@ -346,17 +346,17 @@ fn scroll_to_top_records_known_limit_when_max_scrolls_exhausted() {
 #[test]
 fn boundary_summary_likely_on_adjacent_repeat() {
   let obs = vec![
-    FakeObservation {
+    FakeViewport {
       fingerprint: "a".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "b".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "b".into(),
     },
   ];
-  let summary = boundary_summary_from_observations(&obs);
+  let summary = boundary_summary_from_viewports(&obs);
   assert_eq!(summary.bottom, BoundaryConfidence::Likely);
   assert_eq!(summary.top, BoundaryConfidence::Unknown);
 }
@@ -364,17 +364,17 @@ fn boundary_summary_likely_on_adjacent_repeat() {
 #[test]
 fn boundary_summary_unknown_when_no_adjacent_repeat() {
   let obs = vec![
-    FakeObservation {
+    FakeViewport {
       fingerprint: "a".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "b".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "c".into(),
     },
   ];
-  let summary = boundary_summary_from_observations(&obs);
+  let summary = boundary_summary_from_viewports(&obs);
   assert_eq!(summary.bottom, BoundaryConfidence::Unknown);
 }
 
@@ -384,17 +384,17 @@ fn boundary_summary_unknown_on_non_adjacent_repeat() {
   // adjacent identical pairs do. Other repeats are handled by
   // RepeatedViewport diagnostics in the policy spec.
   let obs = vec![
-    FakeObservation {
+    FakeViewport {
       fingerprint: "a".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "b".into(),
     },
-    FakeObservation {
+    FakeViewport {
       fingerprint: "a".into(),
     },
   ];
-  let summary = boundary_summary_from_observations(&obs);
+  let summary = boundary_summary_from_viewports(&obs);
   assert_eq!(summary.bottom, BoundaryConfidence::Unknown);
 }
 
@@ -471,14 +471,14 @@ struct FakeCandidate {
 }
 
 #[derive(Debug)]
-struct FakeReconstructObservation {
+struct FakeReconstructViewport {
   fingerprint: String,
   candidates: Vec<FakeCandidate>,
   parser_notes_vec: Vec<ParserDiagnostic>,
   evidence_present: bool,
 }
 
-impl ViewObservation for FakeReconstructObservation {
+impl ParsedViewport for FakeReconstructViewport {
   fn viewport_fingerprint(&self) -> &str {
     &self.fingerprint
   }
@@ -510,13 +510,13 @@ impl ReconstructionPolicy for FakePolicy {
   type SectionKey = String;
   type SectionProjection = FakeSection;
   type ItemProjection = FakeItem;
-  type Observation = FakeReconstructObservation;
+  type Viewport = FakeReconstructViewport;
 
-  fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  fn candidates<'a>(&self, viewport: &'a Self::Viewport) -> impl Iterator<Item = &'a Self::Candidate> + 'a
   where
     Self::Candidate: 'a,
   {
-    observation.candidates.iter()
+    viewport.candidates.iter()
   }
 
   fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {
@@ -531,7 +531,7 @@ impl ReconstructionPolicy for FakePolicy {
     }
   }
 
-  fn build_section(&self, _observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
+  fn build_section(&self, _viewport: &Self::Viewport, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
     let id = format!("section.{}", candidate.id);
     let node = ViewNodeRecord {
       id: id.clone(),
@@ -570,7 +570,7 @@ impl ReconstructionPolicy for FakePolicy {
 
   fn build_item(
     &self,
-    _observation: &Self::Observation,
+    _viewport: &Self::Viewport,
     candidate: &Self::Candidate,
     _section: &Self::SectionProjection,
   ) -> (ViewNodeRecord, Self::ItemProjection) {
@@ -643,8 +643,8 @@ fn item(id: &str, label: &str) -> FakeCandidate {
   }
 }
 
-fn obs(fingerprint: &str, candidates: Vec<FakeCandidate>) -> FakeReconstructObservation {
-  FakeReconstructObservation {
+fn obs(fingerprint: &str, candidates: Vec<FakeCandidate>) -> FakeReconstructViewport {
+  FakeReconstructViewport {
     fingerprint: fingerprint.into(),
     candidates,
     parser_notes_vec: Vec::new(),
@@ -653,10 +653,10 @@ fn obs(fingerprint: &str, candidates: Vec<FakeCandidate>) -> FakeReconstructObse
 }
 
 #[test]
-fn reconstruct_dedups_sections_by_key_across_observations() {
+fn reconstruct_dedups_sections_by_key_across_viewports() {
   // Same section header label appears in obs 0 and obs 1; only one section
   // should be produced.
-  let observations = vec![
+  let viewports = vec![
     obs(
       "fp-0",
       vec![
@@ -672,7 +672,7 @@ fn reconstruct_dedups_sections_by_key_across_observations() {
       ],
     ),
   ];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   assert_eq!(out.sections.len(), 1, "second header with same key must merge");
   assert_eq!(out.sections[0].items.len(), 2);
   assert_eq!(out.sections[0].items[0].label, "Liked Songs");
@@ -683,7 +683,7 @@ fn reconstruct_dedups_sections_by_key_across_observations() {
 fn reconstruct_dedups_items_within_section_and_emits_diagnostic() {
   // Same item label appears twice under the same section; the second
   // attempt emits a diagnostic and is not appended.
-  let observations = vec![obs(
+  let viewports = vec![obs(
     "fp",
     vec![
       header("h", "Recommended", "recommended"),
@@ -691,7 +691,7 @@ fn reconstruct_dedups_items_within_section_and_emits_diagnostic() {
       item("i1", "Discover Weekly"),
     ],
   )];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   assert_eq!(out.sections.len(), 1);
   assert_eq!(out.sections[0].items.len(), 1);
   let dedup = out.diagnostics.iter().find(|d| d.code == "deduplicated_item").expect("dedup diagnostic must fire");
@@ -703,8 +703,8 @@ fn reconstruct_dedups_items_within_section_and_emits_diagnostic() {
 fn reconstruct_builds_unassigned_section_for_items_before_any_header() {
   // Item appears before any header; framework creates an unassigned
   // section lazily.
-  let observations = vec![obs("fp", vec![item("i0", "Orphan Track")])];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  let viewports = vec![obs("fp", vec![item("i0", "Orphan Track")])];
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   assert_eq!(out.sections.len(), 1);
   assert_eq!(out.sections[0].id, "section.unassigned");
   assert_eq!(out.sections[0].items.len(), 1);
@@ -712,9 +712,9 @@ fn reconstruct_builds_unassigned_section_for_items_before_any_header() {
 
 #[test]
 fn reconstruct_raises_no_reliable_candidates_when_evidence_but_no_sections() {
-  // Observation has evidence but the only candidates are Unknown — no
+  // Viewport has evidence but the only candidates are Unknown — no
   // sections, framework raises the parser_no_reliable_candidates note.
-  let observations = vec![obs(
+  let viewports = vec![obs(
     "fp",
     vec![FakeCandidate {
       id: "u".into(),
@@ -723,7 +723,7 @@ fn reconstruct_raises_no_reliable_candidates_when_evidence_but_no_sections() {
       section_key: None,
     }],
   )];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   assert_eq!(out.sections.len(), 0);
   assert!(
     out.diagnostics.iter().any(|d| d.code == "parser_no_reliable_candidates"),
@@ -741,11 +741,11 @@ fn reconstruct_does_not_raise_no_reliable_candidates_when_no_evidence() {
 }
 
 #[test]
-fn reconstruct_forwards_observation_parser_notes_into_diagnostics() {
+fn reconstruct_forwards_viewport_parser_notes_into_diagnostics() {
   let mut o = obs("fp", vec![]);
   o.parser_notes_vec = vec![ParserDiagnostic {
     code: "preview".into(),
-    message: "from observation".into(),
+    message: "from viewport".into(),
     node_id: None,
   }];
   o.evidence_present = false;
@@ -758,11 +758,11 @@ fn reconstruct_collects_anchors_and_landmarks_in_preorder() {
   // Section node has an anchor; each item has an anchor + landmark.
   // Pre-order walk: root has no anchor, section.anchor first, then per-item
   // anchors in declaration order.
-  let observations = vec![obs(
+  let viewports = vec![obs(
     "fp",
     vec![header("h", "S", "s"), item("i0", "A"), item("i1", "B")],
   )];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   let anchor_ids: Vec<&str> = out.anchor_index.iter().map(|a| a.id.as_str()).collect();
   assert_eq!(anchor_ids, vec!["anchor.section.h", "anchor.item.i0", "anchor.item.i1"]);
   let landmark_ids: Vec<&str> = out.landmark_index.iter().map(|l| l.id.as_str()).collect();
@@ -772,8 +772,8 @@ fn reconstruct_collects_anchors_and_landmarks_in_preorder() {
 #[test]
 fn reconstruct_boundary_summary_reports_likely_on_adjacent_repeat() {
   // Same fingerprint twice in a row → boundary.bottom = Likely (inherited
-  // from boundary_summary_from_observations).
-  let observations = vec![obs("fp-a", vec![]), obs("fp-a", vec![])];
-  let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+  // from boundary_summary_from_viewports).
+  let viewports = vec![obs("fp-a", vec![]), obs("fp-a", vec![])];
+  let out = reconstruct(&FakePolicy, &viewports, ViewBounds::default());
   assert_eq!(out.boundary.bottom, BoundaryConfidence::Likely);
 }

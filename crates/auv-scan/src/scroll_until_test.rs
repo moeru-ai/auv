@@ -135,7 +135,7 @@ fn request(condition: ScrollUntilCondition) -> ScrollUntilRequest {
     settle: Duration::ZERO,
     no_motion_confirmations: 2,
     motion_region: None,
-    observe: ScrollUntilObserve::default(),
+    output: ScrollUntilOutputOptions::default(),
   }
 }
 
@@ -147,8 +147,8 @@ fn run(list: &mut FakeList, request: &ScrollUntilRequest) -> DriverResult<Scroll
 fn end_stops_after_consecutive_no_motion_at_the_bottom() {
   let mut list = FakeList::new(260);
   let mut streaks = Vec::new();
-  let result = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |observation| {
-    streaks.push(observation.no_motion_streak);
+  let result = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |update| {
+    streaks.push(update.no_motion_streak);
     Ok(ScrollUntilDecision::Continue)
   })
   .unwrap();
@@ -273,16 +273,16 @@ fn invalid_requests_are_rejected_before_any_input() {
 }
 
 #[test]
-fn observer_sees_every_observation_with_text_by_default() {
+fn observer_sees_every_update_with_text_by_default() {
   let mut list = FakeList::new(260);
   let mut seen = Vec::new();
-  scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |observation| {
-    assert!(observation.text.is_some(), "{observation:?}");
-    seen.push((observation.steps, observation.motion.is_some(), observation.stop));
+  scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |update| {
+    assert!(update.text.is_some(), "{update:?}");
+    seen.push((update.steps, update.motion.is_some(), update.stop));
     Ok(ScrollUntilDecision::Continue)
   })
   .unwrap();
-  assert_eq!(seen.first(), Some(&(0, false, None)), "initial observation has no motion yet");
+  assert_eq!(seen.first(), Some(&(0, false, None)), "initial update has no motion yet");
   assert_eq!(seen.len(), 7);
   assert_eq!(seen.last(), Some(&(6, true, Some(ScrollUntilStopReason::EndByNoVisualProgress))));
 }
@@ -290,8 +290,8 @@ fn observer_sees_every_observation_with_text_by_default() {
 #[test]
 fn observer_stop_ends_the_loop_as_predicate_satisfied() {
   let mut list = FakeList::new(2_000);
-  let result = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |observation| {
-    let text = observation.text.expect("text is observed by default");
+  let result = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |update| {
+    let text = update.text.expect("text is observed by default");
     Ok(if text.regions[0].text == "row at 150" {
       ScrollUntilDecision::Stop
     } else {
@@ -319,8 +319,8 @@ fn built_in_stop_wins_over_the_observer_decision() {
     &request(ScrollUntilCondition::TextVisible {
       query: "target".to_string(),
     }),
-    &mut |observation| {
-      assert_eq!(observation.stop, Some(ScrollUntilStopReason::TextVisible));
+    &mut |update| {
+      assert_eq!(update.stop, Some(ScrollUntilStopReason::TextVisible));
       Ok(ScrollUntilDecision::Stop)
     },
   )
@@ -331,8 +331,8 @@ fn built_in_stop_wins_over_the_observer_decision() {
 #[test]
 fn observer_errors_abort_the_loop() {
   let mut list = FakeList::new(2_000);
-  let error = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |observation| {
-    if observation.steps == 2 {
+  let error = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |update| {
+    if update.steps == 2 {
       Err(DriverError::InvalidInput {
         message: "client went away".to_string(),
       })
@@ -346,12 +346,12 @@ fn observer_errors_abort_the_loop() {
 }
 
 #[test]
-fn opted_out_observations_skip_recognition() {
+fn opted_out_updates_skip_recognition() {
   let mut list = FakeList::new(260);
   let mut end = request(ScrollUntilCondition::End);
-  end.observe = ScrollUntilObserve { text: false };
-  scroll_until(&mut list, &end, &mut |observation| {
-    assert!(observation.text.is_none());
+  end.output = ScrollUntilOutputOptions { text: false };
+  scroll_until(&mut list, &end, &mut |update| {
+    assert!(update.text.is_none());
     Ok(ScrollUntilDecision::Continue)
   })
   .unwrap();
@@ -365,9 +365,9 @@ fn text_condition_still_recognizes_when_text_is_opted_out() {
   let mut find = request(ScrollUntilCondition::TextVisible {
     query: "target".to_string(),
   });
-  find.observe.text = false;
-  let result = scroll_until(&mut list, &find, &mut |observation| {
-    assert!(observation.text.is_none());
+  find.output.text = false;
+  let result = scroll_until(&mut list, &find, &mut |update| {
+    assert!(update.text.is_none());
     Ok(ScrollUntilDecision::Continue)
   })
   .unwrap();
@@ -379,7 +379,7 @@ fn text_condition_still_recognizes_when_text_is_opted_out() {
 fn motion_only_loops_capture_at_logical_resolution() {
   let mut list = FakeList::new(260);
   let mut end = request(ScrollUntilCondition::End);
-  end.observe = ScrollUntilObserve { text: false };
+  end.output = ScrollUntilOutputOptions { text: false };
   scroll_until(&mut list, &end, &mut |_| Ok(ScrollUntilDecision::Continue)).unwrap();
   assert!(list.resolutions.iter().all(|resolution| *resolution == CaptureResolution::Logical), "{:?}", list.resolutions);
 

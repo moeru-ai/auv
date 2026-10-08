@@ -89,9 +89,9 @@ fn probe_parse_includes_playlist_row_below_sidebar_bottom() {
 fn probe_parse_viewport_keeps_player_bar_outside() {
   let recognition = fake_recognition(vec![("Reverberation", 98.0, 994.0, 160.0, 20.0)]);
   let sidebar_bounds = ViewBounds::new(0.0, 443.0, 344.0, 528.0);
-  let observation = parse_sidebar_viewport(0, sidebar_bounds, &recognition);
+  let viewport = parse_sidebar_viewport(0, sidebar_bounds, &recognition);
 
-  assert!(observation.evidence_nodes.is_empty());
+  assert!(viewport.evidence_nodes.is_empty());
 }
 
 #[test]

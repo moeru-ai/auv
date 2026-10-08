@@ -59,19 +59,19 @@ use crate::view_parsers::sidebar::*;
 use crate::views::player::classify_bottom_playback_control_state;
 use crate::views::screen;
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
-// Framework view-parser IR types, utilities, and the `ViewObserver` trait
+// Framework view-parser IR types, utilities, and the `ViewportReader` trait
 // live in `auv-view` so other app crates (future QQ Music, etc.) can build
 // on the same vocabulary without duplicating the records or re-defining the
-// observer contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
+// reader contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
 // the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
-// crate because they consume NetEase-shaped observations.
+// crate because they consume NetEase-shaped viewports.
 use auv_driver::{RatioRect, Size};
 use auv_view::{
-  AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic, ReconstructionOutput, ReconstructionPolicy,
-  ScanAppContext, ScanOptions, ScanWindowContext, ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor,
-  ViewAxis, ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord, ViewObservation,
-  ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord, confidence_from_ocr, normalize_identity,
-  reconstruct, slug, viewport_contains_center, viewport_fingerprint,
+  AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParsedViewport, ParserDiagnostic, ReconstructionOutput,
+  ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext, ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION,
+  ViewAction, ViewAnchor, ViewAxis, ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
+  ViewNodeRecord, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord, ViewportReader, confidence_from_ocr,
+  normalize_identity, reconstruct, slug, viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
 use image::{Rgba, RgbaImage};
@@ -225,15 +225,15 @@ pub struct SongListScanResult {
   pub window: ScanWindowContext,
   pub song_list_region: ViewRegionRecord,
   pub items: Vec<SongListItem>,
-  pub observations: Vec<SongListObservation>,
+  pub viewports: Vec<SongListPage>,
   pub boundary: ScrollBoundarySummary,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SongListObservation {
-  pub observation_index: usize,
+pub struct SongListPage {
+  pub viewport_index: usize,
   pub incoming_scroll_delivery_path: Option<String>,
   pub scroll_motion: Option<MotionEvidence>,
   pub rows: Vec<SongListItem>,
@@ -328,7 +328,7 @@ pub struct PlaylistSidebarScan {
   app: ScanAppContext,
   window: ScanWindowContext,
   sidebar_region: ViewRegionRecord,
-  observations: Vec<SidebarViewportObservation>,
+  viewports: Vec<SidebarViewport>,
   reconstruction: ViewReconstructionRecord,
   projection: PlaylistSidebarProjection,
   boundary: ScrollBoundarySummary,
@@ -346,7 +346,7 @@ pub struct PlaylistSelectTarget {
   pub item_id: String,
   pub anchor_id: Option<String>,
   pub candidate_id: Option<String>,
-  pub observation_index: Option<usize>,
+  pub viewport_index: Option<usize>,
   pub bounds: Option<ViewBounds>,
 }
 
@@ -362,7 +362,7 @@ impl PlaylistSidebarScan {
       app,
       window,
       sidebar_region,
-      observations: Vec::new(),
+      viewports: Vec::new(),
       reconstruction: ViewReconstructionRecord {
         root,
         anchor_index: Vec::new(),
@@ -401,8 +401,8 @@ impl PlaylistSidebarScan {
     &self.sidebar_region
   }
 
-  pub fn observations_len(&self) -> usize {
-    self.observations.len()
+  pub fn viewports_len(&self) -> usize {
+    self.viewports.len()
   }
 
   pub fn reconstruction(&self) -> &ViewReconstructionRecord {
@@ -493,18 +493,18 @@ impl PlaylistSidebarScan {
   }
 
   fn candidate_bounds(&self, candidate_id: &str) -> Option<(usize, ViewBounds)> {
-    self.observations.iter().find_map(|observation| {
-      observation
+    self.viewports.iter().find_map(|viewport| {
+      viewport
         .candidates
         .iter()
         .find(|candidate| candidate.id == candidate_id)
         .and_then(|candidate| candidate.bounds)
-        .map(|bounds| (observation.observation_index, bounds))
+        .map(|bounds| (viewport.viewport_index, bounds))
     })
   }
 
   fn select_target_from_parts(&self, section: &SidebarSection, item: &PlaylistSidebarItem) -> PlaylistSelectTarget {
-    let (observation_index, bounds) = item
+    let (viewport_index, bounds) = item
       .candidate_id
       .as_deref()
       .and_then(|candidate_id| self.candidate_bounds(candidate_id))
@@ -517,7 +517,7 @@ impl PlaylistSidebarScan {
       item_id: item.id.clone(),
       anchor_id: item.anchor_id.clone(),
       candidate_id: item.candidate_id.clone(),
-      observation_index,
+      viewport_index,
       bounds,
     }
   }
@@ -563,7 +563,7 @@ impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
       "boundary: top={:?} bottom={:?} left={:?} right={:?}",
       scan.boundary.top, scan.boundary.bottom, scan.boundary.left, scan.boundary.right
     )?;
-    writeln!(f, "observations: {}", scan.observations.len())?;
+    writeln!(f, "viewports: {}", scan.viewports.len())?;
     writeln!(f, "sections:")?;
     if scan.projection.sections.is_empty() {
       writeln!(f, "  (none)")?;
@@ -609,8 +609,8 @@ impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct SidebarViewportObservation {
-  observation_index: usize,
+struct SidebarViewport {
+  viewport_index: usize,
   viewport: ViewViewportRecord,
   incoming_scroll_delivery_path: Option<String>,
   scroll_motion: Option<MotionEvidence>,
@@ -627,7 +627,7 @@ struct SidebarViewportObservation {
   ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
 }
 
-impl ViewObservation for SidebarViewportObservation {
+impl ParsedViewport for SidebarViewport {
   fn viewport_fingerprint(&self) -> &str {
     &self.viewport_fingerprint
   }
@@ -756,14 +756,14 @@ fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaI
 }
 
 #[cfg(target_os = "macos")]
-fn draw_overlay(image: &mut RgbaImage, sidebar_bounds: ViewBounds, observation: &SidebarViewportObservation) {
+fn draw_overlay(image: &mut RgbaImage, sidebar_bounds: ViewBounds, viewport: &SidebarViewport) {
   draw_rect(image, sidebar_bounds, Rgba([255, 64, 64, 255]), 3);
-  for evidence in &observation.evidence_nodes {
+  for evidence in &viewport.evidence_nodes {
     if let Some(bounds) = evidence.bounds {
       draw_rect(image, bounds, Rgba([64, 160, 255, 255]), 2);
     }
   }
-  for candidate in &observation.candidates {
+  for candidate in &viewport.candidates {
     if let Some(bounds) = candidate.bounds {
       let color = match candidate.kind {
         SidebarCandidateKind::SectionHeader => Rgba([255, 210, 64, 255]),
@@ -788,7 +788,7 @@ fn section_node(
   kind: SidebarSectionKind,
   label: &str,
   candidate: &SidebarViewportCandidate,
-  observation: &SidebarViewportObservation,
+  viewport: &SidebarViewport,
 ) -> ViewNodeRecord {
   ViewNodeRecord {
     id: id.to_string(),
@@ -813,19 +813,13 @@ fn section_node(
       evidence_ids: candidate.evidence_ids.clone(),
     }],
     actions: vec![ViewAction::ObserveOnly],
-    evidence: candidate_evidence(candidate, observation),
+    evidence: candidate_evidence(candidate, viewport),
     children: Vec::new(),
   }
 }
 
-fn item_node(
-  id: &str,
-  anchor_id: &str,
-  label: &str,
-  candidate: &SidebarViewportCandidate,
-  observation: &SidebarViewportObservation,
-) -> ViewNodeRecord {
-  let evidence = candidate_evidence(candidate, observation);
+fn item_node(id: &str, anchor_id: &str, label: &str, candidate: &SidebarViewportCandidate, viewport: &SidebarViewport) -> ViewNodeRecord {
+  let evidence = candidate_evidence(candidate, viewport);
   let bounds = candidate.bounds.unwrap_or_default();
 
   ViewNodeRecord {
@@ -863,8 +857,8 @@ fn item_node(
   }
 }
 
-fn candidate_evidence(candidate: &SidebarViewportCandidate, observation: &SidebarViewportObservation) -> Vec<ViewEvidenceNode> {
-  candidate.evidence_ids.iter().filter_map(|id| observation.evidence_nodes.iter().find(|node| node.id == *id).cloned()).collect()
+fn candidate_evidence(candidate: &SidebarViewportCandidate, viewport: &SidebarViewport) -> Vec<ViewEvidenceNode> {
+  candidate.evidence_ids.iter().filter_map(|id| viewport.evidence_nodes.iter().find(|node| node.id == *id).cloned()).collect()
 }
 
 #[cfg(test)]

@@ -1390,7 +1390,7 @@ pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.scrollUntil 200 300 --dy 600 --until end --target app:com.google.Chrome\n  auv invoke input.scrollUntil 0.5 0.5 --normalized --dy 800 --until 'text:Load more' --settle-ms 600 --target window:12345\n  auv invoke input.scrollUntil 200 300 --dy 900 --step-duration-ms 500 --easing ease-in-out --until end --region 0,0.1,1,0.8 --target app:com.google.Chrome\nEach step scrolls --dx/--dy logical pixels (one axis; positive is down/right), waits --settle-ms so lazy content can load, then captures the window once. --until end stops after --confirmations consecutive steps without visual motion in --region; --until text:<query> stops when recognized text contains the query, or at the end; keep the step well below the visible height (for example 60-70%) so each line appears whole in at least one observation. --max-steps bounds the loop. An end stop means no visual progress was observed, not proof that no more content exists."
+  after_long_help = "Examples:\n  auv invoke input.scrollUntil 200 300 --dy 600 --until end --target app:com.google.Chrome\n  auv invoke input.scrollUntil 0.5 0.5 --normalized --dy 800 --until 'text:Load more' --settle-ms 600 --target window:12345\n  auv invoke input.scrollUntil 200 300 --dy 900 --step-duration-ms 500 --easing ease-in-out --until end --region 0,0.1,1,0.8 --target app:com.google.Chrome\nEach step scrolls --dx/--dy logical pixels (one axis; positive is down/right), waits --settle-ms so lazy content can load, then captures the window once. --until end stops after --confirmations consecutive steps without visual motion in --region; --until text:<query> stops when recognized text contains the query, or at the end; keep the step well below the visible height (for example 60-70%) so each line appears whole in at least one update. --max-steps bounds the loop. An end stop means no visual progress was observed, not proof that no more content exists."
 )]
 struct ScrollUntilArgs {
   /// X coordinate inside the target window.
@@ -1449,7 +1449,7 @@ struct ScrollUntilArgs {
 
 const DEFAULT_SCROLL_UNTIL_MAX_STEPS: u32 = 50;
 // NOTICE: 400 ms lets typical infinite lists request and render the next page
-// before the observation; slower feeds should raise --settle-ms.
+// before the update; slower feeds should raise --settle-ms.
 const DEFAULT_SCROLL_UNTIL_SETTLE_MS: u64 = 400;
 // NOTICE: two confirmations keep one slow lazy-load pause from ending the
 // scan early, matching the NetEase boundary policy.
@@ -1509,8 +1509,8 @@ impl ScrollUntilArgs {
       settle: std::time::Duration::from_millis(self.settle_ms),
       no_motion_confirmations: self.confirmations,
       motion_region: self.region.as_deref().map(parse_normalized_region).transpose()?,
-      // The command reports only the result, so observations skip OCR.
-      observe: auv_scan::ScrollUntilObserve { text: false },
+      // The command reports only the result, so updates skip OCR.
+      output: auv_scan::ScrollUntilOutputOptions { text: false },
     };
     request.validate().map_err(|error| format!("input.scrollUntil: {error}"))?;
     Ok(ScrollUntilPlan {

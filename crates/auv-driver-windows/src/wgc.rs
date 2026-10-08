@@ -1506,17 +1506,17 @@ pub fn reset_d3d_context() {
 #[cfg(not(target_os = "windows"))]
 pub fn reset_d3d_context() {}
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 pub fn health_cache_spawn_count() -> usize {
   native::with_health_state(|s| s.spawn_count)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 pub fn is_health_worker_running() -> bool {
   native::with_health_state(|s| s.worker_running)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 pub fn inject_health_cache_entry(key: HealthCacheKey, health: WindowHealth, age: Duration) {
   native::with_health_state(|s| {
     s.target_key = Some(key.clone());
@@ -1529,12 +1529,13 @@ pub fn inject_health_cache_entry(key: HealthCacheKey, health: WindowHealth, age:
   });
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 pub fn clear_health_cache() {
   native::clear_health_cache();
 }
 
-#[cfg(test)]
+// The tests drive Direct3D and WGC directly, so they only build on Windows.
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
   use super::*;
   use windows::Graphics::Capture::Direct3D11CaptureFramePool;

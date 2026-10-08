@@ -5,23 +5,23 @@ use crate::memory::{VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot};
 use auv_tracing::{ArtifactId, ArtifactUri, RunId};
 
 struct FakeAdapter {
-  observations: Vec<ReacquireObservation>,
+  viewports: Vec<ReacquireSnapshot>,
   cursor: usize,
   scrolls: usize,
 }
 
 impl ReacquireDriverAdapter for FakeAdapter {
-  fn observe_viewport(&mut self) -> Result<ReacquireObservation, ParserDiagnostic> {
+  fn read_viewport(&mut self) -> Result<ReacquireSnapshot, ParserDiagnostic> {
     self
-      .observations
+      .viewports
       .get(self.cursor)
       .cloned()
-      .map(|observation| {
+      .map(|viewport| {
         self.cursor += 1;
-        observation
+        viewport
       })
       .ok_or_else(|| ParserDiagnostic {
-        code: "no_observation".into(),
+        code: "no_viewport".into(),
         message: "fake adapter exhausted".into(),
         node_id: None,
       })
@@ -62,7 +62,7 @@ fn empty_memory() -> ViewMemory {
 fn reacquire_stage1_direct_id_on_screen() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![ReacquireObservation {
+    viewports: vec![ReacquireSnapshot {
       fingerprint: "a".into(),
       candidates: vec![ReacquireCandidate {
         node_id: Some("item.coding-bgm-synth".into()),
@@ -89,7 +89,7 @@ fn reacquire_stage1_direct_id_on_screen() {
 fn reacquire_stage3_unique_label() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![ReacquireObservation {
+    viewports: vec![ReacquireSnapshot {
       fingerprint: "b".into(),
       candidates: vec![ReacquireCandidate {
         node_id: Some("item.road-trip".into()),
@@ -124,8 +124,8 @@ fn reacquire_stage3_unique_label() {
 fn reacquire_stage3_ambiguous_falls_through() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![
-      ReacquireObservation {
+    viewports: vec![
+      ReacquireSnapshot {
         fingerprint: "a".into(),
         candidates: vec![
           ReacquireCandidate {
@@ -142,7 +142,7 @@ fn reacquire_stage3_ambiguous_falls_through() {
           },
         ],
       },
-      ReacquireObservation {
+      ReacquireSnapshot {
         fingerprint: "b".into(),
         candidates: vec![],
       },
@@ -170,8 +170,8 @@ fn reacquire_stage3_ambiguous_falls_through() {
 fn reacquire_stage5_label_section_after_scroll() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![
-      ReacquireObservation {
+    viewports: vec![
+      ReacquireSnapshot {
         fingerprint: "page0".into(),
         candidates: vec![ReacquireCandidate {
           node_id: Some("item.coding-bgm".into()),
@@ -180,7 +180,7 @@ fn reacquire_stage5_label_section_after_scroll() {
           bounds: ViewBounds::default(),
         }],
       },
-      ReacquireObservation {
+      ReacquireSnapshot {
         fingerprint: "page1".into(),
         candidates: vec![ReacquireCandidate {
           node_id: Some("item.jazz".into()),
@@ -209,10 +209,10 @@ fn reacquire_stage5_label_section_after_scroll() {
   match outcome {
     ReacquireOutcome::Reacquired {
       strategy_used: ReacquireStrategy::LabelPlusSection,
-      observation_count,
+      read_count,
       ..
     } => {
-      assert!(observation_count >= 2);
+      assert!(read_count >= 2);
     }
     other => panic!("expected scrolled label+section match, got {other:?}"),
   }
@@ -222,7 +222,7 @@ fn reacquire_stage5_label_section_after_scroll() {
 fn reacquire_not_found_lists_attempted_strategies() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![ReacquireObservation {
+    viewports: vec![ReacquireSnapshot {
       fingerprint: "other".into(),
       candidates: vec![ReacquireCandidate {
         node_id: None,
@@ -263,7 +263,7 @@ fn reacquire_stale_on_freshness_rejection() {
   let mut memory = empty_memory();
   memory.last_reconstructed_at_millis = 1_000;
   let mut adapter = FakeAdapter {
-    observations: vec![],
+    viewports: vec![],
     cursor: 0,
     scrolls: 0,
   };
@@ -297,7 +297,7 @@ fn reacquire_stale_on_freshness_rejection() {
 fn reacquire_not_found_when_viewport_observed_but_empty_candidates() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![ReacquireObservation {
+    viewports: vec![ReacquireSnapshot {
       fingerprint: "empty".into(),
       candidates: vec![],
     }],
@@ -320,13 +320,13 @@ fn reacquire_not_found_when_viewport_observed_but_empty_candidates() {
   match outcome {
     ReacquireOutcome::NotFound {
       attempted_strategies,
-      observation_count,
+      read_count,
       ..
     } => {
-      assert_eq!(observation_count, 1);
+      assert_eq!(read_count, 1);
       assert!(attempted_strategies.iter().any(|strategy| *strategy == ReacquireStrategy::LabelCurrentViewport));
     }
-    other => panic!("expected not_found after successful observe, got {other:?}"),
+    other => panic!("expected not_found after successful read_viewport, got {other:?}"),
   }
 }
 
@@ -334,7 +334,7 @@ fn reacquire_not_found_when_viewport_observed_but_empty_candidates() {
 fn reacquire_not_found_when_candidates_exist_but_no_match() {
   let memory = empty_memory();
   let mut adapter = FakeAdapter {
-    observations: vec![ReacquireObservation {
+    viewports: vec![ReacquireSnapshot {
       fingerprint: "other".into(),
       candidates: vec![ReacquireCandidate {
         node_id: None,
@@ -365,10 +365,10 @@ fn reacquire_not_found_when_candidates_exist_but_no_match() {
 struct AlwaysErrAdapter;
 
 impl ReacquireDriverAdapter for AlwaysErrAdapter {
-  fn observe_viewport(&mut self) -> Result<ReacquireObservation, ParserDiagnostic> {
+  fn read_viewport(&mut self) -> Result<ReacquireSnapshot, ParserDiagnostic> {
     Err(ParserDiagnostic {
       code: "capture_failed".into(),
-      message: "simulated observe failure".into(),
+      message: "simulated read_viewport failure".into(),
       node_id: None,
     })
   }
@@ -383,7 +383,7 @@ impl ReacquireDriverAdapter for AlwaysErrAdapter {
 }
 
 #[test]
-fn reacquire_stale_when_all_observes_fail() {
+fn reacquire_stale_when_all_reads_fail() {
   let memory = empty_memory();
   let mut adapter = AlwaysErrAdapter;
 
@@ -401,12 +401,12 @@ fn reacquire_stale_when_all_observes_fail() {
   );
   match outcome {
     ReacquireOutcome::Stale {
-      reason: StaleReason::ObservationFailedAtReacquisition,
-      observation_count: 0,
+      reason: StaleReason::ReadFailedAtReacquisition,
+      read_count: 0,
       diagnostics,
     } => {
       assert!(!diagnostics.is_empty());
     }
-    other => panic!("expected observation-failed stale, got {other:?}"),
+    other => panic!("expected viewport-failed stale, got {other:?}"),
   }
 }

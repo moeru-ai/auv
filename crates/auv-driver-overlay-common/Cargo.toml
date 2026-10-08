@@ -13,8 +13,12 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-common = { version = "0.0.30", path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.31", path = "../auv-driver-common" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-serde_json = "1"
+# NOTICE(serde-json-arbitrary-precision): `auv-tracing` enables
+# `arbitrary_precision`, and feature unification turns it on for every binary
+# that ships this crate. Test with it so serde shapes that break under it
+# (untagged and internally tagged enums holding numbers) fail here too.
+serde_json = { version = "1", features = ["arbitrary_precision"] }

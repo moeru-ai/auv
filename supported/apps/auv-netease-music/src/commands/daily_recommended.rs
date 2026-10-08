@@ -409,7 +409,7 @@ impl DailyRecommendedRun<'_> {
       settle: std::time::Duration::from_millis(300),
       no_motion_confirmations: 2,
       motion_region: None,
-      observe: auv_scan::ScrollUntilObserve { text: false },
+      output: auv_scan::ScrollUntilOutputOptions { text: false },
     };
     let options = ScrollOptions {
       policy: InputPolicy::BackgroundPreferred,

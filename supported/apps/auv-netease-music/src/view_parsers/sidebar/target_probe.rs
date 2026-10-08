@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::scroll::policies::detection_motion::MotionDetectionPolicy;
 use crate::scroll::policies::detection_motion::MotionEvidence;
 use crate::view_parsers::sidebar::classify_sidebar_text;
-use crate::{SidebarCandidateKind, SidebarViewportObservation, ViewBounds, normalize_identity};
+use crate::{SidebarCandidateKind, SidebarViewport, ViewBounds, normalize_identity};
 use auv_driver::RatioRect;
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 
@@ -41,7 +41,7 @@ pub(crate) struct MisclassifiedSidebarText {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SidebarTargetProbe {
-  pub observation_index: usize,
+  pub viewport_index: usize,
   pub evidence_count: usize,
   pub playlist_item_count: usize,
   pub viewport_fingerprint: String,
@@ -196,7 +196,7 @@ pub(crate) fn build_probe_capture_context(
   sidebar_bounds: ViewBounds,
   sidebar_ratio: RatioRect,
   recognition: &TextRecognition,
-  observation: &SidebarViewportObservation,
+  viewport: &SidebarViewport,
   crop_pixel_size: (u32, u32),
   scroll_motion: Option<MotionEvidence>,
   ocr_context: &SidebarTargetProbeOcrContext,
@@ -210,7 +210,7 @@ pub(crate) fn build_probe_capture_context(
     crop_pixel_size,
     ocr_region_count: recognition.regions.len(),
     ocr_text_preview: truncate_ocr_preview(&recognition.text),
-    evidence_count: observation.evidence_nodes.len(),
+    evidence_count: viewport.evidence_nodes.len(),
     scroll_motion,
     ocr_profile: ocr_context.profile.clone(),
     ocr_recognition_languages: ocr_context.options.recognition_languages.clone(),
@@ -220,11 +220,11 @@ pub(crate) fn build_probe_capture_context(
   }
 }
 
-pub(crate) fn analyze_sidebar_target_probe(observation: &SidebarViewportObservation, target_label: &str, query: &str) -> SidebarTargetProbe {
+pub(crate) fn analyze_sidebar_target_probe(viewport: &SidebarViewport, target_label: &str, query: &str) -> SidebarTargetProbe {
   let target_identity = normalize_identity(target_label);
   let query_identity = normalize_identity(query);
   let playlist_items =
-    observation.candidates.iter().filter(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem).collect::<Vec<_>>();
+    viewport.candidates.iter().filter(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem).collect::<Vec<_>>();
 
   let result = playlist_items.iter().find_map(|candidate| {
     let label = candidate.label.as_deref()?;
@@ -233,18 +233,18 @@ pub(crate) fn analyze_sidebar_target_probe(observation: &SidebarViewportObservat
   });
 
   let miss_reason = result.is_none().then(|| {
-    if observation.evidence_nodes.is_empty() {
+    if viewport.evidence_nodes.is_empty() {
       return SidebarTargetMissReason::NoEvidenceNodes;
     }
 
     if playlist_items.is_empty() {
-      let visible_labels = observation.evidence_nodes.iter().filter_map(|node| node.label.clone()).collect();
+      let visible_labels = viewport.evidence_nodes.iter().filter_map(|node| node.label.clone()).collect();
       return SidebarTargetMissReason::NoPlaylistItems { visible_labels };
     }
 
     let playlist_labels = playlist_items.iter().filter_map(|candidate| candidate.label.clone()).collect();
-    let ocr_contains_target = ocr_labels_containing_target(&observation.evidence_nodes, &target_identity, &query_identity);
-    let misclassified = misclassified_target_evidence(&observation.evidence_nodes, &target_identity, &query_identity);
+    let ocr_contains_target = ocr_labels_containing_target(&viewport.evidence_nodes, &target_identity, &query_identity);
+    let misclassified = misclassified_target_evidence(&viewport.evidence_nodes, &target_identity, &query_identity);
     SidebarTargetMissReason::LabelNotMatched {
       playlist_labels,
       ocr_contains_target,
@@ -253,10 +253,10 @@ pub(crate) fn analyze_sidebar_target_probe(observation: &SidebarViewportObservat
   });
 
   SidebarTargetProbe {
-    observation_index: observation.observation_index,
-    evidence_count: observation.evidence_nodes.len(),
+    viewport_index: viewport.viewport_index,
+    evidence_count: viewport.evidence_nodes.len(),
     playlist_item_count: playlist_items.len(),
-    viewport_fingerprint: observation.viewport_fingerprint.clone(),
+    viewport_fingerprint: viewport.viewport_fingerprint.clone(),
     result,
     miss_reason,
   }
@@ -266,7 +266,7 @@ pub(crate) fn publish_sidebar_target_probe_artifacts(
   capture: &auv_driver::Capture,
   sidebar_crop: &RgbaImage,
   recognition: &TextRecognition,
-  observation: &SidebarViewportObservation,
+  viewport: &SidebarViewport,
   probe: &SidebarTargetProbe,
   scroll_context: &SidebarTargetProbeScrollContext,
   capture_context: &SidebarTargetProbeCaptureContext,
@@ -275,7 +275,7 @@ pub(crate) fn publish_sidebar_target_probe_artifacts(
   // Images are recorded at logical resolution like other evidence: the
   // recognition JSON keeps the exact OCR boxes in points, which overlay the 1x
   // image. Native probe frames cost ~2.6 MB each (~26 MB per select run).
-  let payload = sidebar_target_probe_artifact(observation, probe, scroll_context, capture_context);
+  let payload = sidebar_target_probe_artifact(viewport, probe, scroll_context, capture_context);
   auv_tracing::in_span!("auv.netease.sidebar_target_probe.evidence", || {
     crate::telemetry::capture_artifact("auv.netease.sidebar_target_probe.window_capture", capture);
     crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.sidebar_crop", sidebar_crop, auv_tracing::ImageResolution::Native);
@@ -285,14 +285,14 @@ pub(crate) fn publish_sidebar_target_probe_artifacts(
 }
 
 fn sidebar_target_probe_artifact(
-  observation: &SidebarViewportObservation,
+  viewport: &SidebarViewport,
   probe: &SidebarTargetProbe,
   scroll_context: &SidebarTargetProbeScrollContext,
   capture_context: &SidebarTargetProbeCaptureContext,
 ) -> SidebarTargetProbeArtifact {
   SidebarTargetProbeArtifact {
     probe: probe.clone(),
-    candidates: observation
+    candidates: viewport
       .candidates
       .iter()
       .map(|candidate| SidebarTargetProbeCandidateSummary {
@@ -387,7 +387,7 @@ pub(crate) fn capture_sidebar_target_probe(
   window: &auv_driver::Window,
   sidebar_bounds: ViewBounds,
   inputs: &crate::Inputs,
-  observation_index: usize,
+  viewport_index: usize,
   target_label: &str,
   query: &str,
   scroll_context: SidebarTargetProbeScrollContext,
@@ -419,7 +419,7 @@ pub(crate) fn capture_sidebar_target_probe(
     fallback_recognition.relative_to(&capture).map_err(|error| error.to_string())?
   };
   let parse_viewport = probe_parse_viewport_bounds(sidebar_bounds, &ocr_context.profile);
-  let observation = crate::view_parsers::sidebar::parse::parse_sidebar_viewport(observation_index, parse_viewport, &recognition);
+  let viewport = crate::view_parsers::sidebar::parse::parse_sidebar_viewport(viewport_index, parse_viewport, &recognition);
   let sidebar_crop = crate::crop_image(&capture.image, sidebar_bounds, capture.scale_factor);
   let scroll_motion = previous_sidebar_crop.as_ref().map(|previous| MotionDetectionPolicy::default().compare(previous, &sidebar_crop));
   *previous_sidebar_crop = Some(sidebar_crop.clone());
@@ -430,14 +430,14 @@ pub(crate) fn capture_sidebar_target_probe(
     sidebar_bounds,
     sidebar_ratio,
     &recognition,
-    &observation,
+    &viewport,
     (sidebar_crop.width(), sidebar_crop.height()),
     scroll_motion,
     &ocr_context,
     parse_viewport,
   );
-  let probe = analyze_sidebar_target_probe(&observation, target_label, query);
-  publish_sidebar_target_probe_artifacts(&capture, &sidebar_crop, &recognition, &observation, &probe, &scroll_context, &capture_context);
+  let probe = analyze_sidebar_target_probe(&viewport, target_label, query);
+  publish_sidebar_target_probe_artifacts(&capture, &sidebar_crop, &recognition, &viewport, &probe, &scroll_context, &capture_context);
 
   Ok(SidebarTargetProbeOutcome {
     probe,

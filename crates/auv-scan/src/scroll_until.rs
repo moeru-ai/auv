@@ -1,4 +1,4 @@
-//! Scroll-until: step a window scroll and observe after each step until the
+//! Scroll-until: scroll a window and inspect each resulting viewport until the
 //! viewport stops moving, target text appears, the caller's observer stops it,
 //! or a step budget runs out.
 //!
@@ -17,7 +17,7 @@ use crate::viewport_pixels::{ScrollAxis, ViewportPixelMotion, ViewportPixelPolic
 const MAX_SCROLL_UNTIL_STEPS: u32 = 1_000;
 // NOTICE(scroll-until-settle-limit): a settle beyond 10 s per step is longer
 // than any lazy-load wait this operation targets; longer waits belong to an
-// explicit observation loop.
+// explicit update loop.
 const MAX_SCROLL_UNTIL_SETTLE: Duration = Duration::from_secs(10);
 
 /// What ends a scroll-until besides the step budget.
@@ -58,28 +58,28 @@ pub struct ScrollUntilRequest {
   pub max_steps: u32,
   /// Wait after each step before observing, so lazy content can arrive.
   pub settle: Duration,
-  /// Consecutive no-motion observations that count as the end, 1..=10.
+  /// Consecutive no-motion updates that count as the end, 1..=10.
   pub no_motion_confirmations: u32,
   /// Normalized region of the window compared for motion; `None` is the whole window.
   pub motion_region: Option<RatioRect>,
-  /// What each observation carries. Everything is included unless opted out.
+  /// What each update carries. Everything is included unless opted out.
   #[serde(default)]
-  pub observe: ScrollUntilObserve,
+  pub output: ScrollUntilOutputOptions,
 }
 
-/// Opt-outs for the data attached to each [`ScrollUntilObservation`].
+/// Opt-outs for the data attached to each [`ScrollUntilUpdate`].
 ///
 /// Motion evidence and the capture are always included: the loop captures
 /// every step for motion detection anyway, and Runners return captures by
 /// reference. Text recognition still runs for a
 /// [`ScrollUntilCondition::TextVisible`] condition even when `text` is off;
-/// only the observation omits it.
+/// only the update omits it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScrollUntilObserve {
+pub struct ScrollUntilOutputOptions {
   pub text: bool,
 }
 
-impl Default for ScrollUntilObserve {
+impl Default for ScrollUntilOutputOptions {
   fn default() -> Self {
     Self { text: true }
   }
@@ -152,25 +152,25 @@ pub struct ScrollUntilTextMatch {
 /// after each step's settle. `C` is how the capture is held: in-process
 /// pixels (`Capture`), or a Runner-held reference in the `auv-core` client.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ScrollUntilObservation<C = Capture> {
+pub struct ScrollUntilUpdate<C = Capture> {
   /// Steps delivered so far.
   pub steps: u32,
   /// Logical pixels delivered so far.
   pub delivered: Scroll,
-  /// Motion since the previous observation; `None` before the first step.
+  /// Motion since the previous update; `None` before the first step.
   pub motion: Option<ViewportPixelMotion>,
   pub no_motion_streak: u32,
-  /// The window capture this observation was made from.
+  /// The window capture this update was made from.
   pub capture: C,
   /// Text recognized in the capture, unless opted out. Region bounds are in
   /// the capture's screen space; `origin` maps them into its owning space.
   pub text: Option<TextRecognition>,
   /// Set when a built-in condition or the budget ends the loop at this
-  /// observation. The observer's decision is then ignored.
+  /// update. The observer's decision is then ignored.
   pub stop: Option<ScrollUntilStopReason>,
 }
 
-/// The observer's verdict on one observation.
+/// The observer's verdict on one update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollUntilDecision {
@@ -198,7 +198,7 @@ pub trait ScrollUntilSurface {
   fn capture(&mut self, resolution: CaptureResolution) -> DriverResult<Capture>;
   /// Recognizes text in the whole capture.
   fn recognize_text(&mut self, capture: &Capture) -> DriverResult<TextRecognition>;
-  /// Waits between a step and its observation; returns an error if cancelled.
+  /// Waits between a step and its update; returns an error if cancelled.
   fn wait(&mut self, duration: Duration) -> DriverResult<()>;
 }
 
@@ -206,15 +206,15 @@ pub trait ScrollUntilSurface {
 // reported in the result but not persisted as run artifacts; add artifact
 // emission when an inspector consumer needs scroll-until evidence.
 // TODO(scroll-until-ax-boundary): accessibility scrollbar values (as NetEase
-// uses) could confirm the end with one observation; add when a platform-neutral
+// uses) could confirm the end with one update; add when a platform-neutral
 // scrollbar read exists.
-/// Runs the loop. `observer` sees every observation, including the initial
+/// Runs the loop. `observer` sees every update, including the initial
 /// one and the last one; it may stop the loop unless a built-in condition or
-/// the budget already did (`observation.stop`).
+/// the budget already did (`update.stop`).
 pub fn scroll_until(
   surface: &mut impl ScrollUntilSurface,
   request: &ScrollUntilRequest,
-  observer: &mut dyn FnMut(ScrollUntilObservation) -> DriverResult<ScrollUntilDecision>,
+  observer: &mut dyn FnMut(ScrollUntilUpdate) -> DriverResult<ScrollUntilDecision>,
 ) -> DriverResult<ScrollUntilResult> {
   request.validate()?;
   let axis = request.axis();
@@ -232,7 +232,7 @@ pub fn scroll_until(
     last_motion: None,
   };
   // Text needs native pixels; motion alone needs only one pixel per point.
-  let resolution = if query.is_some() || request.observe.text {
+  let resolution = if query.is_some() || request.output.text {
     CaptureResolution::Native
   } else {
     CaptureResolution::Logical
@@ -241,7 +241,7 @@ pub fn scroll_until(
   let mut previous = motion_frame(&capture, request.motion_region);
   let mut no_motion_streak = 0;
   loop {
-    let text = if query.is_some() || request.observe.text {
+    let text = if query.is_some() || request.output.text {
       Some(surface.recognize_text(&capture)?)
     } else {
       None
@@ -258,13 +258,13 @@ pub fn scroll_until(
     } else {
       None
     };
-    let decision = observer(ScrollUntilObservation {
+    let decision = observer(ScrollUntilUpdate {
       steps: result.steps,
       delivered: result.delivered,
       motion: result.last_motion,
       no_motion_streak,
       capture,
-      text: text.filter(|_| request.observe.text),
+      text: text.filter(|_| request.output.text),
       stop,
     })?;
     if let Some(reason) = stop {

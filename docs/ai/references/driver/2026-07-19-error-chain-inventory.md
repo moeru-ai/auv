@@ -1,5 +1,10 @@
 # AUV Error Chain Inventory
 
+> Naming migration (2026-10-08): `StaleObservation` → `StaleUiReference`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 Date: 2026-07-19
 Responsibility: driver (error semantics), runtime (operation failure mapping)
 Type: inventory / baseline

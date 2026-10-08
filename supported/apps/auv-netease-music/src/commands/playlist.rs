@@ -497,7 +497,7 @@ fn run_playlist_select_resolved(
 
   let target_bounds =
     target.bounds.ok_or_else(|| format!("playlist target {:?} did not carry live bounds; rerun playlist ls/select", target.label))?;
-  let target_observation_index = target.observation_index.unwrap_or(0);
+  let target_viewport_index = target.viewport_index.unwrap_or(0);
 
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
@@ -514,7 +514,7 @@ fn run_playlist_select_resolved(
     // experiment was removed because it had no current production consumer.
     // Reintroduce a memory shortcut only with an owner-approved runtime/read-side contract.
     // Rescan replay rewinds to the top and scroll-seeks the target label instead
-    // of replaying a stale observation-index page count.
+    // of replaying a stale viewport-index page count.
     // NOTICE(a6c-5): top rewind step size matches live top seek; motion stop deferred.
     let top_scroll_delta = -inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
     let top_scrolls = top_seek_scroll_budget(inputs.max_scrolls);
@@ -557,7 +557,7 @@ fn run_playlist_select_resolved(
       }
     }
 
-    let seek_budget = sidebar_rescan_target_seek_budget(inputs.max_scrolls, target_observation_index);
+    let seek_budget = sidebar_rescan_target_seek_budget(inputs.max_scrolls, target_viewport_index);
     let mut rescan_target_found = false;
     let mut last_rescan_probe_summary = None;
     let mut previous_sidebar_crop = None;

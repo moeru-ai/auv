@@ -1,3 +1,8 @@
+//! QQ Music commands over the macOS driver. This integration only targets the
+//! macOS app, so the library is empty elsewhere and the binary exits with a
+//! message.
+#![cfg(target_os = "macos")]
+
 pub mod cli;
 pub mod driver;
 pub mod search;

@@ -6,7 +6,7 @@ use auv_view::ViewBounds;
 use serde::Serialize;
 
 use crate::scroll::policies::detection_motion::MotionEvidence;
-use crate::{SidebarScanStopReason, SidebarViewportObservation};
+use crate::{SidebarScanStopReason, SidebarViewport};
 
 const JSON_ARTIFACT_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -23,7 +23,7 @@ impl auv_tracing::EventPayload for ArtifactPreparationFailed {
 
 #[derive(Serialize)]
 struct SidebarObserved {
-  observation_index: usize,
+  viewport_index: usize,
   viewport_fingerprint: String,
 }
 
@@ -34,8 +34,8 @@ impl auv_tracing::EventPayload for SidebarObserved {
 
 #[derive(Serialize)]
 struct SidebarScrolled {
-  from_observation: usize,
-  to_observation: usize,
+  from_viewport: usize,
+  to_viewport: usize,
   requested_delta: f64,
   settle_ms: u64,
   delivery_path: Option<String>,
@@ -173,20 +173,20 @@ impl auv_tracing::EventPayload for DailyRecommendedPlayAllChecked {
 }
 
 pub(crate) fn emit_sidebar_scan_events(
-  observations: &[SidebarViewportObservation],
+  viewports: &[SidebarViewport],
   scroll_amount: f64,
   scroll_settle_ms: u64,
   stop_reason: Option<SidebarScanStopReason>,
 ) {
-  for (index, observation) in observations.iter().enumerate() {
+  for (index, viewport) in viewports.iter().enumerate() {
     auv_tracing::emit_event!(SidebarObserved {
-      observation_index: observation.observation_index,
-      viewport_fingerprint: observation.viewport_fingerprint.clone(),
+      viewport_index: viewport.viewport_index,
+      viewport_fingerprint: viewport.viewport_fingerprint.clone(),
     });
-    if let Some(next) = observations.get(index + 1) {
+    if let Some(next) = viewports.get(index + 1) {
       auv_tracing::emit_event!(SidebarScrolled {
-        from_observation: observation.observation_index,
-        to_observation: next.observation_index,
+        from_viewport: viewport.viewport_index,
+        to_viewport: next.viewport_index,
         requested_delta: scroll_amount,
         settle_ms: scroll_settle_ms,
         delivery_path: next.incoming_scroll_delivery_path.clone(),

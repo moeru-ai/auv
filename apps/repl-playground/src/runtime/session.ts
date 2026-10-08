@@ -250,7 +250,7 @@ class ExecSession {
       call: async (method, args, stepId) => {
         const line = lineOf(stepId)
         return await invokeBinding(this.#runBackend, method, args, {
-          decide: async (predicateId, observation) => await this.#exec.decide(predicateId, observation),
+          decide: async (predicateId, update) => await this.#exec.decide(predicateId, update),
           hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
           line,
           nextSeq: () => {

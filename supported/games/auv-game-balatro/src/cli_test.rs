@@ -23,7 +23,7 @@ fn remote_hover_text_promotes_an_object_read_and_records_evidence() {
     reading: ObjectReadValue::unread(),
     evidence: ObjectReadEvidence {
       frame: "daemon://display/primary".to_string(),
-      source: "observation_without_hover_ocr".to_string(),
+      source: "read_without_hover_ocr".to_string(),
       hover_required: true,
       hover_frame: None,
       hover_ocr_region: None,
@@ -31,7 +31,7 @@ fn remote_hover_text_promotes_an_object_read_and_records_evidence() {
     },
   };
 
-  apply_hover_read_observation(
+  apply_hover_read_result(
     &mut read,
     auv_driver::TextRecognition {
       origin: None,
@@ -66,13 +66,13 @@ fn remote_hover_text_promotes_an_object_read_and_records_evidence() {
 }
 
 #[test]
-fn card_commit_accepts_the_same_hand_detector_and_device_as_state_observation() {
+fn card_commit_accepts_the_same_hand_detector_and_device_as_state_read() {
   // ROOT CAUSE:
   //
   // If a remote card action always constructed `BalatroModelConfig::default`,
   // `game state --cards-model ... --device cuda:0` exposed eight slots while
   // `cards play` silently switched back to the CPU entities detector and saw
-  // nine. The action must carry its observation policy explicitly.
+  // nine. The action must carry its read policy explicitly.
   let args = CliArgs::try_parse_from([
     "auv-game-balatro",
     "cards",

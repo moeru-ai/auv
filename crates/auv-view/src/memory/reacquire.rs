@@ -43,7 +43,7 @@ pub struct ReacquireCandidate {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReacquireObservation {
+pub struct ReacquireSnapshot {
   pub fingerprint: String,
   pub candidates: Vec<ReacquireCandidate>,
 }
@@ -53,17 +53,17 @@ pub enum ReacquireOutcome {
   Reacquired {
     node: ReacquiredNode,
     strategy_used: ReacquireStrategy,
-    observation_count: usize,
+    read_count: usize,
     diagnostics: Vec<ParserDiagnostic>,
   },
   Stale {
     reason: StaleReason,
-    observation_count: usize,
+    read_count: usize,
     diagnostics: Vec<ParserDiagnostic>,
   },
   NotFound {
     attempted_strategies: Vec<ReacquireStrategy>,
-    observation_count: usize,
+    read_count: usize,
     diagnostics: Vec<ParserDiagnostic>,
   },
 }
@@ -96,7 +96,7 @@ pub fn reacquire(
       MemoryReadOutcome::Rejected { reason } => {
         return ReacquireOutcome::Stale {
           reason,
-          observation_count: 0,
+          read_count: 0,
           diagnostics: vec![ParserDiagnostic {
             code: "reacquire_memory_stale".into(),
             message: format!("view memory rejected at reacquire entry: {reason:?}"),
@@ -112,21 +112,19 @@ pub fn reacquire(
 
   let resolved = resolve_target(&checked_memory, target);
   let mut attempted = Vec::new();
-  let mut observation_count = 0usize;
-  let mut observe_error_count = 0usize;
-  let mut observe_diagnostics = Vec::new();
+  let mut read_count = 0usize;
+  let mut read_error_count = 0usize;
+  let mut read_diagnostics = Vec::new();
   let mut saw_any_candidates = false;
 
   if let ReacquireTarget::NodeId(node_id) = &resolved {
     attempted.push(ReacquireStrategy::DirectId);
-    if let Some(observation) =
-      observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
-    {
-      if let Some(node) = match_direct_id(node_id, &observation) {
+    if let Some(viewport) = read_viewport(adapter, &mut read_count, &mut read_error_count, &mut read_diagnostics, &mut saw_any_candidates) {
+      if let Some(node) = match_direct_id(node_id, &viewport) {
         return ReacquireOutcome::Reacquired {
           node,
           strategy_used: ReacquireStrategy::DirectId,
-          observation_count,
+          read_count,
           diagnostics: Vec::new(),
         };
       }
@@ -135,15 +133,13 @@ pub fn reacquire(
 
   let (label, section_hint) = target_label_and_section(&checked_memory, &resolved);
   attempted.push(ReacquireStrategy::LabelCurrentViewport);
-  if let Some(observation) =
-    observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
-  {
-    match match_label(&label, section_hint.as_deref(), &observation, false) {
+  if let Some(viewport) = read_viewport(adapter, &mut read_count, &mut read_error_count, &mut read_diagnostics, &mut saw_any_candidates) {
+    match match_label(&label, section_hint.as_deref(), &viewport, false) {
       LabelMatch::Unique(node) => {
         return ReacquireOutcome::Reacquired {
           node,
           strategy_used: ReacquireStrategy::LabelCurrentViewport,
-          observation_count,
+          read_count,
           diagnostics: Vec::new(),
         };
       }
@@ -153,15 +149,13 @@ pub fn reacquire(
 
   attempted.push(ReacquireStrategy::LabelPlusSection);
   for _ in 0..config.max_scroll_attempts {
-    if let Some(observation) =
-      observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
-    {
-      match match_label(&label, section_hint.as_deref(), &observation, true) {
+    if let Some(viewport) = read_viewport(adapter, &mut read_count, &mut read_error_count, &mut read_diagnostics, &mut saw_any_candidates) {
+      match match_label(&label, section_hint.as_deref(), &viewport, true) {
         LabelMatch::Unique(node) => {
           return ReacquireOutcome::Reacquired {
             node,
             strategy_used: ReacquireStrategy::LabelPlusSection,
-            observation_count,
+            read_count,
             diagnostics: Vec::new(),
           };
         }
@@ -174,23 +168,23 @@ pub fn reacquire(
   }
 
   if !saw_any_candidates {
-    if observe_error_count > 0 && observation_count == 0 {
+    if read_error_count > 0 && read_count == 0 {
       return ReacquireOutcome::Stale {
-        reason: StaleReason::ObservationFailedAtReacquisition,
-        observation_count,
-        diagnostics: observe_diagnostics,
+        reason: StaleReason::ReadFailedAtReacquisition,
+        read_count,
+        diagnostics: read_diagnostics,
       };
     }
-    // NOTICE(a6c-4): viewport observe succeeded but adapter returned zero
+    // NOTICE(a6c-4): viewport read_viewport succeeded but adapter returned zero
     // reacquire candidates (e.g. Case B target scrolled off-viewport while
     // section/nav OCR remains). Classify as miss, not region-gone stale.
     return ReacquireOutcome::NotFound {
       attempted_strategies: attempted,
-      observation_count,
+      read_count,
       diagnostics: vec![ParserDiagnostic {
         code: "reacquire_not_found".into(),
-        message: if observation_count > 0 {
-          format!("no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}")
+        message: if read_count > 0 {
+          format!("no sidebar candidates observed across {read_count} viewport(s) while reacquiring label={label:?}")
         } else {
           format!("no sidebar candidates observed while reacquiring label={label:?}")
         },
@@ -201,7 +195,7 @@ pub fn reacquire(
 
   ReacquireOutcome::NotFound {
     attempted_strategies: attempted,
-    observation_count,
+    read_count,
     diagnostics: vec![ParserDiagnostic {
       code: "reacquire_not_found".into(),
       message: format!("could not reacquire target label={label:?}"),
@@ -248,36 +242,36 @@ enum LabelMatch {
   None,
 }
 
-fn observe(
+fn read_viewport(
   adapter: &mut dyn ReacquireDriverAdapter,
-  observation_count: &mut usize,
-  observe_error_count: &mut usize,
-  observe_diagnostics: &mut Vec<ParserDiagnostic>,
+  read_count: &mut usize,
+  read_error_count: &mut usize,
+  read_diagnostics: &mut Vec<ParserDiagnostic>,
   saw_any_candidates: &mut bool,
-) -> Option<ReacquireObservation> {
-  match adapter.observe_viewport() {
-    Ok(observation) => {
-      *observation_count += 1;
-      if !observation.candidates.is_empty() {
+) -> Option<ReacquireSnapshot> {
+  match adapter.read_viewport() {
+    Ok(viewport) => {
+      *read_count += 1;
+      if !viewport.candidates.is_empty() {
         *saw_any_candidates = true;
       }
-      Some(observation)
+      Some(viewport)
     }
     Err(diagnostic) => {
-      *observe_error_count += 1;
-      observe_diagnostics.push(diagnostic);
+      *read_error_count += 1;
+      read_diagnostics.push(diagnostic);
       None
     }
   }
 }
 
-fn match_direct_id(node_id: &str, observation: &ReacquireObservation) -> Option<ReacquiredNode> {
-  observation.candidates.iter().find(|candidate| candidate.node_id.as_deref() == Some(node_id)).map(candidate_to_node)
+fn match_direct_id(node_id: &str, viewport: &ReacquireSnapshot) -> Option<ReacquiredNode> {
+  viewport.candidates.iter().find(|candidate| candidate.node_id.as_deref() == Some(node_id)).map(candidate_to_node)
 }
 
-fn match_label(label: &str, section_hint: Option<&str>, observation: &ReacquireObservation, require_section: bool) -> LabelMatch {
+fn match_label(label: &str, section_hint: Option<&str>, viewport: &ReacquireSnapshot, require_section: bool) -> LabelMatch {
   let normalized = normalize_identity(label);
-  let matches: Vec<_> = observation
+  let matches: Vec<_> = viewport
     .candidates
     .iter()
     .filter(|candidate| normalize_identity(&candidate.label) == normalized)

@@ -1,7 +1,7 @@
 use auv_driver::vision::TextRecognition;
 
 // NOTICE: This is a learned window-local logical point for the song-detail
-// back affordance, matching the current live NetEase macOS client observation.
+// back affordance, matching the current live NetEase macOS client viewport.
 const PLAYING_SONG_DETAIL_RESTORE_POINT: auv_driver::Point = auv_driver::Point::new(82.602, 16.336);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl ScreenView {
     }
   }
 
-  /// Build a view when the screen was not classified by this observation.
+  /// Build a view when the screen was not classified by this viewport.
   pub fn unknown() -> Self {
     Self::new(ScreenState::Unknown, None)
   }
