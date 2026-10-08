@@ -137,6 +137,7 @@ async fn runner_display_capture_reports_metadata_without_pixels() {
     pixel_size: auv_driver::PixelSize::new(2880, 1800),
     backend: "fixture-runner".to_string(),
     fallback_reason: None,
+    thumbhash: Vec::new(),
   };
 
   let output = recorded_display_capture_output(&display, super::super::runner_capture_result(&capture), None)

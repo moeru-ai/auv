@@ -334,6 +334,16 @@ const thumbnail = await runner.captures.image(frame!, {
 const bitmap = await createImageBitmap(new Blob([thumbnail.data], { type: 'image/jpeg' }))
 ```
 
+Every `CapturedFrame` also carries `thumbhash`, a ThumbHash of the whole capture
+(about 20 bytes). Decode it with the [`thumbhash`](https://www.npmjs.com/package/thumbhash)
+package to show a blurred preview while the pixels load:
+
+```ts
+import { thumbHashToDataURL } from 'thumbhash'
+
+const preview = frame!.thumbhash.length > 0 ? thumbHashToDataURL(frame!.thumbhash) : undefined
+```
+
 Captures are taken at native resolution (2x on Retina). For frames you only
 display, or compare for motion, pass `{ resolution: CaptureResolution.LOGICAL }`
 to `capture()` / `captureRegion()`: one pixel per point, a quarter of the

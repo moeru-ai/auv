@@ -1336,7 +1336,11 @@ Across the Runner API, a capture frame stays in the Runner that produced it
 - **Capture reference** (`CaptureRef`, *provisional*): a Runner resource that
   names one capture in that Runner's **capture store**. Capture, find-text and
   scroll-until responses return `CapturedFrame` with `ref`, bounds, origin,
-  scale and `pixel_size`, but no pixels.
+  scale and `pixel_size`, but no pixels. Each also carries a `thumbhash`
+  (about 20 bytes, [ThumbHash](https://evanw.github.io/thumbhash/)) of the
+  whole capture, so a viewer can draw a blurred preview before it fetches
+  pixels. Computing it costs about 3 ms for a 2880x1800 capture and 9 ms for
+  a 5120x2880 one (release build, Apple silicon, 2026-10-08).
 - **Capture store** (*provisional*): the Runner's in-memory cache of the
   captures it produced. It evicts the least recently used captures beyond a
   byte budget (512 MiB, `AUV_CAPTURE_STORE_BUDGET_MIB`) and captures unused for

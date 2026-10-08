@@ -49,6 +49,7 @@ tonic-health = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
+thumbhash = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["termios"] }

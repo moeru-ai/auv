@@ -23,6 +23,7 @@ fn large_capture_metadata() -> proto::CapturedFrame {
     scale_factor: 1.0,
     backend: "fixture".to_string(),
     fallback_reason: None,
+    thumbhash: vec![1, 2, 3],
   }
 }
 

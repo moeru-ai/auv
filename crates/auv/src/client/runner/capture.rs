@@ -42,6 +42,9 @@ pub struct RunnerCapture {
   pub pixel_size: auv_driver::PixelSize,
   pub backend: String,
   pub fallback_reason: Option<String>,
+  /// ThumbHash of the whole capture for a blurred preview; empty from a
+  /// Runner that predates it.
+  pub thumbhash: Vec<u8>,
 }
 
 impl auv_driver::Positional for RunnerCapture {
@@ -187,6 +190,7 @@ pub(super) fn runner_capture_from_proto(capture: proto::CapturedFrame) -> Result
     pixel_size: auv_driver::PixelSize::new(size.width, size.height),
     backend: capture.backend,
     fallback_reason: capture.fallback_reason,
+    thumbhash: capture.thumbhash,
   })
 }
 

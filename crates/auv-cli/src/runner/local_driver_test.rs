@@ -1255,6 +1255,25 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
 }
 
 #[test]
+fn stored_capture_carries_a_thumbhash_preview_of_the_whole_image() {
+  // A Retina-sized capture is downscaled first: ThumbHash accepts at most
+  // 100x100 pixels. The preview keeps the aspect ratio and average color.
+  let capture = auv_driver::Capture {
+    image: image::RgbaImage::from_pixel(2880, 1800, image::Rgba([200, 40, 40, 255])),
+    ..gradient_capture(1, 1)
+  };
+  let frame = stored_capture_to_proto(&CaptureStore::new(CaptureStoreOptions::default()), capture);
+  let (red, green, blue, alpha) = thumbhash::thumb_hash_to_average_rgba(&frame.thumbhash).expect("valid thumbhash");
+  assert!((red - 200.0 / 255.0).abs() < 0.05 && (green - 40.0 / 255.0).abs() < 0.05 && (blue - 40.0 / 255.0).abs() < 0.05);
+  assert!((alpha - 1.0).abs() < 0.01);
+  let aspect = thumbhash::thumb_hash_to_approximate_aspect_ratio(&frame.thumbhash).expect("valid thumbhash");
+  // ThumbHash stores the aspect ratio coarsely (it decodes 1.6 as 1.75).
+  assert!((aspect - 1.6).abs() < 0.2, "aspect {aspect}");
+
+  assert!(capture_thumbhash(&image::RgbaImage::new(0, 0)).is_empty());
+}
+
+#[test]
 fn capture_image_webp_is_lossless() {
   use auv_api_proto::auv::api::image::v1 as image_proto;
   let capture = gradient_capture(10, 4);

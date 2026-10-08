@@ -2536,10 +2536,26 @@ pub(super) fn image_frame_to_proto(capture: auv_driver::Capture) -> proto::Image
 /// (see "Image Payloads" in AGENTS.md).
 fn stored_capture_to_proto(captures: &CaptureStore, capture: auv_driver::Capture) -> proto::CapturedFrame {
   let mut frame = capture_metadata_to_proto(&capture);
+  frame.thumbhash = capture_thumbhash(&capture.image);
   frame.r#ref = Some(proto::CaptureRef {
     capture_id: captures.insert(capture),
   });
   frame
+}
+
+/// A ThumbHash of the whole image, or empty for an empty image. ThumbHash
+/// accepts at most 100x100 pixels; an area-averaging downscale keeps the
+/// colors of a large capture.
+fn capture_thumbhash(image: &image::RgbaImage) -> Vec<u8> {
+  let (width, height) = image.dimensions();
+  if width == 0 || height == 0 {
+    return Vec::new();
+  }
+  let scale = (100.0 / f64::from(width.max(height))).min(1.0);
+  let fitted_width = ((f64::from(width) * scale).round() as u32).max(1);
+  let fitted_height = ((f64::from(height) * scale).round() as u32).max(1);
+  let small = image::imageops::thumbnail(image, fitted_width, fitted_height);
+  thumbhash::rgba_to_thumb_hash(fitted_width as usize, fitted_height as usize, small.as_raw())
 }
 
 fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFrame {
@@ -2559,6 +2575,7 @@ fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFr
       width: capture.image.width(),
       height: capture.image.height(),
     }),
+    thumbhash: Vec::new(),
   }
 }
 

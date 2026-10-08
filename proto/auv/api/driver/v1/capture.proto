@@ -55,6 +55,9 @@ message CapturedFrame {
   CaptureRef ref = 7;
   // Physical pixel size.
   auv.api.image.v1.PixelSize pixel_size = 8;
+  // ThumbHash (https://evanw.github.io/thumbhash/) of the whole capture, about
+  // 20 bytes, for a blurred preview before `GetCaptureImage` returns pixels.
+  bytes thumbhash = 9;
 }
 
 // Pixels with their screen placement, where pixels must travel: images a
