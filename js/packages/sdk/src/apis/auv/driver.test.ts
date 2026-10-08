@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
@@ -490,7 +490,7 @@ describe('runner Driver control surface', () => {
     })
 
     expect(window.id).toBe('window-42')
-    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith', 'window'])
+    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'pasteText', 'pressKeys', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith', 'typeText', 'window'])
 
     const capture = await window.capture()
     expect(capture.window?.frame?.width).toBe(1280)
@@ -626,6 +626,75 @@ describe('windows.get', () => {
     const fresh = await runner.windows.get(stale)
     expect(fresh.window.frame?.x).toBe(300)
     await expect(runner.windows.get('w-9')).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })
+    await connection.close()
+  })
+})
+
+describe('window keyboard', () => {
+  async function keyboardConnection(calls: UnaryCall[]) {
+    return await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.InputService/InputKeyboard':
+              return toBinary(InputKeyboardResponseSchema, create(InputKeyboardResponseSchema, { actions: [{ attempts: [{ succeeded: true }] }] }))
+            case '/auv.api.driver.v1.WindowService/ListWindows':
+              return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
+                windows: [{ processId: 4242, ref: { windowId: 'w-7' }, title: 'Search' }],
+              }))
+            default:
+              throw new Error(`unexpected unary call: ${call.method}`)
+          }
+        },
+      },
+    })
+  }
+
+  // ROOT CAUSE:
+  //
+  // The SDK only wrapped TypeText/PressKey, which name no recipient, so a REPL
+  // script's typing went to its own browser.
+  //
+  // The fix sends InputKeyboard to the window, foreground-first by default.
+  it('types, presses and pastes into the window as the recipient, foreground first by default', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await keyboardConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const [music] = await runner.windows.list()
+
+    await music!.typeText('Reply')
+    await music!.pressKeys(['cmd', 'a'], { count: 2, interval: { nanos: 50_000_000 } })
+    await music!.pasteText('Reply', { policy: InputPolicy.BACKGROUND_ONLY })
+
+    const requests = calls.slice(1).map(call => fromBinary(InputKeyboardRequestSchema, call.body))
+    for (const request of requests) {
+      expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242, ref: expect.objectContaining({ windowId: 'w-7' }) }) })
+      expect(request.inputs).toHaveLength(1)
+    }
+    const [typed, pressed, pasted] = requests.map(request => request.inputs[0]!.action)
+    expect(typed).toMatchObject({ case: 'typeText', value: { options: { policy: InputPolicy.FOREGROUND_PREFERRED }, text: 'Reply' } })
+    expect(pressed).toMatchObject({ case: 'press', value: { options: { count: 2, keys: ['cmd', 'a'] }, policy: InputPolicy.FOREGROUND_PREFERRED } })
+    expect(pasted).toMatchObject({ case: 'pasteText', value: { policy: InputPolicy.BACKGROUND_ONLY, text: 'Reply' } })
+    await connection.close()
+  })
+
+  it('looks up the owning process for a window bound from its ID', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await keyboardConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+
+    await runner.windows.from('w-7').typeText('Reply', { policy: InputPolicy.BACKGROUND_PREFERRED })
+
+    expect(calls.map(call => call.method.split('/').pop())).toEqual(['ListWindows', 'InputKeyboard'])
+    const request = fromBinary(InputKeyboardRequestSchema, calls[1]!.body)
+    expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242 }) })
+    expect(request.inputs[0]!.action).toMatchObject({ case: 'typeText', value: { options: { policy: InputPolicy.BACKGROUND_PREFERRED } } })
+    await expect(runner.windows.from('w-9').pressKeys(['return'])).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })
     await connection.close()
   })
 })

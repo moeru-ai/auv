@@ -182,6 +182,26 @@ await auv.input.click(area(found.match!), { count: 2 })
 await music.findText('Now playing: Remember', { within: area(music).region({ bottom: 0, height: 70 }) })
 ```
 
+### Typing
+
+`win.typeText(text)` and `win.pressKey('cmd+a')` deliver to that window
+(`InputService/InputKeyboard`): the window is brought to the front and focused
+first, so the text cannot land in another app. `auv.input.typeText` and
+`auv.input.pressKey` go to whichever app has keyboard focus when they run, which
+can be this playground's browser.
+
+```ts
+const music = await auv.windows.resolve({ bundleId: 'com.netease.163music' })
+await music.click({ x: 528, y: 50 }) // the search box, window-relative
+await music.typeText('Reply 超时空辉夜姬')
+await music.pressKey('return')
+await music.pressKey('cmd+a', { background: true }) // no activation; the box must already have focus
+```
+
+`{ background: true }` posts without activating the window. The control must
+already have keyboard focus; a click does not give it focus in every app (it did
+not in NetEase Cloud Music while another app was in front).
+
 Script API types (`Area`, `Rect`, `Point`, `WindowHandle`, `TextMatch`, …) can
 be used by name in cells, e.g. `function toolbar(win: Area): Area`.
 

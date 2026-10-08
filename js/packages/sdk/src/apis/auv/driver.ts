@@ -15,9 +15,14 @@ import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1
 import type { ScreenPointSchema, ScreenRectSchema, WindowPointSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
   ClickOptionsSchema,
+  InputActionResult,
+  InputKeyboardRequestSchema,
+  KeyboardInputSchema,
   MoveMouseRequestSchema,
   MoveMouseStreamResponse,
   PasteTextOptionsSchema,
+  PressKeysOptionsSchema,
+  PressKeysRequestSchema,
   ScreenClickOptionsSchema,
   ScrollMotionSchema,
   ScrollOptionsSchema,
@@ -51,7 +56,7 @@ import { MediaControlService } from '../../gen/auv/api/driver/macos/v1/media_con
 import { PermissionService } from '../../gen/auv/api/driver/macos/v1/permission_pb'
 import { CaptureService } from '../../gen/auv/api/driver/v1/capture_pb'
 import { DisplayService } from '../../gen/auv/api/driver/v1/display_pb'
-import { InputService } from '../../gen/auv/api/driver/v1/input_pb'
+import { InputPolicy, InputService } from '../../gen/auv/api/driver/v1/input_pb'
 import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
@@ -116,15 +121,29 @@ export interface RunnerClient {
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
     holdKeys: (request: Init<typeof InputService.method.holdKeys.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdKeys.output>>
+    /**
+     * Runs ordered keyboard actions (`press`, `typeText`, `pasteText`) on one
+     * explicit recipient: a window, an application, or the foreground. The
+     * Runner validates every action before delivering any; an error carries
+     * how far delivery got. Older Runners reject the call as UNIMPLEMENTED.
+     */
+    keyboard: (request: Init<typeof InputKeyboardRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.inputKeyboard.output>>
     keyDown: (request: Init<typeof InputService.method.keyDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.keyDown.output>>
     keyUp: (request: Init<typeof InputService.method.keyUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.keyUp.output>>
     mouseDown: (request: Init<typeof InputService.method.mouseDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseDown.output>>
     mouseUp: (request: Init<typeof InputService.method.mouseUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseUp.output>>
     moveMouse: (request: Init<typeof MoveMouseRequestSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
     pasteText: (text: string, inputOptions?: Init<typeof PasteTextOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.pasteText.output>>
+    /** Legacy: presses a key or shortcut string in whichever app has keyboard focus. Prefer `pressKeys`. */
     pressKey: (key: string, options?: PressKeyOptions) => Promise<Shape<typeof InputService.method.pressKey.output>>
+    /** One key combination, optionally repeated, on an explicit recipient; see `keyboard`. */
+    pressKeys: (request: Init<typeof PressKeysRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.pressKeys.output>>
     removeMouse: (request: Init<typeof InputService.method.removeMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.removeMouse.output>>
     streamMouseMotion: (options?: OperationOptions) => Promise<TypedDuplexCall<typeof InputService.method.streamMouseMotion.input, typeof InputService.method.streamMouseMotion.output>>
+    /**
+     * Types into whichever app has keyboard focus when the call arrives. To
+     * type into a specific window, use `WindowClient.typeText` or `keyboard`.
+     */
     typeText: (text: string, inputOptions?: Init<typeof TypeTextOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.typeText.output>>
   }
   readonly macos: {
@@ -176,6 +195,7 @@ export interface RunnerRouteOptions extends OperationOptions {
   runId?: string
   runnerClass: string
 }
+
 /** Begin parameters for `scrollStream`; the window comes from the client. */
 export type ScrollStreamBegin = InputFields<typeof StreamScrollBeginSchema, 'window'>
 
@@ -186,7 +206,6 @@ export interface ScrollStreamController {
   setVelocity: (velocity: Init<typeof ScrollVelocitySchema>) => Promise<void>
   stop: () => Promise<void>
 }
-
 export interface ScrollUntilCallOptions extends OperationOptions {
   /** Receives every update in order, including the last one. */
   onUpdate?: (update: ScrollUntilUpdate) => Promise<void> | void
@@ -219,6 +238,17 @@ export interface WindowClient {
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
+  /**
+   * Pastes text into this window through the clipboard. Same policy default
+   * and focus rules as `typeText`.
+   */
+  pasteText: (text: string, pasteOptions?: WindowPasteTextOptions, options?: OperationOptions) => Promise<InputActionResult>
+  /**
+   * Presses one key combination in this window, e.g. `['cmd', 'a']` or
+   * `['return']`, optionally repeated. Same policy default and focus rules as
+   * `typeText`.
+   */
+  pressKeys: (keys: readonly string[], pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
    * Wheel-scrolls at a window-local point. Deltas are logical pixels: positive
    * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
@@ -255,12 +285,28 @@ export interface WindowClient {
    */
   scrollWith: (steps: AsyncIterable<ScrollWithStep> | Iterable<ScrollWithStep>, begin: ScrollStreamBegin, options?: OperationOptions) => Promise<StreamScrollCompleted>
   /**
+   * Types text into this window. `typeOptions.policy` defaults to
+   * `InputPolicy.FOREGROUND_PREFERRED`: the window is brought to the front and
+   * focused first, so text cannot land in another app. Background policies
+   * post to the window's process without activating it, so the control must
+   * already have keyboard focus; a background click does not give it focus in
+   * every app (it did not in NetEase Cloud Music). The result is delivery
+   * evidence, not proof the text arrived.
+   */
+  typeText: (text: string, typeOptions?: Init<typeof TypeTextOptionsSchema>, options?: OperationOptions) => Promise<InputActionResult>
+  /**
    * Metadata from the call that produced this client (`resolve` or `list`),
    * or just the reference for a client bound with `windows.client`. It is a
    * snapshot: the Runner re-resolves the window before every operation.
    */
   readonly window: Window
 }
+
+/** Options for `WindowClient.pasteText`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
+export type WindowPasteTextOptions = Init<typeof PasteTextOptionsSchema> & { policy?: InputPolicy }
+
+/** Options for `WindowClient.pressKeys`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
+export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 'keys'> & { policy?: InputPolicy }
 // gRPC status code NOT_FOUND.
 const GRPC_NOT_FOUND = 5
 
@@ -324,10 +370,32 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       stop: () => call.send({ event: { case: 'stop', value: {} } }),
     }
   }
+  /** A window from a fresh listing; NOT_FOUND, like the Runner, once it is gone. */
+  const findWindow = async (id: string | undefined, options?: OperationOptions): Promise<Window> => {
+    const windows = (await unary(WindowService.method.listWindows, {}, options)).windows
+    const found = windows.find(candidate => candidate.ref?.windowId === id)
+    if (!found)
+      throw new AuvRpcError(GRPC_NOT_FOUND, `window:${id} was not found`)
+    return found
+  }
   const window = (metadata: Window): WindowClient => {
     const id = metadata.ref?.windowId
     if (id === undefined || id.length === 0)
       throw new AuvProtocolError('Window omitted ref.windowId')
+    // Keyboard recipients must name the owning process, so the Runner can
+    // refuse a window ID that now belongs to another app. A client bound from
+    // a bare ID or ref looks it up once per call.
+    const keyboard = async (input: Init<typeof KeyboardInputSchema>, options?: OperationOptions): Promise<InputActionResult> => {
+      const recipient = metadata.processId ? metadata : await findWindow(id, options)
+      const response = await unary(InputService.method.inputKeyboard, {
+        inputs: [input],
+        target: { recipient: { case: 'window', value: recipient } },
+      }, options)
+      const action = response.actions[0]
+      if (!action)
+        throw new AuvProtocolError('InputKeyboardResponse omitted the action result')
+      return action
+    }
     return {
       capture: ({ resolution, ...options } = {}) => unary(CaptureService.method.captureWindow, { resolution, window: { windowId: id } }, options),
       click: (point, clickOptions, options) => unary(InputService.method.clickWindowPoint, {
@@ -344,6 +412,12 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         }, { signal })
       },
       id,
+      pasteText: (text, { policy, ...pasteOptions } = {}, options) => keyboard({
+        action: { case: 'pasteText', value: { options: pasteOptions, policy: policy || InputPolicy.FOREGROUND_PREFERRED, text } },
+      }, options),
+      pressKeys: (keys, { policy, ...pressOptions } = {}, options) => keyboard({
+        action: { case: 'press', value: { options: { ...pressOptions, keys: [...keys] }, policy: policy || InputPolicy.FOREGROUND_PREFERRED } },
+      }, options),
       scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
         options: scrollOptions,
         point,
@@ -405,6 +479,9 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         await controller.stop()
         return await completion
       },
+      typeText: (text, typeOptions = {}, options) => keyboard({
+        action: { case: 'typeText', value: { options: { ...typeOptions, policy: typeOptions.policy || InputPolicy.FOREGROUND_PREFERRED }, text } },
+      }, options),
       window: metadata,
     }
   }
@@ -433,6 +510,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
       dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
       holdKeys: (request, options) => unary(InputService.method.holdKeys, request, options),
+      keyboard: (request, options) => unary(InputService.method.inputKeyboard, request, options),
       keyDown: (request, options) => unary(InputService.method.keyDown, request, options),
       keyUp: (request, options) => unary(InputService.method.keyUp, request, options),
       mouseDown: (request, options) => unary(InputService.method.mouseDown, request, options),
@@ -440,6 +518,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       moveMouse: (request, options) => serverStream(InputService.method.moveMouse, request, options),
       pasteText: (text, options, operation) => unary(InputService.method.pasteText, { options, text }, operation),
       pressKey: (key, options = {}) => unary(InputService.method.pressKey, { key, settle: options.settle }, options),
+      pressKeys: (request, options) => unary(InputService.method.pressKeys, request, options),
       removeMouse: (request, options) => unary(InputService.method.removeMouse, request, options),
       streamMouseMotion: options => duplex(InputService.method.streamMouseMotion, options),
       typeText: (text, options, operation) => unary(InputService.method.typeText, { options, text }, operation),
@@ -480,15 +559,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     },
     windows: {
       from: target => window(windowOf(target)),
-      get: async (target, options) => {
-        const id = windowOf(target).ref?.windowId
-        const windows = (await unary(WindowService.method.listWindows, {}, options)).windows
-        const found = windows.find(candidate => candidate.ref?.windowId === id)
-        // Same shape as a Runner NOT_FOUND status, so callers handle both alike.
-        if (!found)
-          throw new AuvRpcError(GRPC_NOT_FOUND, `window:${id} was not found`)
-        return window(found)
-      },
+      get: async (target, options) => window(await findWindow(windowOf(target).ref?.windowId, options)),
       list: async options => (await unary(WindowService.method.listWindows, {}, options)).windows.map(window),
       resolve: async (selector, options) => {
         const response = await unary(WindowService.method.resolveWindow, { selector }, options)

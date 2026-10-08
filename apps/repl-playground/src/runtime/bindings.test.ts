@@ -118,3 +118,43 @@ describe('windows.scrollUntil', () => {
     await expect(invokeBinding(backend, 'windows.scrollUntil', [{ $ref: 'window:7' }, { x: 600, y: 350 }, { dx: 10, dy: 10 }], context)).rejects.toThrow('one axis')
   })
 })
+
+describe('window keyboard', () => {
+  beforeEach(() => {
+    seq = 0
+    usePlayground.setState({ calls: [], resources: {} })
+    const handle = { $ref: 'window:7' as const, frame, id: '7', kind: 'window' as const }
+    actions.putResource('window:7', { callId: 0, handle, kind: 'window', run: usePlayground.getState().runIndex, seq: 0 })
+  })
+
+  // ROOT CAUSE:
+  //
+  // Scripts could only type through `auv.input.typeText`, which goes to
+  // whichever app has keyboard focus; after a background click that was the
+  // playground's browser, so the text never reached the target window.
+  //
+  // The fix routes window keyboard calls to that window on the device.
+  it('sends typing and key presses to the window, with the delivery options', async () => {
+    const calls: unknown[][] = []
+    const backend = {
+      pressKeyWindow: async (...args: unknown[]) => {
+        calls.push(['pressKeyWindow', ...args])
+        return { path: 'window-targeted-keyboard' }
+      },
+      typeTextWindow: async (...args: unknown[]) => {
+        calls.push(['typeTextWindow', ...args])
+        return { path: 'window-targeted-keyboard' }
+      },
+    } as unknown as Backend
+
+    const typed = await invokeBinding(backend, 'windows.typeText', [{ $ref: 'window:7' }, 'Reply'], context) as InputHandle
+    const pressed = await invokeBinding(backend, 'windows.pressKey', [{ $ref: 'window:7' }, 'cmd+a', { background: true }], context) as InputHandle
+
+    expect(calls).toEqual([
+      ['typeTextWindow', '7', 'Reply', undefined],
+      ['pressKeyWindow', '7', 'cmd+a', { background: true }],
+    ])
+    expect([typed.action, pressed.action]).toEqual(['type', 'key'])
+    expect(typed.path).toBe('window-targeted-keyboard')
+  })
+})

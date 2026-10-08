@@ -22,6 +22,7 @@ type DisplayHandle = import('./auv-api').DisplayHandle
 type FocusOptions = import('./auv-api').FocusOptions
 type FrameHandle = import('./auv-api').FrameHandle
 type InputHandle = import('./auv-api').InputHandle
+type KeyboardOptions = import('./auv-api').KeyboardOptions
 type Point = import('./auv-api').Point
 type Positional = import('./auv-api').Positional
 type Rect = import('./auv-api').Rect

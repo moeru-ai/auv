@@ -1,5 +1,5 @@
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilRequest, TextSearchResult, WindowInfo } from '../backend/types'
-import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextHandle, WindowSelector } from '../script-api/api'
+import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextHandle, WindowSelector } from '../script-api/api'
 import type { Effect, Resource, WindowData } from '../store'
 import type { WireValue } from './protocol'
 
@@ -122,6 +122,7 @@ const BINDINGS: Record<string, Binding> = {
     return scope.text(await backend.findWindowText(windowId(window), String(query), within?.area), String(query), undefined, within?.area)
   }),
   'windows.list': read(async (backend, scope) => (await backend.listWindows()).map(info => scope.window(info))),
+  'windows.pressKey': input(async (backend, scope, [window, key, options]) => scope.input('key', await backend.pressKeyWindow(windowId(window), String(key), options as KeyboardOptions | undefined))),
   'windows.resolve': read(async (backend, scope, [selector]) => scope.window(await backend.resolveWindow((selector ?? {}) as WindowSelector))),
   'windows.scroll': input(async (backend, scope, [window, at, delta]) => {
     const local = windowPoint(window, at)
@@ -146,6 +147,7 @@ const BINDINGS: Record<string, Binding> = {
       text: outcome.recognized ? scope.text(outcome.recognized, request.text, frame) : undefined,
     }
   }),
+  'windows.typeText': input(async (backend, scope, [window, text, options]) => scope.input('type', await backend.typeTextWindow(windowId(window), String(text), options as KeyboardOptions | undefined))),
 }
 
 export interface CallContext {

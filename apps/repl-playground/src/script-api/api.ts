@@ -75,8 +75,15 @@ export interface AuvScriptApi {
   input: {
     /** Clicks a logical screen point, or the center of an area or rectangle. */
     click: (target: Point | Rect, options?: ClickOptions) => Promise<InputHandle>
-    /** Presses a key or chord, e.g. `Return` or `cmd+a`. */
+    /**
+     * Presses a key or chord, e.g. `Return` or `cmd+a`, in whichever app has
+     * keyboard focus when it runs. Use `WindowHandle.pressKey` to target a window.
+     */
     pressKey: (key: string) => Promise<InputHandle>
+    /**
+     * Types into whichever app has keyboard focus when it runs, which may be
+     * this playground's browser. Use `WindowHandle.typeText` to target a window.
+     */
     typeText: (text: string) => Promise<InputHandle>
   }
   text: {
@@ -149,6 +156,17 @@ export interface InputHandle {
   readonly path?: string
   /** Screen point for pointer actions. */
   readonly point?: Point
+}
+
+/** How `WindowHandle.typeText` and `pressKey` deliver to their window. */
+export interface KeyboardOptions {
+  /**
+   * Posts to the window without activating it. The control must already have
+   * keyboard focus: a click does not give it focus in every app (it did not in
+   * NetEase Cloud Music while another app was in front). By default the
+   * window is brought to the front and focused first.
+   */
+  background?: boolean
 }
 
 /** A point in logical screen coordinates (points, not pixels). */
@@ -259,6 +277,11 @@ export interface WindowHandle {
   readonly kind: 'window'
   readonly pid?: number
   /**
+   * Presses a key or chord in this window, e.g. `return` or `cmd+a`. Brings
+   * the window to the front first unless `background` is set.
+   */
+  pressKey: (key: string, options?: KeyboardOptions) => Promise<InputHandle>
+  /**
    * Wheel-scrolls once at `at`: a screen-space point, or the center of an area
    * or rectangle (unlike `click`, which takes a window-relative point). The
    * receipt is delivery evidence only; it does not prove the content moved.
@@ -274,6 +297,12 @@ export interface WindowHandle {
   // (`scrollStream` / `scrollWith`) scrolling exist in `@auv-js/sdk` but are not
   // exposed; add them when a script needs eased or continuous scrolling.
   readonly title?: string
+  /**
+   * Types text into this window's focused control. Brings the window to the
+   * front first unless `background` is set, so the text cannot land in
+   * another app. The receipt is delivery evidence, not proof the text arrived.
+   */
+  typeText: (text: string, options?: KeyboardOptions) => Promise<InputHandle>
 }
 
 export interface WindowSelector {

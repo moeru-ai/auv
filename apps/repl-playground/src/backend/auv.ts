@@ -1,9 +1,9 @@
 import type { AuvClient, AuvConnection, Device, RunnerClient, WindowClient } from '@auv-js/sdk'
 
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
+import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
-import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
+import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, InputPolicy, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
 
 type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
@@ -147,6 +147,11 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action) }
   }
 
+  async pressKeyWindow(windowId: string, key: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    const action = await this.#runner.windows.from(windowId).pressKeys(keyCombination(key), { policy: keyboardPolicy(options) })
+    return { path: deliveryPath(action) }
+  }
+
   async recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
     return toRecognized(await this.#runner.recognizeText(frame.ref, area ? { screenRegion: area } : undefined))
   }
@@ -196,6 +201,11 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action) }
   }
 
+  async typeTextWindow(windowId: string, text: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    const action = await this.#runner.windows.from(windowId).typeText(text, { policy: keyboardPolicy(options) })
+    return { path: deliveryPath(action) }
+  }
+
   /** Window references are Device resources; each call takes a client for the current Run with `windows.from(id)`. */
   #bind(): RunnerClient {
     return this.client.runner({ deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS })
@@ -229,10 +239,19 @@ export async function pairBrowser(endpoint: string, token: string, label = 'AUV 
   }
 }
 
-/** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */
 function deliveryPath(action: NativeAction): string | undefined {
   const name = action ? InputDeliveryPath[action.selectedPath] : undefined
   return name && name !== 'UNSPECIFIED' ? name.toLowerCase().replaceAll('_', '-') : undefined
+}
+
+function keyboardPolicy(options: KeyboardOptions | undefined): InputPolicy {
+  return options?.background ? InputPolicy.BACKGROUND_ONLY : InputPolicy.FOREGROUND_PREFERRED
+}
+
+/** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */
+/** `cmd+a` → `['cmd', 'a']`; a trailing `+` is the plus key (`cmd++`). */
+function keyCombination(key: string): string[] {
+  return key.split(/\+(?=.)/).map(part => part.trim()).filter(part => part.length > 0)
 }
 
 /**

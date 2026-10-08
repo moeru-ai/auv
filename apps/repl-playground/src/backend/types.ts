@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilResult, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
+import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilResult, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
 
 /**
  * One accessibility element. `path` is a stable-within-a-snapshot address
@@ -53,6 +53,8 @@ export interface Backend {
   listDisplays: () => Promise<DisplayInfo[]>
   listWindows: () => Promise<WindowInfo[]>
   pressKey: (key: string) => Promise<InputReceipt>
+  /** Presses a key or `+`-joined chord in a window, foreground first unless `background`. */
+  pressKeyWindow: (windowId: string, key: string, options?: KeyboardOptions) => Promise<InputReceipt>
   recognizeText: (frame: CapturedFrame, area?: Rect) => Promise<TextSearchResult>
   resolveWindow: (selector: WindowSelector) => Promise<WindowInfo>
   /** Wheel-scrolls once at a window-local point. */
@@ -63,6 +65,8 @@ export interface Backend {
    */
   scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => Promise<ScrollUntilOutcome>
   typeText: (text: string) => Promise<InputReceipt>
+  /** Types into a window, foreground first unless `background`. */
+  typeTextWindow: (windowId: string, text: string, options?: KeyboardOptions) => Promise<InputReceipt>
 }
 
 /** A capture the backend holds: its reference plus logical placement, without pixels. */

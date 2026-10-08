@@ -1,5 +1,5 @@
 import type { ExecWorkerApi, HostApi, LogLevel, ResumeMode, RunOutcome, RunRequest, WireValue } from '../runtime/protocol'
-import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollUntilOptions, ScrollUntilUpdate, TextSearchOptions, WindowHandle } from '../script-api/api'
+import type { AuvScriptApi, ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilOptions, ScrollUntilUpdate, TextSearchOptions, WindowHandle } from '../script-api/api'
 /// <reference lib="webworker" />
 import type { StepSite } from '../stepper/compile'
 
@@ -109,6 +109,7 @@ function attachWindowMethods(window: WindowHandle): void {
     capture: { value: () => call('windows.capture', ref) },
     click: { value: (point: Point, options?: ClickOptions) => call('windows.click', ref, point, options) },
     findText: { value: (query: string, options?: TextSearchOptions) => call('windows.findText', ref, query, options) },
+    pressKey: { value: (key: string, options?: KeyboardOptions) => call('windows.pressKey', ref, key, options) },
     scroll: { value: (at: Point | Rect, delta: ScrollDelta) => call('windows.scroll', ref, at, delta) },
     scrollUntil: {
       value: async (at: Point | Rect, options: ScrollUntilOptions) => {
@@ -126,6 +127,7 @@ function attachWindowMethods(window: WindowHandle): void {
         }
       },
     },
+    typeText: { value: (text: string, options?: KeyboardOptions) => call('windows.typeText', ref, text, options) },
   })
 }
 

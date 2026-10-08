@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
+import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
 import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 interface MockWindow extends WindowInfo {
@@ -256,6 +256,11 @@ export class MockBackend implements Backend {
     return { path: 'mock-keyboard' }
   }
 
+  async pressKeyWindow(windowId: string, key: string, _options?: KeyboardOptions): Promise<InputReceipt> {
+    this.#window(windowId)
+    return this.pressKey(key)
+  }
+
   async recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
     await delay(100)
     const matches = this.#text(frame.bounds, area)
@@ -318,6 +323,11 @@ export class MockBackend implements Backend {
     if (this.#focused)
       this.#draft += text
     return { path: 'mock-keyboard' }
+  }
+
+  async typeTextWindow(windowId: string, text: string, _options?: KeyboardOptions): Promise<InputReceipt> {
+    this.#window(windowId)
+    return this.typeText(text)
   }
 
   /**

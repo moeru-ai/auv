@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
+import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
 import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 /** One device call of a live run: what was asked and what the device answered. */
@@ -101,6 +101,10 @@ export class RecordingBackend implements Backend {
     return this.#record('pressKey', [key], () => this.inner.pressKey(key))
   }
 
+  pressKeyWindow(windowId: string, key: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    return this.#record('pressKeyWindow', [windowId, key, options], () => this.inner.pressKeyWindow(windowId, key, options))
+  }
+
   recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
     return this.#record('recognizeText', [frame, area], () => this.inner.recognizeText(frame, area))
   }
@@ -120,6 +124,10 @@ export class RecordingBackend implements Backend {
 
   typeText(text: string): Promise<InputReceipt> {
     return this.#record('typeText', [text], () => this.inner.typeText(text))
+  }
+
+  typeTextWindow(windowId: string, text: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    return this.#record('typeTextWindow', [windowId, text, options], () => this.inner.typeTextWindow(windowId, text, options))
   }
 
   async #record<T>(method: RecordedMethod, args: unknown[], run: () => Promise<T>): Promise<T> {
@@ -210,6 +218,10 @@ export class ReplayBackend implements Backend {
     return this.#next('pressKey', [key])
   }
 
+  pressKeyWindow(windowId: string, key: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    return this.#next('pressKeyWindow', [windowId, key, options])
+  }
+
   recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
     return this.#next('recognizeText', [frame, area])
   }
@@ -231,6 +243,10 @@ export class ReplayBackend implements Backend {
 
   typeText(text: string): Promise<InputReceipt> {
     return this.#next('typeText', [text])
+  }
+
+  typeTextWindow(windowId: string, text: string, options?: KeyboardOptions): Promise<InputReceipt> {
+    return this.#next('typeTextWindow', [windowId, text, options])
   }
 
   async #next<T>(method: RecordedMethod, args: unknown[]): Promise<T> {

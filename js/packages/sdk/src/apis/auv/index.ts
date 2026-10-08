@@ -46,6 +46,8 @@ export type {
   ScrollUntilOptions,
   ScrollWithStep,
   WindowClient,
+  WindowPasteTextOptions,
+  WindowPressKeysOptions,
   WindowTarget,
 } from './driver'
 export { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
