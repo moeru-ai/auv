@@ -21,6 +21,7 @@ export { createAuv } from './client'
 export type { AuvClient, CreateClientOptions } from './client'
 export { discoverRunner } from './discover'
 export type {
+  DescribedRpcMethod,
   DiscoveredMethodEffect,
   DiscoveredRpcMethod,
   DiscoveredRunner,

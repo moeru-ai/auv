@@ -12,6 +12,16 @@ import { AuvProtocolError } from '../../transport/errors'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 import { protobufJsonSchema } from './json'
 
+/** One reflected method, for hosts that relay already-encoded RPCs. */
+export interface DescribedRpcMethod {
+  /** ProtoJSON of an encoded request, for inspection. */
+  decodeRequest: (body: Uint8Array) => JsonValue
+  /** ProtoJSON of an encoded response message, for inspection. */
+  decodeResponse: (body: Uint8Array) => JsonValue
+  readonly effect: DiscoveredMethodEffect
+  readonly methodKind: DescMethod['methodKind']
+}
+
 export type DiscoveredMethodEffect = 'administration' | 'input' | 'mutation' | 'read_only' | 'unspecified'
 
 // TODO(discovered-tool-presentation): The annotation contract has no title or
@@ -30,6 +40,11 @@ export interface DiscoveredRpcMethod {
 /** Discovered methods and dynamic ProtoJSON invocation for one RunnerClass. */
 export interface DiscoveredRunner {
   readonly apis: readonly DiscoveredRpcMethod[]
+  /**
+   * Describes any reflected method by gRPC path (`/pkg.Service/Method`),
+   * including methods not marked discoverable; `undefined` when unknown.
+   */
+  describeMethod: (id: string) => DescribedRpcMethod | undefined
   invokeServerStreamJson: (options: InvokeDiscoveredOptions) => Promise<AsyncIterable<JsonValue>>
   invokeUnaryJson: (options: InvokeDiscoveredOptions) => Promise<JsonValue>
   readonly runnerClass: string
@@ -221,6 +236,18 @@ function discoveredRunner(
 
   return {
     apis,
+    describeMethod(id) {
+      const [serviceName, methodName] = id.slice(1).split('/')
+      const descriptor = registry.getService(serviceName ?? '')?.methods.find(candidate => candidate.name === methodName)
+      if (descriptor === undefined)
+        return undefined
+      return {
+        decodeRequest: body => toJson(descriptor.input, fromBinary(descriptor.input, body), { registry }),
+        decodeResponse: body => toJson(descriptor.output, fromBinary(descriptor.output, body), { registry }),
+        effect: discoveredEffect(hasOption(descriptor, effect) ? getOption(descriptor, effect) : MethodEffect.UNSPECIFIED),
+        methodKind: descriptor.methodKind,
+      }
+    },
     async invokeServerStreamJson(options) {
       const { descriptor, method } = resolve(options.method)
       if (descriptor.methodKind !== 'server_streaming')

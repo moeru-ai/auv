@@ -25,6 +25,7 @@
     "@codemirror/state": "catalog:",
     "@codemirror/view": "catalog:",
     "@lezer/highlight": "catalog:",
+    "@moeru/eventa": "catalog:",
     "@typescript/vfs": "catalog:",
     "acorn": "catalog:",
     "birpc": "catalog:",

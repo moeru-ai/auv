@@ -1,3 +1,6 @@
+import type { DescribedRpcMethod } from '@auv-js/sdk'
+
+import type { BridgeTarget } from '../runtime/sdk-bridge'
 import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilResult, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
 
 /**
@@ -64,6 +67,11 @@ export interface Backend {
    * request's condition, `decide`, the end, or the budget stops it.
    */
   scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => Promise<ScrollUntilOutcome>
+  /**
+   * Serves scripts' direct `@auv-js/sdk` calls. Absent on backends that cannot
+   * answer encoded RPCs yet: TODO(playground-sdk-mock), TODO(playground-sdk-replay).
+   */
+  sdk?: () => SdkAccess
   typeText: (text: string) => Promise<InputReceipt>
   /** Types into a window, foreground first unless `background`. */
   typeTextWindow: (windowId: string, text: string, options?: KeyboardOptions) => Promise<InputReceipt>
@@ -117,6 +125,15 @@ export interface ScrollUntilRequest {
   settleMs: number
   /** Built-in text condition; the loop otherwise stops at the end. */
   text?: string
+}
+
+/** How the host forwards scripts' SDK calls to a backend, and how scripts route them. */
+export interface SdkAccess {
+  /** Effect and ProtoJSON decoding for a gRPC path, from the Runner's reflection. */
+  describe: (method: string) => Promise<DescribedRpcMethod | undefined>
+  /** The Device, Run and RunnerClass the script's `runner` targets. */
+  route: { deviceId?: string, runId?: string, runnerClass: string }
+  target: BridgeTarget
 }
 
 export interface TextSearchResult {

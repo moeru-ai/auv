@@ -98,6 +98,13 @@ describe('runner discovery', () => {
     })).resolves.toEqual({
       displays: [{ displayId: 'display-main', name: 'Main', primary: true, scaleFactor: 2 }],
     })
+
+    // Hosts that relay encoded RPCs classify and decode them with the same descriptors.
+    const described = discovered.describeMethod(`/${DisplayService.typeName}/${DisplayService.method.listDisplays.name}`)
+    expect(described).toMatchObject({ effect: 'read_only', methodKind: 'unary' })
+    const encoded = toBinary(ListDisplaysResponseSchema, create(ListDisplaysResponseSchema, { displays: [{ displayId: 'display-main' }] }))
+    expect(described?.decodeResponse(encoded)).toEqual({ displays: [{ displayId: 'display-main' }] })
+    expect(discovered.describeMethod('/auv.api.driver.v1.DisplayService/Missing')).toBeUndefined()
   })
 })
 

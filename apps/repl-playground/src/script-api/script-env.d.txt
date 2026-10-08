@@ -35,3 +35,13 @@ type TextMatch = import('./auv-api').TextMatch
 type TextSearchOptions = import('./auv-api').TextSearchOptions
 type WindowHandle = import('./auv-api').WindowHandle
 type WindowSelector = import('./auv-api').WindowSelector
+
+// Direct `@auv-js/sdk` access: `sdk` is the module and `runner` a Runner client
+// bound to the current Device and Run, as in a Node script.
+// TODO(playground-sdk-types): typed as `any` until the editor's language service
+// loads the SDK's declarations; see
+// docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md.
+// eslint-disable-next-line ts/no-explicit-any
+declare const sdk: any
+// eslint-disable-next-line ts/no-explicit-any
+declare const runner: any

@@ -7,13 +7,15 @@ import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
 import type { ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
 
+import { createContext as createWorkerChannel } from '@moeru/eventa/adapters/webworkers'
 import { createBirpc } from 'birpc'
 
 import { RecordingBackend, ReplayBackend } from '../backend/replay'
 import { boundsOf } from '../handles'
 import { StepTimer } from '../stepper/timing'
-import { actions, usePlayground } from '../store'
+import { actions, nowMs, usePlayground } from '../store'
 import { decodeBitmap, invokeBinding } from './bindings'
+import { SDK_PORT_MESSAGE, serveBridge } from './sdk-bridge'
 
 /** Language service + compiler worker, shared by the editor and the runner. */
 export const language: BirpcReturn<LanguageWorkerApi, object> = createBirpc<LanguageWorkerApi, object>({}, (() => {
@@ -166,6 +168,7 @@ class ExecSession {
         hoisted: compiled.hoisted,
         mode: options.mode,
         prelude: compiled.prelude,
+        sdkRoute: this.#runBackend?.sdk?.().route,
         steps: compiled.steps,
       })
       this.#timer.finish(performance.timeOrigin + performance.now())
@@ -246,6 +249,48 @@ class ExecSession {
     const worker = new Worker(new URL('../workers/exec.worker.ts', import.meta.url), { type: 'module' })
     this.#worker = worker
     const lineOf = (stepId: null | number) => stepId === null ? null : this.#steps[stepId]?.line ?? null
+    // Scripts' direct `@auv-js/sdk` calls arrive here encoded, on their own port.
+    const channel = new MessageChannel()
+    worker.postMessage({ type: SDK_PORT_MESSAGE }, [channel.port2])
+    serveBridge(createWorkerChannel(channel.port1 as unknown as Worker).context, {
+      record: async (start) => {
+        const line = lineOf(start.stepId)
+        const described = await this.#runBackend?.sdk?.().describe(start.method)
+        const decode = (body: Uint8Array, as: 'request' | 'response') => {
+          try {
+            return as === 'request' ? described?.decodeRequest(body) : described?.decodeResponse(body)
+          }
+          catch {
+            return `${body.byteLength} bytes`
+          }
+        }
+        const seq = this.#nextSeq()
+        this.#batch.flush()
+        const callId = actions.beginCall({
+          args: start.body && described ? [decode(start.body, 'request')] : [],
+          // TODO(playground-sdk-visualize): results are recorded as ProtoJSON;
+          // canvas and inspector rendering by message type is not wired yet.
+          effect: described?.effect === 'input' ? 'input' : 'read',
+          hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
+          line,
+          method: `rpc:${start.method.slice(1)}`,
+          seq,
+          startedAt: nowMs(),
+        })
+        return (end) => {
+          const results = end.json !== undefined ? [JSON.parse(end.json) as unknown] : end.responses.map(body => decode(body, 'response'))
+          actions.endCall(callId, {
+            endSeq: this.#nextSeq(),
+            error: end.error,
+            refs: [],
+            result: results.length === 1 ? results[0] : results,
+            status: end.error === undefined ? 'ok' : 'error',
+          })
+        }
+      },
+      target: () => this.#runBackend?.sdk?.().target
+        ?? 'Direct SDK calls need a connected device; the mock desktop and replays do not serve them yet',
+    })
     const host: HostApi = {
       call: async (method, args, stepId) => {
         const line = lineOf(stepId)

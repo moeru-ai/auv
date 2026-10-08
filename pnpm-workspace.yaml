@@ -70,6 +70,7 @@ catalog:
   '@iconify-json/ph': ^1.2.2
   '@lezer/highlight': ^1.2.5
   '@moeru/eslint-config': ^0.1.0-beta.20
+  '@moeru/eventa': ^1.0.2
   '@moeru/std': 0.1.0-beta.20
   '@napi-rs/cli': ^3.8.6
   '@pnpm/find-workspace-dir': 1000.1.5

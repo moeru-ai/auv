@@ -2,7 +2,7 @@
 
 AUV tracing, run storage, artifact delivery, and inspect viewer contracts
 
-Count: **13**
+Count: **14**
 
 ## Current
 
@@ -10,6 +10,10 @@ Count: **13**
   (current producer-side `auv-tracing` contract and implementation handoff)
 
 This contract wins if a historical record conflicts with it.
+
+- [`2026-10-08-playground-sdk-transport-design.md`](2026-10-08-playground-sdk-transport-design.md)
+  (proposed: playground scripts on `@auv-js/sdk` over an eventa transport
+  bridge, with host-side recording; prototype behind `sdk` / `runner`)
 
 ## Historical / Superseded Pre-V1 Records
 

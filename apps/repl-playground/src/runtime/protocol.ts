@@ -103,6 +103,8 @@ export interface RunRequest {
   /** Pause at the first hook (`step`) or only at breakpoints (`run`). */
   mode: 'run' | 'step'
   prelude: string
+  /** Route for the script's `runner`; absent when the backend cannot serve SDK calls. */
+  sdkRoute?: { deviceId?: string, runId?: string, runnerClass: string }
   steps: StepSite[]
 }
 

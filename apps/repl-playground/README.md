@@ -202,6 +202,26 @@ await music.pressKey('cmd+a', { background: true }) // no activation; the box mu
 already have keyboard focus; a click does not give it focus in every app (it did
 not in NetEase Cloud Music while another app was in front).
 
+### Direct SDK (prototype)
+
+Scripts can also call `@auv-js/sdk` directly. `sdk` is the SDK module and
+`runner` is a Runner client bound to the current Device and Run, the same object
+a Node script gets from `createAuv(await connect(...)).runner(route)`. Every
+Runner RPC is available without a playground binding:
+
+```ts
+const music = (await runner.windows.list()).find(w => w.window.applicationBundleId === 'com.netease.163music')
+await music.click({ x: 528, y: 50 }, { button: sdk.MouseButton.LEFT })
+const playing = await runner.macos.media.nowPlaying()
+```
+
+Calls cross to the page encoded, where the device credential is added; each one
+is recorded in the timeline as `rpc:<Service>/<Method>` with ProtoJSON request and
+response. It needs a connected device: the mock desktop and replays do not serve
+SDK calls yet, canvas rendering of results is not wired, and the editor types
+`runner` and `sdk` as `any`. See
+`docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md`.
+
 Script API types (`Area`, `Rect`, `Point`, `WindowHandle`, `TextMatch`, …) can
 be used by name in cells, e.g. `function toolbar(win: Area): Area`.
 

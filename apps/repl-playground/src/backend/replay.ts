@@ -1,5 +1,5 @@
 import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
-import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
+import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, SdkAccess, TextSearchResult, WindowInfo } from './types'
 
 /** One device call of a live run: what was asked and what the device answered. */
 export interface RecordedCall {
@@ -22,7 +22,7 @@ export interface Recording {
   label: string
 }
 
-type RecordedMethod = Exclude<keyof Backend, 'accessibilityTree' | 'beginRun' | 'captureImage' | 'dispose' | 'endRun' | 'kind' | 'label'>
+type RecordedMethod = Exclude<keyof Backend, 'accessibilityTree' | 'beginRun' | 'captureImage' | 'dispose' | 'endRun' | 'kind' | 'label' | 'sdk'>
 
 /**
  * Wraps a live backend and records every device call with its result, so the
@@ -35,12 +35,17 @@ export class RecordingBackend implements Backend {
   readonly kind: Backend['kind']
 
   readonly label: string
+  sdk?: () => SdkAccess
 
   constructor(private readonly inner: Backend) {
     this.kind = inner.kind
     this.label = inner.label
     if (inner.accessibilityTree)
       this.accessibilityTree = () => inner.accessibilityTree!()
+    // TODO(playground-sdk-replay): direct SDK calls reach the device but are
+    // not added to `entries`, so a run that uses `runner` does not replay yet.
+    if (inner.sdk)
+      this.sdk = () => inner.sdk!()
   }
 
   activateApp(bundleId: string): Promise<InputReceipt> {
