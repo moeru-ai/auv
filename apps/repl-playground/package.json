@@ -16,6 +16,7 @@
   "dependencies": {
     "@auv-js/sdk": "workspace:*",
     "@base-ui/react": "catalog:",
+    "@bufbuild/protobuf": "catalog:",
     "@codemirror/autocomplete": "catalog:",
     "@codemirror/commands": "catalog:",
     "@codemirror/lang-javascript": "catalog:",
@@ -33,6 +34,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-resizable-panels": "catalog:",
+    "thumbhash": "catalog:",
     "ts-blank-space": "catalog:",
     "typescript": "catalog:",
     "zustand": "catalog:"

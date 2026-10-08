@@ -5,6 +5,7 @@ import type { CameraFlight, View } from './camera'
 import { useEffect, useRef, useState } from 'react'
 
 import { confidenceAlpha } from '../../ocr'
+import { paintRevealed } from '../../preview'
 import { nowMs, usePlayground } from '../../store'
 import { callAt, callsUpTo, cursorSeq, latestFramesAt, pickAxNode } from '../../timeline'
 import { flight, flightDuration, viewFor } from './camera'
@@ -58,6 +59,8 @@ export function DesktopCanvas() {
     const base = document.createElement('canvas')
     const baseCtx = base.getContext('2d')!
     let baseKey: unknown[] = []
+    // A frame fading in from its ThumbHash preview repaints the base until done.
+    let baseFading = false
     let raf = 0
     // `focus()` camera: the focus the view last flew to, and the flight in progress.
     let appliedFocus: null | number = null
@@ -97,7 +100,7 @@ export function DesktopCanvas() {
       // NOTICE(camera-smoothing): high-quality downscaling of Retina captures
       // costs ~40 ms a frame; flights use low quality, then redraw once landed.
       const quality: ImageSmoothingQuality = camera ? 'low' : 'high'
-      const key = [canvas.width, canvas.height, v.k, v.tx, v.ty, quality, state.displays, state.liveFrames, state.resources, scene.cursor, scene.timeTravel, scene.focusCall?.id]
+      const key = [canvas.width, canvas.height, v.k, v.tx, v.ty, quality, state.displays, state.liveFrames, state.resources, scene.cursor, scene.timeTravel, scene.focusCall?.id, baseFading ? performance.now() : 0]
       if (key.some((value, index) => value !== baseKey[index])) {
         baseKey = key
         base.width = canvas.width
@@ -105,14 +108,14 @@ export function DesktopCanvas() {
         baseCtx.setTransform(dpr * v.k, 0, 0, dpr * v.k, dpr * v.tx, dpr * v.ty)
         baseCtx.imageSmoothingEnabled = true
         baseCtx.imageSmoothingQuality = quality
-        paintBase(baseCtx, state, scene, v.k)
+        baseFading = paintBase(baseCtx, state, scene, v.k)
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       ctx.drawImage(base, 0, 0)
       ctx.setTransform(dpr * v.k, 0, 0, dpr * v.k, dpr * v.tx, dpr * v.ty)
       // Click ripples and camera flights keep animating until done.
-      if (paintOverlays(ctx, state, scene, v.k) || camera)
+      if (paintOverlays(ctx, state, scene, v.k) || camera || baseFading)
         invalidate()
     }
     function invalidate() {
@@ -247,9 +250,13 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.fillText(text, x, y)
 }
 
-/** Pixels: displays, live frames and captured frames as of the cursor. */
-function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { cursor, focusCall, timeTravel }: Scene, k: number): void {
+/**
+ * Pixels: displays, live frames and captured frames as of the cursor. Returns
+ * whether a frame is still fading in over its preview.
+ */
+function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { cursor, focusCall, timeTravel }: Scene, k: number): boolean {
   const px = (n: number) => n / k
+  let fading = false
 
   // 1. Displays. When following the latest event, show live pixels; when time
   //    travelling, only what had been captured by the cursor.
@@ -259,7 +266,7 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
     ctx.fillRect(f.x, f.y, f.width, f.height)
     const live = state.liveFrames[display.id]
     if (live && !timeTravel)
-      ctx.drawImage(live.bitmap, live.bounds.x, live.bounds.y, live.bounds.width, live.bounds.height)
+      fading = paintRevealed(ctx, live, live.bounds.x, live.bounds.y, live.bounds.width, live.bounds.height) || fading
     ctx.strokeStyle = COLORS.display
     ctx.lineWidth = px(1)
     ctx.strokeRect(f.x, f.y, f.width, f.height)
@@ -268,13 +275,13 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
 
   // 2. The newest frame of every source as of the cursor, oldest first.
   for (const frame of latestFramesAt(state, cursor)) {
-    if (!frame.bitmap)
+    if (!frame.bitmap && !frame.preview)
       continue
     const liveIsNewer = !timeTravel && Object.values(state.liveFrames).some(candidate => candidate.capturedAt > frame.capturedAt && contains(candidate.bounds, frame.handle.bounds))
     if (liveIsNewer)
       continue
     const b = frame.handle.bounds
-    ctx.drawImage(frame.bitmap, b.x, b.y, b.width, b.height)
+    fading = paintRevealed(ctx, frame, b.x, b.y, b.width, b.height) || fading
   }
 
   // 3. The focused call's own frame (hovered, or at the cursor) is what that
@@ -282,12 +289,13 @@ function paintBase(ctx: CanvasRenderingContext2D, state: PlaygroundState, { curs
   if (focusCall) {
     for (const ref of focusCall.refs) {
       const resource = state.resources[ref]
-      if (resource?.kind === 'frame' && resource.bitmap) {
+      if (resource?.kind === 'frame') {
         const b = resource.handle.bounds
-        ctx.drawImage(resource.bitmap, b.x, b.y, b.width, b.height)
+        fading = paintRevealed(ctx, resource, b.x, b.y, b.width, b.height) || fading
       }
     }
   }
+  return fading
 }
 
 function paintFocus(ctx: CanvasRenderingContext2D, resource: Resource | undefined, k: number): void {

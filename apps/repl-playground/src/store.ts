@@ -1,4 +1,5 @@
 import type { AxNode, Backend, CapturedFrame, DisplayInfo } from './backend/types'
+import type { RevealedImage } from './preview'
 import type { LogLevel, RunOutcome, WireValue } from './runtime/protocol'
 import type { DisplayHandle, FrameHandle, InputHandle, Point, Rect, TextHandle, WindowHandle } from './script-api/api'
 import type { TimingSnapshot } from './stepper/timing'
@@ -51,8 +52,8 @@ export interface FocusEvent {
 
 export type InspectorTab = 'ax' | 'call' | 'handle'
 
-export interface LiveFrame {
-  bitmap: ImageBitmap
+/** The latest display capture in live mode; a ThumbHash preview until its pixels load. */
+export interface LiveFrame extends RevealedImage {
   bounds: CapturedFrame['bounds']
   capturedAt: number
 }
@@ -139,14 +140,14 @@ export interface PlaygroundState {
  * worker. `seq` is the event-log position of the call that produced it.
  */
 export type Resource = (
-  | {
-    /** Display copy at logical resolution, loaded after the call returns. */
-    bitmap?: ImageBitmap
+  | (RevealedImage & {
+    // `bitmap` is a display copy at logical resolution, loaded after the call
+    // returns; `preview` shows meanwhile.
     capturedAt: number
     frame: CapturedFrame
     handle: FrameHandle
     kind: 'frame'
-  }
+  })
   | { handle: DisplayHandle, kind: 'display' }
   | { handle: InputHandle, kind: 'input' }
   | { handle: TextHandle, kind: 'text' }
@@ -324,8 +325,10 @@ export const actions = {
 
   resetSession(): void {
     for (const resource of Object.values(get().resources)) {
-      if (resource.kind === 'frame')
+      if (resource.kind === 'frame') {
         resource.bitmap?.close()
+        resource.preview?.close()
+      }
     }
     set({
       binds: [],
@@ -368,7 +371,11 @@ export const actions = {
   setLiveFrame(displayId: string, frame: LiveFrame): void {
     const previous = get().liveFrames[displayId]
     set(state => ({ liveFrames: { ...state.liveFrames, [displayId]: frame } }))
-    previous?.bitmap.close()
+    // A frame can keep its predecessor's preview while its pixels load.
+    if (previous?.bitmap !== frame.bitmap)
+      previous?.bitmap?.close()
+    if (previous?.preview !== frame.preview)
+      previous?.preview?.close()
   },
 
   // TODO(breakpoint-anchors): breakpoints are plain line numbers and do not

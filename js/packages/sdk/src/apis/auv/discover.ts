@@ -1,4 +1,4 @@
-import type { DescMethod, FileRegistry, JsonObject, JsonValue } from '@bufbuild/protobuf'
+import type { DescMessage, DescMethod, FileRegistry, JsonObject, JsonValue } from '@bufbuild/protobuf'
 
 import type { AuvConnection } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
@@ -19,7 +19,11 @@ export interface DescribedRpcMethod {
   /** ProtoJSON of an encoded response message, for inspection. */
   decodeResponse: (body: Uint8Array) => JsonValue
   readonly effect: DiscoveredMethodEffect
+  /** Reflected request message, for decoding with `fromBinary` and walking by type. */
+  readonly input: DescMessage
   readonly methodKind: DescMethod['methodKind']
+  /** Reflected response message. */
+  readonly output: DescMessage
 }
 
 export type DiscoveredMethodEffect = 'administration' | 'input' | 'mutation' | 'read_only' | 'unspecified'
@@ -245,7 +249,9 @@ function discoveredRunner(
         decodeRequest: body => toJson(descriptor.input, fromBinary(descriptor.input, body), { registry }),
         decodeResponse: body => toJson(descriptor.output, fromBinary(descriptor.output, body), { registry }),
         effect: discoveredEffect(hasOption(descriptor, effect) ? getOption(descriptor, effect) : MethodEffect.UNSPECIFIED),
+        input: descriptor.input,
         methodKind: descriptor.methodKind,
+        output: descriptor.output,
       }
     },
     async invokeServerStreamJson(options) {

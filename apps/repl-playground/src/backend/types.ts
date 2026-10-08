@@ -68,8 +68,8 @@ export interface Backend {
    */
   scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => Promise<ScrollUntilOutcome>
   /**
-   * Serves scripts' direct `@auv-js/sdk` calls. Absent on backends that cannot
-   * answer encoded RPCs yet: TODO(playground-sdk-mock), TODO(playground-sdk-replay).
+   * Serves scripts' direct `@auv-js/sdk` calls: the device, or a replay of a
+   * run that made them. Absent on the mock desktop: TODO(playground-sdk-mock).
    */
   sdk?: () => SdkAccess
   typeText: (text: string) => Promise<InputReceipt>
@@ -86,6 +86,8 @@ export interface CapturedFrame {
   ref: string
   scale: number
   source: string
+  /** ThumbHash of the whole capture, for a preview before the pixels load. */
+  thumbhash?: Uint8Array
   /** Pixel width. */
   width: number
 }

@@ -74,7 +74,7 @@ describe('sdk bridge', () => {
     expect(call?.headers.get('auv-run-id')).toBe('run-1')
     expect(call?.http).toBeDefined()
     expect(recorded).toEqual([{
-      end: { responses: [new Uint8Array()] },
+      end: { exchange: [{ request: expect.any(Uint8Array) }, { response: new Uint8Array() }], json: undefined },
       start: { body: expect.any(Uint8Array), method: '/auv.api.driver.v1.DisplayService/ListDisplays', stepId: 7 },
     }])
     await connection.close()
@@ -136,7 +136,8 @@ describe('sdk bridge', () => {
         }
       },
     })
-    const transport = bridge(daemon.transport)
+    const recorded: Array<{ end?: BridgedCallEnd, start: BridgedCallStart }> = []
+    const transport = bridge(daemon.transport, recorded)
 
     const call = await transport.duplex({ headers: new Headers(), method: '/auv.api.driver.v1.InputService/ScrollUntil' })
     const received: number[] = []
@@ -144,12 +145,18 @@ describe('sdk bridge', () => {
       for await (const body of call.responses)
         received.push(body[0]!)
     })()
+    // Like a scroll-until decision, the second request answers the first response.
     await call.send(new Uint8Array([1]))
+    await expect.poll(() => received.length).toBe(1)
     await call.send(new Uint8Array([10]))
     await call.halfClose()
     await reading
 
     expect(sent.map(body => body[0])).toEqual([1, 10])
     expect(received).toEqual([2, 11])
+    // Replay needs every message of the call, in the order they crossed.
+    await expect.poll(() => recorded[0]?.end).toBeDefined()
+    expect(recorded[0]?.end?.exchange.map(frame => 'request' in frame ? `request ${frame.request[0]}` : `response ${frame.response[0]}`))
+      .toEqual(['request 1', 'response 2', 'request 10', 'response 11'])
   })
 })

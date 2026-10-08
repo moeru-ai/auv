@@ -253,6 +253,12 @@ export async function createAuvBackend(options: AuvBackendOptions): Promise<{ ba
   return { backend: withReadableErrors(new AuvBackend(connection, client, device, { credential: options.credential, transport })), device, devices }
 }
 
+/** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */
+export function deliveryPath(action: NativeAction): string | undefined {
+  const name = action ? InputDeliveryPath[action.selectedPath] : undefined
+  return name && name !== 'UNSPECIFIED' ? name.toLowerCase().replaceAll('_', '-') : undefined
+}
+
 /** Pairs this browser with a daemon using a one-time token from `auv devices pair create-token`. */
 export async function pairBrowser(endpoint: string, token: string, label = 'AUV Playground'): Promise<string> {
   const bootstrap = await connect({ transport: createHttpTransport({ endpoint }) })
@@ -265,16 +271,61 @@ export async function pairBrowser(endpoint: string, token: string, label = 'AUV 
   }
 }
 
-function deliveryPath(action: NativeAction): string | undefined {
-  const name = action ? InputDeliveryPath[action.selectedPath] : undefined
-  return name && name !== 'UNSPECIFIED' ? name.toLowerCase().replaceAll('_', '-') : undefined
+export function toDisplay(display: NativeDisplay): DisplayInfo {
+  return {
+    frame: toRect(display.frame) ?? { height: 0, width: 0, x: 0, y: 0 },
+    id: display.displayId,
+    name: display.name,
+    primary: display.primary,
+    scale: display.scaleFactor || 1,
+  }
+}
+
+/** A capture's reference and placement, from AUV's `CapturedFrame`. */
+export function toFrame(capture: NativeFrame | undefined, source: string): CapturedFrame {
+  if (!capture?.ref)
+    throw new Error('AUV returned a capture without a reference')
+  const { height = 0, width = 0 } = capture.pixelSize ?? {}
+  return {
+    bounds: toRect(capture.bounds) ?? { height, width, x: 0, y: 0 },
+    height,
+    ref: capture.ref.captureId,
+    scale: capture.scaleFactor || 1,
+    source,
+    thumbhash: capture.thumbhash.length > 0 ? capture.thumbhash : undefined,
+    width,
+  }
+}
+
+/** OCR response as playground matches. */
+export function toRecognized(response: NativeRecognized): TextSearchResult {
+  return {
+    // Region bounds are screen rectangles, like TextMatch bounds (see
+    // "Capture Frame" in docs/TERMS_AND_CONCEPTS.md).
+    matches: response.regions.map(region => ({ bounds: toRect(region.bounds)!, confidence: region.confidence ?? 1, text: region.text })),
+    text: response.text,
+  }
+}
+
+export function toRect(rect: undefined | { height: number, width: number, x: number, y: number }): Rect | undefined {
+  return rect ? { height: rect.height, width: rect.width, x: rect.x, y: rect.y } : undefined
+}
+
+export function toWindow(window: NativeWindow): WindowInfo {
+  return {
+    app: window.applicationName,
+    bundleId: window.applicationBundleId,
+    frame: toRect(window.frame) ?? { height: 0, width: 0, x: 0, y: 0 },
+    id: window.ref?.windowId ?? '',
+    pid: window.processId,
+    title: window.title,
+  }
 }
 
 function keyboardPolicy(options: KeyboardOptions | undefined): InputPolicy {
   return options?.background ? InputPolicy.BACKGROUND_ONLY : InputPolicy.FOREGROUND_PREFERRED
 }
 
-/** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */
 /** `cmd+a` → `['cmd', 'a']`; a trailing `+` is the plus key (`cmd++`). */
 function keyCombination(key: string): string[] {
   return key.split(/\+(?=.)/).map(part => part.trim()).filter(part => part.length > 0)
@@ -313,47 +364,9 @@ function toClick(options: ClickOptions | undefined) {
   return { count, interval: toDuration(ms) }
 }
 
-function toDisplay(display: NativeDisplay): DisplayInfo {
-  return {
-    frame: toRect(display.frame) ?? { height: 0, width: 0, x: 0, y: 0 },
-    id: display.displayId,
-    name: display.name,
-    primary: display.primary,
-    scale: display.scaleFactor || 1,
-  }
-}
-
 /** `google.protobuf.Duration` from milliseconds. */
 function toDuration(ms: number) {
   return { nanos: Math.round((ms % 1000) * 1e6), seconds: BigInt(Math.floor(ms / 1000)) }
-}
-
-function toFrame(capture: NativeFrame | undefined, source: string): CapturedFrame {
-  if (!capture?.ref)
-    throw new Error('AUV returned a capture without a reference')
-  const { height = 0, width = 0 } = capture.pixelSize ?? {}
-  return {
-    bounds: toRect(capture.bounds) ?? { height, width, x: 0, y: 0 },
-    height,
-    ref: capture.ref.captureId,
-    scale: capture.scaleFactor || 1,
-    source,
-    width,
-  }
-}
-
-/** OCR response as playground matches. */
-function toRecognized(response: NativeRecognized): TextSearchResult {
-  return {
-    // Region bounds are screen rectangles, like TextMatch bounds (see
-    // "Capture Frame" in docs/TERMS_AND_CONCEPTS.md).
-    matches: response.regions.map(region => ({ bounds: toRect(region.bounds)!, confidence: region.confidence ?? 1, text: region.text })),
-    text: response.text,
-  }
-}
-
-function toRect(rect: undefined | { height: number, width: number, x: number, y: number }): Rect | undefined {
-  return rect ? { height: rect.height, width: rect.width, x: rect.x, y: rect.y } : undefined
 }
 
 function toSelector(selector: WindowSelector): Parameters<RunnerClient['windows']['resolve']>[0] {
@@ -370,17 +383,6 @@ function toSelector(selector: WindowSelector): Parameters<RunnerClient['windows'
       ? { case: 'titleContains' as const, value: selector.titleContains }
       : { case: 'mainVisible' as const, value: true }
   return { application, window }
-}
-
-function toWindow(window: NativeWindow): WindowInfo {
-  return {
-    app: window.applicationName,
-    bundleId: window.applicationBundleId,
-    frame: toRect(window.frame) ?? { height: 0, width: 0, x: 0, y: 0 },
-    id: window.ref?.windowId ?? '',
-    pid: window.processId,
-    title: window.title,
-  }
 }
 
 /**

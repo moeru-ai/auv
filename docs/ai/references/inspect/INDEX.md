@@ -12,8 +12,9 @@ Count: **14**
 This contract wins if a historical record conflicts with it.
 
 - [`2026-10-08-playground-sdk-transport-design.md`](2026-10-08-playground-sdk-transport-design.md)
-  (proposed: playground scripts on `@auv-js/sdk` over an eventa transport
-  bridge, with host-side recording; prototype behind `sdk` / `device`)
+  (accepted: playground scripts on `@auv-js/sdk` over an eventa transport
+  bridge; RPCs drawn by message type, replayed at the transport, and captures
+  previewed by ThumbHash; behind `sdk` / `device`)
 
 ## Historical / Superseded Pre-V1 Records
 

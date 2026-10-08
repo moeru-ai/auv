@@ -69,15 +69,45 @@ Implemented:
    SDK's `decodeJson` lives).
 4. Unit tests over a `MessageChannel`.
 
+Timeline and replay (2026-10-08):
+
+5. **Drawing by message type** (`runtime/rpc-resources.ts`). The host decodes
+   each call's messages with the Runner's reflected descriptors
+   (`DescribedRpcMethod.input` / `output`) and registers the playground's
+   existing resources by protobuf type name:
+   - `CapturedFrame` becomes a frame, labelled by the request's window or
+     display;
+   - `TextMatch` lists and `RecognizeTextResponse` become text, tied to the
+     capture in the same message;
+   - `InputActionResult` becomes an input receipt at `screen_point`, or at the
+     window point plus the window origin;
+   - `Window` and `Display` become outlines.
+
+   Oneof events and repeated fields are walked, so each scroll-until step is
+   a frame. The kind of an input receipt comes from the method name.
+6. **Replay at the transport.** `RecordingBackend.sdk()` wraps the live
+   transport and records each call as its request and response messages, in
+   the order they crossed (`RecordedRpc`). `ReplayBackend` serves
+   `ReplayTransport`, which works as follows:
+   - A call matches the first unused recorded call with the same method and
+     request bytes, so concurrent calls replay in any order.
+   - Streams replay in lockstep, so a scroll-until decision is compared before
+     the next update.
+   - Errors replay as the same SDK error class.
+   - An unknown call or stream message raises `ReplayDivergence`.
+7. **Previews.** Frames and the first live frame of a display show the
+   capture's ThumbHash (`CapturedFrame.thumbhash`, #286) and fade the pixels
+   in over 750 ms (`preview.ts`).
+
 Deferred, each marked in code:
 
 - `TODO(playground-sdk-mock)`: the mock desktop answers SDK RPCs through an
-  RPC-level mock Runner in `@auv-js/sdk` (see Decisions).
-- `TODO(playground-sdk-replay)`: replay of SDK calls. The recording becomes the
-  ordered request/response frames; current recordings are not read.
-- `TODO(playground-sdk-visualize)`: canvas and inspector rendering of RPC
-  results by message type. The prototype records method, effect, JSON and
-  timing only.
+  RPC-level mock Runner in `@auv-js/sdk` (see Decisions and
+  `../session-api/2026-10-08-mock-runner-design.md`).
+- `TODO(playground-sdk-stream-progress)`: a stream's resources appear when it
+  ends; scroll-until steps could appear as they arrive.
+- `TODO(playground-sdk-input-kinds)`: mouse primitives and held keys record
+  no input receipt, because the script API's receipts do not name their kinds.
 - `TODO(playground-sdk-types)`: SDK types in the editor's language service, so
   `device.` completes.
 - Moving the bridge into `@auv-js/sdk` when a second host (Electron, iframe)

@@ -32,9 +32,10 @@ controlled desktop.
   bound to, used by — each jumps the time cursor), and an **AX tree** panel
   (DevTools-style; hover highlights the element on the canvas, clicking the
   canvas selects the element under the pointer).
-- **Offline replay**: every live run records its device calls. Replay re-runs
-  the (possibly edited) script against that recording without touching the
-  device, and stops with a divergence error at the first call that differs.
+- **Offline replay**: every live run records its device calls, including direct
+  SDK calls as encoded messages. Replay re-runs the (possibly edited) script
+  against that recording without touching the device, and stops with a
+  divergence error at the first call that differs.
 - **Mock desktop**: a deterministic in-browser desktop (todo app, counter, and
   a music app with a 40-song list that scrolls and plays on click) whose state
   changes on input, so everything works without a device.
@@ -219,10 +220,16 @@ const playing = await device.macos.media.nowPlaying()
 
 Calls cross to the page encoded, where the device credential is added; each one
 is recorded in the timeline as `rpc:<Service>/<Method>` with ProtoJSON request and
-response. It needs a connected device: the mock desktop and replays do not serve
-SDK calls yet, canvas rendering of results is not wired, and the editor types
-`device` and `sdk` as `any`. See
+response. Results are drawn by message type, like `auv.*` handles: captures as
+frames, text matches and recognized text as boxes, input results as receipts at
+the delivered point, windows and displays as outlines. Offline replay answers
+SDK calls from the live run's recording too. The mock desktop does not serve SDK
+calls yet, and the editor types `device` and `sdk` as `any`. See
 `docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md`.
+
+Captures carry a ThumbHash (`CapturedFrame.thumbhash`): frames, and the first
+live frame after connecting to a device, show a blurred preview at once and fade
+the pixels in when they load.
 
 Script API types (`Area`, `Rect`, `Point`, `WindowHandle`, `TextMatch`, …) can
 be used by name in cells, e.g. `function toolbar(win: Area): Area`.

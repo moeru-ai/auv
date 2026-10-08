@@ -10,6 +10,7 @@ import { file_auv_api_annotations_v1_annotations } from '../../gen/auv/api/annot
 import {
   DisplayService,
   file_auv_api_driver_v1_display,
+  ListDisplaysRequestSchema,
   ListDisplaysResponseSchema,
 } from '../../gen/auv/api/driver/v1/display_pb'
 import {
@@ -104,6 +105,7 @@ describe('runner discovery', () => {
     expect(described).toMatchObject({ effect: 'read_only', methodKind: 'unary' })
     const encoded = toBinary(ListDisplaysResponseSchema, create(ListDisplaysResponseSchema, { displays: [{ displayId: 'display-main' }] }))
     expect(described?.decodeResponse(encoded)).toEqual({ displays: [{ displayId: 'display-main' }] })
+    expect([described?.input.typeName, described?.output.typeName]).toEqual([ListDisplaysRequestSchema.typeName, ListDisplaysResponseSchema.typeName])
     expect(discovered.describeMethod('/auv.api.driver.v1.DisplayService/Missing')).toBeUndefined()
   })
 })

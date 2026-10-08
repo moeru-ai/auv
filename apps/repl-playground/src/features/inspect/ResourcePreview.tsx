@@ -1,3 +1,4 @@
+import type { RevealedImage } from '../../preview'
 import type { Rect } from '../../script-api/api'
 import type { Resource } from '../../store'
 
@@ -5,6 +6,7 @@ import { useEffect, useRef } from 'react'
 
 import { CopyButton } from '../../components/CopyButton'
 import { confidenceAlpha, confidenceLabel } from '../../ocr'
+import { paintRevealed } from '../../preview'
 import { usePlayground } from '../../store'
 import { ClickLoupe } from './ClickLoupe'
 
@@ -18,11 +20,14 @@ interface OverlayBox {
   rect: Rect
 }
 
-/** Draws a captured frame scaled to fit, with screen-space boxes on top. */
-export function FrameView({ bitmap, bounds, boxes = [], maxHeight = 220, maxWidth = 360 }: {
-  bitmap?: ImageBitmap
+/**
+ * Draws a captured frame scaled to fit, with screen-space boxes on top. The
+ * frame's ThumbHash preview shows until its pixels load and fade in.
+ */
+export function FrameView({ bounds, boxes = [], image, maxHeight = 220, maxWidth = 360 }: {
   bounds: Rect
   boxes?: OverlayBox[]
+  image?: RevealedImage
   maxHeight?: number
   maxWidth?: number
 }) {
@@ -30,6 +35,9 @@ export function FrameView({ bitmap, bounds, boxes = [], maxHeight = 220, maxWidt
   const k = Math.min(maxWidth / bounds.width, maxHeight / bounds.height, 1)
   const width = Math.max(1, Math.round(bounds.width * k))
   const height = Math.max(1, Math.round(bounds.height * k))
+  const bitmap = image?.bitmap
+  const preview = image?.preview
+  const revealedAt = image?.revealedAt
 
   useEffect(() => {
     const canvas = ref.current
@@ -39,22 +47,27 @@ export function FrameView({ bitmap, bounds, boxes = [], maxHeight = 220, maxWidt
     canvas.width = width * dpr
     canvas.height = height * dpr
     const ctx = canvas.getContext('2d')!
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, width, height)
-    if (bitmap)
-      ctx.drawImage(bitmap, 0, 0, width, height)
-    for (const box of boxes) {
-      const x = (box.rect.x - bounds.x) * k
-      const y = (box.rect.y - bounds.y) * k
-      ctx.globalAlpha = box.alpha ?? 1
-      ctx.strokeStyle = box.color
-      ctx.lineWidth = 1.5
-      ctx.setLineDash(box.dashed ? [4, 3] : [])
-      ctx.strokeRect(x, y, box.rect.width * k, box.rect.height * k)
-      ctx.setLineDash([])
-      ctx.globalAlpha = 1
+    let raf = 0
+    const draw = () => {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, width, height)
+      const fading = paintRevealed(ctx, { bitmap, preview, revealedAt }, 0, 0, width, height)
+      for (const box of boxes) {
+        const x = (box.rect.x - bounds.x) * k
+        const y = (box.rect.y - bounds.y) * k
+        ctx.globalAlpha = box.alpha ?? 1
+        ctx.strokeStyle = box.color
+        ctx.lineWidth = 1.5
+        ctx.setLineDash(box.dashed ? [4, 3] : [])
+        ctx.strokeRect(x, y, box.rect.width * k, box.rect.height * k)
+        ctx.setLineDash([])
+        ctx.globalAlpha = 1
+      }
+      raf = fading ? requestAnimationFrame(draw) : 0
     }
-  }, [bitmap, bounds, boxes, height, k, width])
+    draw()
+    return () => cancelAnimationFrame(raf)
+  }, [bitmap, bounds, boxes, height, k, preview, revealedAt, width])
 
   return (
     <canvas
@@ -85,7 +98,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
       const { handle } = resource
       return (
         <div className="flex flex-col gap-1.5">
-          <FrameView bitmap={resource.bitmap} bounds={handle.bounds} {...size} />
+          <FrameView bounds={handle.bounds} image={resource} {...size} />
           <Meta items={[`${handle.width}×${handle.height}px`, `@${handle.scale}x`, handle.source]} />
         </div>
       )
@@ -111,7 +124,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
             {frame?.kind === 'frame' && (
               <details className="text-[11px] text-fg-subtle">
                 <summary className="cursor-pointer select-none hover:text-fg-muted">{`searched in ${frame.handle.$ref}`}</summary>
-                <div className="mt-1.5 opacity-70"><FrameView bitmap={frame.bitmap} bounds={frame.handle.bounds} {...size} /></div>
+                <div className="mt-1.5 opacity-70"><FrameView bounds={frame.handle.bounds} image={frame} {...size} /></div>
               </details>
             )}
           </div>
@@ -122,7 +135,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
         boxes.push({ color: OVERLAY.area, dashed: true, rect: handle.within })
       return (
         <div className="flex flex-col gap-1.5">
-          {frame?.kind === 'frame' && <FrameView bitmap={frame.bitmap} bounds={frame.handle.bounds} boxes={boxes} {...size} />}
+          {frame?.kind === 'frame' && <FrameView bounds={frame.handle.bounds} boxes={boxes} image={frame} {...size} />}
           <Meta items={[`${handle.matches.length} match${handle.matches.length === 1 ? '' : 'es'}`, handle.query ? `"${handle.query}"` : 'full OCR']} />
           <ul className="text-[12px] m-0 p-0 list-none max-h-40 overflow-auto">
             {handle.matches.slice(0, compact ? 5 : 50).map((match, index) => (
@@ -145,7 +158,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
       const capture = Object.values(resources).findLast(candidate => candidate.kind === 'frame' && candidate.handle.source === handle.$ref)
       return (
         <div className="flex flex-col gap-1.5">
-          {capture?.kind === 'frame' && <FrameView bitmap={capture.bitmap} bounds={capture.handle.bounds} {...size} />}
+          {capture?.kind === 'frame' && <FrameView bounds={capture.handle.bounds} image={capture} {...size} />}
           <Fields
             items={[
               ['title', handle.title],

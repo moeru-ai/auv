@@ -140,7 +140,7 @@ function CallSummary({ call, previewCall = call }: { call: CallRecord, previewCa
       {frame?.kind === 'frame' && (
         <div className="self-start relative">
           <div className={noMatch ? 'opacity-30' : undefined}>
-            <FrameView bitmap={frame.bitmap} bounds={frame.handle.bounds} boxes={boxes} maxHeight={150} maxWidth={260} />
+            <FrameView bounds={frame.handle.bounds} boxes={boxes} image={frame} maxHeight={150} maxWidth={260} />
           </div>
           {noMatch && (
             <span className="text-[12px] text-fg-muted flex gap-1.5 items-center inset-0 justify-center absolute">

@@ -7,14 +7,17 @@ import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
 import type { ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
 
+import { fromBinary, fromJsonString } from '@bufbuild/protobuf'
 import { createContext as createWorkerChannel } from '@moeru/eventa/adapters/webworkers'
 import { createBirpc } from 'birpc'
 
 import { RecordingBackend, ReplayBackend } from '../backend/replay'
 import { boundsOf } from '../handles'
+import { decodeThumbHash } from '../preview'
 import { StepTimer } from '../stepper/timing'
 import { actions, nowMs, usePlayground } from '../store'
-import { decodeBitmap, invokeBinding } from './bindings'
+import { CallScope, decodeBitmap, invokeBinding } from './bindings'
+import { recordRpcResources } from './rpc-resources'
 import { SDK_PORT_MESSAGE, serveBridge } from './sdk-bridge'
 
 /** Language service + compiler worker, shared by the editor and the runner. */
@@ -190,7 +193,7 @@ class ExecSession {
       usePlayground.setState({ timings })
       await this.#runBackend?.endRun(outcome.status === 'ok' ? 'succeeded' : outcome.status === 'stopped' ? 'canceled' : 'failed')
       if (recorder) {
-        this.#recording = { entries: recorder.entries, images: recorder.images, label: recorder.label }
+        this.#recording = recorder.recording()
         usePlayground.setState({ hasRecording: true })
       }
       void this.refreshAxTree().catch(() => {})
@@ -216,9 +219,7 @@ class ExecSession {
         return
       for (const display of displays) {
         try {
-          const frame = await backend.captureDisplay(display.id, { logical: true })
-          const bitmap = await decodeBitmap(backend, frame)
-          actions.setLiveFrame(display.id, { bitmap, bounds: frame.bounds, capturedAt: Date.now() })
+          await captureLiveFrame(backend, display.id)
         }
         catch (error) {
           console.warn(`Live capture failed for display ${display.id}`, error)
@@ -268,8 +269,6 @@ class ExecSession {
         this.#batch.flush()
         const callId = actions.beginCall({
           args: start.body && described ? [decode(start.body, 'request')] : [],
-          // TODO(playground-sdk-visualize): results are recorded as ProtoJSON;
-          // canvas and inspector rendering by message type is not wired yet.
           effect: described?.effect === 'input' ? 'input' : 'read',
           hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
           line,
@@ -277,19 +276,37 @@ class ExecSession {
           seq,
           startedAt: nowMs(),
         })
+        // TODO(playground-sdk-stream-progress): a stream's resources appear
+        // when it ends; show each scroll-until step as it arrives.
         return (end) => {
-          const results = end.json !== undefined ? [JSON.parse(end.json) as unknown] : end.responses.map(body => decode(body, 'response'))
+          const responses = end.exchange.flatMap(frame => 'response' in frame ? [frame.response] : [])
+          const results = end.json !== undefined ? [JSON.parse(end.json) as unknown] : responses.map(body => decode(body, 'response'))
+          const scope = new CallScope(callId, seq, this.#runBackend)
+          if (described) {
+            try {
+              const request = start.body && fromBinary(described.input, start.body)
+              const messages = end.json !== undefined
+                ? [fromJsonString(described.output, end.json, { ignoreUnknownFields: true })]
+                : responses.map(body => fromBinary(described.output, body))
+              recordRpcResources(scope, start.method, request || undefined, messages)
+            }
+            catch (error) {
+              console.warn(`Showing ${start.method} on the canvas failed`, error)
+            }
+          }
           actions.endCall(callId, {
             endSeq: this.#nextSeq(),
-            error: end.error,
-            refs: [],
+            error: end.error?.message,
+            refs: scope.refs,
             result: results.length === 1 ? results[0] : results,
             status: end.error === undefined ? 'ok' : 'error',
           })
         }
       },
+      // TODO(playground-sdk-mock): the mock desktop answers SDK calls once it
+      // is a mock Runner; see docs/ai/references/session-api/2026-10-08-mock-runner-design.md.
       target: () => this.#runBackend?.sdk?.().target
-        ?? 'Direct SDK calls need a connected device; the mock desktop and replays do not serve them yet',
+        ?? 'Direct SDK calls need a connected device, or a replay of a run that made them; the mock desktop does not serve them yet',
     })
     const host: HostApi = {
       call: async (method, args, stepId) => {
@@ -383,11 +400,26 @@ export async function activateBackend(backend: Backend | null): Promise<void> {
   usePlayground.setState({ displays })
   // One snapshot per display so the canvas is not empty before live mode.
   for (const display of displays) {
-    void backend.captureDisplay(display.id, { logical: true })
-      .then(async frame => actions.setLiveFrame(display.id, { bitmap: await decodeBitmap(backend, frame), bounds: frame.bounds, capturedAt: Date.now() }))
+    void captureLiveFrame(backend, display.id)
       .catch(error => console.warn(`Initial capture failed for display ${display.id}`, error))
   }
   void session.refreshAxTree().catch(() => {})
+}
+
+/**
+ * Captures a display for the canvas. A display with no pixels on screen yet
+ * shows the capture's ThumbHash preview first, so a new connection paints at
+ * once; later captures replace the previous pixels when they load.
+ */
+async function captureLiveFrame(backend: Backend, displayId: string): Promise<void> {
+  const frame = await backend.captureDisplay(displayId, { logical: true })
+  const capturedAt = Date.now()
+  const shown = usePlayground.getState().liveFrames[displayId]
+  const preview = shown?.bitmap ? undefined : await decodeThumbHash(frame.thumbhash)
+  if (preview)
+    actions.setLiveFrame(displayId, { bounds: frame.bounds, capturedAt, preview })
+  const bitmap = await decodeBitmap(backend, frame)
+  actions.setLiveFrame(displayId, { bitmap, bounds: frame.bounds, capturedAt, preview, revealedAt: preview ? performance.now() : undefined })
 }
 
 /** Canvas shape for a `draw()` target: rectangles (and areas) by bounds, otherwise a point. */

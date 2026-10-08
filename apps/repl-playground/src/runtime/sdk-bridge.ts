@@ -12,19 +12,19 @@ import { defineInvoke, defineInvokeEventa, defineInvokeHandler, defineStreamInvo
 /** Message posted to the worker with the port this bridge runs on. */
 export const SDK_PORT_MESSAGE = 'auv:sdk-port'
 
+/** A remote error, rebuilt in the worker as the same SDK error class. */
+export interface BridgedError {
+  message: string
+  name: string
+  rpcCode?: number
+}
+
 /** Where an encoded RPC came from in the script. */
 interface BridgedCall {
   headers: [string, string][]
   /** gRPC path, `/package.Service/Method`. */
   method: string
   stepId: null | number
-}
-
-/** A remote error, rebuilt in the worker as the same SDK error class. */
-interface BridgedError {
-  message: string
-  name: string
-  rpcCode?: number
 }
 
 type DuplexFrame = { body: Uint8Array } | { open: BridgedCall }
@@ -40,11 +40,16 @@ interface UnaryRequest extends BridgedCall {
 const unaryRpc = defineInvokeEventa<UnaryReply, UnaryRequest>('auv:sdk:unary')
 const duplexRpc = defineInvokeEventa<DuplexReply, ReadableStream<DuplexFrame>>('auv:sdk:duplex')
 
-/** How a forwarded RPC ended: encoded response(s), JSON, or an error message. */
+/** How a forwarded RPC ended: its encoded messages, JSON, or an error. */
 export interface BridgedCallEnd {
-  error?: string
+  error?: BridgedError
+  /**
+   * Request and response messages in the order they crossed. Replay needs the
+   * order: scroll-until answers each update with a decision.
+   */
+  exchange: Exchanged[]
+  /** A JSON-encoded HTTP binding's response text, in place of a response message. */
   json?: string
-  responses: Uint8Array[]
 }
 
 /** One forwarded RPC as the host sees it, for recording. */
@@ -68,7 +73,18 @@ export interface BridgeTarget {
   transport: Transport
 }
 
+export type Exchanged = { request: Uint8Array } | { response: Uint8Array }
+
 type AnyContext = EventContext<any, any>
+
+/** An error as it crosses the bridge or is recorded for replay. */
+export function bridgedError(error: unknown): BridgedError {
+  if (error instanceof AuvRpcError)
+    return { message: error.message, name: error.name, rpcCode: error.rpcCode }
+  if (error instanceof Error)
+    return { message: error.message, name: error.name }
+  return { message: String(error), name: 'Error' }
+}
 
 /**
  * The SDK transport inside the worker. `currentStep` attributes each call to
@@ -134,6 +150,17 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
   }
 }
 
+/** Rebuilds a bridged error as the SDK error class it was. */
+export function remoteError(error: BridgedError): Error {
+  const rebuilt = error.rpcCode !== undefined
+    ? new AuvRpcError(error.rpcCode, error.message)
+    : error.name === 'AuvTransportError'
+      ? new AuvTransportError(error.message)
+      : new AuvRemoteError(error.message)
+  rebuilt.name = error.name
+  return rebuilt
+}
+
 /** Serves bridged RPCs on the host by forwarding them to the active backend. */
 export function serveBridge(context: AnyContext, host: BridgeHost): void {
   defineInvokeHandler(context, unaryRpc, async (request, options): Promise<UnaryReply> => {
@@ -156,11 +183,11 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
         method: request.method,
         signal: options?.abortController?.signal,
       } satisfies UnaryCall)
-      finish?.(json === undefined ? { responses: [body] } : { json, responses: [] })
+      finish?.({ exchange: json === undefined ? [{ request: request.body }, { response: body }] : [{ request: request.body }], json })
       return json === undefined ? { body } : { json }
     }
     catch (error) {
-      finish?.({ error: messageOf(error), responses: [] })
+      finish?.({ error: bridgedError(error), exchange: [{ request: request.body }] })
       return { error: bridgedError(error) }
     }
   })
@@ -173,7 +200,7 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
       return
     }
     const opened = first.value.open
-    const responses: Uint8Array[] = []
+    const exchange: Exchanged[] = []
     let finish: ((end: BridgedCallEnd) => void) | undefined
     let call: DuplexCall | undefined
     try {
@@ -194,33 +221,26 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
               started = true
               finish = await host.record?.({ body: next.value.body, method: opened.method, stepId: opened.stepId })
             }
+            exchange.push({ request: next.value.body })
             await stream.send(next.value.body)
           }
         }
         await stream.halfClose()
       })().catch(() => {})
       for await (const body of stream.responses) {
-        responses.push(body)
+        exchange.push({ response: body })
         yield { body }
       }
-      finish?.({ responses })
+      finish?.({ exchange })
     }
     catch (error) {
-      finish?.({ error: messageOf(error), responses })
+      finish?.({ error: bridgedError(error), exchange })
       yield { error: bridgedError(error) }
     }
     finally {
       await call?.close({})
     }
   })
-}
-
-function bridgedError(error: unknown): BridgedError {
-  if (error instanceof AuvRpcError)
-    return { message: error.message, name: error.name, rpcCode: error.rpcCode }
-  if (error instanceof Error)
-    return { message: error.message, name: error.name }
-  return { message: String(error), name: 'Error' }
 }
 
 /** eventa hands a stream handler a `ReadableStream`; read it without relying on its async iterator. */
@@ -237,20 +257,6 @@ async function* iterateStream<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
   finally {
     reader.releaseLock()
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function remoteError(error: BridgedError): Error {
-  const rebuilt = error.rpcCode !== undefined
-    ? new AuvRpcError(error.rpcCode, error.message)
-    : error.name === 'AuvTransportError'
-      ? new AuvTransportError(error.message)
-      : new AuvRemoteError(error.message)
-  rebuilt.name = error.name
-  return rebuilt
 }
 
 function resolveTarget(host: BridgeHost): BridgeTarget {
