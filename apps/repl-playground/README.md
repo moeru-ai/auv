@@ -212,7 +212,8 @@ Runner RPC is available without a playground binding:
 
 ```ts
 const music = (await device.windows.list()).find(w => w.window.applicationBundleId === 'com.netease.163music')
-await music.click({ x: 528, y: 50 }, { button: sdk.MouseButton.LEFT })
+await music.click({ x: 528, y: 50 })
+await music.typeText('Reply', { policy: sdk.InputPolicy.FOREGROUND_PREFERRED })
 const playing = await device.macos.media.nowPlaying()
 ```
 
