@@ -801,3 +801,165 @@ fn test_17_execution_mode_gate_aligned_with_derive_rejects_status_and_volume_gat
   assert_eq!(gate_eval.reason_code, ReasonCode::RejectModeConflict);
   assert!(gate_eval.message.contains("StatusAndVolumeGate"));
 }
+
+#[test]
+fn test_18_register_active_validates_execution_mode_compatibility_fail_closed() {
+  let mut catalog = OperationCatalog::new();
+  let bad_op = OperationDef {
+    schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+    name: "qqmusic.bad_fast_op".to_string(),
+    description: "Fast op with status and volume gate".to_string(),
+    execution_mode: ExecutionMode::Fast,
+    compilation_metadata: CompilationMetadata {
+      compiler: "test".to_string(),
+      source_record: "test".to_string(),
+      date: "2026-10-08".to_string(),
+      crux_goal: "test".to_string(),
+    },
+    target: TargetMetadata {
+      app_name: "QQMusic.exe".to_string(),
+      backend: "windows.smtc".to_string(),
+    },
+    preconditions: vec![],
+    parameters: vec![],
+    steps: vec![OperationStepDef {
+      id: "step_bad".to_string(),
+      name: "Set volume".to_string(),
+      description: "Set volume".to_string(),
+      action: serde_json::json!({ "type": "set_volume", "value": 0.40 }),
+      verification_gate: VerificationGateDef::StatusAndVolumeGate {
+        expected_status: "Playing".to_string(),
+        expected_volume: 0.40,
+        volume_tolerance: 0.05,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "vlm".to_string(),
+      },
+      is_unverified: false,
+    }],
+    tags: vec![],
+  };
+
+  let res = catalog.register_active(bad_op);
+  assert!(res.is_err(), "register_active must reject Fast operation containing StatusAndVolumeGate");
+  let failure = res.unwrap_err();
+  assert_eq!(failure.reason_code, ReasonCode::RejectModeConflict);
+  assert!(failure.message.contains("execution mode incompatible with gates"));
+  assert!(catalog.get_active("qqmusic.bad_fast_op").is_none());
+}
+
+#[test]
+fn test_19_scheduler_bidirectional_mode_check_rejects_fast_op_when_verified_requested() {
+  let logger = DecisionLogger::new();
+  let scheduler = FastLoopScheduler::new(&logger);
+  let mut catalog = OperationCatalog::new();
+
+  let fast_op = OperationDef {
+    schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+    name: "qqmusic.fast_action".to_string(),
+    description: "Fast action".to_string(),
+    execution_mode: ExecutionMode::Fast,
+    compilation_metadata: CompilationMetadata {
+      compiler: "test".to_string(),
+      source_record: "test".to_string(),
+      date: "2026-10-08".to_string(),
+      crux_goal: "test".to_string(),
+    },
+    target: TargetMetadata {
+      app_name: "QQMusic.exe".to_string(),
+      backend: "windows.smtc".to_string(),
+    },
+    preconditions: vec![],
+    parameters: vec![],
+    steps: vec![OperationStepDef {
+      id: "step_1".to_string(),
+      name: "Play dispatch".to_string(),
+      description: "Trigger play dispatch".to_string(),
+      action: serde_json::json!({ "type": "play", "app_id": "QQMusic.exe" }),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    }],
+    tags: vec![],
+  };
+
+  catalog.register_active(fast_op).unwrap();
+
+  // Caller requests Verified mode for a Fast operation
+  let req = TaskRequest {
+    app_name: "QQMusic.exe".to_string(),
+    task_name: "fast_action".to_string(),
+    instruction: "play music with verified confirmation".to_string(),
+    requested_mode: Some(ExecutionMode::Verified),
+    current_context: HashMap::new(),
+    embedding_vector: None,
+  };
+
+  let outcome = scheduler.schedule(&req, &catalog);
+  assert!(outcome.selected_operation.is_none(), "Verified request must NOT select a Fast operation (silent downgrade barred)");
+  assert_eq!(outcome.reason_code, ReasonCode::ModeMismatchEscalateVlm);
+  assert!(outcome.message.contains("Mode mismatch"));
+}
+
+#[test]
+fn test_20_scheduler_candidate_mode_mismatch_preserves_typed_reason_code() {
+  let logger = DecisionLogger::new();
+  let scheduler = FastLoopScheduler::new(&logger);
+  let mut catalog = OperationCatalog::new();
+
+  // Register a Verified operation
+  let verified_op = OperationDef {
+    schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+    name: "qqmusic.verified_skip".to_string(),
+    description: "Verified skip next track".to_string(),
+    execution_mode: ExecutionMode::Verified,
+    compilation_metadata: CompilationMetadata {
+      compiler: "test".to_string(),
+      source_record: "test".to_string(),
+      date: "2026-10-08".to_string(),
+      crux_goal: "test".to_string(),
+    },
+    target: TargetMetadata {
+      app_name: "QQMusic.exe".to_string(),
+      backend: "windows.smtc".to_string(),
+    },
+    preconditions: vec![],
+    parameters: vec![],
+    steps: vec![OperationStepDef {
+      id: "step_1".to_string(),
+      name: "Skip next".to_string(),
+      description: "Skip next track".to_string(),
+      action: serde_json::json!({ "type": "skip_next" }),
+      verification_gate: VerificationGateDef::TitleChangeGate {
+        require_title_change: true,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "vlm".to_string(),
+      },
+      is_unverified: false,
+    }],
+    tags: vec![],
+  };
+  catalog.register_active(verified_op).unwrap();
+
+  // Task query does NOT match exact key ("long_tail_skip" != "verified_skip"),
+  // but embedding fallback returns "verified_skip" as candidate
+  let req = TaskRequest {
+    app_name: "QQMusic.exe".to_string(),
+    task_name: "long_tail_skip".to_string(),
+    instruction: "skip next track fast".to_string(),
+    requested_mode: Some(ExecutionMode::Fast),
+    current_context: HashMap::new(),
+    embedding_vector: Some(vec![0.5, 0.5, 0.5, 0.5]),
+  };
+
+  let outcome = scheduler.schedule(&req, &catalog);
+  assert!(outcome.selected_operation.is_none());
+  assert!(outcome.embedding_called, "Long tail query must invoke embedding fallback");
+  assert_eq!(
+    outcome.reason_code,
+    ReasonCode::ModeMismatchEscalateVlm,
+    "Outcome must preserve typed ReasonCode::ModeMismatchEscalateVlm rather than generic scheduler miss"
+  );
+}

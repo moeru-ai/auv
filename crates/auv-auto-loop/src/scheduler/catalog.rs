@@ -156,6 +156,17 @@ impl OperationCatalog {
       });
     }
 
+    // Validate execution mode compatibility against operation steps and tags fail-closed
+    let mode_eval = compile_gate::evaluate_execution_mode_gate(op.execution_mode, &op.steps, &op.tags);
+    if !mode_eval.passed {
+      return Err(AdmissionFailure {
+        operation_key: op.name.clone(),
+        location: "register_active".to_string(),
+        reason_code: mode_eval.reason_code,
+        message: format!("Operation '{}' rejected during admission: execution mode incompatible with gates: {}", op.name, mode_eval.message),
+      });
+    }
+
     if self.is_isolated(&op.name) {
       self.isolated_operations.insert(op.name.clone(), op);
       return Ok(false);
