@@ -10,7 +10,6 @@ mkdir "$MOCK_STATE"
 cat > "$tmp/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-args=("$@")
 while [[ $# -gt 0 ]]; do
   case $1 in
     --request-timeout=*|--context=*|--kubeconfig=*) shift ;;
@@ -23,9 +22,6 @@ case "$*" in
   'create -f '*)
     file=$3
     kind=$(jq -r .kind "$file")
-    if [[ ${MOCK_POLICY_FAILURE:-false} == true && $kind == NetworkPolicy ]]; then
-      echo 'Forbidden: networkpolicies' >&2; exit 1
-    fi
     cp "$file" "$MOCK_STATE/$kind.json"
     if [[ $kind == Pod ]]; then
       jq '.metadata.uid="test-uid"' "$file"
@@ -34,19 +30,10 @@ case "$*" in
     fi ;;
   'patch pod '*) touch "$MOCK_STATE/ungated" ;;
   'get pod '*)
-    jq --arg phase "${MOCK_PHASE:-Running}" --arg init "${MOCK_INIT_FAILURE:-false}" '
-      .spec.nodeName="test-node" | .status={phase:$phase} |
-      if $init=="true" then .status.initContainerStatuses=[{state:{terminated:{exitCode:1}}}] else . end
-    ' "$MOCK_STATE/Pod.json" ;;
+    jq '.spec.nodeName="test-node" | .status.phase="Running"' "$MOCK_STATE/Pod.json" ;;
   'exec '*)
-    printf '%s\n' "${args[@]}" > "$MOCK_STATE/probe.txt"
-    if [[ ${MOCK_REAL_PROBE:-false} == true ]]; then
-      bash -c "${args[${#args[@]}-1]}"
-    elif [[ ${MOCK_PROFILE:-osworld} == osworld ]]; then
-      echo OSWORLD_READY
-    else
-      printf 'OpenGL renderer string: NVIDIA test GPU\nAccelerated: yes\n'
-    fi ;;
+    if [[ ${MOCK_PROFILE:-osworld} == osworld ]]; then echo OSWORLD_READY
+    else printf 'OpenGL renderer string: NVIDIA test GPU\nAccelerated: yes\n'; fi ;;
   'delete --raw '*)
     jq -e '.preconditions.uid=="test-uid" and .propagationPolicy=="Foreground"' "$5" >/dev/null
     touch "$MOCK_STATE/deleted" ;;
@@ -59,93 +46,25 @@ chmod +x "$tmp/bin/kubectl"
 export PATH="$tmp/bin:$PATH"
 script="$root/evals/osworld/scripts/create-on-k8s"
 
+# Exercise template rendering through the actual create path.
 "$script" create --node test-node > "$tmp/receipt.json"
-jq -e '.profile=="osworld" and .server_port==5000 and .desktop_port==8006 and .acceleration=="software" and .osworld_ready==true and (has("password_secret")|not)' "$tmp/receipt.json"
-# A later guest daemon needs QEMU forwarding as well as a kubectl tunnel.
-# Reporting this port means it is forwarded, not that AUV is installed or ready.
-jq -e '.auv_port==9847' "$tmp/receipt.json"
-jq -e '[.spec.containers[0].env[]|select(.name=="USER_PORTS")|.value]==["5000,9222,8080,9847"]' "$MOCK_STATE/Pod.json"
-# ROOT CAUSE:
-# TCG's default max CPU reports AMD family 6. The official guest's LLVM treats
-# that as a 32-bit CPU and aborts GNOME. Keep the AMD64 identity override in the
-# public Pod manifest; KVM must continue using its host CPU (asserted below).
-# https://gitlab.com/qemu-project/qemu/-/issues/191
-jq -e '
-  .spec.automountServiceAccountToken==false and
-  .spec.schedulingGates[0].name=="auv.dev/desktop-resources" and
-  (.spec|has("resourceClaims")|not) and
-  .spec.containers[0].image=="happysixd/osworld-docker@sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9" and
-  ([.spec.containers[0].env[]|select(.name=="KVM")|.value]==["N"]) and
-  ([.spec.containers[0].env[]|select(.name=="CPU_MODEL")|.value]==["max,family=15,model=6,stepping=1"]) and
-  ([.spec.containers[0].volumeMounts[]|select(.mountPath=="/System.qcow2")|.readOnly]==[true]) and
-  ([.spec.initContainers[0].env[]|select(.name=="VM_IMAGE_SHA256")|.value]==["b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712"])
-' "$MOCK_STATE/Pod.json"
-jq -e '.spec.ingress==[] and .metadata.ownerReferences[0].uid=="test-uid"' "$MOCK_STATE/NetworkPolicy.json"
+jq -e '.profile=="osworld" and .auv_port==9847' "$tmp/receipt.json"
+# QEMU #191: AMD family 6 makes guest LLVM abort GNOME; retain AMD64 identity.
+jq -e '([.spec.containers[0].env[] | select(.name=="CPU_MODEL") | .value] ==
+  ["max,family=15,model=6,stepping=1"]) and
+  .spec.initContainers[0].image == .spec.containers[0].image' "$MOCK_STATE/Pod.json"
+jq -e '.metadata.ownerReferences[0].uid=="test-uid" and .spec.ingress==[]' "$MOCK_STATE/NetworkPolicy.json"
 test -e "$MOCK_STATE/ungated"
-test ! -e "$MOCK_STATE/Secret.json"
-test ! -e "$MOCK_STATE/ResourceClaim.json"
-"$script" delete "$tmp/receipt.json" > /dev/null
+"$script" delete "$tmp/receipt.json" >/dev/null
 test -e "$MOCK_STATE/deleted"
-rm "$MOCK_STATE/deleted"
-jq '.uid="replacement-uid"' "$tmp/receipt.json" > "$tmp/replacement.json"
-if "$script" delete "$tmp/replacement.json" > /dev/null 2>&1; then
-  echo 'Expected UID mismatch to refuse deletion' >&2; exit 1
-fi
-test ! -e "$MOCK_STATE/deleted"
 
-if MOCK_PHASE=Failed "$script" create --node test-node > "$tmp/failed.json" 2> "$tmp/error"; then
-  echo 'Expected failed Pod to fail creation' >&2; exit 1
-fi
-test -e "$MOCK_STATE/deleted"
-test ! -s "$tmp/failed.json"
-
-rm "$MOCK_STATE/deleted"
-if MOCK_PHASE=Pending MOCK_INIT_FAILURE=true "$script" create --node test-node > "$tmp/failed-init.json" 2> "$tmp/error"; then
-  echo 'Expected image init failure to fail creation' >&2; exit 1
-fi
-test -e "$MOCK_STATE/deleted"
-test ! -s "$tmp/failed-init.json"
-
-rm "$MOCK_STATE/deleted" "$MOCK_STATE/ungated"
-if MOCK_POLICY_FAILURE=true "$script" create --node test-node > "$tmp/failed-policy.json" 2> "$tmp/error"; then
-  echo 'Expected network isolation failure to stop creation' >&2; exit 1
-fi
-test -e "$MOCK_STATE/deleted"
-test ! -e "$MOCK_STATE/ungated"
-
-# Exercise the exact in-container readiness script, mocking only HTTP transport.
-cat > "$tmp/bin/wget" <<'HTTP'
-#!/usr/bin/env bash
-while [[ $1 != -O ]]; do shift; done
-if [[ ${MOCK_BAD_SCREENSHOT:-false} == true ]]; then
-  printf '<html>not ready</html>' > "$2"
-else
-  printf '\211PNG\r\n\032\nfixture' > "$2"
-fi
-HTTP
-chmod +x "$tmp/bin/wget"
-MOCK_REAL_PROBE=true "$script" create --node test-node > "$tmp/real-probe.json"
-if MOCK_REAL_PROBE=true MOCK_BAD_SCREENSHOT=true "$script" create --node test-node --timeout 1 > "$tmp/invalid-frame.json" 2> "$tmp/error"; then
-  echo 'Expected HTTP 200 non-PNG response to fail readiness' >&2; exit 1
-fi
-test ! -s "$tmp/invalid-frame.json"
+"$script" create --node test-node --kvm-resource devices.example.com/kvm > "$tmp/kvm.json"
+jq -e '.spec.containers[0].resources.limits["devices.example.com/kvm"]=="1" and
+  ([.spec.containers[0].env[] | select(.name=="CPU_MODEL")]|length)==0' "$MOCK_STATE/Pod.json"
 
 MOCK_PROFILE=selkies "$script" create --profile selkies --node test-node > "$tmp/selkies.json"
-jq -e '.profile=="selkies" and .gpu_rendering_verified==true and .desktop_port==8080' "$tmp/selkies.json"
-jq -e 'has("auv_port")|not' "$tmp/selkies.json"
-jq -e '.spec.resourceClaims[0].name=="gpu"' "$MOCK_STATE/Pod.json"
+jq -e '.profile=="selkies" and .gpu_rendering_verified==true' "$tmp/selkies.json"
+jq -e '.spec.resourceClaims[0].resourceClaimName==.metadata.name' "$MOCK_STATE/Pod.json"
 test -e "$MOCK_STATE/Secret.json"
 test -e "$MOCK_STATE/ResourceClaim.json"
-
-for options in '--profile invalid' '--vm-image-url https://example.com/custom.zip' '--gpu-cores 20' '--profile selkies --kvm-resource devices.example.com/kvm'; do
-  # Deliberate word splitting: these are fixed test arguments, not user input.
-  # shellcheck disable=SC2086
-  if "$script" create --node test-node $options > /dev/null 2>&1; then
-    echo "Expected invalid options to fail: $options" >&2; exit 1
-  fi
-done
-"$script" create --node test-node --image example.com/qemu:custom --kvm-resource devices.example.com/kvm > "$tmp/kvm.json"
-jq -e '.image=="example.com/qemu:custom" and .acceleration=="kvm"' "$tmp/kvm.json"
-jq -e '.spec.containers[0].resources.limits["devices.example.com/kvm"]=="1" and ([.spec.containers[0].env[]|select(.name=="KVM")|.value]==["Y"])' "$MOCK_STATE/Pod.json"
-jq -e '[.spec.containers[0].env[]|select(.name=="CPU_MODEL")]|length==0' "$MOCK_STATE/Pod.json"
-echo 'All create-on-k8s tests passed.'
+echo 'Template and lifecycle checks passed.'

@@ -1,0 +1,86 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {},
+  "spec": {
+    "automountServiceAccountToken": false,
+    "restartPolicy": "Never",
+    "nodeSelector": {
+      "kubernetes.io/hostname": ""
+    },
+    "resourceClaims": [
+      {
+        "name": "gpu",
+        "resourceClaimName": null
+      }
+    ],
+    "containers": [
+      {
+        "name": "desktop",
+        "image": "",
+        "env": [
+          {
+            "name": "SELKIES_WAYLAND",
+            "value": "false"
+          },
+          {
+            "name": "SELKIES_MODE",
+            "value": "websockets"
+          },
+          {
+            "name": "SELKIES_ENABLE_BASIC_AUTH",
+            "value": "true"
+          },
+          {
+            "name": "NVIDIA_DRIVER_CAPABILITIES",
+            "value": "all"
+          },
+          {
+            "name": "DISPLAY",
+            "value": ":20"
+          },
+          {
+            "name": "PASSWD",
+            "valueFrom": {
+              "secretKeyRef": {
+                "name": null,
+                "key": "password"
+              }
+            }
+          }
+        ],
+        "resources": {
+          "claims": [
+            {
+              "name": "gpu",
+              "request": "gpu"
+            }
+          ],
+          "requests": {
+            "cpu": "1",
+            "memory": "2Gi"
+          },
+          "limits": {
+            "cpu": "8",
+            "memory": "16Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "shm",
+            "mountPath": "/dev/shm"
+          }
+        ]
+      }
+    ],
+    "volumes": [
+      {
+        "name": "shm",
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "2Gi"
+        }
+      }
+    ]
+  }
+}

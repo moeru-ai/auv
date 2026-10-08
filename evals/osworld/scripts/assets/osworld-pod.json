@@ -1,0 +1,131 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {},
+  "spec": {
+    "automountServiceAccountToken": false,
+    "restartPolicy": "Never",
+    "nodeSelector": {
+      "kubernetes.io/hostname": "",
+      "kubernetes.io/arch": "amd64"
+    },
+    "schedulingGates": [
+      {
+        "name": "auv.dev/desktop-resources"
+      }
+    ],
+    "initContainers": [
+      {
+        "name": "prepare-image",
+        "image": "",
+        "command": [
+          "bash",
+          "-ceu",
+          ""
+        ],
+        "env": [
+          {
+            "name": "VM_IMAGE_URL",
+            "value": ""
+          },
+          {
+            "name": "VM_IMAGE_SHA256",
+            "value": ""
+          }
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "100m",
+            "memory": "256Mi",
+            "ephemeral-storage": "40Gi"
+          },
+          "limits": {
+            "cpu": "2",
+            "memory": "1Gi",
+            "ephemeral-storage": "100Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "base",
+            "mountPath": "/image"
+          }
+        ]
+      }
+    ],
+    "containers": [
+      {
+        "name": "desktop",
+        "image": "",
+        "env": [
+          {
+            "name": "RAM_SIZE",
+            "value": "4G"
+          },
+          {
+            "name": "CPU_CORES",
+            "value": "4"
+          },
+          {
+            "name": "DISK_SIZE",
+            "value": "32G"
+          },
+          {
+            "name": "KVM",
+            "value": "N"
+          },
+          {
+            "name": "NETWORK",
+            "value": "user"
+          },
+          {
+            "name": "USER_PORTS",
+            "value": "5000,9222,8080,9847"
+          },
+          {
+            "name": "CPU_MODEL",
+            "value": "max,family=15,model=6,stepping=1"
+          }
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "1",
+            "memory": "5Gi",
+            "ephemeral-storage": "40Gi"
+          },
+          "limits": {
+            "cpu": "4",
+            "memory": "8Gi",
+            "ephemeral-storage": "100Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "base",
+            "mountPath": "/System.qcow2",
+            "subPath": "System.qcow2",
+            "readOnly": true
+          },
+          {
+            "name": "storage",
+            "mountPath": "/storage"
+          }
+        ]
+      }
+    ],
+    "volumes": [
+      {
+        "name": "base",
+        "emptyDir": {
+          "sizeLimit": "60Gi"
+        }
+      },
+      {
+        "name": "storage",
+        "emptyDir": {
+          "sizeLimit": "32Gi"
+        }
+      }
+    ]
+  }
+}

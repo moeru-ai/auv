@@ -3,6 +3,7 @@
 # TODO: Task setup/reset/evaluation remain outside provisioning; add a provider
 # only in an owner-approved runner integration slice, see ../README.md.
 set -euo pipefail
+assets="$(cd "$(dirname "$0")/assets" && pwd)"
 
 usage() {
   cat <<'HELP'
@@ -188,47 +189,31 @@ if [[ $profile == osworld ]]; then
   # doesn't support it". Use the AMD64 CPUID identity proposed in QEMU #191.
   # Remove when a new runtime's default passes the same GNOME/screenshot probe.
   # https://gitlab.com/qemu-project/qemu/-/issues/191
-  jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" \
+  jq --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" \
     --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg kvm "$kvm" \
     --arg resource "$kvm_resource" --rawfile prepare "$(dirname "$0")/prepare-osworld-image" '
-    {apiVersion:"v1",kind:"Pod",metadata:$meta[0],spec:{
-      automountServiceAccountToken:false,restartPolicy:"Never",
-      nodeSelector:{"kubernetes.io/hostname":$node,"kubernetes.io/arch":"amd64"},
-      schedulingGates:[{name:"auv.dev/desktop-resources"}],
-      initContainers:[{name:"prepare-image",image:$image,command:["bash","-ceu",$prepare],
-        env:[{name:"VM_IMAGE_URL",value:$url},{name:"VM_IMAGE_SHA256",value:$sha}],
-        resources:{requests:{cpu:"100m",memory:"256Mi","ephemeral-storage":"40Gi"},
-          limits:{cpu:"2",memory:"1Gi","ephemeral-storage":"100Gi"}},
-        volumeMounts:[{name:"base",mountPath:"/image"}]}],
-      containers:[{name:"desktop",image:$image,env:[
-        {name:"RAM_SIZE",value:"4G"},{name:"CPU_CORES",value:"4"},{name:"DISK_SIZE",value:"32G"},
-        {name:"KVM",value:$kvm},{name:"NETWORK",value:"user"},
-        {name:"USER_PORTS",value:"5000,9222,8080,9847"}] +
-        if $kvm=="N" then [{name:"CPU_MODEL",value:"max,family=15,model=6,stepping=1"}] else [] end,
-        resources:{requests:({cpu:"1",memory:"5Gi","ephemeral-storage":"40Gi"} +
-          if $resource=="" then {} else {($resource):"1"} end),
-          limits:({cpu:"4",memory:"8Gi","ephemeral-storage":"100Gi"} +
-          if $resource=="" then {} else {($resource):"1"} end)},
-        volumeMounts:[{name:"base",mountPath:"/System.qcow2",subPath:"System.qcow2",readOnly:true},
-          {name:"storage",mountPath:"/storage"}]}],
-      volumes:[{name:"base",emptyDir:{sizeLimit:"60Gi"}},{name:"storage",emptyDir:{sizeLimit:"32Gi"}}]}}' > "$tmp/pod.json"
+    .metadata = $meta[0] |
+    .spec.nodeSelector["kubernetes.io/hostname"] = $node |
+    .spec.initContainers[0] |= (.image = $image | .command[2] = $prepare |
+      .env |= map(if .name == "VM_IMAGE_URL" then .value = $url
+        elif .name == "VM_IMAGE_SHA256" then .value = $sha else . end)) |
+    .spec.containers[0] |= (.image = $image |
+      .env |= map(if .name == "KVM" then .value = $kvm else . end) |
+      if $resource == "" then . else
+        .env |= map(select(.name != "CPU_MODEL")) |
+        .resources.requests[$resource] = "1" | .resources.limits[$resource] = "1"
+      end)
+  ' "$assets/osworld-pod.json" > "$tmp/pod.json"
 else
   # Passwords never enter command arguments or receipts.
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp/password"
-  jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" '
-  $meta[0].name as $name | {apiVersion:"v1",kind:"Pod",metadata:$meta[0],spec:{
-    automountServiceAccountToken:false,restartPolicy:"Never",
-    nodeSelector:{"kubernetes.io/hostname":$node},
-    resourceClaims:[{name:"gpu",resourceClaimName:$name}],
-    containers:[{name:"desktop",image:$image,env:[
-      {name:"SELKIES_WAYLAND",value:"false"},{name:"SELKIES_MODE",value:"websockets"},
-      {name:"SELKIES_ENABLE_BASIC_AUTH",value:"true"},{name:"NVIDIA_DRIVER_CAPABILITIES",value:"all"},
-      {name:"DISPLAY",value:":20"},
-      {name:"PASSWD",valueFrom:{secretKeyRef:{name:$name,key:"password"}}}],
-      resources:{claims:[{name:"gpu",request:"gpu"}],
-        requests:{cpu:"1",memory:"2Gi"},limits:{cpu:"8",memory:"16Gi"}},
-      volumeMounts:[{name:"shm",mountPath:"/dev/shm"}]}],
-    volumes:[{name:"shm",emptyDir:{medium:"Memory",sizeLimit:"2Gi"}}]}}' > "$tmp/pod.json"
+  jq --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" '
+    .metadata = $meta[0] |
+    .spec.nodeSelector["kubernetes.io/hostname"] = $node |
+    .spec.resourceClaims[0].resourceClaimName = $meta[0].name |
+    .spec.containers[0] |= (.image = $image |
+      .env |= map(if .name == "PASSWD" then .valueFrom.secretKeyRef.name = $meta[0].name else . end))
+  ' "$assets/selkies-pod.json" > "$tmp/pod.json"
 fi
 printf 'Creating %s/%s on %s\n' "$namespace" "$name" "$node" >&2
 # Create the Pod first: its UID owns profile-specific dependent resources.
@@ -243,21 +228,22 @@ if [[ $profile == osworld ]]; then
   # unscheduled until ingress isolation exists; access it through kubectl tunnels.
   # NOTICE: Requires a NetworkPolicy-enforcing CNI. Policies are additive: an
   # existing allow policy selecting this Pod can still grant ingress.
-  jq -n --slurpfile meta "$tmp/owned.json" --arg name "$name" '
-    {apiVersion:"networking.k8s.io/v1",kind:"NetworkPolicy",metadata:$meta[0],spec:{
-      podSelector:{matchLabels:{"auv.dev/desktop":$name}},policyTypes:["Ingress"],ingress:[]}}' > "$tmp/policy.json"
+  jq --slurpfile meta "$tmp/owned.json" '
+    .metadata = $meta[0] | .spec.podSelector.matchLabels["auv.dev/desktop"] = $meta[0].name
+  ' "$assets/osworld-network-policy.json" > "$tmp/policy.json"
   "${kube[@]}" -n "$namespace" create -f "$tmp/policy.json" -o name >&2
   "${kube[@]}" -n "$namespace" patch pod "$name" --type=json \
     -p='[{"op":"remove","path":"/spec/schedulingGates"}]' >&2
 else
-  jq -n --slurpfile meta "$tmp/owned.json" --rawfile password "$tmp/password" \
-    '{apiVersion:"v1",kind:"Secret",metadata:$meta[0],type:"Opaque",stringData:{password:$password}}' > "$tmp/secret.json"
+  jq --slurpfile meta "$tmp/owned.json" --rawfile password "$tmp/password" '
+    .metadata = $meta[0] | .stringData.password = $password
+  ' "$assets/selkies-secret.json" > "$tmp/secret.json"
   "${kube[@]}" -n "$namespace" create -f "$tmp/secret.json" -o name >&2
-  jq -n --slurpfile meta "$tmp/owned.json" --arg class "$device_class" \
+  jq --slurpfile meta "$tmp/owned.json" --arg class "$device_class" \
     --arg cores "$gpu_cores" --arg memory "$gpu_memory" '
-  {apiVersion:"resource.k8s.io/v1",kind:"ResourceClaim",metadata:$meta[0],spec:{devices:{requests:[
-    {name:"gpu",exactly:{deviceClassName:$class,allocationMode:"ExactCount",count:1,
-      capacity:{requests:{cores:$cores,memory:$memory}}}}]}}}' > "$tmp/claim.json"
+    .metadata = $meta[0] | .spec.devices.requests[0].exactly |=
+      (.deviceClassName = $class | .capacity.requests = {cores:$cores,memory:$memory})
+  ' "$assets/selkies-gpu-claim.json" > "$tmp/claim.json"
   "${kube[@]}" -n "$namespace" create -f "$tmp/claim.json" -o name >&2
 fi
 
@@ -267,7 +253,7 @@ set -eu
 frame=$(mktemp)
 trap 'rm -f "$frame"' EXIT
 # Match upstream API readiness; reject HTML/error bodies with 200. This is not
-# proof of a stable compositor or task success; see the live evidence note.
+# proof of a stable compositor or task success.
 wget --quiet --timeout=15 --tries=1 -O "$frame" http://127.0.0.1:5000/screenshot
 signature=$(od -An -N8 -tx1 "$frame" | tr -d ' \n')
 [ "$signature" = 89504e470d0a1a0a ] || { echo 'Screenshot is not PNG' >&2; exit 1; }
