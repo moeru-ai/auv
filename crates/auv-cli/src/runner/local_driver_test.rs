@@ -405,9 +405,10 @@ fn input_options_reject_malformed_values_before_delivery() {
   .expect_err("negative protobuf duration");
   assert_eq!(duration_error.code(), tonic::Code::InvalidArgument);
 
-  let point_error = window_point_from_proto(proto::WindowPoint {
+  let point_error = position_from_proto(proto::Position {
     x: f64::NAN,
     y: 0.0,
+    coordinate_space: Some(proto::position::CoordinateSpace::WindowId("window-1".to_string())),
   })
   .expect_err("non-finite point");
   assert_eq!(point_error.code(), tonic::Code::InvalidArgument);
@@ -460,11 +461,12 @@ fn click_rpc_preserves_modifiers_for_window_and_screen_delivery() {
     ..Default::default()
   }))
   .unwrap();
-  let (_, _, screen) = screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+  let screen = global_click_options_from_proto(Some(proto::ClickOptions {
     modifiers: Some(modifiers),
     ..Default::default()
   }))
-  .unwrap();
+  .unwrap()
+  .modifiers;
   assert_eq!(
     window.modifiers,
     auv_driver::ClickModifiers {
@@ -476,7 +478,62 @@ fn click_rpc_preserves_modifiers_for_window_and_screen_delivery() {
   );
   assert_eq!(screen, window.modifiers);
   assert!(click_options_from_proto(None).unwrap().modifiers.is_empty());
-  assert!(screen_click_options_from_proto(Some(Default::default())).unwrap().2.is_empty());
+  assert!(global_click_options_from_proto(None).unwrap().modifiers.is_empty());
+}
+
+#[test]
+fn global_click_rejects_window_delivery_options() {
+  // A screen or display click has no target window. Window policy and
+  // strategy are rejected instead of being silently ignored by the driver.
+  let policy = global_click_options_from_proto(Some(proto::ClickOptions {
+    policy: proto::InputPolicy::BackgroundOnly as i32,
+    ..Default::default()
+  }))
+  .unwrap_err();
+  assert_eq!(policy.code(), tonic::Code::InvalidArgument);
+  let strategy = global_click_options_from_proto(Some(proto::ClickOptions {
+    window_strategy: proto::WindowClickStrategy::PidTargeted as i32,
+    ..Default::default()
+  }))
+  .unwrap_err();
+  assert_eq!(strategy.code(), tonic::Code::InvalidArgument);
+}
+
+#[test]
+fn window_scoped_positions_convert_with_the_current_window_frame() {
+  let window = auv_driver::Window {
+    reference: auv_driver::WindowRef {
+      id: "window-1".to_string(),
+    },
+    title: None,
+    app_name: None,
+    app_bundle_id: None,
+    process_id: None,
+    frame: auv_driver::Rect::new(100.0, 50.0, 400.0, 300.0),
+    coordinate_space: auv_driver::CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+  let no_display = |id: &str| -> Result<auv_driver::Point, Status> { panic!("unexpected display lookup for {id}") };
+  let at = |x, y, coordinate_space| auv_driver::Position {
+    point: auv_driver::Point::new(x, y),
+    coordinate_space,
+  };
+
+  let local = window_point_for_position(&window, &at(10.0, 20.0, auv_driver::CoordinateSpace::Window("window-1".into())), no_display);
+  assert_eq!(local.unwrap(), auv_driver::WindowPoint::new(10.0, 20.0));
+
+  let screen = window_point_for_position(&window, &at(110.0, 70.0, auv_driver::CoordinateSpace::Screen), no_display);
+  assert_eq!(screen.unwrap(), auv_driver::WindowPoint::new(10.0, 20.0));
+
+  let display = window_point_for_position(&window, &at(10.0, 20.0, auv_driver::CoordinateSpace::Display("d2".into())), |id| {
+    assert_eq!(id, "d2");
+    Ok(auv_driver::Point::new(-1000.0, 0.0))
+  });
+  assert_eq!(display.unwrap(), auv_driver::WindowPoint::new(-1090.0, -30.0));
+
+  let other = window_point_for_position(&window, &at(10.0, 20.0, auv_driver::CoordinateSpace::Window("window-2".into())), no_display);
+  assert_eq!(other.unwrap_err().code(), tonic::Code::InvalidArgument);
 }
 
 #[test]
@@ -800,12 +857,12 @@ fn click_rpc_decodes_all_buttons_and_rejects_unknown_before_delivery() {
       button
     );
     assert_eq!(
-      screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+      global_click_options_from_proto(Some(proto::ClickOptions {
         button: wire as i32,
         ..Default::default()
       }))
       .unwrap()
-      .0,
+      .button,
       button
     );
   }
@@ -820,7 +877,7 @@ fn click_rpc_decodes_all_buttons_and_rejects_unknown_before_delivery() {
     tonic::Code::InvalidArgument
   );
   assert_eq!(
-    screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+    global_click_options_from_proto(Some(proto::ClickOptions {
       button: 99,
       ..Default::default()
     }))

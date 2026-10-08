@@ -12,7 +12,7 @@ import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/macos/v1/a
 import type { ActivateBundleIdRequestSchema } from '../../gen/auv/api/driver/macos/v1/application_pb'
 import type { CaptureRefSchema, CaptureResolution, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import type { ScreenPointSchema, ScreenRectSchema, WindowPointSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
+import type { PositionSchema, ScreenRectSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
   ClickOptionsSchema,
   InputActionResult,
@@ -23,7 +23,6 @@ import type {
   PasteTextOptionsSchema,
   PressKeysOptionsSchema,
   PressKeysRequestSchema,
-  ScreenClickOptionsSchema,
   ScrollMotionSchema,
   ScrollOptionsSchema,
   ScrollSchema,
@@ -92,6 +91,18 @@ export interface FindDisplayTextOptions extends InputFields<typeof FindDisplayTe
 
 export interface FindWindowTextOptions extends InputFields<typeof FindWindowTextRequestSchema, 'query' | 'window'>, OperationOptions {}
 
+/**
+ * Where a pointer action lands (*provisional* name):
+ *
+ * - a `Position`, with an explicit `coordinateSpace` (screen, display or window);
+ * - an object with screen-space `bounds`, such as a text match: its center;
+ * - a plain `{ x, y }`: window-local for a `WindowClient`, screen space for `input`.
+ *
+ * Window-scoped calls convert screen and display positions with the window's
+ * current frame on the Runner.
+ */
+export type PointTarget = Init<typeof PositionSchema> | { bounds?: Init<typeof ScreenRectSchema> } | { x: number, y: number }
+
 export interface PressKeyOptions extends OperationOptions {
   settle?: Init<typeof DurationSchema>
 }
@@ -117,7 +128,12 @@ export interface RunnerClient {
     list: (options?: OperationOptions) => Promise<readonly Display[]>
   }
   readonly input: {
-    clickScreenPoint: (point: Init<typeof ScreenPointSchema>, clickOptions: Init<typeof ScreenClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickScreenPoint.output>>
+    /**
+     * Clicks at a point. A window position is delivered to that window under
+     * `clickOptions.policy` and `windowStrategy`; a screen or display position
+     * is a global click, which takes neither (the Runner rejects them).
+     */
+    click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
     holdKeys: (request: Init<typeof InputService.method.holdKeys.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdKeys.output>>
@@ -197,7 +213,7 @@ export interface RunnerRouteOptions extends OperationOptions {
 }
 
 /** Begin parameters for `scrollStream`; the window comes from the client. */
-export type ScrollStreamBegin = InputFields<typeof StreamScrollBeginSchema, 'window'>
+export type ScrollStreamBegin = InputFields<typeof StreamScrollBeginSchema, 'point' | 'window'> & { point: PointTarget }
 
 export interface ScrollStreamController {
   cancel: () => Promise<void>
@@ -234,7 +250,8 @@ export interface ScrollWithStep {
 
 export interface WindowClient {
   capture: (options?: CaptureOptions) => Promise<Shape<typeof CaptureService.method.captureWindow.output>>
-  click: (point: Init<typeof WindowPointSchema>, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickWindowPoint.output>>
+  /** Clicks in this window; see `PointTarget` for what `target` accepts. */
+  click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
@@ -250,18 +267,18 @@ export interface WindowClient {
    */
   pressKeys: (keys: readonly string[], pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
-   * Wheel-scrolls at a window-local point. Deltas are logical pixels: positive
+   * Wheel-scrolls at a point in this window. Deltas are logical pixels: positive
    * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
    * right, like DOM `WheelEvent`. The result is delivery evidence only.
    */
-  scroll: (point: Init<typeof WindowPointSchema>, scroll: Init<typeof ScrollSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.scrollWindowPoint.output>>
+  scroll: (point: PointTarget, scroll: Init<typeof ScrollSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.scrollWindowPoint.output>>
   /**
    * Spreads one scroll over time with a timing function and streams
    * `started`, `progress`, and `completed` events. Aborting `options.signal`
    * stops the remaining samples. Totals use the same logical-pixel,
    * positive-down convention as `scroll`.
    */
-  scrollMotion: (point: Init<typeof WindowPointSchema>, motion: Init<typeof ScrollMotionSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<AsyncIterable<ScrollWindowPointMotionResponse>>
+  scrollMotion: (point: PointTarget, motion: Init<typeof ScrollMotionSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<AsyncIterable<ScrollWindowPointMotionResponse>>
   /**
    * Opens a live scroll stream. Delivery starts at zero velocity; steer it
    * with `setVelocity` (logical px/s, positive = down/right). Every update
@@ -276,7 +293,7 @@ export interface WindowClient {
    * Resolves with the completion. An end stop means no visual progress was
    * observed, not proof that no more content exists.
    */
-  scrollUntil: (point: Init<typeof WindowPointSchema>, request: ScrollUntilOptions, options?: ScrollUntilCallOptions) => Promise<ScrollUntilCompleted>
+  scrollUntil: (point: PointTarget, request: ScrollUntilOptions, options?: ScrollUntilCallOptions) => Promise<ScrollUntilCompleted>
   /**
    * Drives a live scroll stream from a (possibly async) generator. Each yielded
    * step sets the velocity and holds it for `holdMs` (default 100), renewing the
@@ -312,6 +329,8 @@ const GRPC_NOT_FOUND = 5
 
 /** Anything that names one window: a client, a `Window`, a `WindowRef`, or a window ID. */
 export type WindowTarget = string | Window | WindowClient | WindowRef
+
+type CoordinateSpaceInit = NonNullable<Init<typeof PositionSchema>['coordinateSpace']>
 
 type Init<T extends DescMessage> = MessageInitShape<T>
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
@@ -362,7 +381,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
   })
   const openScrollStream = async (windowId: string, begin: ScrollStreamBegin, options?: OperationOptions): Promise<ScrollStreamController> => {
     const call = await duplex(InputService.method.streamScroll, options)
-    await call.send({ event: { case: 'begin', value: { ...begin, window: { windowId } } } })
+    await call.send({ event: { case: 'begin', value: { ...begin, point: positionOf(begin.point, { case: 'windowId', value: windowId }), window: { windowId } } } })
     return {
       cancel: () => call.send({ event: { case: 'cancel', value: {} } }),
       events: call.responses,
@@ -396,11 +415,12 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         throw new AuvProtocolError('InputKeyboardResponse omitted the action result')
       return action
     }
+    const local = { case: 'windowId', value: id } as const
     return {
       capture: ({ resolution, ...options } = {}) => unary(CaptureService.method.captureWindow, { resolution, window: { windowId: id } }, options),
-      click: (point, clickOptions, options) => unary(InputService.method.clickWindowPoint, {
+      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
         options: clickOptions,
-        point,
+        position: positionOf(target, local),
         window: { windowId: id },
       }, options),
       findText: (query, options = {}) => {
@@ -420,14 +440,14 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       }, options),
       scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
         options: scrollOptions,
-        point,
+        point: positionOf(point, local),
         scroll,
         window: { windowId: id },
       }, options),
       scrollMotion: (point, motion, scrollOptions, options) => serverStream(InputService.method.scrollWindowPointMotion, {
         motion,
         options: scrollOptions,
-        point,
+        point: positionOf(point, local),
         window: { windowId: id },
       }, options),
       scrollStream: (begin, options) => openScrollStream(id, begin, options),
@@ -438,7 +458,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         await call.send({
           event: {
             case: 'begin',
-            value: { ...request, awaitDecisions: until !== undefined, condition, point, window: { windowId: id } },
+            value: { ...request, awaitDecisions: until !== undefined, condition, point: positionOf(point, local), window: { windowId: id } },
           },
         })
         for await (const response of call.responses) {
@@ -506,7 +526,10 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       list: async options => (await unary(DisplayService.method.listDisplays, {}, options)).displays,
     },
     input: {
-      clickScreenPoint: (point, clickOptions, options) => unary(InputService.method.clickScreenPoint, { options: clickOptions, point }, options),
+      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
+        options: clickOptions,
+        position: positionOf(target, { case: 'screen', value: true }),
+      }, options),
       createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
       dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
       holdKeys: (request, options) => unary(InputService.method.holdKeys, request, options),
@@ -613,6 +636,22 @@ function durationMilliseconds(duration: ScrollStreamBegin['lease']): number {
 
 function isWindowClient(target: Exclude<WindowTarget, string>): target is WindowClient {
   return 'window' in target && typeof target.capture === 'function'
+}
+
+/** Encodes a `PointTarget`; a plain `{ x, y }` takes the caller's default space. */
+function positionOf(target: PointTarget, plain: CoordinateSpaceInit): Init<typeof PositionSchema> {
+  if ('coordinateSpace' in target && target.coordinateSpace?.case !== undefined)
+    return target
+  if ('bounds' in target) {
+    const bounds = target.bounds
+    if (!bounds)
+      throw new TypeError('point target has no bounds')
+    const { height = 0, width = 0, x = 0, y = 0 } = bounds
+    return { coordinateSpace: { case: 'screen', value: true }, x: x + width / 2, y: y + height / 2 }
+  }
+  if (!('x' in target) || !('y' in target) || target.x === undefined || target.y === undefined)
+    throw new TypeError('point target needs a coordinateSpace, bounds, or x and y')
+  return { coordinateSpace: plain, x: target.x, y: target.y }
 }
 
 /** `Window` metadata for any window target; IDs and refs carry only the reference. */

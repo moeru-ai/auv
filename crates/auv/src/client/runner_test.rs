@@ -181,18 +181,24 @@ async fn resolved_window_child_retains_the_exact_resource_reference() {
   };
   assert_eq!(child.reference().id, "window_test");
   assert_eq!(&child.resource().reference, child.reference());
+
+  // A window-local point is bound to this window; other positions pass
+  // through for the Runner to convert with the window's current frame.
+  let local = child.pointer_position(auv_driver::WindowPoint::new(10.0, 20.0).into());
+  assert_eq!(
+    (local.x, local.y, local.coordinate_space),
+    (10.0, 20.0, Some(proto::position::CoordinateSpace::WindowId("window_test".to_string())))
+  );
+  let screen = child.pointer_position(auv_driver::ScreenPoint::new(-5.0, 7.0).into());
+  assert_eq!((screen.x, screen.y, screen.coordinate_space), (-5.0, 7.0, Some(proto::position::CoordinateSpace::Screen(true))));
 }
 
 #[tokio::test]
-async fn runner_input_exposes_typed_screen_point_click() {
+async fn runner_input_exposes_typed_position_click() {
   let runner = RunnerClient::new(disconnected_client(), route()).expect("runner client");
   let input = runner.input();
-  let call = input.click_screen_point(
-    auv_driver::Point::new(10.0, 20.0),
-    auv_driver::MouseButton::Left,
-    auv_driver::Click::Single,
-    Default::default(),
-  );
+  let point = auv_driver::ScreenPoint::new(10.0, 20.0);
+  let call = input.click(&point, Default::default());
   drop(call);
 }
 
@@ -682,7 +688,7 @@ fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
     proto::WindowRef {
       window_id: "window-1".to_string(),
     },
-    auv_driver::WindowPoint::new(10.0, 20.0),
+    crate::protocol::position::encode(auv_driver::Position::in_screen(auv_driver::ScreenPoint::new(10.0, 20.0))),
     auv_scan::ScrollUntilRequest {
       step: auv_scan::ScrollUntilStep::Instant {
         delta: auv_driver::Scroll::new(0.0, 600.0),

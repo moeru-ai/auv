@@ -137,11 +137,15 @@ pub struct WindowCapture {
   pub capture: RunnerCapture,
 }
 
-/// Typed result of a delivered screen-point click.
+/// Typed result of a click delivered through [`InputClient::click`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct ScreenPointClick {
-  /// Delivered screen point.
-  pub point: auv_driver::Point,
+pub struct PointClick {
+  /// Refreshed target window, for a window position.
+  pub window: Option<auv_driver::Window>,
+  /// Delivered point in the window's space, for a window position.
+  pub window_point: Option<auv_driver::WindowPoint>,
+  /// Delivered point in logical screen space.
+  pub screen_point: auv_driver::ScreenPoint,
   /// Typed input-delivery evidence.
   pub action: auv_driver::InputActionResult,
 }
@@ -355,13 +359,42 @@ impl MouseMotionSession {
   }
 }
 
-/// Typed result of a delivered window-local click.
+/// Where a window-scoped pointer action lands (*provisional* name): a
+/// window-local point, or a position in any space that the Runner converts
+/// with the window's current frame.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PointerTarget {
+  Local(auv_driver::WindowPoint),
+  Position(auv_driver::Position),
+}
+
+impl From<auv_driver::WindowPoint> for PointerTarget {
+  fn from(point: auv_driver::WindowPoint) -> Self {
+    Self::Local(point)
+  }
+}
+
+impl From<auv_driver::Position> for PointerTarget {
+  fn from(position: auv_driver::Position) -> Self {
+    Self::Position(position)
+  }
+}
+
+impl From<auv_driver::ScreenPoint> for PointerTarget {
+  fn from(point: auv_driver::ScreenPoint) -> Self {
+    Self::Position(auv_driver::Position::in_screen(point))
+  }
+}
+
+/// Typed result of a delivered window click.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowPointClick {
   /// Resolved target window.
   pub window: auv_driver::Window,
   /// Delivered window-local point.
   pub point: auv_driver::WindowPoint,
+  /// Delivered point in logical screen space.
+  pub screen_point: auv_driver::ScreenPoint,
   /// Typed input-delivery evidence.
   pub action: auv_driver::InputActionResult,
 }
@@ -900,25 +933,39 @@ impl WindowClient {
     })
   }
 
-  /// Delivers a click in window-local coordinates.
-  pub async fn click(&self, point: auv_driver::WindowPoint, options: auv_driver::ClickOptions) -> Result<WindowPointClick, CapabilityError> {
+  /// Delivers a click to this window, at a window-local point or at a
+  /// position the Runner converts with the window's current frame.
+  pub async fn click(
+    &self,
+    target: impl Into<PointerTarget>,
+    options: auv_driver::ClickOptions,
+  ) -> Result<WindowPointClick, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .click_window_point(proto::ClickWindowPointRequest {
-        window: Some(self.window_ref.clone()),
-        point: Some(proto::WindowPoint {
-          x: point.point().x,
-          y: point.point().y,
-        }),
+      .click_point(proto::ClickPointRequest {
+        position: Some(self.pointer_position(target.into())),
         options: Some(click_options_to_proto(options)?),
+        window: Some(self.window_ref.clone()),
       })
       .await
       .map_err(capability_status)?
       .into_inner();
-    let point = required(response.point, "ClickWindowPoint response omitted WindowPoint")?;
+    let point = required(response.window_point, "ClickPoint response omitted WindowPoint")?;
+    let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
     Ok(WindowPointClick {
-      window: window_from_proto(required(response.window, "ClickWindowPoint response omitted Window")?)?,
+      window: window_from_proto(required(response.window, "ClickPoint response omitted Window")?)?,
       point: auv_driver::WindowPoint::new(point.x, point.y),
-      action: input_action_result_from_proto(required(response.action, "ClickWindowPoint response omitted InputActionResult")?)?,
+      screen_point: auv_driver::ScreenPoint::new(screen_point.x, screen_point.y),
+      action: input_action_result_from_proto(required(response.action, "ClickPoint response omitted InputActionResult")?)?,
+    })
+  }
+
+  fn pointer_position(&self, target: PointerTarget) -> proto::Position {
+    crate::protocol::position::encode(match target {
+      PointerTarget::Local(point) => auv_driver::Position {
+        point: point.point(),
+        coordinate_space: auv_driver::CoordinateSpace::Window(self.window_ref.window_id.clone()),
+      },
+      PointerTarget::Position(position) => position,
     })
   }
 
@@ -927,17 +974,14 @@ impl WindowClient {
   /// remaining samples.
   pub async fn scroll_motion(
     &self,
-    point: auv_driver::WindowPoint,
+    point: impl Into<PointerTarget>,
     motion: auv_driver::ScrollMotion,
     options: auv_driver::ScrollOptions,
   ) -> Result<ScrollMotionStream, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
       .scroll_window_point_motion(proto::ScrollWindowPointMotionRequest {
         window: Some(self.window_ref.clone()),
-        point: Some(proto::WindowPoint {
-          x: point.point().x,
-          y: point.point().y,
-        }),
+        point: Some(self.pointer_position(point.into())),
         motion: Some(scroll_motion_to_proto(motion)?),
         options: Some(scroll_options_to_proto(options)?),
       })
@@ -951,7 +995,7 @@ impl WindowClient {
   /// zero velocity; steer it through the returned session.
   pub async fn scroll_stream(
     &self,
-    point: auv_driver::WindowPoint,
+    point: impl Into<PointerTarget>,
     stream: auv_driver::ScrollStreamOptions,
     options: auv_driver::ScrollOptions,
   ) -> Result<ScrollStreamSession, CapabilityError> {
@@ -960,10 +1004,7 @@ impl WindowClient {
       .send(proto::StreamScrollRequest {
         event: Some(proto::stream_scroll_request::Event::Begin(proto::StreamScrollBegin {
           window: Some(self.window_ref.clone()),
-          point: Some(proto::WindowPoint {
-            x: point.point().x,
-            y: point.point().y,
-          }),
+          point: Some(self.pointer_position(point.into())),
           options: Some(scroll_options_to_proto(options)?),
           sample_rate_hz: stream.sample_rate_hz,
           max_acceleration: stream.max_acceleration,
@@ -989,7 +1030,7 @@ impl WindowClient {
   /// a decision through [`ScrollUntilSession::decide`].
   pub async fn scroll_until(
     &self,
-    point: auv_driver::WindowPoint,
+    point: impl Into<PointerTarget>,
     request: auv_scan::ScrollUntilRequest,
     options: auv_driver::ScrollOptions,
     await_decisions: bool,
@@ -999,7 +1040,7 @@ impl WindowClient {
       .send(proto::ScrollUntilRequest {
         event: Some(proto::scroll_until_request::Event::Begin(scroll_until_begin_to_proto(
           self.window_ref.clone(),
-          point,
+          self.pointer_position(point.into()),
           request,
           options,
           await_decisions,
@@ -1023,7 +1064,7 @@ impl WindowClient {
   /// Updates the Runner already ends are not passed to `predicate`.
   pub async fn scroll_until_with(
     &self,
-    point: auv_driver::WindowPoint,
+    point: impl Into<PointerTarget>,
     request: auv_scan::ScrollUntilRequest,
     options: auv_driver::ScrollOptions,
     mut predicate: impl FnMut(&auv_scan::ScrollUntilUpdate<RunnerCapture>) -> bool,
@@ -1054,17 +1095,14 @@ impl WindowClient {
   /// `scroll` is in logical pixels, positive toward later content (down/right).
   pub async fn scroll(
     &self,
-    point: auv_driver::WindowPoint,
+    point: impl Into<PointerTarget>,
     scroll: auv_driver::Scroll,
     options: auv_driver::ScrollOptions,
   ) -> Result<WindowPointScroll, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
       .scroll_window_point(proto::ScrollWindowPointRequest {
         window: Some(self.window_ref.clone()),
-        point: Some(proto::WindowPoint {
-          x: point.point().x,
-          y: point.point().y,
-        }),
+        point: Some(self.pointer_position(point.into())),
         scroll: Some(proto::Scroll {
           delta_x: scroll.delta_x,
           delta_y: scroll.delta_y,
@@ -1596,33 +1634,40 @@ impl InputClient {
     })
   }
 
-  /// Delivers a click in screen coordinates.
-  pub async fn click_screen_point(
-    &self,
-    point: auv_driver::Point,
-    button: auv_driver::MouseButton,
-    click: auv_driver::Click,
-    modifiers: auv_driver::ClickModifiers,
-  ) -> Result<ScreenPointClick, CapabilityError> {
+  /// Clicks at a position. A window position is delivered to that window
+  /// under `options.policy` and `window_strategy`; a screen or display
+  /// position is a global click, which the Runner rejects when either differs
+  /// from its default.
+  pub async fn click(&self, target: &impl auv_driver::Positional, options: auv_driver::ClickOptions) -> Result<PointClick, CapabilityError> {
+    let position = target.position().map_err(|error| CapabilityError::InvalidArgument(error.to_string()))?;
+    let global = !matches!(position.coordinate_space, auv_driver::CoordinateSpace::Window(_));
+    // Default window options mean "not requested" for a global click; the
+    // Runner rejects anything else rather than ignore it.
+    let defaults = auv_driver::ClickOptions::default();
+    let default_policy = options.policy == defaults.policy;
+    let default_strategy = options.window_strategy == defaults.window_strategy;
+    let mut wire_options = click_options_to_proto(options)?;
+    if global && default_policy {
+      wire_options.policy = proto::InputPolicy::Unspecified as i32;
+    }
+    if global && default_strategy {
+      wire_options.window_strategy = proto::WindowClickStrategy::Unspecified as i32;
+    }
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .click_screen_point(proto::ClickScreenPointRequest {
-        point: Some(proto::ScreenPoint {
-          x: point.x,
-          y: point.y,
-        }),
-        options: Some(proto::ScreenClickOptions {
-          button: mouse_button_to_proto(button) as i32,
-          click: Some(click_to_proto(click)?),
-          modifiers: Some(click_modifiers_to_proto(modifiers)),
-        }),
+      .click_point(proto::ClickPointRequest {
+        position: Some(crate::protocol::position::encode(position)),
+        options: Some(wire_options),
+        window: None,
       })
       .await
       .map_err(capability_status)?
       .into_inner();
-    let point = required(response.point, "ClickScreenPoint response omitted ScreenPoint")?;
-    Ok(ScreenPointClick {
-      point: auv_driver::Point::new(point.x, point.y),
-      action: input_action_result_from_proto(required(response.action, "ClickScreenPoint response omitted InputActionResult")?)?,
+    let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
+    Ok(PointClick {
+      window: response.window.map(window_from_proto).transpose()?,
+      window_point: response.window_point.map(|point| auv_driver::WindowPoint::new(point.x, point.y)),
+      screen_point: auv_driver::ScreenPoint::new(screen_point.x, screen_point.y),
+      action: input_action_result_from_proto(required(response.action, "ClickPoint response omitted InputActionResult")?)?,
     })
   }
 
@@ -2110,7 +2155,7 @@ fn scroll_stream_event_from_proto(value: proto::StreamScrollResponse) -> Result<
 
 fn scroll_until_begin_to_proto(
   window: proto::WindowRef,
-  point: auv_driver::WindowPoint,
+  point: proto::Position,
   request: auv_scan::ScrollUntilRequest,
   options: auv_driver::ScrollOptions,
   await_decisions: bool,
@@ -2130,10 +2175,7 @@ fn scroll_until_begin_to_proto(
   };
   Ok(proto::ScrollUntilBegin {
     window: Some(window),
-    point: Some(proto::WindowPoint {
-      x: point.point().x,
-      y: point.point().y,
-    }),
+    point: Some(point),
     step: Some(step),
     condition: Some(condition),
     max_steps: request.max_steps,

@@ -302,8 +302,15 @@ The domain already has the right model:
 
 The wire and the SDK still split everything by space. Proposal:
 
-1. **Input takes `Position`.** `ClickPoint { Position position; ClickOptions }`
-   replaces `ClickScreenPoint` and `ClickWindowPoint`.
+1. **Input takes `Position`.** Done (2026-10-08):
+   `ClickPoint { Position position; ClickOptions options; WindowRef window }`
+   replaces `ClickScreenPoint` and `ClickWindowPoint`, and `ScreenClickOptions`
+   is deleted. The optional `window` makes a screen or display position
+   window-targeted, which `WindowClient.click` uses. A global click rejects a
+   `policy` or `window_strategy` with `INVALID_ARGUMENT` instead of ignoring it.
+   The Rust client takes `InputClient::click(&impl Positional, ClickOptions)`
+   and `WindowClient::click/scroll*(impl Into<PointerTarget>)`; the JS SDK takes
+   a `PointTarget` (*provisional* names).
    - A window position uses window-targeted delivery, and a screen or display
      position uses global delivery.
    - Window-scoped calls (`WindowClient.click`/`scroll*`) accept a position in

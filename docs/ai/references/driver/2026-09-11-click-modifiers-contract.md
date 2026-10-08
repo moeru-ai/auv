@@ -4,6 +4,12 @@ Date: 2026-09-11. Classification: approved feature, BG-1 standard modifier state
 The owner selected `ClickModifiers` after a review of key identity and hold
 semantics. This slice connects existing point-click consumers to that contract.
 
+> **Migration (2026-10-08):** `ClickScreenPoint`, `ClickWindowPoint` and
+> `ScreenClickOptions` were replaced by `InputService/ClickPoint`, which takes a
+> `Position` and the shared `ClickOptions`. The Rust client's
+> `click_screen_point` is now `InputClient::click`. See "Position and
+> Positional" in `docs/TERMS_AND_CONCEPTS.md`.
+
 ## Contract and execution
 
 `auv-driver-common::ClickModifiers` contains four independent booleans:

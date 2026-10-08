@@ -703,23 +703,42 @@ impl InputService for LocalInputService {
   type ScrollUntilStream = Pin<Box<dyn Stream<Item = Result<proto::ScrollUntilResponse, Status>> + Send>>;
   type StreamMouseMotionStream = Pin<Box<dyn Stream<Item = Result<proto::StreamMouseMotionResponse, Status>> + Send>>;
 
-  async fn click_window_point(
-    &self,
-    request: Request<proto::ClickWindowPointRequest>,
-  ) -> Result<Response<proto::ClickWindowPointResponse>, Status> {
+  async fn click_point(&self, request: Request<proto::ClickPointRequest>) -> Result<Response<proto::ClickPointResponse>, Status> {
     let request = request.into_inner();
-    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
+    let window_ref = match (request.window, &position.coordinate_space) {
+      (Some(window_ref), _) => Some(window_ref),
+      (None, auv_driver::CoordinateSpace::Window(id)) => Some(proto::WindowRef {
+        window_id: id.clone(),
+      }),
+      (None, _) => None,
+    };
+    let Some(window_ref) = window_ref else {
+      let options = global_click_options_from_proto(request.options)?;
+      let point = screen_point_for_position(&position, |id| display_origin(&self.session, id))?;
+      let session = self.session.clone();
+      let action =
+        run_input_blocking(move || session.input().click_at(point.point(), options.button, options.click, options.modifiers)).await?;
+      return Ok(Response::new(proto::ClickPointResponse {
+        window: None,
+        screen_point: Some(screen_point_to_proto(point)),
+        action: Some(input_action_to_proto(action)?),
+        window_point: None,
+      }));
+    };
     let options = click_options_from_proto(request.options)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
     require_point_inside_window(&window, point)?;
     let session = self.session.clone();
     let target = window.clone();
     let action = run_input_blocking(move || session.window().click(&target, point, options)).await?;
-    Ok(Response::new(proto::ClickWindowPointResponse {
+    let screen_point = auv_driver::ScreenPoint::new(window.frame.origin.x + point.point().x, window.frame.origin.y + point.point().y);
+    Ok(Response::new(proto::ClickPointResponse {
       window: Some(window_to_proto(window)),
-      point: Some(window_point_to_proto(point)),
+      screen_point: Some(screen_point_to_proto(screen_point)),
       action: Some(input_action_to_proto(action)?),
+      window_point: Some(window_point_to_proto(point)),
     }))
   }
 
@@ -729,10 +748,11 @@ impl InputService for LocalInputService {
   ) -> Result<Response<proto::ScrollWindowPointResponse>, Status> {
     let request = request.into_inner();
     let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
     let scroll = scroll_from_proto(request.scroll)?;
     let options = scroll_options_from_proto(request.options)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
     require_point_inside_window(&window, point)?;
     let session = self.session.clone();
     let target = window.clone();
@@ -754,11 +774,12 @@ impl InputService for LocalInputService {
   ) -> Result<Response<Self::ScrollWindowPointMotionStream>, Status> {
     let request = request.into_inner();
     let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
     let motion = scroll_motion_from_proto(request.motion)?;
     let options = scroll_options_from_proto(request.options)?;
     let schedule = motion.schedule().map_err(driver_status)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
     require_point_inside_window(&window, point)?;
     let started = proto::ScrollMotionStarted {
       window: Some(window_to_proto(window.clone())),
@@ -790,7 +811,7 @@ impl InputService for LocalInputService {
       _ => return Err(Status::invalid_argument("begin must be the first StreamScroll event")),
     };
     let window_ref = begin.window.ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
-    let point = window_point_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
+    let position = position_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
     let options = scroll_options_from_proto(begin.options)?;
     let stream_options = auv_driver::ScrollStreamOptions {
       sample_rate_hz: begin.sample_rate_hz,
@@ -803,6 +824,7 @@ impl InputService for LocalInputService {
     };
     stream_options.validate().map_err(driver_status)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
     require_point_inside_window(&window, point)?;
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
     let session = self.session.clone();
@@ -828,12 +850,13 @@ impl InputService for LocalInputService {
       _ => return Err(Status::invalid_argument("begin must be the first ScrollUntil event")),
     };
     let window_ref = begin.window.clone().ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
-    let point = window_point_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
+    let position = position_from_proto(begin.point.clone().ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
     let options = scroll_options_from_proto(begin.options.clone())?;
     let await_decisions = begin.await_decisions;
     let until = scroll_until_request_from_proto(begin)?;
     until.validate().map_err(driver_status)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
     require_point_inside_window(&window, point)?;
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
     let session = self.session.clone();
@@ -847,21 +870,6 @@ impl InputService for LocalInputService {
       }
     });
     Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
-  }
-
-  async fn click_screen_point(
-    &self,
-    request: Request<proto::ClickScreenPointRequest>,
-  ) -> Result<Response<proto::ClickScreenPointResponse>, Status> {
-    let request = request.into_inner();
-    let point = screen_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
-    let (button, click, modifiers) = screen_click_options_from_proto(request.options)?;
-    let session = self.session.clone();
-    let action = run_input_blocking(move || session.input().click_at(point.point(), button, click, modifiers)).await?;
-    Ok(Response::new(proto::ClickScreenPointResponse {
-      point: Some(screen_point_to_proto(point)),
-      action: Some(input_action_to_proto(action)?),
-    }))
   }
 
   async fn move_mouse(&self, request: Request<proto::MoveMouseRequest>) -> Result<Response<Self::MoveMouseStream>, Status> {
@@ -1060,13 +1068,6 @@ pub(super) fn resolve_window_ref(
     .ok_or_else(|| Status::not_found(format!("unknown Window: {}", window_ref.window_id)))
 }
 
-fn window_point_from_proto(point: proto::WindowPoint) -> Result<auv_driver::WindowPoint, Status> {
-  if !point.x.is_finite() || !point.y.is_finite() {
-    return Err(Status::invalid_argument("point coordinates must be finite"));
-  }
-  Ok(auv_driver::WindowPoint::new(point.x, point.y))
-}
-
 /// Window-point input is accepted only inside the freshly resolved Window, so a
 /// stale caller geometry cannot deliver input to whatever lies outside it.
 fn require_point_inside_window(window: &auv_driver::Window, point: auv_driver::WindowPoint) -> Result<(), Status> {
@@ -1076,6 +1077,54 @@ fn require_point_inside_window(window: &auv_driver::Window, point: auv_driver::W
     return Err(Status::invalid_argument("point must be inside the current Window bounds"));
   }
   Ok(())
+}
+
+/// The current frame origin of a display, in logical screen space.
+fn display_origin(session: &auv_driver::LocalDriverSession, id: &str) -> Result<auv_driver::Point, Status> {
+  session
+    .display()
+    .list()
+    .map_err(driver_status)?
+    .displays
+    .into_iter()
+    .find(|display| display.id == id)
+    .map(|display| display.frame.origin)
+    .ok_or_else(|| Status::not_found(format!("unknown Display: {id}")))
+}
+
+/// Converts a screen or display position into logical screen space. A display
+/// position is relative to that display's frame origin, which `display_origin`
+/// observes.
+fn screen_point_for_position(
+  position: &auv_driver::Position,
+  display_origin: impl FnOnce(&str) -> Result<auv_driver::Point, Status>,
+) -> Result<auv_driver::ScreenPoint, Status> {
+  let point = position.point;
+  match &position.coordinate_space {
+    auv_driver::CoordinateSpace::Screen => Ok(auv_driver::ScreenPoint::new(point.x, point.y)),
+    auv_driver::CoordinateSpace::Display(id) => {
+      let origin = display_origin(id)?;
+      Ok(auv_driver::ScreenPoint::new(origin.x + point.x, origin.y + point.y))
+    }
+    auv_driver::CoordinateSpace::Window(_) => Err(Status::invalid_argument("a window position has no screen point without its window")),
+  }
+}
+
+/// Converts a pointer position into `window`'s space with its current frame,
+/// so callers need not convert by hand. A window position must name `window`.
+fn window_point_for_position(
+  window: &auv_driver::Window,
+  position: &auv_driver::Position,
+  display_origin: impl FnOnce(&str) -> Result<auv_driver::Point, Status>,
+) -> Result<auv_driver::WindowPoint, Status> {
+  if let auv_driver::CoordinateSpace::Window(id) = &position.coordinate_space {
+    if *id != window.reference.id {
+      return Err(Status::invalid_argument(format!("position is in Window {id}, but the target is Window {}", window.reference.id)));
+    }
+    return Ok(auv_driver::WindowPoint::from(position.point));
+  }
+  let screen = screen_point_for_position(position, display_origin)?.point();
+  Ok(auv_driver::WindowPoint::new(screen.x - window.frame.origin.x, screen.y - window.frame.origin.y))
 }
 
 fn screen_point_from_proto(point: proto::ScreenPoint) -> Result<auv_driver::ScreenPoint, Status> {
@@ -1788,11 +1837,17 @@ fn scroll_options_from_proto(options: Option<proto::ScrollOptions>) -> Result<au
   })
 }
 
-fn screen_click_options_from_proto(
-  options: Option<proto::ScreenClickOptions>,
-) -> Result<(auv_driver::MouseButton, auv_driver::Click, auv_driver::ClickModifiers), Status> {
-  let options = options.ok_or_else(|| Status::invalid_argument("options are required"))?;
-  Ok((mouse_button_from_proto(options.button)?, click_from_proto(options.click)?, click_modifiers_from_proto(options.modifiers)))
+/// A global click has no target window, so it must not carry window delivery
+/// options the driver would silently ignore.
+fn global_click_options_from_proto(options: Option<proto::ClickOptions>) -> Result<auv_driver::ClickOptions, Status> {
+  let options = options.unwrap_or_default();
+  if options.policy != proto::InputPolicy::Unspecified as i32 {
+    return Err(Status::invalid_argument("options.policy requires a target window; omit it for a screen or display position"));
+  }
+  if options.window_strategy != proto::WindowClickStrategy::Unspecified as i32 {
+    return Err(Status::invalid_argument("options.window_strategy requires a target window; omit it for a screen or display position"));
+  }
+  click_options_from_proto(Some(options))
 }
 
 fn mouse_button_from_proto(value: i32) -> Result<auv_driver::MouseButton, Status> {

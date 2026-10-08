@@ -68,18 +68,20 @@ service InputService {
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
 
-  rpc ClickWindowPoint(ClickWindowPointRequest) returns (ClickWindowPointResponse) {
+  // Clicks at a position in any coordinate space. A window position, or any
+  // position with `window` set, is delivered to that window under
+  // `options.policy` and `window_strategy`. Otherwise a screen or display
+  // position is a global click, which takes neither.
+  rpc ClickPoint(ClickPointRequest) returns (ClickPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
-  rpc ClickScreenPoint(ClickScreenPointRequest) returns (ClickScreenPointResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
-  }
-  // Wheel-style scroll at a window-local point. Delivery evidence only: a
-  // delivered wheel event does not prove the target viewport moved.
-  // TODO(screen-point-scroll): screen/display-relative scroll is deferred until
-  // a caller needs it; platform global scroll primitives do not share one API.
+  // Wheel-style scroll in a window, at a position in its space or in screen or
+  // display space. Delivery evidence only: a delivered wheel event does not
+  // prove the target viewport moved.
+  // TODO(screen-point-scroll): scrolling without a target window is deferred
+  // until a caller needs it; platform global scroll primitives do not share one
+  // API.
   rpc ScrollWindowPoint(ScrollWindowPointRequest) returns (ScrollWindowPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -223,15 +225,6 @@ message ClickModifiers {
   bool meta = 4;
 }
 
-// Screen-point delivery has no target Window policy or strategy. Keeping its
-// options separate prevents callers from requesting behavior the Driver would
-// have to ignore.
-message ScreenClickOptions {
-  Click click = 1;
-  ClickModifiers modifiers = 2;
-  MouseButton button = 3;
-}
-
 message Click {
   // Must be in [1, 255]. One is a single click, two is a double click, and
   // larger values are repeated clicks.
@@ -273,20 +266,24 @@ message InputActionResult {
   DisturbanceLevel clipboard_disturbance = 5;
 }
 
-message ClickWindowPointRequest {
-  reserved 1;
-  reserved "lease";
-  // A previously resolved child resource. The Runner refreshes this reference
-  // before delivery so stale platform handles are never trusted as snapshots.
-  WindowRef window = 2;
-  WindowPoint point = 3;
-  ClickOptions options = 4;
+message ClickPointRequest {
+  // A window position names a previously resolved window, which the Runner
+  // refreshes before delivery so stale platform handles are never trusted.
+  Position position = 1;
+  ClickOptions options = 2;
+  // Delivers to this window. A screen or display position is converted with
+  // the window's current frame; a window position must name the same window.
+  WindowRef window = 3;
 }
 
-message ClickWindowPointResponse {
+message ClickPointResponse {
+  // The refreshed window, for window-targeted delivery.
   Window window = 1;
-  WindowPoint point = 2;
+  // Where the click was delivered, in logical screen space.
+  ScreenPoint screen_point = 2;
   InputActionResult action = 3;
+  // The delivered point in `window`'s space, for window-targeted delivery.
+  WindowPoint window_point = 4;
 }
 
 // Ordered pre-execution scroll delivery plan entry. The response's selected
@@ -321,7 +318,9 @@ message ScrollWindowPointRequest {
   // A previously resolved child resource. The Runner refreshes this reference
   // before delivery so stale platform handles are never trusted as snapshots.
   WindowRef window = 1;
-  WindowPoint point = 2;
+  // In this window's space, or in screen or display space; the Runner converts
+  // it with the window's current frame.
+  Position point = 2;
   Scroll scroll = 3;
   ScrollOptions options = 4;
 }
@@ -378,7 +377,9 @@ message ScrollMotion {
 message ScrollWindowPointMotionRequest {
   // A previously resolved child resource, refreshed before delivery.
   WindowRef window = 1;
-  WindowPoint point = 2;
+  // In this window's space, or in screen or display space; the Runner converts
+  // it with the window's current frame.
+  Position point = 2;
   ScrollMotion motion = 3;
   ScrollOptions options = 4;
 }
@@ -423,7 +424,9 @@ message ScrollVelocity {
 message StreamScrollBegin {
   // A previously resolved child resource, refreshed before delivery.
   WindowRef window = 1;
-  WindowPoint point = 2;
+  // In this window's space, or in screen or display space; the Runner converts
+  // it with the window's current frame.
+  Position point = 2;
   ScrollOptions options = 3;
   // Samples per second, 1..=1000.
   uint32 sample_rate_hz = 4;
@@ -512,7 +515,9 @@ message ScrollUntilOutputOptions {
 message ScrollUntilBegin {
   // A previously resolved child resource, refreshed before delivery.
   WindowRef window = 1;
-  WindowPoint point = 2;
+  // In this window's space, or in screen or display space; the Runner converts
+  // it with the window's current frame.
+  Position point = 2;
   // One axis only, finite and non-zero, in logical pixels per step.
   oneof step {
     Scroll instant = 3;
@@ -605,18 +610,6 @@ message ScrollUntilResponse {
     ScrollUntilUpdate update = 1;
     ScrollUntilCompleted completed = 2;
   }
-}
-
-message ClickScreenPointRequest {
-  reserved 1;
-  reserved "lease";
-  ScreenPoint point = 2;
-  ScreenClickOptions options = 3;
-}
-
-message ClickScreenPointResponse {
-  ScreenPoint point = 1;
-  InputActionResult action = 2;
 }
 
 message MouseCurrentPosition {}

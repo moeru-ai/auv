@@ -32,6 +32,12 @@ export interface AuvBackendOptions {
   endpoint: string
 }
 
+/** Screen point of a window-local point, when the response reported the window frame. */
+function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point | undefined {
+  const rect = toRect(frame)
+  return rect ? { x: rect.x + point.x, y: rect.y + point.y } : undefined
+}
+
 class AuvBackend implements Backend {
   readonly kind = 'auv'
   readonly label: string
@@ -88,7 +94,7 @@ class AuvBackend implements Backend {
   }
 
   async clickScreen(point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
-    const response = await this.#runner.input.clickScreenPoint(point, {
+    const response = await this.#runner.input.click(point, {
       button: MOUSE_BUTTONS[options?.button ?? 'left'],
       click: toClick(options),
     })
@@ -101,7 +107,8 @@ class AuvBackend implements Backend {
       button: MOUSE_BUTTONS[options?.button ?? 'left'],
       click: toClick(options),
     })
-    return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
+    const delivered = response.screenPoint
+    return { path: deliveryPath(response.action), point: delivered && { x: delivered.x, y: delivered.y } }
   }
 
   async dispose(): Promise<void> {
@@ -269,12 +276,6 @@ function readableError(error: unknown): unknown {
   }
   catch {}
   return error
-}
-
-/** Screen point of a window-local point, when the response reported the window frame. */
-function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point | undefined {
-  const rect = toRect(frame)
-  return rect ? { x: rect.x + point.x, y: rect.y + point.y } : undefined
 }
 
 /**
