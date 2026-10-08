@@ -14,8 +14,8 @@ pub mod gate_derive;
 
 use crate::decision_log::DecisionLogger;
 use crate::models::{
-  CompilationMetadata, DecisionAction, DecisionCategory, ManualReviewItem, OperationDef, PreconditionDef, ReasonCode, TargetMetadata,
-  TrajectoryRecord,
+  CompilationMetadata, DecisionAction, DecisionCategory, ExecutionMode, ManualReviewItem, OPERATION_SCHEMA_VERSION, OperationDef,
+  PreconditionDef, ReasonCode, TargetMetadata, TrajectoryRecord,
 };
 use chrono::Utc;
 
@@ -28,13 +28,24 @@ impl<'a> AutoCompiler<'a> {
     Self { logger }
   }
 
-  /// Compiles a trajectory record into an executable operation specification.
-  /// If additional isomorphic records are provided, anti-unification attempts
-  /// to lift differing literal values into generalized parameters.
+  /// Compiles a trajectory record into an executable operation specification,
+  /// automatically deriving the execution mode from the step verification gates.
   pub fn compile(
     &self,
     primary_record: &TrajectoryRecord,
     isomorphic_records: Option<&[TrajectoryRecord]>,
+  ) -> Result<OperationDef, ManualReviewItem> {
+    self.compile_with_mode(primary_record, isomorphic_records, None)
+  }
+
+  /// Compiles a trajectory record with an explicit or automatically derived execution mode.
+  /// If target_mode is specified, the compilation gate validates that the trajectory's
+  /// actions and gates are compatible with that mode (e.g., unverified-step cannot be Fast).
+  pub fn compile_with_mode(
+    &self,
+    primary_record: &TrajectoryRecord,
+    isomorphic_records: Option<&[TrajectoryRecord]>,
+    target_mode: Option<ExecutionMode>,
   ) -> Result<OperationDef, ManualReviewItem> {
     let task_name = &primary_record.metadata.task;
 
@@ -58,6 +69,7 @@ impl<'a> AutoCompiler<'a> {
         task_name: task_name.clone(),
         reason_code: cleaning_eval.reason_code,
         reason_description: cleaning_eval.message,
+        execution_mode: target_mode,
         source_trajectory: Some(Box::new(primary_record.clone())),
         isolated_operation: None,
         created_at: Utc::now().to_rfc3339(),
@@ -103,6 +115,7 @@ impl<'a> AutoCompiler<'a> {
         task_name: task_name.clone(),
         reason_code: param_eval.reason_code,
         reason_description: param_eval.message,
+        execution_mode: target_mode,
         source_trajectory: Some(Box::new(primary_record.clone())),
         isolated_operation: None,
         created_at: Utc::now().to_rfc3339(),
@@ -150,6 +163,7 @@ impl<'a> AutoCompiler<'a> {
         task_name: task_name.clone(),
         reason_code: blast_eval.reason_code,
         reason_description: blast_eval.message,
+        execution_mode: target_mode,
         source_trajectory: Some(Box::new(primary_record.clone())),
         isolated_operation: None,
         created_at: Utc::now().to_rfc3339(),
@@ -166,12 +180,38 @@ impl<'a> AutoCompiler<'a> {
       serde_json::json!({ "approved_steps": operation_steps.len() }),
     );
 
-    // Step 5: Final Operation Assembly
+    // Step 5: Mode Derivation & Execution Mode Gate
     let mut tags = Vec::new();
     if has_unverified {
       tags.push("unverified-step".to_string());
     }
 
+    let mode = target_mode.unwrap_or_else(|| gate_derive::derive_mode_from_steps(&operation_steps));
+    let mode_eval = compile_gate::evaluate_execution_mode_gate(mode, &operation_steps, &tags);
+    if !mode_eval.passed {
+      self.logger.log(
+        DecisionCategory::Compilation,
+        DecisionAction::Rejected,
+        mode_eval.reason_code,
+        task_name,
+        None,
+        &mode_eval.message,
+        serde_json::json!({ "mode": mode.as_str(), "steps_count": operation_steps.len() }),
+      );
+
+      return Err(ManualReviewItem {
+        id: format!("review_{}", Utc::now().timestamp_millis()),
+        task_name: task_name.clone(),
+        reason_code: mode_eval.reason_code,
+        reason_description: mode_eval.message,
+        execution_mode: Some(mode),
+        source_trajectory: Some(Box::new(primary_record.clone())),
+        isolated_operation: None,
+        created_at: Utc::now().to_rfc3339(),
+      });
+    }
+
+    // Step 6: Final Operation Assembly
     let operation_name = if task_name.contains("播放") || task_name.contains("playback") {
       "qqmusic.prepare_playback".to_string()
     } else {
@@ -179,9 +219,10 @@ impl<'a> AutoCompiler<'a> {
     };
 
     let op_def = OperationDef {
-      schema_version: "auv.operation.v1".to_string(),
+      schema_version: OPERATION_SCHEMA_VERSION.to_string(),
       name: operation_name.clone(),
       description: primary_record.metadata.instruction.clone(),
+      execution_mode: mode,
       compilation_metadata: CompilationMetadata {
         compiler: "auto-loop-v0.1-compiler".to_string(),
         source_record: "vlm_trajectory_record".to_string(),
@@ -207,8 +248,8 @@ impl<'a> AutoCompiler<'a> {
       ReasonCode::CompilationApproved,
       task_name,
       Some(op_def.name.clone()),
-      "All 3 compilation gates passed. Operation successfully compiled for fast-loop deployment.",
-      serde_json::json!({ "step_count": op_def.steps.len(), "tags": op_def.tags }),
+      "All compilation gates passed. Operation successfully compiled for fast-loop deployment.",
+      serde_json::json!({ "step_count": op_def.steps.len(), "execution_mode": op_def.execution_mode.as_str(), "tags": op_def.tags }),
     );
 
     Ok(op_def)

@@ -1,14 +1,26 @@
 //! Storage for active operations, isolated operations, and manual review backlog.
 //!
 //! Provides durable persistence for operation isolation state:
-//! - Auto-isolation records (operation name, reason code, reason description, timestamp) are persisted to disk.
+//! - Auto-isolation records (operation name, reason code, reason description, timestamp, execution mode) are persisted to disk.
 //! - Restarting the catalog reloads persisted isolation records on startup.
 //! - Registration of previously isolated operations is rejected to prevent bad operation revival.
+//! - Enforces fail-closed schema validation: operations without `execution_mode` or with outdated schema_version are rejected.
 
-use crate::models::{ManualReviewItem, OperationDef, PersistedIsolationRecord};
+use crate::compiler::compile_gate;
+use crate::models::{ManualReviewItem, OPERATION_SCHEMA_VERSION, OperationDef, PersistedIsolationRecord, ReasonCode};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Typed failure returned when an operation fails catalog admission or validation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdmissionFailure {
+  pub operation_key: String,
+  pub location: String,
+  pub reason_code: ReasonCode,
+  pub message: String,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct OperationCatalog {
@@ -95,11 +107,13 @@ impl OperationCatalog {
     if let Some(op) = self.active_operations.remove(&name) {
       self.isolated_operations.insert(name.clone(), op);
     }
+    let execution_mode = record.execution_mode.or_else(|| self.isolated_operations.get(&name).map(|op| op.execution_mode));
     let review_item = ManualReviewItem {
       id: format!("persisted_{}", name),
       task_name: name.clone(),
       reason_code: record.reason_code,
       reason_description: record.reason_description.clone(),
+      execution_mode,
       source_trajectory: None,
       isolated_operation: self.isolated_operations.get(&name).map(|op| Box::new(op.clone())),
       created_at: record.isolated_at.clone(),
@@ -125,15 +139,44 @@ impl OperationCatalog {
 
   /// Adds a compiled operation to the active pool.
   ///
-  /// If the operation has already been isolated, registration is rejected
-  /// to prevent reviving a faulty operation.
-  pub fn register_active(&mut self, op: OperationDef) -> bool {
+  /// Enforces fail-closed schema validation:
+  /// - `op.schema_version` must match `OPERATION_SCHEMA_VERSION`.
+  /// - If the operation has already been isolated, registration is rejected
+  ///   to prevent reviving a faulty operation.
+  pub fn register_active(&mut self, op: OperationDef) -> Result<bool, AdmissionFailure> {
+    if op.schema_version != OPERATION_SCHEMA_VERSION {
+      return Err(AdmissionFailure {
+        operation_key: op.name.clone(),
+        location: "register_active".to_string(),
+        reason_code: ReasonCode::RejectSchemaVersionMismatch,
+        message: format!(
+          "Operation '{}' rejected: schema_version '{}' does not match current '{}'",
+          op.name, op.schema_version, OPERATION_SCHEMA_VERSION
+        ),
+      });
+    }
+
     if self.is_isolated(&op.name) {
       self.isolated_operations.insert(op.name.clone(), op);
-      return false;
+      return Ok(false);
     }
     self.active_operations.insert(op.name.clone(), op);
-    true
+    Ok(true)
+  }
+
+  /// Admits an operation from a raw JSON string into the catalog fail-closed.
+  pub fn admit_operation_json(&mut self, raw_json: &str, location: &str) -> Result<OperationDef, AdmissionFailure> {
+    let op = validate_and_parse_operation(raw_json, location)?;
+    let registered = self.register_active(op.clone())?;
+    if !registered {
+      return Err(AdmissionFailure {
+        operation_key: op.name.clone(),
+        location: location.to_string(),
+        reason_code: ReasonCode::AutoIsolatedConsecutiveFailures,
+        message: format!("Operation '{}' is isolated; cannot admit into active catalog", op.name),
+      });
+    }
+    Ok(op)
   }
 
   /// Retrieves an active operation by exact name.
@@ -158,15 +201,23 @@ impl OperationCatalog {
 
   /// Moves an operation from the active pool to the isolated pool upon repeated failures,
   /// persists the isolation record to disk if configured, and queues an item for human inspection.
-  pub fn isolate(&mut self, name: &str, review_item: ManualReviewItem) {
-    if let Some(op) = self.active_operations.remove(name) {
-      self.isolated_operations.insert(name.to_string(), op);
+  pub fn isolate(&mut self, name: &str, mut review_item: ManualReviewItem) {
+    let op = self.active_operations.remove(name);
+    let execution_mode = review_item
+      .execution_mode
+      .or_else(|| op.as_ref().map(|o| o.execution_mode))
+      .or_else(|| self.isolated_operations.get(name).map(|o| o.execution_mode));
+    review_item.execution_mode = execution_mode;
+
+    if let Some(ref o) = op {
+      self.isolated_operations.insert(name.to_string(), o.clone());
     }
 
     let record = PersistedIsolationRecord {
       operation_name: name.to_string(),
       reason_code: review_item.reason_code,
       reason_description: review_item.reason_description.clone(),
+      execution_mode,
       isolated_at: review_item.created_at.clone(),
     };
     self.isolated_records.insert(name.to_string(), record.clone());
@@ -198,4 +249,66 @@ impl OperationCatalog {
   pub fn manual_review_queue(&self) -> &[ManualReviewItem] {
     &self.manual_review_queue
   }
+}
+
+/// Parses and validates an operation definition JSON string fail-closed.
+///
+/// Enforces:
+/// - Missing `execution_mode` field is rejected with `REJECT_MODE_UNDECLARED`.
+/// - Outdated or mismatched `schema_version` is rejected with `REJECT_SCHEMA_VERSION_MISMATCH`.
+/// - Incompatible mode vs gates (e.g. `unverified-step` + Fast) is rejected with `REJECT_MODE_CONFLICT`.
+pub fn validate_and_parse_operation(raw_json: &str, location: &str) -> Result<OperationDef, AdmissionFailure> {
+  let val: serde_json::Value = serde_json::from_str(raw_json).map_err(|e| AdmissionFailure {
+    operation_key: "unknown".to_string(),
+    location: location.to_string(),
+    reason_code: ReasonCode::RejectModeUndeclared,
+    message: format!("Failed to parse operation JSON at {}: {}", location, e),
+  })?;
+
+  let op_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+
+  // 1. Fail-closed: execution_mode MUST be present
+  if val.get("execution_mode").is_none() || val.get("execution_mode").and_then(|v| v.as_str()).is_none() {
+    return Err(AdmissionFailure {
+      operation_key: op_name.clone(),
+      location: location.to_string(),
+      reason_code: ReasonCode::RejectModeUndeclared,
+      message: format!("Operation '{}' rejected at {}: missing required field 'execution_mode'", op_name, location),
+    });
+  }
+
+  // 2. Fail-closed: schema_version check
+  let schema = val.get("schema_version").and_then(|v| v.as_str()).unwrap_or("");
+  if schema != OPERATION_SCHEMA_VERSION {
+    return Err(AdmissionFailure {
+      operation_key: op_name.clone(),
+      location: location.to_string(),
+      reason_code: ReasonCode::RejectSchemaVersionMismatch,
+      message: format!(
+        "Operation '{}' rejected at {}: schema_version '{}' does not match current '{}'",
+        op_name, location, schema, OPERATION_SCHEMA_VERSION
+      ),
+    });
+  }
+
+  // 3. Deserialize into typed OperationDef
+  let op_def: OperationDef = serde_json::from_value(val).map_err(|e| AdmissionFailure {
+    operation_key: op_name.clone(),
+    location: location.to_string(),
+    reason_code: ReasonCode::RejectModeUndeclared,
+    message: format!("Operation '{}' deserialization failed at {}: {}", op_name, location, e),
+  })?;
+
+  // 4. Validate execution mode gates
+  let mode_eval = compile_gate::evaluate_execution_mode_gate(op_def.execution_mode, &op_def.steps, &op_def.tags);
+  if !mode_eval.passed {
+    return Err(AdmissionFailure {
+      operation_key: op_def.name.clone(),
+      location: location.to_string(),
+      reason_code: mode_eval.reason_code,
+      message: mode_eval.message,
+    });
+  }
+
+  Ok(op_def)
 }

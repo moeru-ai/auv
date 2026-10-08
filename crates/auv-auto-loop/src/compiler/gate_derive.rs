@@ -6,8 +6,15 @@
 //! - WGC -> SSIM / histogram / non-black pixel ratio (strictly forbids pixel hash).
 //! - Unknown/unsupported -> Marked as `unverified-step` with `UnverifiedFallback`,
 //!   which triggers strict runtime mode (single failure -> instant escalation + isolation).
+//!
+//! Gate template to execution mode mapping:
+//! - `TitleChangeGate(require_title_change=true)` -> Verified
+//! - `StatusAndVolumeGate` / `SmtcSessionPresent` / `WgcAliveGate` -> Verified
+//! - Pure action dispatch without effect gate -> Fast candidate (subject to blast-radius approval)
+//! - Blast-radius high risk actions (delete/send/sys-config) -> constructively barred from Fast
+//! - `unverified-step` -> Verified only (rejected with Fast at compilation gate)
 
-use crate::models::{OperationStepDef, TrajectoryStep, VerificationGateDef};
+use crate::models::{ExecutionMode, OperationStepDef, TrajectoryStep, VerificationGateDef};
 
 /// Derives an operation step definition and its verification gate from a trajectory step.
 pub fn derive_step_gate(step: &TrajectoryStep, app_id: &str) -> OperationStepDef {
@@ -168,4 +175,45 @@ fn extract_volume_from_step(step: &TrajectoryStep) -> Option<f64> {
     }
   }
   None
+}
+
+/// Derives the execution mode required by a slice of compiled steps.
+///
+/// Rules:
+/// - If any step requires effect verification (`TitleChangeGate(require_title_change=true)`,
+///   `StatusAndVolumeGate`, `WgcAliveGate`, `SmtcSessionPresent`, etc.) or is unverified,
+///   the operation requires `ExecutionMode::Verified`.
+/// - Pure action dispatch with zero effect verification gates is a candidate for `ExecutionMode::Fast`.
+pub fn derive_mode_from_steps(steps: &[OperationStepDef]) -> ExecutionMode {
+  for step in steps {
+    if step.is_unverified {
+      return ExecutionMode::Verified;
+    }
+    match &step.verification_gate {
+      VerificationGateDef::TitleChangeGate {
+        require_title_change: true,
+        ..
+      } => {
+        return ExecutionMode::Verified;
+      }
+      VerificationGateDef::StatusAndVolumeGate { .. } => {
+        return ExecutionMode::Verified;
+      }
+      VerificationGateDef::WgcAliveGate { .. } => {
+        return ExecutionMode::Verified;
+      }
+      VerificationGateDef::SmtcSessionPresent { .. } => {
+        return ExecutionMode::Verified;
+      }
+      VerificationGateDef::UnverifiedFallback { .. } => {
+        return ExecutionMode::Verified;
+      }
+      VerificationGateDef::TitleChangeGate {
+        require_title_change: false,
+        ..
+      } => {}
+      VerificationGateDef::CustomAssertion { .. } => {}
+    }
+  }
+  ExecutionMode::Fast
 }

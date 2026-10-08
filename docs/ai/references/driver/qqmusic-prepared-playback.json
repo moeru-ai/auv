@@ -1,7 +1,8 @@
 {
-  "schema_version": "auv.operation.v1",
+  "schema_version": "auv.operation.v2",
   "name": "qqmusic.prepare_playback",
   "description": "Prepare QQ Music playback: volume 40%, skip next, ensure playing, verify window alive",
+  "execution_mode": "verified",
   "compilation_metadata": {
     "compiler": "human-manual-compilation",
     "source_record": "2026-10-04-qqmusic-vlm-record.json",

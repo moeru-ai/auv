@@ -409,9 +409,58 @@ In `crates/auv-driver-windows/src/wgc.rs`:
 - `docs/ai/references/driver/2026-10-07-windows-tail-warm-fast-20x.jsonl`: 20x warm Fast records with play fire-and-forget (P50 8.68ms, P95 29.70ms, Mean 15.71ms, 16 play calls dispatched without blocking).
 - `docs/ai/references/driver/2026-10-07-windows-tail-cold-fast-10x.jsonl`: 10x independent cold process Fast runs with eager prewarm (P50 24.44ms, P95 41.59ms, Mean 27.52ms, `wgc_ms` P50 2.51ms).
 - `docs/ai/references/driver/2026-10-07-spike-verify-experiments.jsonl`: 96x live single-variable runs across skip intervals, process lifecycles, playback positions, and event arrival deltas.
-- `docs/ai/references/driver/2026-10-07-verified-fast-path-spike.md`: Detailed spike report on Step 3 bimodal distribution, limit cycle oscillation, and NO-GO verdict.
+---
 
+## Phase 7 — Compiled-Operation Execution-Mode Schema & Routing (2026-10-08)
 
+### 1. Objective & Decision (Locked 2026-10-08)
 
+- **Goal**: Introduce explicit execution mode semantics (`Fast` vs `Verified`) to `OperationDef` schema, compilation gates, catalog admission, scheduler matching, and runtime execution.
+- **Fail-Closed Decision**: Operations lacking `execution_mode` fail immediately during compilation or catalog admission. Missing modes are **never defaulted to Verified** and **never silently filled**.
+- **Schema Version**: Bumped to `auv.operation.v2`. Operations with legacy `auv.operation.v1` or missing versions are rejected fail-closed with `REJECT_SCHEMA_VERSION_MISMATCH`.
 
+---
 
+### 2. Architecture & Rules
+
+#### 2.1 Schema Definition (`models.rs`)
+- `ExecutionMode`: Enum `Fast` | `Verified`. Required on `OperationDef` without serde default.
+- Rejection codes added:
+  - `REJECT_MODE_UNDECLARED`: Operation definition lacks `execution_mode`.
+  - `REJECT_MODE_CONFLICT`: Incompatible mode requested or derived for operation gates.
+  - `REJECT_SCHEMA_VERSION_MISMATCH`: Operation schema version is not `auv.operation.v2`.
+  - `MODE_MISMATCH_ESCALATE_VLM`: Fast mode requested for a Verified operation; intercepted to escalate to VLM with zero side-effects.
+
+#### 2.2 Compilation Gates & Mode Derivation (`compiler/`)
+- `derive_mode_from_steps`: Automatically infers operation mode from step gates. Steps containing `TitleChangeGate(require_title_change=true)`, `StatusAndVolumeGate`, or `UnverifiedFallback` require `Verified` mode.
+- `evaluate_execution_mode_gate`:
+  - Rejects `unverified-step` tag or `is_unverified: true` with `Fast` mode (`REJECT_MODE_CONFLICT`).
+  - Rejects destructive high-risk actions (delete, format, drop) with `Fast` mode (`REJECT_BLAST_RADIUS_VIOLATION` / `REJECT_MODE_CONFLICT`).
+  - Rejects `TitleChangeGate(require_title_change=true)` with `Fast` mode.
+
+#### 2.3 Scheduler Matching & Zero Side-Effects Invariant (`scheduler/`)
+- `TaskRequest` carries optional `requested_mode: Option<ExecutionMode>`.
+- In `FastLoopScheduler::schedule`:
+  - When exact key or candidate matches an operation requiring `Verified` mode while `requested_mode == Some(ExecutionMode::Fast)`, scheduler intercepts execution, logs `MODE_MISMATCH_ESCALATE_VLM`, and returns `selected_operation: None`.
+  - **Zero Side-Effects Guarantee**: No commands or driver actions are dispatched.
+
+#### 2.4 Catalog Admission (`catalog.rs`)
+- `admit_operation_json` and `register_active` validate schema version `auv.operation.v2` and require `execution_mode`.
+- Missing fields reject the operation into `ManualReviewItem` with `REJECT_MODE_UNDECLARED` and location tracking.
+
+#### 2.5 Runtime Enforcement (`runtime/executor.rs`)
+- `ExecutionResult::Success`: In `Fast` mode, `confirmed` is constructively clamped to `false`.
+- `execute_fast`: Attempting to execute a `Verified` operation via the fast path fails immediately with `ModeConflictError` before calling action sinks.
+
+---
+
+### 3. Verification & Acceptance Criteria
+
+All 8 acceptance criteria verified via 15 acceptance tests in `crates/auv-auto-loop/tests/acceptance_test.rs`:
+1. **Missing `execution_mode`**: Serde deserialization fails, and catalog admission rejects with `REJECT_MODE_UNDECLARED` (`test_10`).
+2. **Mode mismatch interception**: Requesting Fast for a Verified operation returns `None`, logs `MODE_MISMATCH_ESCALATE_VLM`, and dispatches zero commands (`test_11`).
+3. **Fast mode confirmation invariant**: `ExecutionResult::confirmed()` is strictly `false` under Fast mode (`test_12`).
+4. **High-risk actions barred from Fast**: Destructive actions fail compilation when targeted for Fast mode (`test_13`).
+5. **Unverified step barred from Fast**: `unverified-step` tags with Fast mode are rejected during compilation (`test_14`).
+6. **Schema v1 migration rejected**: Legacy `auv.operation.v1` operations are rejected with `REJECT_SCHEMA_VERSION_MISMATCH` (`test_15`).
+7. **Existing regression coverage**: All 9 prior acceptance tests updated to `auv.operation.v2` and pass cleanly (`tests 1–9`).

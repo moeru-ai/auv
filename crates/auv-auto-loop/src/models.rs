@@ -20,6 +20,12 @@ pub enum ReasonCode {
   BlastRadiusApproved,
   /// Blast-radius gate failed: operation contains non-whitelisted/destructive actions (delete, send, sys-config).
   RejectBlastRadiusViolation,
+  /// Operation definition lacks required execution_mode field.
+  RejectModeUndeclared,
+  /// Operation definition has conflict between declared mode and its gates/actions.
+  RejectModeConflict,
+  /// Operation schema_version does not match current supported version.
+  RejectSchemaVersionMismatch,
   /// Auto compilation gate fully passed: all 3 sub-gates satisfied, approved for activation.
   CompilationApproved,
 
@@ -32,6 +38,8 @@ pub enum ReasonCode {
   PreconditionPassed,
   /// Strict preconditions failed: intercepted false candidate execution.
   PreconditionMismatch,
+  /// Task requested Fast execution mode but candidate requires Verified mode. Zero commands dispatched.
+  ModeMismatchEscalateVlm,
   /// Scheduler miss: task not in catalog or candidates failed preconditions, escalate to VLM.
   SchedulerMissEscalateVlm,
 
@@ -57,11 +65,15 @@ impl ReasonCode {
       Self::RejectForbiddenParameterization => "REJECT_FORBIDDEN_PARAMETERIZATION",
       Self::BlastRadiusApproved => "BLAST_RADIUS_APPROVED",
       Self::RejectBlastRadiusViolation => "REJECT_BLAST_RADIUS_VIOLATION",
+      Self::RejectModeUndeclared => "REJECT_MODE_UNDECLARED",
+      Self::RejectModeConflict => "REJECT_MODE_CONFLICT",
+      Self::RejectSchemaVersionMismatch => "REJECT_SCHEMA_VERSION_MISMATCH",
       Self::CompilationApproved => "COMPILATION_APPROVED",
       Self::ExactKeyMatch => "EXACT_KEY_MATCH",
       Self::EmbeddingTop3Candidate => "EMBEDDING_TOP3_CANDIDATE",
       Self::PreconditionPassed => "PRECONDITION_PASSED",
       Self::PreconditionMismatch => "PRECONDITION_MISMATCH",
+      Self::ModeMismatchEscalateVlm => "MODE_MISMATCH_ESCALATE_VLM",
       Self::SchedulerMissEscalateVlm => "SCHEDULER_MISS_ESCALATE_VLM",
       Self::GatePassed => "GATE_PASSED",
       Self::GateFailed => "GATE_FAILED",
@@ -161,11 +173,33 @@ pub struct DroppedStep {
 // Operation Specification Models (Compiled Artifact)
 // ==============================================================================
 
+pub const OPERATION_SCHEMA_VERSION: &str = "auv.operation.v2";
+
+/// Execution mode for compiled operations.
+/// - Fast: Action dispatch only (eventual consistency), confirmed is ALWAYS false.
+/// - Verified: Effect confirmed via explicit verification gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMode {
+  Fast,
+  Verified,
+}
+
+impl ExecutionMode {
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Fast => "fast",
+      Self::Verified => "verified",
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OperationDef {
   pub schema_version: String,
   pub name: String,
   pub description: String,
+  pub execution_mode: ExecutionMode,
   pub compilation_metadata: CompilationMetadata,
   pub target: TargetMetadata,
   #[serde(default)]
@@ -272,6 +306,8 @@ pub struct ManualReviewItem {
   pub task_name: String,
   pub reason_code: ReasonCode,
   pub reason_description: String,
+  #[serde(default)]
+  pub execution_mode: Option<ExecutionMode>,
   pub source_trajectory: Option<Box<TrajectoryRecord>>,
   pub isolated_operation: Option<Box<OperationDef>>,
   pub created_at: String,
@@ -283,5 +319,7 @@ pub struct PersistedIsolationRecord {
   pub operation_name: String,
   pub reason_code: ReasonCode,
   pub reason_description: String,
+  #[serde(default)]
+  pub execution_mode: Option<ExecutionMode>,
   pub isolated_at: String,
 }

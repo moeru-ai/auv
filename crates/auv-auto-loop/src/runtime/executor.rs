@@ -7,7 +7,7 @@
 //! - Zero silent errors: All gate evaluations and isolation events log explicit ReasonCodes.
 
 use crate::decision_log::DecisionLogger;
-use crate::models::{DecisionAction, DecisionCategory, ManualReviewItem, OperationDef, ReasonCode, VerificationGateDef};
+use crate::models::{DecisionAction, DecisionCategory, ExecutionMode, ManualReviewItem, OperationDef, ReasonCode, VerificationGateDef};
 use crate::scheduler::catalog::OperationCatalog;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -42,10 +42,12 @@ impl Default for RuntimeEnvironment {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionResult {
   Success {
     steps_executed: usize,
+    execution_mode: ExecutionMode,
+    confirmed: bool,
   },
   GateFailed {
     step_id: String,
@@ -57,6 +59,39 @@ pub enum ExecutionResult {
     reason: String,
     isolated: bool,
   },
+  ModeConflictError {
+    operation_name: String,
+    message: String,
+  },
+}
+
+impl ExecutionResult {
+  /// Constructs a success result enforcing that Fast mode is NEVER confirmed.
+  pub fn success(steps_executed: usize, mode: ExecutionMode, confirmed: bool) -> Self {
+    let effective_confirmed = match mode {
+      ExecutionMode::Fast => false,
+      ExecutionMode::Verified => confirmed,
+    };
+    Self::Success {
+      steps_executed,
+      execution_mode: mode,
+      confirmed: effective_confirmed,
+    }
+  }
+
+  pub fn confirmed(&self) -> bool {
+    match self {
+      Self::Success { confirmed, .. } => *confirmed,
+      _ => false,
+    }
+  }
+
+  pub fn execution_mode(&self) -> Option<ExecutionMode> {
+    match self {
+      Self::Success { execution_mode, .. } => Some(*execution_mode),
+      _ => None,
+    }
+  }
 }
 
 pub struct RuntimeExecutor<'a> {
@@ -75,6 +110,25 @@ impl<'a> RuntimeExecutor<'a> {
   /// Executes an operation step-by-step against the runtime environment.
   pub fn execute(&mut self, op: &OperationDef, env: &mut RuntimeEnvironment, catalog: &mut OperationCatalog) -> ExecutionResult {
     let task_id = &op.name;
+
+    // Fast mode: Dispatch actions only, never wait on verification gates; confirmed is ALWAYS false
+    if op.execution_mode == ExecutionMode::Fast {
+      for step in &op.steps {
+        apply_action_effects(&step.action, env);
+      }
+      self.logger.log(
+        DecisionCategory::Runtime,
+        DecisionAction::Executed,
+        ReasonCode::GatePassed,
+        task_id,
+        Some(op.name.clone()),
+        format!("Fast mode: dispatched {} actions with eventual consistency (confirmed: false)", op.steps.len()),
+        serde_json::json!({ "execution_mode": "fast", "confirmed": false }),
+      );
+      return ExecutionResult::success(op.steps.len(), ExecutionMode::Fast, false);
+    }
+
+    // Verified mode: Dispatch actions and verify each gate strictly
     let is_strict_mode = op.tags.iter().any(|t| t == "unverified-step") || op.steps.iter().any(|s| s.is_unverified);
 
     for step in &op.steps {
@@ -152,9 +206,32 @@ impl<'a> RuntimeExecutor<'a> {
     // All steps passed: reset consecutive failure counter
     self.failure_tracker.insert(op.name.clone(), 0);
 
-    ExecutionResult::Success {
-      steps_executed: op.steps.len(),
+    let confirmed = op.execution_mode == ExecutionMode::Verified;
+    ExecutionResult::success(op.steps.len(), op.execution_mode, confirmed)
+  }
+
+  /// Executes an operation explicitly via the fast path.
+  ///
+  /// If the operation requires Verified mode, execution is rejected fail-closed with zero side-effects.
+  pub fn execute_fast(&mut self, op: &OperationDef, env: &mut RuntimeEnvironment, catalog: &mut OperationCatalog) -> ExecutionResult {
+    if op.execution_mode == ExecutionMode::Verified {
+      self.logger.log(
+        DecisionCategory::Runtime,
+        DecisionAction::Escalated,
+        ReasonCode::ModeMismatchEscalateVlm,
+        &op.name,
+        Some(op.name.clone()),
+        format!("Fast path execution invoked for Verified operation '{}'; escalating to VLM without commands dispatched.", op.name),
+        serde_json::json!({ "op_mode": "verified", "requested_path": "fast", "zero_side_effects": true }),
+      );
+
+      return ExecutionResult::ModeConflictError {
+        operation_name: op.name.clone(),
+        message: format!("Fast path cannot execute Verified operation '{}'", op.name),
+      };
     }
+
+    self.execute(op, env, catalog)
   }
 
   fn isolate_operation(&mut self, op: &OperationDef, catalog: &mut OperationCatalog, failed_step_id: &str, failure_detail: &str) {
@@ -183,6 +260,7 @@ impl<'a> RuntimeExecutor<'a> {
       task_name: op.name.clone(),
       reason_code: ReasonCode::AutoIsolatedConsecutiveFailures,
       reason_description: format!("Failed at step '{}': {}", failed_step_id, failure_detail),
+      execution_mode: Some(op.execution_mode),
       source_trajectory: None,
       isolated_operation: Some(Box::new(op.clone())),
       created_at: Utc::now().to_rfc3339(),

@@ -11,7 +11,10 @@
 
 use auv_auto_loop::compiler::AutoCompiler;
 use auv_auto_loop::decision_log::DecisionLogger;
-use auv_auto_loop::models::{ReasonCode, TrajectoryRecord, TrajectoryStep, VerificationGateDef};
+use auv_auto_loop::models::{
+  CompilationMetadata, ExecutionMode, OPERATION_SCHEMA_VERSION, OperationDef, OperationStepDef, ReasonCode, TargetMetadata,
+  TrajectoryRecord, TrajectoryStep, VerificationGateDef,
+};
 use auv_auto_loop::runtime::{ExecutionResult, RuntimeEnvironment, RuntimeExecutor};
 use auv_auto_loop::scheduler::{FastLoopScheduler, OperationCatalog, TaskRequest};
 use std::collections::HashMap;
@@ -32,7 +35,8 @@ fn test_1_clean_trajectory_auto_compilation() {
   let op = compiler.compile(&record, None).expect("Clean trajectory must compile automatically without human intervention");
 
   // Semantic checks against manual YAML
-  assert_eq!(op.schema_version, "auv.operation.v1");
+  assert_eq!(op.schema_version, OPERATION_SCHEMA_VERSION);
+  assert_eq!(op.execution_mode, ExecutionMode::Verified);
   assert_eq!(op.name, "qqmusic.prepare_playback");
   assert_eq!(op.target.app_name, "QQMusic.exe");
   assert_eq!(op.target.backend, "windows.smtc+coreaudio+wgc");
@@ -192,7 +196,7 @@ fn test_5_scheduler_exact_key_hit_vs_embedding_precondition_interception() {
   let op = compiler.compile(&record, None).unwrap();
 
   let mut catalog = OperationCatalog::new();
-  catalog.register_active(op);
+  catalog.register_active(op).unwrap();
 
   let scheduler = FastLoopScheduler::new(&logger);
 
@@ -204,6 +208,7 @@ fn test_5_scheduler_exact_key_hit_vs_embedding_precondition_interception() {
     app_name: "QQMusic.exe".to_string(),
     task_name: "prepare_playback".to_string(),
     instruction: "把音乐调好：音量40%，切到下一首，确保在播".to_string(),
+    requested_mode: None,
     current_context: valid_context,
     embedding_vector: None,
   };
@@ -227,6 +232,7 @@ fn test_5_scheduler_exact_key_hit_vs_embedding_precondition_interception() {
     app_name: "QQMusic.exe".to_string(),
     task_name: "long_tail_random_task".to_string(),
     instruction: "把音乐调好：音量40%".to_string(),
+    requested_mode: None,
     current_context: mismatch_context,
     embedding_vector: Some(vec![0.5, 0.5, 0.5, 0.5]),
   };
@@ -251,7 +257,7 @@ fn test_6_runtime_fault_injection_auto_isolation_and_vlm_routing() {
   let op = compiler.compile(&record, None).unwrap();
 
   let mut catalog = OperationCatalog::new();
-  catalog.register_active(op.clone());
+  catalog.register_active(op.clone()).unwrap();
 
   let mut executor = RuntimeExecutor::new(&logger);
 
@@ -311,6 +317,7 @@ fn test_6_runtime_fault_injection_auto_isolation_and_vlm_routing() {
     app_name: "QQMusic.exe".to_string(),
     task_name: "prepare_playback".to_string(),
     instruction: "把音乐调好：音量40%，切到下一首，确保在播".to_string(),
+    requested_mode: None,
     current_context: context,
     embedding_vector: None,
   };
@@ -330,7 +337,7 @@ fn test_7_zero_silent_errors_invariant() {
 
   let op = compiler.compile(&record, None).unwrap();
   let mut catalog = OperationCatalog::new();
-  catalog.register_active(op.clone());
+  catalog.register_active(op.clone()).unwrap();
 
   let mut executor = RuntimeExecutor::new(&logger);
   let mut env = RuntimeEnvironment::default();
@@ -371,7 +378,7 @@ fn test_8_strict_mode_unverified_step_instant_isolation() {
   assert!(op.steps.iter().any(|s| s.is_unverified));
 
   let mut catalog = OperationCatalog::new();
-  catalog.register_active(op.clone());
+  catalog.register_active(op.clone()).unwrap();
 
   let mut executor = RuntimeExecutor::new(&logger);
 
@@ -407,7 +414,7 @@ fn test_9_isolation_persistence_across_restarts() {
   assert_eq!(catalog.persistence_path(), Some(persistence_path.as_path()));
   assert!(!catalog.is_isolated(&op.name));
 
-  let activated = catalog.register_active(op.clone());
+  let activated = catalog.register_active(op.clone()).expect("register_active must succeed");
   assert!(activated);
   assert!(catalog.get_active(&op.name).is_some());
 
@@ -453,11 +460,12 @@ fn test_9_isolation_persistence_across_restarts() {
   let isolation_rec = restarted_catalog.get_isolated_record(&op.name).expect("Persisted isolation record must be present");
   assert_eq!(isolation_rec.operation_name, op.name);
   assert_eq!(isolation_rec.reason_code, ReasonCode::AutoIsolatedConsecutiveFailures);
+  assert_eq!(isolation_rec.execution_mode, Some(ExecutionMode::Verified));
   assert!(!isolation_rec.isolated_at.is_empty());
 
   // Step 5: Prevent bad operation revival!
   // Attempting to register the bad operation into active pool must be rejected.
-  let revived = restarted_catalog.register_active(op.clone());
+  let revived = restarted_catalog.register_active(op.clone()).expect("revival check must succeed");
   assert!(!revived, "Registering an isolated operation into active pool must be rejected");
   assert!(restarted_catalog.get_active(&op.name).is_none(), "Bad operation must NOT be in active pool");
   assert!(restarted_catalog.is_isolated(&op.name), "Bad operation must remain isolated");
@@ -471,6 +479,7 @@ fn test_9_isolation_persistence_across_restarts() {
     app_name: "QQMusic.exe".to_string(),
     task_name: "prepare_playback".to_string(),
     instruction: "把音乐调好：音量40%，切到下一首，确保在播".to_string(),
+    requested_mode: None,
     current_context: context,
     embedding_vector: None,
   };
@@ -479,4 +488,248 @@ fn test_9_isolation_persistence_across_restarts() {
   assert!(outcome.selected_operation.is_none(), "Isolated operation must not be selected");
   assert_eq!(outcome.reason_code, ReasonCode::EscalateToVlm, "Must escalate to VLM immediately without execution");
   assert!(!outcome.embedding_called, "Exact isolated key must not call embeddings");
+}
+
+#[test]
+fn test_10_missing_execution_mode_rejected_fail_closed() {
+  let mut catalog = OperationCatalog::new();
+
+  // Construct JSON omitting the required execution_mode field
+  let raw_json_no_mode = serde_json::json!({
+    "schema_version": "auv.operation.v2",
+    "name": "qqmusic.test_op_no_mode",
+    "description": "Test operation without execution_mode",
+    "compilation_metadata": {
+      "compiler": "test",
+      "source_record": "test",
+      "date": "2026-10-08",
+      "crux_goal": "test"
+    },
+    "target": {
+      "app_name": "QQMusic.exe",
+      "backend": "windows.smtc"
+    },
+    "steps": []
+  })
+  .to_string();
+
+  // Serde deserialization must fail directly
+  assert!(serde_json::from_str::<OperationDef>(&raw_json_no_mode).is_err(), "Missing execution_mode must fail serde deserialization");
+
+  // Admission via catalog must be rejected fail-closed with REJECT_MODE_UNDECLARED
+  let admission_res = catalog.admit_operation_json(&raw_json_no_mode, "catalog_entry_10");
+  assert!(admission_res.is_err());
+  let failure = admission_res.unwrap_err();
+  assert_eq!(failure.reason_code, ReasonCode::RejectModeUndeclared);
+  assert_eq!(failure.operation_key, "qqmusic.test_op_no_mode");
+  assert_eq!(failure.location, "catalog_entry_10");
+  assert!(failure.message.contains("missing required field 'execution_mode'"));
+
+  // Must not be added to active operations
+  assert!(catalog.get_active("qqmusic.test_op_no_mode").is_none());
+}
+
+#[test]
+fn test_11_mode_mismatch_rejected_with_zero_side_effects() {
+  let logger = DecisionLogger::new();
+  let compiler = AutoCompiler::new(&logger);
+  let record = load_clean_record();
+  let op = compiler.compile(&record, None).unwrap();
+  assert_eq!(op.execution_mode, ExecutionMode::Verified);
+
+  let mut catalog = OperationCatalog::new();
+  catalog.register_active(op.clone()).unwrap();
+
+  let scheduler = FastLoopScheduler::new(&logger);
+  let mut context = HashMap::new();
+  context.insert("App.ProcessName".to_string(), serde_json::json!("QQMusic.exe"));
+
+  // Request Fast execution mode for a Verified operation
+  let req = TaskRequest {
+    app_name: "QQMusic.exe".to_string(),
+    task_name: "prepare_playback".to_string(),
+    instruction: "把音乐调好：音量40%".to_string(),
+    requested_mode: Some(ExecutionMode::Fast),
+    current_context: context,
+    embedding_vector: None,
+  };
+
+  let outcome = scheduler.schedule(&req, &catalog);
+
+  // Must NOT select operation; must escalate with MODE_MISMATCH_ESCALATE_VLM
+  assert!(outcome.selected_operation.is_none(), "Verified operation must never be scheduled for Fast mode");
+  assert_eq!(outcome.reason_code, ReasonCode::ModeMismatchEscalateVlm);
+  assert!(outcome.message.contains("Mode mismatch"));
+
+  // Check structured decision log
+  let mismatch_logs = logger.find_by_reason(ReasonCode::ModeMismatchEscalateVlm);
+  assert_eq!(mismatch_logs.len(), 1);
+  assert_eq!(mismatch_logs[0].details.get("zero_side_effects").and_then(|v| v.as_bool()), Some(true));
+
+  // RuntimeExecutor fast-path execution on Verified op must also fail with ModeConflictError
+  let mut executor = RuntimeExecutor::new(&logger);
+  let mut env = RuntimeEnvironment::default();
+  let initial_volume = env.current_volume;
+  let initial_title = env.current_title.clone();
+
+  let exec_res = executor.execute_fast(&op, &mut env, &mut catalog);
+  assert!(matches!(exec_res, ExecutionResult::ModeConflictError { .. }));
+
+  // Assert ZERO side-effects: environment unchanged, no commands executed
+  assert_eq!(env.current_volume, initial_volume);
+  assert_eq!(env.current_title, initial_title);
+}
+
+#[test]
+fn test_12_fast_mode_never_reports_confirmed_true() {
+  let logger = DecisionLogger::new();
+  let mut catalog = OperationCatalog::new();
+  let mut executor = RuntimeExecutor::new(&logger);
+
+  // Construct a valid Fast-mode operation with pure action dispatch steps
+  let fast_op = OperationDef {
+    schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+    name: "qqmusic.fast_action".to_string(),
+    description: "Fast action dispatch without effect gates".to_string(),
+    execution_mode: ExecutionMode::Fast,
+    compilation_metadata: CompilationMetadata {
+      compiler: "test".to_string(),
+      source_record: "test".to_string(),
+      date: "2026-10-08".to_string(),
+      crux_goal: "fast dispatch".to_string(),
+    },
+    target: TargetMetadata {
+      app_name: "QQMusic.exe".to_string(),
+      backend: "windows.smtc".to_string(),
+    },
+    preconditions: vec![],
+    parameters: vec![],
+    steps: vec![OperationStepDef {
+      id: "step_1_dispatch".to_string(),
+      name: "Play dispatch".to_string(),
+      description: "Trigger play dispatch".to_string(),
+      action: serde_json::json!({ "type": "play", "app_id": "QQMusic.exe" }),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    }],
+    tags: vec![],
+  };
+
+  catalog.register_active(fast_op.clone()).unwrap();
+
+  let mut env = RuntimeEnvironment::default();
+  let res = executor.execute(&fast_op, &mut env, &mut catalog);
+
+  // Assert execution result confirmed is strictly false
+  match res {
+    ExecutionResult::Success {
+      execution_mode,
+      confirmed,
+      ..
+    } => {
+      assert_eq!(execution_mode, ExecutionMode::Fast);
+      assert!(!confirmed, "REDLINE: Fast mode result must NEVER report confirmed: true");
+    }
+    other => panic!("Expected Success, got {:?}", other),
+  }
+  assert!(!res.confirmed(), "res.confirmed() must be false for Fast mode");
+
+  // Even if someone explicitly passes confirmed: true to ExecutionResult::success,
+  // constructor must clamp/force confirmed to false in Fast mode!
+  let forced = ExecutionResult::success(1, ExecutionMode::Fast, true);
+  assert!(!forced.confirmed(), "ExecutionResult constructor must force confirmed: false for Fast mode");
+}
+
+#[test]
+fn test_13_high_risk_actions_barred_from_fast_mode() {
+  let logger = DecisionLogger::new();
+  let compiler = AutoCompiler::new(&logger);
+  let mut bad_record = load_clean_record();
+
+  // Inject destructive deletion action
+  bad_record.structured_trajectory.push(TrajectoryStep {
+    step: 6,
+    intent: "Delete user cache directory".to_string(),
+    action: "delete C:\\Users\\QQMusic\\cache".to_string(),
+    perception: "File system deletion".to_string(),
+    result: serde_json::json!({ "deleted": true }),
+    pre_state: None,
+    post_state: None,
+  });
+
+  // Attempt to compile in Fast mode -> Barred!
+  let res_fast = compiler.compile_with_mode(&bad_record, None, Some(ExecutionMode::Fast));
+  assert!(res_fast.is_err(), "High-risk actions must be barred from Fast mode");
+  let review_item = res_fast.unwrap_err();
+  assert!(review_item.reason_code == ReasonCode::RejectBlastRadiusViolation || review_item.reason_code == ReasonCode::RejectModeConflict);
+}
+
+#[test]
+fn test_14_unverified_step_with_fast_mode_rejected_by_compilation_gate() {
+  let logger = DecisionLogger::new();
+  let compiler = AutoCompiler::new(&logger);
+  let mut custom_record = load_clean_record();
+
+  // Custom uncovered step -> produces unverified-step
+  custom_record.structured_trajectory.push(TrajectoryStep {
+    step: 6,
+    intent: "Inspect unknown layout".to_string(),
+    action: "custom_unknown_action --opaque".to_string(),
+    perception: "Opaque data".to_string(),
+    result: serde_json::json!({ "ok": true }),
+    pre_state: None,
+    post_state: None,
+  });
+
+  // Attempt to compile unverified-step in Fast mode -> Compilation gate rejects!
+  let res = compiler.compile_with_mode(&custom_record, None, Some(ExecutionMode::Fast));
+  assert!(res.is_err(), "unverified-step + Fast mode combination must be rejected by compilation gate");
+  let review = res.unwrap_err();
+  assert_eq!(review.reason_code, ReasonCode::RejectModeConflict);
+  assert!(review.reason_description.contains("unverified-step cannot be combined with Fast mode"));
+}
+
+#[test]
+fn test_15_legacy_schema_v1_rejected_fail_closed() {
+  let mut catalog = OperationCatalog::new();
+
+  let v1_json = serde_json::json!({
+    "schema_version": "auv.operation.v1",
+    "name": "qqmusic.legacy_v1_op",
+    "description": "Legacy operation from v1 schema",
+    "execution_mode": "verified",
+    "compilation_metadata": {
+      "compiler": "legacy",
+      "source_record": "legacy",
+      "date": "2026-10-04",
+      "crux_goal": "legacy"
+    },
+    "target": {
+      "app_name": "QQMusic.exe",
+      "backend": "windows.smtc"
+    },
+    "steps": []
+  })
+  .to_string();
+
+  // Admission via catalog must fail fail-closed with REJECT_SCHEMA_VERSION_MISMATCH
+  let res = catalog.admit_operation_json(&v1_json, "catalog_legacy_entry");
+  assert!(res.is_err(), "Legacy schema_version must be rejected fail-closed");
+  let failure = res.unwrap_err();
+  assert_eq!(failure.reason_code, ReasonCode::RejectSchemaVersionMismatch);
+  assert!(failure.message.contains("schema_version 'auv.operation.v1' does not match current 'auv.operation.v2'"));
+
+  // register_active with v1 OperationDef must also be rejected
+  let mut v1_op: OperationDef = serde_json::from_str(&v1_json).unwrap();
+  v1_op.schema_version = "auv.operation.v1".to_string();
+  let reg_res = catalog.register_active(v1_op);
+  assert!(reg_res.is_err(), "register_active must reject v1 schema");
+  assert_eq!(reg_res.unwrap_err().reason_code, ReasonCode::RejectSchemaVersionMismatch);
+
+  // Must not have admitted any active operation
+  assert!(catalog.get_active("qqmusic.legacy_v1_op").is_none());
 }

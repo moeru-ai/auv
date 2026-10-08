@@ -50,6 +50,8 @@ struct CompiledOperation {
   schema_version: String,
   name: String,
   description: String,
+  #[serde(default)]
+  execution_mode: Option<String>,
   compilation_metadata: CompilationMetadata,
   target: TargetMetadata,
   steps: Vec<OperationStepDef>,
