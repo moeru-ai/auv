@@ -334,7 +334,7 @@ fn detect_frame(
 
 #[cfg(unix)]
 pub async fn serve_inherited() -> Result<(), String> {
-  let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
+  let (incoming, shutdown) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
   let service = BalatroDetectionServiceServer::new(Service::default())
     .max_decoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED)
     .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
@@ -352,7 +352,7 @@ pub async fn serve_inherited() -> Result<(), String> {
     .add_service(health)
     .add_service(reflection)
     .add_service(service)
-    .serve_with_incoming_shutdown(incoming, parent_disconnected)
+    .serve_with_incoming_shutdown(incoming, shutdown)
     .await
     .map_err(|error| format!("Balatro Runner transport failed: {error}"))
 }

@@ -449,7 +449,7 @@ fn seek_playback(_position: std::time::Duration, _app_id: &str) -> Result<(), St
 
 #[cfg(unix)]
 pub async fn serve_inherited() -> Result<(), String> {
-  let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
+  let (incoming, shutdown) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
   let (health_reporter, health) = tonic_health::server::health_reporter();
   health_reporter.set_serving::<ApplicationServiceServer<Service>>().await;
   health_reporter.set_serving::<PlayerServiceServer<Service>>().await;
@@ -471,7 +471,7 @@ pub async fn serve_inherited() -> Result<(), String> {
     .add_service(PlaylistServiceServer::new(Service))
     .add_service(RecommendationServiceServer::new(Service))
     .add_service(SongServiceServer::new(Service))
-    .serve_with_incoming_shutdown(incoming, parent_disconnected)
+    .serve_with_incoming_shutdown(incoming, shutdown)
     .await
     .map_err(|error| format!("NetEase Runner transport failed: {error}"))
 }

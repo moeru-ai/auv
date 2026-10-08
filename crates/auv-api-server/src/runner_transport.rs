@@ -28,11 +28,15 @@ pub const RUNNER_IPC_FD: RawFd = 3;
 pub struct InheritedStream {
   inner: tokio::net::UnixStream,
   disconnected: Option<tokio::sync::oneshot::Sender<()>>,
+  termination: Termination,
 }
 
 #[cfg(unix)]
 impl tokio::io::AsyncRead for InheritedStream {
   fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut tokio::io::ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    if self.termination.poll_requested(context) {
+      return Poll::Ready(Ok(()));
+    }
     Pin::new(&mut self.inner).poll_read(context, buffer)
   }
 }
@@ -73,11 +77,15 @@ impl tonic::transport::server::Connected for InheritedStream {
 pub struct InheritedStream {
   inner: tokio::net::windows::named_pipe::NamedPipeClient,
   disconnected: Option<tokio::sync::oneshot::Sender<()>>,
+  termination: Termination,
 }
 
 #[cfg(windows)]
 impl tokio::io::AsyncRead for InheritedStream {
   fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut tokio::io::ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    if self.termination.poll_requested(context) {
+      return Poll::Ready(Ok(()));
+    }
     Pin::new(&mut self.inner).poll_read(context, buffer)
   }
 }
@@ -113,6 +121,32 @@ impl tonic::transport::server::Connected for InheritedStream {
   fn connect_info(&self) -> Self::ConnectInfo {}
 }
 
+/// Ends a Runner's IPC stream when the Runner process is asked to terminate
+/// (`termination::requested`): reads then report end of stream, as if the
+/// parent had disconnected. The server closes the connection, its graceful
+/// shutdown completes instead of waiting on a parent that is still connected,
+/// and the Runner's own cleanup (such as releasing held input) runs.
+struct Termination {
+  requested: Pin<Box<dyn Future<Output = ()> + Send>>,
+  ended: bool,
+}
+
+impl Termination {
+  fn new() -> Self {
+    Self {
+      requested: Box::pin(crate::termination::requested()),
+      ended: false,
+    }
+  }
+
+  fn poll_requested(&mut self, context: &mut Context<'_>) -> bool {
+    if !self.ended && self.requested.as_mut().poll(context).is_ready() {
+      self.ended = true;
+    }
+    self.ended
+  }
+}
+
 /// One adopted daemon connection and a shutdown signal that resolves when the
 /// parent side disconnects.
 #[cfg(any(unix, windows))]
@@ -124,7 +158,8 @@ pub struct InheritedTransport {
 #[cfg(any(unix, windows))]
 impl InheritedTransport {
   /// Splits the transport into tonic's incoming stream and a parent-disconnect
-  /// shutdown signal.
+  /// shutdown signal. A termination request to the Runner process ends the
+  /// stream too (see `Termination`), so it shuts down the same way.
   pub fn into_parts(
     self,
   ) -> (impl tokio_stream::Stream<Item = Result<InheritedStream, std::io::Error>> + Send + 'static, impl Future<Output = ()> + Send + 'static)
@@ -163,6 +198,7 @@ pub fn inherited_transport() -> Result<InheritedTransport, String> {
     stream: InheritedStream {
       inner: stream,
       disconnected: Some(disconnected),
+      termination: Termination::new(),
     },
     parent_disconnected,
   })
@@ -180,6 +216,7 @@ pub fn inherited_transport() -> Result<InheritedTransport, String> {
     stream: InheritedStream {
       inner: stream,
       disconnected: Some(disconnected),
+      termination: Termination::new(),
     },
     parent_disconnected,
   })
@@ -189,3 +226,7 @@ pub fn inherited_transport() -> Result<InheritedTransport, String> {
 pub fn inherited_transport() -> Result<(), String> {
   Err("the inherited Runner transport is not supported on this platform".to_string())
 }
+
+#[cfg(all(test, unix))]
+#[path = "runner_transport_test.rs"]
+mod tests;

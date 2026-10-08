@@ -370,6 +370,51 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   assert!(!discovery.exists(), "daemon must clean up its discovery descriptor");
 }
 
+// ROOT CAUSE:
+//
+// If `auv serve` received SIGTERM (launchd and systemd stop services with
+// it), the process ended with the default action because only Ctrl-C was
+// handled.
+//
+// Before the fix, the Unix socket stayed behind and the next `auv serve`
+// failed with "API Unix socket path already exists". SIGTERM now runs the
+// same graceful shutdown as Ctrl-C.
+#[cfg(unix)]
+#[test]
+fn sigterm_shuts_the_daemon_down_and_removes_its_socket() {
+  let directory = tempfile::tempdir().expect("temporary daemon directory");
+  let socket = directory.path().join("auv.sock");
+  let store = directory.path().join("store");
+  let discovery = directory.path().join("daemon.json");
+  let endpoint = format!("unix://{}", socket.display());
+  let child = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "serve",
+      "--listen",
+      &endpoint,
+      "--store-root",
+      store.to_str().unwrap(),
+      "--discovery-file",
+      discovery.to_str().unwrap(),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("start local daemon");
+  let mut daemon = ChildGuard(child);
+  wait_for_path(&mut daemon.0, &socket);
+  wait_for_path(&mut daemon.0, &discovery);
+
+  let status = Command::new("/bin/kill").args(["-TERM", &daemon.0.id().to_string()]).status().expect("signal daemon");
+  assert!(status.success(), "SIGTERM delivery failed: {status}");
+  let exit = daemon.0.wait().expect("wait for local daemon");
+
+  assert!(exit.success(), "SIGTERM must end the daemon through its graceful shutdown: {exit}");
+  assert!(!socket.exists(), "daemon must clean up its Unix socket on SIGTERM");
+  assert!(!discovery.exists(), "daemon must clean up its discovery descriptor on SIGTERM");
+}
+
 #[cfg(unix)]
 #[test]
 fn local_daemon_routes_runner_grpc_without_claims_or_leases() {

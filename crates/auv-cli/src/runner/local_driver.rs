@@ -2605,7 +2605,7 @@ impl DisplayService for LocalDisplayService {
 ///
 #[cfg(any(unix, windows))]
 pub(super) async fn serve_inherited() -> Result<(), String> {
-  let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
+  let (incoming, shutdown) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
 
   let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
   let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
@@ -2722,7 +2722,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     .add_service(accessibility)
     .add_service(media_control)
     .add_service(overlay)
-    .serve_with_incoming_shutdown(incoming, parent_disconnected)
+    .serve_with_incoming_shutdown(incoming, shutdown)
     .await
     .map_err(|error| format!("Runner transport failed: {error}"));
   let shutdown_result = recent_frames_service.shutdown().await.map_err(|error| format!("recent-frame shutdown failed: {error}"));

@@ -6,6 +6,7 @@
 //! - `method_docs`: long-form method docs and examples, served on request.
 //! - `server`: listener binding, request serving, and control routing.
 //! - `runner_transport`: inherited private IPC for daemon-owned Runners.
+//! - `termination`: termination signals that start a graceful shutdown.
 
 mod authentication;
 pub mod control;
@@ -17,3 +18,4 @@ pub mod reflection;
 mod rest;
 pub mod runner_transport;
 pub mod server;
+pub mod termination;

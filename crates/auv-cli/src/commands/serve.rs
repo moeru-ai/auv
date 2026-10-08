@@ -48,9 +48,8 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   let shutdown = tokio_util::sync::CancellationToken::new();
   let signal = shutdown.clone();
   tokio::spawn(async move {
-    if tokio::signal::ctrl_c().await.is_ok() {
-      signal.cancel();
-    }
+    auv_api_server::termination::requested().await;
+    signal.cancel();
   });
 
   let store_root = args.store_root.map_or_else(|| project_root.join(".auv").join("store"), |path| resolve_path(project_root, &path));
