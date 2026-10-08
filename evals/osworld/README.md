@@ -1,81 +1,210 @@
-# OSWorld on Kubernetes
+# OSWorld desktop on Kubernetes
 
-The script defaults to the classic OSWorld Ubuntu VM: a pinned QEMU container
-plus the official QCOW2 disk, downloaded and verified with SHA256. Use
-`--profile selkies` for the previous HAMi GPU desktop.
+Run these commands from the repository root. The default profile creates the
+classic OSWorld Ubuntu VM using a pinned QEMU runtime and the official QCOW2 disk.
+Use `--profile selkies` for the original Plasma GPU X11 desktop through HAMi DRA.
 
-## Create
+**NOTICE:** This provisions the desktop environment. OSWorld task setup, reset,
+evaluation, and AUV installation/pairing remain separate work.
 
-Requires Bash 3.2+, jq, kubectl, an existing namespace and a Linux amd64 node.
-OSWorld requests 1 CPU, 5 GiB RAM and 40 GiB ephemeral storage. The initial
-12.3 GB download can take several minutes; the default timeout is one hour.
+## Before you start
+
+- **Client:** Bash 3.2+, `kubectl`, and `jq`. Python is not required.
+- **OSWorld:** An existing namespace and Linux amd64 node, scheduling gates
+  (Kubernetes 1.30+), and a NetworkPolicy-enforcing CNI. The node needs registry
+  access; the init container needs access to Hugging Face and its download CDN.
+- **Selkies:** An existing namespace, GPU node, and HAMi DRA with consumable
+  capacity and `resource.k8s.io/v1`. The node needs registry access or a cached image.
+- **Access:** Create/read/delete Pods, exec/logs/port-forward. OSWorld additionally
+  needs NetworkPolicies and Pod patching; Selkies needs Secrets and ResourceClaims.
+
+The OSWorld API and noVNC have no transport authentication. The script creates a
+Pod-owned deny-ingress policy before releasing its scheduling gate. Use a
+namespace without overlapping ingress grants: NetworkPolicies are additive.
+Neither profile creates a Service or Ingress; connect through local tunnels.
+
+## 1. Create
+
+Replace the kubeconfig path, node, and namespace for your cluster:
 
 ```sh
-export KUBECONFIG="$HOME/.kube/config.d/ihome.conf"
+export KUBECONFIG=/path/to/kubeconfig
 ./evals/osworld/scripts/create-on-k8s create \
-  --node neko-gpu-1 --namespace auv-x11-hami-test > desktop.json
+  --node YOUR_NODE --namespace YOUR_NAMESPACE > desktop.json
 ```
 
-- `--profile osworld|selkies`: choose the environment (default: `osworld`).
-- `--image IMAGE`: override the selected profile's container runtime.
-- `--vm-image-url URL --vm-image-sha256 SHA256`: override the OSWorld disk;
-  requires an HTTPS ZIP containing `Ubuntu.qcow2`.
-- `--kvm-resource vendor.example/kvm`: use an existing device plugin supplying
-  `/dev/kvm`. Otherwise QEMU uses slower software emulation.
-- `--timeout SECONDS`: override the startup deadline.
+To create the original GPU desktop, add `--profile selkies`:
 
-Selkies requires HAMi DRA and supports `--gpu-cores`, `--gpu-memory` and
-`--device-class`. Run `create --help` for defaults.
+```sh
+./evals/osworld/scripts/create-on-k8s create --profile selkies \
+  --node YOUR_GPU_NODE --namespace YOUR_NAMESPACE > selkies.json
+```
 
-OSWorld requires scheduling gates (Kubernetes 1.30+) and a NetworkPolicy-enforcing
-CNI. The script creates a deny-ingress policy before starting the Pod; use a
-namespace without overlapping ingress grants. Access is through local tunnels.
+Wait for **`OSWorld ready`** or **`Desktop ready`**. OSWorld checks that the guest
+screenshot API returns a PNG; Selkies checks X11, Plasma, and the NVIDIA OpenGL
+renderer. A Pod being `Running` is not enough. Screenshot API readiness does not
+prove compositor stability or task success; inspect the desktop before a task run.
 
-## Connect and delete
+Progress goes to the terminal; the JSON result goes to the receipt file. Keep
+that file for connection and deletion, and use a different filename per desktop.
+It contains the Pod name, UID, context, namespace and profile-specific results.
+
+**Time:** Each OSWorld Pod downloads and verifies a 12.3 GB ZIP, then extracts the
+system disk; the default deadline is one hour. Selkies downloads about 3.7 GB on a
+first run, skips the download when cached, and defaults to 15 minutes.
+
+## 2. Connect
+
+Use the same kubeconfig as creation. For OSWorld:
 
 ```sh
 kubectl --context "$(jq -r .context desktop.json)" \
   -n "$(jq -r .namespace desktop.json)" \
   port-forward --address 127.0.0.1 "pod/$(jq -r .pod desktop.json)" \
-  8006:8006 5000:5000 9847:9847
+  8006:8006 5000:5000
 ```
 
-Open [noVNC](http://127.0.0.1:8006), or fetch a screenshot:
+Keep this terminal open. Open [noVNC](http://127.0.0.1:8006), or fetch a screenshot
+from a second terminal:
 
 ```sh
 curl --fail http://127.0.0.1:5000/screenshot -o screenshot.png
-./evals/osworld/scripts/create-on-k8s delete desktop.json
 ```
 
-Port 9847 is reserved for a later AUV installation inside the VM; installation
-and pairing are separate steps. If the local port is occupied, use `19847:9847`.
-Guest Chromium and VLC ports 9222 and 8080 can also be forwarded as needed.
+Guest Chromium and VLC ports 9222 and 8080 can also be forwarded. Port 9847 is
+reserved for a later AUV installation inside the VM; it does not mean AUV is
+installed or ready. After starting the guest daemon, add `9847:9847` to the tunnel
+(or `19847:9847` if local port 9847 is occupied), then pair through that local port.
+Previously created Pods retain their original QEMU forwarding configuration.
 
-For Selkies, forward port 8080 and open `https://127.0.0.1:8080` (self-signed
-certificate). Sign in as `ubuntu`; retrieve the password with:
+### Selkies connection and sign-in
 
 ```sh
-kubectl --context "$(jq -r .context desktop.json)" \
-  -n "$(jq -r .namespace desktop.json)" \
-  get secret "$(jq -r .password_secret desktop.json)" \
+kubectl --context "$(jq -r .context selkies.json)" \
+  -n "$(jq -r .namespace selkies.json)" \
+  port-forward --address 127.0.0.1 "pod/$(jq -r .pod selkies.json)" 8080:8080
+```
+
+In a second terminal, using the same kubeconfig, retrieve the password:
+
+```sh
+kubectl --context "$(jq -r .context selkies.json)" \
+  -n "$(jq -r .namespace selkies.json)" \
+  get secret "$(jq -r .password_secret selkies.json)" \
   -o jsonpath='{.data.password}' | base64 --decode
 ```
 
-Deleting a Pod discards its guest state and owned resources; old Selkies receipts
-still work. Stop tunnels separately. For startup failures, inspect
-`kubectl logs POD -c prepare-image` or `-c desktop` in the chosen namespace.
+Open <https://localhost:8080>, accept the self-signed certificate for this local
+connection, and sign in as **`ubuntu`**. The endpoint requires TLS and a password.
+The password stays in a Secret, not in the receipt.
+
+## 3. Delete when finished
+
+Copy needed files before deletion; desktop files and VM changes are temporary.
+Use the same kubeconfig and context as creation, with the matching receipt:
+
+```sh
+./evals/osworld/scripts/create-on-k8s delete desktop.json
+# Or: ./evals/osworld/scripts/create-on-k8s delete selkies.json
+```
+
+Deletion checks the Pod UID to protect a replacement Pod with the same name.
+Kubernetes also deletes its owned NetworkPolicy, Secret or ResourceClaim. The
+namespace stays, and old Selkies receipts still work. Stop tunnels with Ctrl-C.
+
+## Optional commands and defaults
+
+<details>
+<summary>Cluster selection, images, resources, and graphical commands</summary>
+
+For ihome, select the kubeconfig before creation:
+
+```sh
+export KUBECONFIG="$HOME/.kube/config.d/ihome.conf"
+```
+
+Put `--kubeconfig` and `--context` before the subcommand:
+
+```sh
+./evals/osworld/scripts/create-on-k8s --context YOUR_CONTEXT create \
+  --node YOUR_NODE --namespace YOUR_NAMESPACE > desktop.json
+```
+
+| Setting | OSWorld default | Selkies default | Control |
+| --- | --- | --- | --- |
+| Container image | Pinned OSWorld QEMU runtime | Pinned Selkies | `--image`, compatible with the selected profile |
+| Startup deadline | 3600 seconds | 900 seconds | `--timeout SECONDS` |
+| CPU / RAM request | 1 CPU / 5 GiB | 1 CPU / 2 GiB | `scripts/assets/*-pod.json` |
+| CPU / RAM limit | 4 CPUs / 8 GiB | 8 CPUs / 16 GiB | `scripts/assets/*-pod.json` |
+| Ephemeral storage request / limit | 40 GiB / 100 GiB | Unspecified | `scripts/assets/*-pod.json` |
+| Acceleration | Software CPU emulation | HAMi GPU | OSWorld: `--kvm-resource vendor.example/kvm` |
+| GPU capacity | Not requested | 25 HAMi cores / 4 GiB | `--gpu-cores`, `--gpu-memory` |
+| DeviceClass | Not used | `hami-core-gpu.project-hami.io` | `--device-class` |
+
+`--image` changes the container runtime, not the VM system disk. To override the
+OSWorld disk, supply both `--vm-image-url URL` and `--vm-image-sha256 SHA256`.
+The URL must use HTTPS and the ZIP must contain `Ubuntu.qcow2`; the hash covers
+the ZIP. The guest gets a read-only base with a disposable write layer. Shared
+persistent caching is not implemented.
+
+Software emulation is slower. KVM requires an existing device plugin supplying
+`/dev/kvm`; the script does not install one or grant privileged host access.
+KVM accelerates the CPU, not guest GPU rendering. Leave node disk headroom above
+the disk-pressure threshold.
+
+For Selkies, DRA capacity requests do not prove Vulkan/OpenGL memory enforcement.
+The measured graphics path uses Zink/Vulkan on NVIDIA; `nvidia-smi` alone does not
+prove GPU graphics use. Load the session environment for graphical commands:
+
+```sh
+kubectl --context "$(jq -r .context selkies.json)" \
+  -n "$(jq -r .namespace selkies.json)" \
+  exec "$(jq -r .pod selkies.json)" -- bash -c \
+  '. /tmp/runtime-ubuntu/container-env; DISPLAY=:20 glxinfo -B'
+```
+
+</details>
+
+## If startup stops
+
+| Message | Meaning and next action |
+| --- | --- |
+| `Preparing OSWorld VM disk` | Download, checksum or extraction is in progress; inspect `prepare-image` logs. |
+| `Waiting for desktop session environment`, `Waiting for Plasma session`, `Waiting for X11 display` | Normal Selkies startup. Wait for `Desktop ready`. |
+| `ImagePullBackOff` / `ErrImagePull` | Inspect Pod events for registry or node DNS errors. Working Pod DNS does not prove working node DNS. |
+| `Pending` | Inspect events for CPU/GPU/storage capacity, node selectors, taints, or a missing DeviceClass. |
+| Software renderer | Selkies GPU validation failed; inspect DRA allocation and graphics libraries. |
+
+Use the Pod name printed in the terminal:
+
+```sh
+kubectl -n YOUR_NAMESPACE describe pod YOUR_POD
+kubectl -n YOUR_NAMESPACE logs YOUR_POD -c desktop --tail=60
+# OSWorld image preparation:
+kubectl -n YOUR_NAMESPACE logs YOUR_POD -c prepare-image --tail=20
+```
+
+Startup failures trigger cleanup. If API access fails, inspect the printed
+resource identity for incomplete cleanup. The script does not change node DNS
+or eviction policy. Registry failures need a node fix or an operator to preload
+the pinned image.
 
 ## Maintenance
 
-Edit bootstrap manifests in `scripts/assets/`; `create-on-k8s` fills in names,
-images, credentials and resource options with jq. Image pins live in the script.
-The download helper uses the tools shipped in the pinned runtime: wget, 7z and
-qemu-img. Run ShellCheck after changes.
+Edit bootstrap manifests in `scripts/assets/`; the script fills names, images,
+credentials and resource options with jq. Image pins live in the script. The
+download helper uses wget, 7z and qemu-img from the pinned runtime.
 
-Evidence: the official disk has booted on Kubernetes under software emulation,
-with a visible GNOME desktop and working screenshot/noVNC endpoints. KVM and AUV
-pairing have not been live-tested. Screenshot readiness does not prove task
-success; OSWorld task setup/reset and evaluation are outside this script.
+```sh
+bash -n evals/osworld/scripts/create-on-k8s evals/osworld/scripts/prepare-osworld-image
+shellcheck evals/osworld/scripts/create-on-k8s evals/osworld/scripts/prepare-osworld-image
+git diff --check
+```
 
+ShellCheck is optional for development; running the script does not require it.
+
+Evidence: [PR #294](https://github.com/moeru-ai/auv/pull/294) records a live
+software-emulated Ubuntu guest with a visible GNOME desktop and working
+screenshot/noVNC endpoints. KVM and AUV pairing have not been live-tested.
 Upstream: [classic Docker provider](https://github.com/xlang-ai/OSWorld/blob/b138d348256078fa634fc3b73567a7337c793e6b/desktop_env/providers/docker/provider.py),
 [official guest image](https://huggingface.co/datasets/xlangai/ubuntu_osworld/tree/a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133).
