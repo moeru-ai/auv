@@ -61,7 +61,7 @@ export interface AuvDaemonExit {
 /** macOS-specific launch configuration for an app-owned daemon. */
 export interface AuvMacosOptions {
   /**
-   * Absolute path of the unpacked, notarized helper app shipped by the
+   * Absolute path of the unpacked, signed helper app shipped by the
    * application embedding AUV, for example
    * `YourApp.app/Contents/Library/Helpers/Your Computer Use.app`.
    * The daemon then trusts only the bundle identifier and Team ID signed into

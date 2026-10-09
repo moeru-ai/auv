@@ -16,7 +16,7 @@ pub fn native_package_version() -> &'static str {
 #[napi(object)]
 #[derive(Clone, Default)]
 pub struct MacosHelperOptions {
-  /// Absolute path of the unpacked, notarized helper app shipped by the
+  /// Absolute path of the unpacked, signed helper app shipped by the
   /// application embedding AUV. Omit it to manage the official AUV Helper
   /// embedded in release builds. Pass the same path to `startAuv({ platforms:
   /// { macos: { helperApp } } })` so the daemon trusts that helper.

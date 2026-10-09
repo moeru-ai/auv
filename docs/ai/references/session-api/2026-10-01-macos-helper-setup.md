@@ -40,7 +40,9 @@ signing from becoming a TCC identity.
 `auv setup macos-helper install` writes the embedded archive to a mode-`0600`
 file in a private staging directory under
 `~/Library/Application Support/AUV`, extracts it, and validates the app version,
-bundle identifier, pinned Team ID, static signature, and Gatekeeper assessment.
+bundle identifier, pinned Team ID, and static signature. Setup does not run a
+Gatekeeper assessment; macOS enforces notarization on downloaded apps, and the
+release workflows assess their artifacts before publishing.
 It then atomically places the app at
 `~/Library/Application Support/AUV/AUV Helper.app`.
 
@@ -91,7 +93,7 @@ executable, may ship the helper under its own name, icon, bundle identifier,
 and Developer ID team. Setup and the daemon do not pin the official identity
 in that case:
 
-- Every frontend takes the unpacked, notarized helper app as a typed option:
+- Every frontend takes the unpacked, signed helper app as a typed option:
   `setup::Options::helper_app` in Rust, `--helper-app` (or
   `AUV_MACOS_HELPER_APP`) for `auv setup macos-helper`, `helperApp` for the
   `@auv-js/cli` setup functions, and `startAuv({ platforms: { macos: {

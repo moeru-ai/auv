@@ -16,7 +16,7 @@ enum SetupCommand {
 
 #[derive(Clone, Debug, Args)]
 struct MacosHelperArgs {
-  /// Manage this unpacked, notarized helper app shipped by an application
+  /// Manage this unpacked, signed helper app shipped by an application
   /// embedding AUV instead of the official AUV Helper.
   #[arg(long, global = true, value_name = "PATH", env = "AUV_MACOS_HELPER_APP")]
   helper_app: Option<std::path::PathBuf>,

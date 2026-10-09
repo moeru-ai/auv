@@ -51,8 +51,11 @@ auv setup macos-helper open-accessibility-settings
 ```
 
 The install command extracts the app under a private directory inside AUV's
-user Application Support root, validates its version, Team ID, signature, and
-Gatekeeper assessment, then atomically places it at the stable path. The
+user Application Support root, validates its version, Team ID, and signature,
+then atomically places it at the stable path. Setup does not run a Gatekeeper
+assessment: notarization is a distribution requirement that macOS enforces on
+downloaded apps, so a locally built, Developer ID-signed helper installs for
+testing. The
 installed helper registers its embedded LaunchAgent through ServiceManagement;
 the setup module reads that native status and waits for the private socket.
 This flow needs neither `sudo` nor an administrator password. A user who has
