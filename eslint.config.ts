@@ -112,6 +112,13 @@ export default defineConfig({
     'react-refresh/only-export-components': 'off',
   },
 }, {
+  files: ['js/packages/**/*.{ts,mts,cts,js,mjs,cjs}'],
+  rules: {
+    // The React preset applies to every source file, but these packages do not
+    // use React. `useLogg` from `@guiiai/logg` is a logger factory, not a hook.
+    'react/rules-of-hooks': 'off',
+  },
+}, {
   files: ['apps/server/**/*.ts'],
   rules: {
     'no-restricted-syntax': [
