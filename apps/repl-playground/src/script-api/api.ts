@@ -1,4 +1,5 @@
-// Script-facing AUV API.
+// Script-facing playground API: the globals cells get beside `auv` (the
+// `@auv-js/sdk` Runner client) and `sdk` (the module).
 //
 // NOTICE(script-api-single-source): this file is both imported by the
 // execution worker and loaded as raw text into the editor's TypeScript
@@ -17,10 +18,12 @@ export interface Area extends Rect {
   at: (fx: number, fy: number) => Point
   /** The strip of `height` below this area, `gap` away. */
   below: (height: number, gap?: number) => Area
+  /** The area itself as screen bounds, so SDK clicks and scrolls take it at its center. */
+  readonly bounds: Rect
   readonly center: Point
   /** Whether a point or rectangle lies fully inside. */
   contains: (target: Point | Rect) => boolean
-  /** `$ref` of the handle the area was first derived from, e.g. `window:42`. */
+  /** The resource the area was first derived from, e.g. `window:42`. */
   readonly from?: string
   /** Shrinks by the same amount on every side, or per side. */
   inset: (by: number | Partial<Record<'bottom' | 'left' | 'right' | 'top', number>>) => Area
@@ -54,71 +57,15 @@ export interface AreaEdges {
 /** Logical points, or a percentage of the parent area such as `'50%'`. */
 export type AreaLength = `${number}%` | number
 
-/** Anything with screen-space bounds an area can start from. */
-export type AreaSource = DisplayHandle | FrameHandle | Rect | TextMatch | WindowHandle
-
-export interface AuvScriptApi {
-  apps: {
-    /**
-     * Brings an application to the foreground by bundle ID (macOS). The
-     * receipt's `path` reports whether AUV verified the app is frontmost.
-     */
-    activate: (bundleId: string) => Promise<InputHandle>
-  }
-  displays: {
-    /** Captures a display; the primary display when omitted. */
-    capture: (display?: DisplayHandle | string) => Promise<FrameHandle>
-    /** Finds text on a display with OCR. */
-    findText: (query: string, display?: DisplayHandle | string, options?: TextSearchOptions) => Promise<TextHandle>
-    list: () => Promise<DisplayHandle[]>
-  }
-  input: {
-    /** Clicks a logical screen point, or the center of an area or rectangle. */
-    click: (target: Point | Rect, options?: ClickOptions) => Promise<InputHandle>
-    /**
-     * Presses a key or chord, e.g. `Return` or `cmd+a`, in whichever app has
-     * keyboard focus when it runs. Use `WindowHandle.pressKey` to target a window.
-     */
-    pressKey: (key: string) => Promise<InputHandle>
-    /**
-     * Types into whichever app has keyboard focus when it runs, which may be
-     * this playground's browser. Use `WindowHandle.typeText` to target a window.
-     */
-    typeText: (text: string) => Promise<InputHandle>
-  }
-  text: {
-    /** Runs OCR over a previously captured frame. */
-    recognize: (frame: FrameHandle, options?: TextSearchOptions) => Promise<TextHandle>
-  }
-  windows: {
-    list: () => Promise<WindowHandle[]>
-    resolve: (selector: WindowSelector) => Promise<WindowHandle>
-  }
-}
+/**
+ * Anything with screen-space bounds an area can start from: a rectangle, an
+ * SDK `Window` or `Display` (`frame`), a `WindowClient` (`window.frame`), a
+ * text match or capture (`bounds`), or another area.
+ */
+export type AreaSource = Rect | { bounds: Rect } | { frame: Rect } | { window: { frame?: Rect } }
 
 /** Center point of a rectangle. */
 export type CenterOf = (rect: Rect) => Point
-
-export interface ClickOptions {
-  button?: 'left' | 'middle' | 'right'
-  /** Clicks in a row: 2 is a double click. */
-  count?: number
-  /** Milliseconds between clicks when `count` > 1; defaults to 80. */
-  interval?: number
-}
-
-/** A display (monitor) of the controlled Device. */
-export interface DisplayHandle {
-  readonly $ref: `display:${string}`
-  /** Logical bounds of the display on the virtual desktop. */
-  readonly frame: Rect
-  readonly id: string
-  readonly kind: 'display'
-  readonly name?: string
-  readonly primary: boolean
-  /** Physical pixels per logical point. */
-  readonly scale: number
-}
 
 export interface FocusOptions {
   /**
@@ -130,45 +77,6 @@ export interface FocusOptions {
   zoom?: boolean
 }
 
-/** A captured image. Pixels stay on the host; scripts hold only this handle. */
-export interface FrameHandle {
-  readonly $ref: `frame:${string}`
-  /** Logical screen-space bounds represented by the pixels. */
-  readonly bounds: Rect
-  /** Physical pixel height. */
-  readonly height: number
-  readonly kind: 'frame'
-  readonly scale: number
-  /** What produced the frame, e.g. `display:1` or `window:42`. */
-  readonly source: string
-  /** Physical pixel width. */
-  readonly width: number
-}
-
-/** Receipt of a delivered input action. Delivery is not semantic success. */
-export interface InputHandle {
-  readonly $ref: `input:${string}`
-  readonly action: 'activate' | 'click' | 'key' | 'scroll' | 'type'
-  /** Scroll amount for `scroll` receipts, in logical pixels. */
-  readonly delta?: ScrollDelta
-  readonly kind: 'input'
-  /** Delivery path chosen by the driver, e.g. `window-targeted`. */
-  readonly path?: string
-  /** Screen point for pointer actions. */
-  readonly point?: Point
-}
-
-/** How `WindowHandle.typeText` and `pressKey` deliver to their window. */
-export interface KeyboardOptions {
-  /**
-   * Posts to the window without activating it. The control must already have
-   * keyboard focus: a click does not give it focus in every app (it did not in
-   * NetEase Cloud Music while another app was in front). By default the
-   * window is brought to the front and focused first.
-   */
-  background?: boolean
-}
-
 /** A point in logical screen coordinates (points, not pixels). */
 export interface Point {
   x: number
@@ -176,7 +84,7 @@ export interface Point {
 }
 
 /** Anything with a screen position the canvas camera can move to. */
-export type Positional = AreaSource | InputHandle | Point | TextHandle
+export type Positional = AreaSource | Point
 
 /** A rectangle in logical screen coordinates. */
 export interface Rect {
@@ -186,140 +94,8 @@ export interface Rect {
   y: number
 }
 
-/**
- * Scroll amount in logical pixels: positive `dy` scrolls toward later content
- * (down), positive `dx` scrolls right, like DOM `WheelEvent`.
- */
-export interface ScrollDelta {
-  dx?: number
-  dy?: number
-}
-
-/** One step per update; scroll along one axis only. */
-export interface ScrollUntilOptions extends ScrollDelta {
-  /** Consecutive no-motion steps that count as the end, 1–10. Default 2. */
-  confirmations?: number
-  /** Step budget, 1–1000. Default 50. */
-  maxSteps?: number
-  /** Milliseconds to wait after each step before observing, ≤ 10000. Default 400. */
-  settle?: number
-  /** Stop when recognized window text contains this (case-insensitive). */
-  text?: string
-  /** Stop when this returns `true` for an update. */
-  until?: (update: ScrollUntilUpdate) => boolean | Promise<boolean>
-}
-
-export interface ScrollUntilResult {
-  /** The last update's capture, unless nothing was observed. */
-  readonly frame?: FrameHandle
-  /** Delivery receipt of the first step; absent if the loop stopped before scrolling. */
-  readonly input?: InputHandle
-  /** Where `text` was found, in screen space. */
-  readonly match?: TextMatch
-  readonly reason: 'budget' | 'end' | 'text-visible' | 'until'
-  readonly steps: number
-  /** The last update's OCR result. */
-  readonly text?: TextHandle
-}
-
-/** What `scrollUntil` saw after one step, for an `until` predicate. */
-export interface ScrollUntilUpdate {
-  /** Whether the viewport moved on this step (false before the first step). */
-  readonly moved: boolean
-  readonly steps: number
-  /** Full recognized window text after this step. */
-  readonly text: string
-}
-
-/** Result of OCR over a frame, a window or a display. */
-export interface TextHandle {
-  readonly $ref: `text:${string}`
-  /** The frame the recognizer looked at, when the driver returned it. */
-  readonly frame?: FrameHandle
-  readonly kind: 'text'
-  readonly matches: readonly TextMatch[]
-  readonly query?: string
-  /** Full recognized text, for `auv.text.recognize`. */
-  readonly text?: string
-  /** Screen-space area the recognizer was limited to, when `within` was given. */
-  readonly within?: Rect
-}
-
-export interface TextMatch {
-  /** Logical screen-space bounds of the matched text. */
-  readonly bounds: Rect
-  readonly confidence: number
-  readonly text: string
-}
-
-export interface TextSearchOptions {
-  /**
-   * Only read text inside this screen-space area (e.g. an `area()`); it is
-   * clipped to the searched window, display or frame.
-   */
-  within?: Rect
-}
-
-/** A resolved top-level window. */
-export interface WindowHandle {
-  readonly $ref: `window:${string}`
-  readonly app?: string
-  readonly bundleId?: string
-  /** Captures the window's pixels. */
-  capture: () => Promise<FrameHandle>
-  /** Clicks a window-relative point (origin at the window's top-left). */
-  click: (point: Point, options?: ClickOptions) => Promise<InputHandle>
-  /** Finds text in the window with OCR; match bounds are screen-space. */
-  findText: (query: string, options?: TextSearchOptions) => Promise<TextHandle>
-  /** Logical screen-space frame of the window. */
-  readonly frame: Rect
-  readonly id: string
-  readonly kind: 'window'
-  readonly pid?: number
-  /**
-   * Presses a key or chord in this window, e.g. `return` or `cmd+a`. Brings
-   * the window to the front first unless `background` is set.
-   */
-  pressKey: (key: string, options?: KeyboardOptions) => Promise<InputHandle>
-  /**
-   * Wheel-scrolls once at `at`: a screen-space point, or the center of an area
-   * or rectangle (unlike `click`, which takes a window-relative point). The
-   * receipt is delivery evidence only; it does not prove the content moved.
-   */
-  scroll: (at: Point | Rect, delta: ScrollDelta) => Promise<InputHandle>
-  /**
-   * Scrolls at `at` in steps, observing (capture + OCR) after each step, until
-   * `text` appears, `until` returns `true`, no visual motion remains, or
-   * `maxSteps` runs out. An `end` stop is not proof that no content is left.
-   */
-  scrollUntil: (at: Point | Rect, options: ScrollUntilOptions) => Promise<ScrollUntilResult>
-  // TODO(repl-scroll-motion): timed (`scrollMotion`) and live velocity
-  // (`scrollStream` / `scrollWith`) scrolling exist in `@auv-js/sdk` but are not
-  // exposed; add them when a script needs eased or continuous scrolling.
-  readonly title?: string
-  /**
-   * Types text into this window's focused control. Brings the window to the
-   * front first unless `background` is set, so the text cannot land in
-   * another app. The receipt is delivery evidence, not proof the text arrived.
-   */
-  typeText: (text: string, options?: KeyboardOptions) => Promise<InputHandle>
-}
-
-export interface WindowSelector {
-  appName?: string
-  bundleId?: string
-  /** Select the frontmost application. */
-  frontmost?: boolean
-  pid?: number
-  /** Exact window title. */
-  title?: string
-  /** Window title substring. */
-  titleContains?: string
-}
-
 declare global {
-  const auv: AuvScriptApi
-  /** Starts an area from a window, display, frame, OCR match or rectangle. */
+  /** Starts an area from a window, display, capture, text match or rectangle. */
   function area(source: AreaSource, label?: string): Area
   /** Center point of a screen-space rectangle. */
   const centerOf: CenterOf
@@ -329,8 +105,8 @@ declare global {
    */
   function draw<T extends Point | Rect>(target: T, label?: string): T
   /**
-   * Editor only: eases the desktop canvas camera onto a window, area, OCR
-   * result, match, frame, click or point at this moment of the run. Nothing
+   * Editor only: eases the desktop canvas camera onto a window, area, text
+   * match, capture or point at this moment of the run. Nothing
    * is sent to the device and the script does not wait. Returns `target`.
    */
   function focus<T extends Positional>(target: T, options?: FocusOptions): T

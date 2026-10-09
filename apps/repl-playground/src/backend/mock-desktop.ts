@@ -1,4 +1,5 @@
-import type { Point, Rect, ScrollDelta, TextMatch } from '../script-api/api'
+import type { ScrollDelta, TextMatch } from '../handles'
+import type { Point, Rect } from '../script-api/api'
 import type { AxNode, DisplayInfo, WindowInfo } from './types'
 
 import { contains, intersect } from '@auv-js/sdk'

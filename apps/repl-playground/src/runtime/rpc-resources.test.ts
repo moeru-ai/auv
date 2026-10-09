@@ -1,10 +1,9 @@
-import type { InputHandle, TextHandle } from '../script-api/api'
+import type { InputHandle, TextHandle } from '../handles'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { usePlayground } from '../store'
-import { CallScope } from './bindings'
-import { recordRpcResources } from './rpc-resources'
+import { CallScope, recordRpcResources } from './rpc-resources'
 
 const V1 = 'auv.api.driver.v1'
 

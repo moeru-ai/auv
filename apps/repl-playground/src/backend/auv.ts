@@ -1,28 +1,18 @@
 import type { AuvClient, AuvConnection, Device, DiscoveredRunner, RunnerClient, Transport, WindowClient } from '@auv-js/sdk'
 
-import type { ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
-import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, SdkAccess, TextSearchResult, WindowInfo } from './types'
+import type { Rect } from '../script-api/api'
+import type { Backend, CapturedFrame, DisplayInfo, RunOutcomeKind, SdkAccess, TextSearchResult, WindowInfo } from './types'
 
-import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, discoverRunner, ImageEncoding, InputDeliveryPath, InputPolicy, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
+import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, discoverRunner, ImageEncoding, InputDeliveryPath, pairDevice } from '@auv-js/sdk'
 
 type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
 type NativeDisplay = Awaited<ReturnType<RunnerClient['displays']['list']>>[number]
 type NativeFrame = NonNullable<CaptureResponse['capture']>
 type NativeRecognized = Awaited<ReturnType<RunnerClient['recognizeText']>>
-type NativeScrollUpdate = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onUpdate']>>[0]
 type NativeWindow = WindowClient['window']
 
 const RUNNER_CLASS = 'auv.core.local'
-
-const MOUSE_BUTTONS = { left: MouseButton.LEFT, middle: MouseButton.MIDDLE, right: MouseButton.RIGHT } as const
-
-const STOP_REASONS: Partial<Record<ScrollUntilStopReason, ScrollUntilOutcome['reason']>> = {
-  [ScrollUntilStopReason.BUDGET_EXHAUSTED]: 'budget',
-  [ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS]: 'end',
-  [ScrollUntilStopReason.PREDICATE_SATISFIED]: 'until',
-  [ScrollUntilStopReason.TEXT_VISIBLE]: 'text-visible',
-}
 
 export interface AuvBackendOptions {
   /** Paired Device credential; omit for a local loopback daemon without a pairing store. */
@@ -39,14 +29,8 @@ interface BackendOptions {
   credential?: string
   kind?: Backend['kind']
   label?: string
-  /** The transport scripts' direct SDK calls are forwarded to. */
+  /** The transport scripts' `auv` calls are forwarded to. */
   transport: Transport
-}
-
-/** Screen point of a window-local point, when the response reported the window frame. */
-function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point | undefined {
-  const rect = toRect(frame)
-  return rect ? { x: rect.x + point.x, y: rect.y + point.y } : undefined
 }
 
 class AuvBackend implements Backend {
@@ -68,11 +52,6 @@ class AuvBackend implements Backend {
     // NOTICE(device-name): a local daemon may report an empty Device name.
     this.label = http.label ?? `${device.name || device.labels.hostname || device.id.slice(0, 12)} (${device.platform})`
     this.#runner = this.#bind()
-  }
-
-  async activateApp(bundleId: string): Promise<InputReceipt> {
-    const response = await this.#runner.macos.applications.activateBundleId({ bundleId })
-    return { path: response.verification?.verification.case ?? 'unverified' }
   }
 
   async beginRun(): Promise<string | undefined> {
@@ -103,30 +82,6 @@ class AuvBackend implements Backend {
     return new Blob([image.data as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' })
   }
 
-  async captureWindow(windowId: string): Promise<CapturedFrame> {
-    const window = this.#runner.windows.from(windowId)
-    const captured = await window.capture()
-    return toFrame(captured.capture, `window:${windowId}`)
-  }
-
-  async clickScreen(point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
-    const response = await this.#runner.input.click(point, {
-      button: MOUSE_BUTTONS[options?.button ?? 'left'],
-      click: toClick(options),
-    })
-    return { path: deliveryPath(response.action), point }
-  }
-
-  async clickWindow(windowId: string, point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
-    const window = this.#runner.windows.from(windowId)
-    const response = await window.click(point, {
-      button: MOUSE_BUTTONS[options?.button ?? 'left'],
-      click: toClick(options),
-    })
-    const delivered = response.screenPoint
-    return { path: deliveryPath(response.action), point: delivered && { x: delivered.x, y: delivered.y } }
-  }
-
   async dispose(): Promise<void> {
     await this.connection.close()
   }
@@ -139,84 +94,8 @@ class AuvBackend implements Backend {
       await this.client.runs.stop({ outcome, runId }).catch(error => console.warn('AUV Run stop failed', error))
   }
 
-  async findDisplayText(query: string, displayId?: string, area?: Rect): Promise<TextSearchResult> {
-    const selector = displayId ? { case: 'display' as const, value: { displayId } } : undefined
-    const response = await this.#runner.displays.findText(selector ? { selector } : undefined, query, area ? { screenRegion: area } : undefined)
-    return {
-      capture: response.capture ? toFrame(response.capture, `display:${response.display?.displayId ?? 'primary'}`) : undefined,
-      matches: response.matches.map(match => ({ bounds: toRect(match.bounds)!, confidence: match.confidence, text: match.text })),
-    }
-  }
-
-  async findWindowText(windowId: string, query: string, area?: Rect): Promise<TextSearchResult> {
-    const window = this.#runner.windows.from(windowId)
-    const response = await window.findText(query, area ? { screenRegion: area } : undefined)
-    return {
-      capture: response.capture ? toFrame(response.capture, `window:${windowId}`) : undefined,
-      matches: response.matches.map(match => ({ bounds: toRect(match.bounds)!, confidence: match.confidence, text: match.text })),
-    }
-  }
-
   async listDisplays(): Promise<DisplayInfo[]> {
     return (await this.#runner.displays.list()).map(toDisplay)
-  }
-
-  async listWindows(): Promise<WindowInfo[]> {
-    return (await this.#runner.windows.list()).map(window => toWindow(window.window))
-  }
-
-  async pressKey(key: string): Promise<InputReceipt> {
-    const response = await this.#runner.input.pressKey(key)
-    return { path: deliveryPath(response.action) }
-  }
-
-  async pressKeyWindow(windowId: string, key: string, options?: KeyboardOptions): Promise<InputReceipt> {
-    const action = await this.#runner.windows.from(windowId).pressKeys(key, { policy: keyboardPolicy(options) })
-    return { path: deliveryPath(action) }
-  }
-
-  async recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
-    return toRecognized(await this.#runner.recognizeText(frame.ref, area ? { screenRegion: area } : undefined))
-  }
-
-  async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
-    return toWindow((await this.#runner.windows.resolve(selector)).window)
-  }
-
-  async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
-    const window = this.#runner.windows.from(windowId)
-    const response = await window.scroll(point, { deltaX: delta.dx ?? 0, deltaY: delta.dy ?? 0 })
-    return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
-  }
-
-  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
-    const window = this.#runner.windows.from(windowId)
-    let last: NativeScrollUpdate | undefined
-    const completed = await window.scrollUntil(point, {
-      condition: request.text ? { case: 'textVisible', value: { query: request.text } } : { case: 'end', value: {} },
-      maxSteps: request.maxSteps,
-      noMotionConfirmations: request.confirmations,
-      settle: toDuration(request.settleMs),
-      step: { case: 'instant', value: { deltaX: request.delta.dx ?? 0, deltaY: request.delta.dy ?? 0 } },
-    }, {
-      onUpdate: (update) => {
-        last = update
-      },
-      until: decide && (update => decide({
-        moved: update.motion ? !update.motion.noMotion : false,
-        steps: update.steps,
-        text: update.text?.text ?? '',
-      })),
-    })
-    const match = completed.textMatch
-    return {
-      capture: last?.capture ? toFrame(last.capture, `window:${windowId}`) : undefined,
-      match: match ? { bounds: toRect(match.bounds)!, confidence: 1, text: match.text } : undefined,
-      reason: STOP_REASONS[completed.reason] ?? 'end',
-      receipt: completed.action ? { path: deliveryPath(completed.action) } : undefined,
-      recognized: last?.text ? toRecognized(last.text) : undefined,
-      steps: completed.steps,
-    }
   }
 
   sdk(): SdkAccess {
@@ -238,17 +117,7 @@ class AuvBackend implements Backend {
     }
   }
 
-  async typeText(text: string): Promise<InputReceipt> {
-    const response = await this.#runner.input.typeText(text)
-    return { path: deliveryPath(response.action) }
-  }
-
-  async typeTextWindow(windowId: string, text: string, options?: KeyboardOptions): Promise<InputReceipt> {
-    const action = await this.#runner.windows.from(windowId).typeText(text, { policy: keyboardPolicy(options) })
-    return { path: deliveryPath(action) }
-  }
-
-  /** Window references are Device resources; each call takes a client for the current Run with `windows.from(id)`. */
+  /** The host's own Runner client for the current Run: canvas captures and pixels. */
   #bind(): RunnerClient {
     return this.client.runner({ deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS })
   }
@@ -256,7 +125,7 @@ class AuvBackend implements Backend {
 
 /**
  * A backend over any AUV transport: a daemon over HTTP, or an in-memory mock
- * Runner. `auv.*` bindings and scripts' direct SDK calls both go through it.
+ * Runner. Scripts' `auv` calls go through `sdk()`.
  */
 export async function connectBackend(options: BackendOptions, deviceId?: string): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
   const connection = await connect({ credential: options.credential, transport: options.transport })
@@ -343,10 +212,6 @@ export function toWindow(window: NativeWindow): WindowInfo {
   }
 }
 
-function keyboardPolicy(options: KeyboardOptions | undefined): InputPolicy {
-  return options?.background ? InputPolicy.BACKGROUND_ONLY : InputPolicy.FOREGROUND_PREFERRED
-}
-
 /**
  * NOTICE(grpc-message-percent-encoding): gRPC percent-encodes `grpc-message`,
  * and AUV 0.0.28's REST proxy copies it into the problem `detail` without
@@ -362,27 +227,6 @@ function readableError(error: unknown): unknown {
   }
   catch {}
   return error
-}
-
-/**
- * AUV `Click`: the count, plus the interval AUV requires for repeated clicks
- * (`input.proto` `Click.interval`; it rejects a multi-click without one).
- * NOTICE(click-interval-default): 80 ms when the script gives none, the
- * value AUV's own invoke tests use for double clicks.
- */
-function toClick(options: ClickOptions | undefined) {
-  const count = options?.count ?? 1
-  if (count <= 1)
-    return { count }
-  const ms = options?.interval ?? 80
-  if (!(ms > 0))
-    throw new RangeError('click interval must be a positive number of milliseconds')
-  return { count, interval: toDuration(ms) }
-}
-
-/** `google.protobuf.Duration` from milliseconds. */
-function toDuration(ms: number) {
-  return { nanos: Math.round((ms % 1000) * 1e6), seconds: BigInt(Math.floor(ms / 1000)) }
 }
 
 /**

@@ -142,8 +142,6 @@ function summarize(value: WireValue): string {
   if (typeof value !== 'object' || value === null)
     return String(value)
   const record = value as Record<string, unknown>
-  if (typeof record.$predicate === 'number')
-    return 'ƒ'
   const ref = refOf(record)
   if (ref)
     return ref

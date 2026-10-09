@@ -1,16 +1,140 @@
-import type { InputHandle, ScrollDelta } from '../script-api/api'
-import type { CallScope } from './bindings'
+import type { CapturedFrame, DisplayInfo, InputReceipt, RunBackend, TextSearchResult, WindowInfo } from '../backend/types'
+import type { DisplayHandle, FrameHandle, InputHandle, ScrollDelta, TextHandle, WindowHandle } from '../handles'
+import type { Rect } from '../script-api/api'
+import type { Resource } from '../store'
 
 import { deliveryPath, toDisplay, toFrame, toRecognized, toRect, toWindow } from '../backend/auv'
+import { decodeThumbHash, revealStart } from '../preview'
+import { actions, nowMs, usePlayground } from '../store'
 
-// Turns a direct SDK call's messages into the playground's resources (frames,
+// Turns an SDK call's messages into the playground's resources (frames,
 // text, input receipts, windows, displays), so the canvas, inspector and
-// timeline show it like a script binding. Messages are matched by protobuf
+// timeline show it. Messages are matched by protobuf
 // type name, not by RPC: a new RPC that returns a known type is shown with no
 // new code. See `docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md`.
 
+let nextHandle = 1
+
 /** A decoded protobuf message (`fromBinary` result), read structurally. */
 type Message = Record<string, unknown> & { $typeName: string }
+
+type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'run' | 'seq'> : never : never
+
+/** Tracks the resource refs one SDK call produced. */
+export class CallScope {
+  readonly refs: string[] = []
+
+  constructor(readonly callId: number, readonly seq: number, readonly backend: null | RunBackend) {}
+
+  display(info: DisplayInfo): DisplayHandle {
+    const handle: DisplayHandle = { $ref: `display:${info.id}`, frame: info.frame, id: info.id, kind: 'display', name: info.name, primary: info.primary, scale: info.scale }
+    this.#put(handle.$ref, { handle, kind: 'display' })
+    return handle
+  }
+
+  frame(frame: CapturedFrame): FrameHandle {
+    // Keyed by the capture ID, so SDK values holding its `CaptureRef` link to
+    // it. A capture seen again in the same run keeps its first producer.
+    const ref = `frame:${frame.ref}` as const
+    const existing = usePlayground.getState().resources[ref]
+    if (existing?.kind === 'frame' && existing.run === usePlayground.getState().runIndex) {
+      this.refs.push(ref)
+      return existing.handle
+    }
+    // A replayed recording reuses its capture IDs; free the earlier run's pixels.
+    if (existing?.kind === 'frame') {
+      existing.bitmap?.close()
+      existing.preview?.close()
+    }
+    const handle: FrameHandle = {
+      $ref: ref,
+      bounds: frame.bounds,
+      height: frame.height,
+      kind: 'frame',
+      scale: frame.scale,
+      source: frame.source,
+      width: frame.width,
+    }
+    this.#put(handle.$ref, { capturedAt: nowMs(), frame, handle, kind: 'frame' })
+    const current = () => {
+      const resource = usePlayground.getState().resources[handle.$ref]
+      return resource?.kind === 'frame' ? resource : undefined
+    }
+    // The ThumbHash preview decodes locally and shows before the pixels load.
+    void decodeThumbHash(frame.thumbhash).then((preview) => {
+      const resource = current()
+      if (preview && resource && !resource.bitmap)
+        actions.putResource(handle.$ref, { ...resource, preview })
+      else
+        preview?.close()
+    })
+    if (this.backend) {
+      void decodeBitmap(this.backend, frame).then((bitmap) => {
+        const resource = current()
+        if (resource)
+          actions.putResource(handle.$ref, { ...resource, bitmap, revealedAt: revealStart(resource) })
+        else
+          bitmap.close()
+      }, error => console.warn(`Loading ${handle.$ref} pixels failed`, error))
+    }
+    return handle
+  }
+
+  input(action: InputHandle['action'], receipt: InputReceipt, delta?: ScrollDelta): InputHandle {
+    const handle: InputHandle = { $ref: `input:${nextHandle++}`, action, delta, kind: 'input', path: receipt.path, point: receipt.point }
+    this.#put(handle.$ref, { handle, kind: 'input' })
+    return handle
+  }
+
+  /**
+   * `source` is the frame the recognizer read when the driver does not return
+   * one; `within` is the screen-space area the search was limited to.
+   */
+  text(result: TextSearchResult, query?: string, source?: FrameHandle, within?: Rect): TextHandle {
+    const handle: TextHandle = {
+      $ref: `text:${nextHandle++}`,
+      frame: result.capture ? this.frame(result.capture) : source,
+      kind: 'text',
+      matches: result.matches,
+      query,
+      text: result.text,
+      within,
+    }
+    this.#put(handle.$ref, { handle, kind: 'text' })
+    return handle
+  }
+
+  window(info: WindowInfo): WindowHandle {
+    const handle: WindowHandle = { $ref: `window:${info.id}`, app: info.app, bundleId: info.bundleId, frame: info.frame, id: info.id, kind: 'window', pid: info.pid, title: info.title }
+    // A window ref is stable across calls; keep the first producer for lineage.
+    const existing = usePlayground.getState().resources[handle.$ref]
+    this.refs.push(handle.$ref)
+    const run = usePlayground.getState().runIndex
+    const sameRun = existing?.run === run
+    actions.putResource(handle.$ref, { callId: sameRun ? existing.callId : this.callId, handle, kind: 'window', run, seq: sameRun ? existing.seq : this.seq })
+    return handle
+  }
+
+  #put(ref: string, resource: ResourceBody): void {
+    this.refs.push(ref)
+    actions.putResource(ref, { ...resource, callId: this.callId, run: usePlayground.getState().runIndex, seq: this.seq } as Resource)
+  }
+}
+
+/**
+ * Display bitmap for a capture at logical resolution (pixels ÷ `scale`): the
+ * canvas and previews draw in logical points, and a Retina capture at full
+ * size costs 4× the transfer, memory and a slow downscale per redraw. The
+ * backend encodes the bounded image; `createImageBitmap` decodes it off the
+ * main thread. OCR keeps reading the full-resolution capture by reference.
+ * NOTICE(bitmap-logical-resolution): magnifiers (ClickLoupe, zoomed canvas)
+ * show logical-resolution detail.
+ */
+export async function decodeBitmap(backend: RunBackend, frame: CapturedFrame): Promise<ImageBitmap> {
+  const scale = frame.scale > 1 ? frame.scale : 1
+  const maxSize = { height: Math.max(1, Math.round(frame.height / scale)), width: Math.max(1, Math.round(frame.width / scale)) }
+  return await createImageBitmap(await backend.captureImage(frame, maxSize))
+}
 
 const TYPE = {
   capturedFrame: 'auv.api.driver.v1.CapturedFrame',

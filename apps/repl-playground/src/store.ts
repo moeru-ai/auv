@@ -1,9 +1,10 @@
 import type { MethodPresentation } from '@auv-js/sdk'
 
 import type { AxNode, Backend, CapturedFrame, DisplayInfo } from './backend/types'
+import type { DisplayHandle, FrameHandle, InputHandle, TextHandle, WindowHandle } from './handles'
 import type { RevealedImage } from './preview'
 import type { LogLevel, RunOutcome, WireValue } from './runtime/protocol'
-import type { DisplayHandle, FrameHandle, InputHandle, Point, Rect, TextHandle, WindowHandle } from './script-api/api'
+import type { Point, Rect } from './script-api/api'
 import type { TimingSnapshot } from './stepper/timing'
 
 import { create } from 'zustand'
@@ -155,7 +156,7 @@ export type Resource = (
   | { handle: DisplayHandle, kind: 'display' }
   | { handle: InputHandle, kind: 'input' }
   | { handle: TextHandle, kind: 'text' }
-  | { handle: WindowData, kind: 'window' }
+  | { handle: WindowHandle, kind: 'window' }
 ) & {
   callId?: number
   /** Run that produced the resource; seqs are only comparable within one run. */
@@ -168,7 +169,7 @@ export interface RunState {
   endedAt?: number
   errorLine?: number
   errorMessage?: string
-  /** `replay` answers bindings from the previous run's recording. */
+  /** `replay` answers `auv` calls from the previous run's recording. */
   mode: 'live' | 'replay'
   outcome?: RunOutcome
   /** AUV Run ID when the backend opened one. */
@@ -186,8 +187,6 @@ export interface StepEvent {
   line: number
   seq: number
 }
-
-export type WindowData = Omit<WindowHandle, 'capture' | 'click' | 'findText' | 'pressKey' | 'scroll' | 'scrollUntil' | 'typeText'>
 
 const emptyTimings: TimingSnapshot = { lines: [], statements: [] }
 

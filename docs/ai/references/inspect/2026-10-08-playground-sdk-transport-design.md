@@ -2,8 +2,12 @@
 
 Date: 2026-10-08
 
-Status: **accepted** (owner decisions below), with a prototype (`sdk` and `device` script globals)
-behind the existing script API. Names marked *provisional* are open.
+Status: **accepted and complete.** Since 2026-10-09 the script global `auv`
+*is* the SDK Runner client, `device` is gone, and the per-method bindings are
+deleted; see
+[`../session-api/2026-10-09-sdk-ergonomics-design.md`](../session-api/2026-10-09-sdk-ergonomics-design.md)
+Phase 3. The sections below record the design as decided, with `device` as the
+interim name. Names marked *provisional* are open.
 
 ## Problem
 

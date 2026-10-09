@@ -1,5 +1,5 @@
 import type { ExecWorkerApi, HostApi, LogLevel, ResumeMode, RunOutcome, RunRequest, WireValue } from '../runtime/protocol'
-import type { AuvScriptApi, ClickOptions, KeyboardOptions, Point, Rect, ScrollDelta, ScrollUntilOptions, ScrollUntilUpdate, TextSearchOptions, WindowHandle } from '../script-api/api'
+import type { Point, Rect } from '../script-api/api'
 /// <reference lib="webworker" />
 import type { StepSite } from '../stepper/compile'
 
@@ -38,22 +38,12 @@ const persistentNames = new Set<string>()
 
 const now = () => performance.timeOrigin + performance.now()
 
-// `scrollUntil` predicates by id while their call runs; the host asks via `decide`.
-const predicates = new Map<number, (update: ScrollUntilUpdate) => boolean | Promise<boolean>>()
-let nextPredicate = 1
-
 const api: ExecWorkerApi = {
-  async decide(predicateId, update) {
-    const predicate = predicates.get(predicateId)
-    if (!predicate)
-      throw new Error(`scrollUntil predicate ${predicateId} is no longer running`)
-    return Boolean(await predicate(update))
-  },
   resume(next) {
     resumeWaiter?.(next)
   },
   async run(request) {
-    globals.device = await deviceRunner(request.sdkRoute)
+    globals.auv = await runnerFor(request.sdkRoute)
     return await runCell(request)
   },
   setBreakpoints(lines) {
@@ -72,15 +62,15 @@ const host = createBirpc<HostApi, ExecWorkerApi>(api, {
       fn(event.data)
   }),
   post: data => postMessage(data),
-  // Script bindings can legitimately take long (OCR, slow apps).
   timeout: 10 * 60_000,
 })
 
-// ---- Direct SDK -------------------------------------------------------------
-// Scripts may also use `@auv-js/sdk` directly: `sdk` is the module and `device`
-// is the Runner client for the selected Device and the current Run, the same
-// object a Node script gets from `createAuv(await connect(...)).runner(route)`. Calls
-// cross to the host encoded, on their own port (`runtime/sdk-bridge.ts`).
+// ---- SDK -------------------------------------------------------------------
+// `auv` is the `@auv-js/sdk` Runner client for the selected Device and the
+// current Run, the same object a Node script gets from
+// `createAuv(await connect(...)).runner(route)`, and `sdk` is the module. Calls
+// cross to the host encoded, on their own port (`runtime/sdk-bridge.ts`),
+// where they are recorded for the timeline and replay.
 
 let sdkConnection: Promise<sdk.AuvConnection> | undefined
 
@@ -94,12 +84,12 @@ addEventListener('message', (event) => {
   sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep) })
 })
 
-async function deviceRunner(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
+async function runnerFor(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
   if (!route || !sdkConnection) {
-    // Fails on first use, with the reason, rather than as `device is undefined`.
+    // Fails on first use, with the reason, rather than as `auv is undefined`.
     return new Proxy({} as sdk.RunnerClient, {
       get() {
-        throw new Error('`device` needs a connected device; the mock desktop and replays do not serve SDK calls yet')
+        throw new Error('`auv` needs a device, the mock desktop, or a replay of a run that made the same calls')
       },
     })
   }
@@ -141,39 +131,6 @@ globals.__bind = (id: number, values: Record<string, unknown>) => {
   host.onBind(id, wire, now())
 }
 
-function attachWindowMethods(window: WindowHandle): void {
-  const ref = { $ref: window.$ref, kind: 'window' }
-  Object.defineProperties(window, {
-    capture: { value: () => call('windows.capture', ref) },
-    click: { value: (point: Point, options?: ClickOptions) => call('windows.click', ref, point, options) },
-    findText: { value: (query: string, options?: TextSearchOptions) => call('windows.findText', ref, query, options) },
-    pressKey: { value: (key: string, options?: KeyboardOptions) => call('windows.pressKey', ref, key, options) },
-    scroll: { value: (at: Point | Rect, delta: ScrollDelta) => call('windows.scroll', ref, at, delta) },
-    scrollUntil: {
-      value: async (at: Point | Rect, options: ScrollUntilOptions) => {
-        const { until, ...rest } = options ?? {}
-        if (!until)
-          return await call('windows.scrollUntil', ref, at, rest)
-        // Functions cannot cross to the host; send a placeholder it calls back through `decide`.
-        const predicateId = nextPredicate++
-        predicates.set(predicateId, until)
-        try {
-          return await call('windows.scrollUntil', ref, at, { ...rest, until: { $predicate: predicateId } })
-        }
-        finally {
-          predicates.delete(predicateId)
-        }
-      },
-    },
-    typeText: { value: (text: string, options?: KeyboardOptions) => call('windows.typeText', ref, text, options) },
-  })
-}
-
-async function call<T>(method: string, ...args: unknown[]): Promise<T> {
-  const result = await host.call(method, args.map(arg => toWire(arg)), currentStep)
-  return hydrate(result) as T
-}
-
 function errorLine(error: Error): number | undefined {
   const match = error.stack?.match(/cell-[^:]+\.ts\.js:(\d+):\d+/)
   if (match)
@@ -182,20 +139,6 @@ function errorLine(error: Error): number | undefined {
 }
 
 // ---- Values crossing to the host ---------------------------------------------
-
-/** Re-attaches methods to handles returned by the host. */
-function hydrate(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.map(hydrate)
-  if (!value || typeof value !== 'object')
-    return value
-  const object = value as Record<string, unknown>
-  for (const key of Object.keys(object))
-    object[key] = hydrate(object[key])
-  if (object.kind === 'window' && typeof object.$ref === 'string')
-    attachWindowMethods(object as unknown as WindowHandle)
-  return object
-}
 
 function publishVars(): void {
   const vars: Record<string, WireValue> = {}
@@ -232,7 +175,7 @@ async function runCell(request: RunRequest): Promise<RunOutcome> {
   }
 }
 
-/** Structured-clone-safe summary of a script value; keeps resource handles intact. */
+/** Structured-clone-safe summary of a script value; keeps protobuf `$typeName`s for lineage. */
 function toWire(value: unknown, depth = 0, seen = new WeakSet<object>()): WireValue {
   if (value === null || value === undefined)
     return value
@@ -272,30 +215,6 @@ function toWire(value: unknown, depth = 0, seen = new WeakSet<object>()): WireVa
 
 // ---- Script globals -------------------------------------------------------------
 
-const auv: AuvScriptApi = {
-  apps: {
-    activate: bundleId => call('apps.activate', bundleId),
-  },
-  displays: {
-    capture: display => call('displays.capture', display),
-    findText: (query, display, options) => call('displays.findText', query, display, options),
-    list: () => call('displays.list'),
-  },
-  input: {
-    click: (point, options) => call('input.click', point, options),
-    pressKey: key => call('input.pressKey', key),
-    typeText: text => call('input.typeText', text),
-  },
-  text: {
-    recognize: (frame, options) => call('text.recognize', frame, options),
-  },
-  windows: {
-    list: () => call('windows.list'),
-    resolve: selector => call('windows.resolve', selector),
-  },
-}
-
-globals.auv = auv
 globals.sdk = sdk
 globals.area = areaOf
 globals.focus = <T>(target: T, options?: { autoZoomOut?: boolean, zoom?: boolean }): T => {

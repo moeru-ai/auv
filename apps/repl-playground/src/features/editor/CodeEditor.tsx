@@ -25,6 +25,7 @@ const STORAGE_KEY = 'auv-playground:source'
 
 export const DEFAULT_SOURCE = `// ⌘↩ run all · ⇧↩ run line · ⌘⇧↩ step from the top
 // Click the gutter left of a line number to toggle a breakpoint.
+// \`auv\` is the @auv-js/sdk Runner client for the selected device.
 
 const todos = await auv.windows.resolve({ appName: 'Todos' })
 const counter = await auv.windows.resolve({ appName: 'Counter' })
@@ -32,17 +33,16 @@ const counter = await auv.windows.resolve({ appName: 'Counter' })
 // OCR the todo window and mark every open item as done.
 const before = await todos.findText('Done')
 for (const match of before.matches) {
-  const point = centerOf(match.bounds)
-  await auv.input.click(point)
+  await todos.click(match) // a text match clicks at its center
 }
 
 // Click a button a few times and read the result back with OCR.
 for (let i = 0; i < 3; i++) {
   const button = await counter.findText('Increment')
-  await auv.input.click(centerOf(button.matches[0]!.bounds))
+  await counter.click(button.matches[0]!)
 }
 const shot = await counter.capture()
-const count = await auv.text.recognize(shot)
+const count = await auv.recognizeText(shot.capture!)
 show(count.text, 'counter text')
 `
 

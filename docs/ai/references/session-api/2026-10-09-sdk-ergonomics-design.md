@@ -2,8 +2,7 @@
 
 Date: 2026-10-09
 
-Status: **Phases 1 (#295) and 2 implemented**; Phase 3 accepted, not
-started. Names marked *provisional* are open.
+Status: **Phases 1 (#295), 2 (#296) and 3 implemented.** Names marked *provisional* are open.
 
 ## Problem
 
@@ -99,13 +98,24 @@ instead: `CaptureRef.captureId`, `WindowRef.windowId` and `displayId`.
 
 ## Phase 3: switch `auv` to the SDK client
 
-- The `auv` global becomes the SDK Runner client, and `device` is removed.
+- The `auv` global is the SDK Runner client for the selected device and the
+  current Run; `device` is removed with no alias. `sdk` stays as the module.
 - The worker proxy, `runtime/bindings.ts`, the `auv.*` script API types and
-  the per-method `Backend` methods are deleted. The backends keep only
-  connection, Run and SDK access.
-- The playground README, the examples and the editor's default script use
-  the new API. The editor still types `auv` as `any` until
-  `TODO(playground-sdk-types)`.
+  the per-method `Backend` methods are deleted. A `RunBackend` has Run
+  lifecycle, `sdk()` and canvas pixels (`captureImage`); a selected `Backend`
+  adds the canvas's own display listing and live captures, the AX tree and
+  `dispose`. A recording now holds only SDK calls and canvas images.
+- Resource handle types (`FrameHandle`, `WindowHandle`, …) moved from the
+  script API to `handles.ts`: they are host records, not script values.
+  `script-api/api.ts` keeps only the playground helpers (`area()`, `draw()`,
+  `focus()`, `show()`, `centerOf()`, `sleep()`) and their types.
+- An area has a `bounds` getter, so SDK clicks and scrolls take it at its
+  center in screen space.
+- The README, the examples and the editor's default script use the SDK API.
+  The editor types `auv` as `any` until `TODO(playground-sdk-types)`.
+- Known regression: `scrollUntil` has no client defaults, so scripts pass
+  `maxSteps`, `noMotionConfirmations` and `settle` themselves
+  (`TODO(sdk-scroll-until-defaults)`).
 
 Each phase is one PR, in this order.
 

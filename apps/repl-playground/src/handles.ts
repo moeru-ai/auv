@@ -1,6 +1,94 @@
 import type { Point, Rect } from './script-api/api'
 import type { Resource } from './store'
 
+// What the playground records for the canvas, inspector and timeline, from
+// SDK responses (`runtime/rpc-resources.ts`). Scripts never hold these: they
+// hold SDK values, which `refOf` maps back to them.
+
+/** A display (monitor) of the controlled Device. */
+export interface DisplayHandle {
+  readonly $ref: `display:${string}`
+  /** Logical bounds of the display on the virtual desktop. */
+  readonly frame: Rect
+  readonly id: string
+  readonly kind: 'display'
+  readonly name?: string
+  readonly primary: boolean
+  /** Physical pixels per logical point. */
+  readonly scale: number
+}
+
+/** A captured image; its pixels load on the host by capture reference. */
+export interface FrameHandle {
+  readonly $ref: `frame:${string}`
+  /** Logical screen-space bounds represented by the pixels. */
+  readonly bounds: Rect
+  /** Physical pixel height. */
+  readonly height: number
+  readonly kind: 'frame'
+  readonly scale: number
+  /** What produced the frame, e.g. `display:1` or `window:42`. */
+  readonly source: string
+  /** Physical pixel width. */
+  readonly width: number
+}
+
+/** Receipt of a delivered input action. Delivery is not semantic success. */
+export interface InputHandle {
+  readonly $ref: `input:${string}`
+  readonly action: 'activate' | 'click' | 'key' | 'scroll' | 'type'
+  /** Scroll amount for `scroll` receipts, in logical pixels. */
+  readonly delta?: ScrollDelta
+  readonly kind: 'input'
+  /** Delivery path chosen by the driver, e.g. `window-targeted`. */
+  readonly path?: string
+  /** Screen point for pointer actions. */
+  readonly point?: Point
+}
+
+/**
+ * Scroll amount in logical pixels: positive `dy` scrolls toward later content
+ * (down), positive `dx` scrolls right, like DOM `WheelEvent`.
+ */
+export interface ScrollDelta {
+  dx?: number
+  dy?: number
+}
+
+/** Result of OCR over a capture, a window or a display. */
+export interface TextHandle {
+  readonly $ref: `text:${string}`
+  /** The frame the recognizer looked at, when the driver returned it. */
+  readonly frame?: FrameHandle
+  readonly kind: 'text'
+  readonly matches: readonly TextMatch[]
+  readonly query?: string
+  /** Full recognized text, for `recognizeText`. */
+  readonly text?: string
+  /** Screen-space area the recognizer was limited to. */
+  readonly within?: Rect
+}
+
+export interface TextMatch {
+  /** Logical screen-space bounds of the matched text. */
+  readonly bounds: Rect
+  readonly confidence: number
+  readonly text: string
+}
+
+/** A top-level window as AUV last reported it. */
+export interface WindowHandle {
+  readonly $ref: `window:${string}`
+  readonly app?: string
+  readonly bundleId?: string
+  /** Logical screen-space frame of the window. */
+  readonly frame: Rect
+  readonly id: string
+  readonly kind: 'window'
+  readonly pid?: number
+  readonly title?: string
+}
+
 // Resources are keyed by the IDs AUV gives them: `window:<windowId>`,
 // `display:<displayId>` and `frame:<captureId>`. SDK messages carry the same
 // IDs (`WindowRef`, `CaptureRef`, a `Position`'s window), so lineage, hover and

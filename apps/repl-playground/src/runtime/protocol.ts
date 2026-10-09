@@ -1,4 +1,3 @@
-import type { ScrollUntilUpdate } from '../script-api/api'
 import type { BindSite, StepSite } from '../stepper/compile'
 
 // ---- Language worker (TypeScript service + cell compiler) ------------------
@@ -40,8 +39,6 @@ export interface DiagnosticInfo {
 }
 
 export interface ExecWorkerApi {
-  /** Runs the script's `scrollUntil` predicate `predicateId` for one update. */
-  decide: (predicateId: number, update: ScrollUntilUpdate) => Promise<boolean>
   resume: (mode: ResumeMode) => void
   run: (request: RunRequest) => Promise<RunOutcome>
   setBreakpoints: (lines: number[]) => void
@@ -50,8 +47,6 @@ export interface ExecWorkerApi {
 
 /** Host functions the execution worker calls. `on*` are fire-and-forget events. */
 export interface HostApi {
-  /** Invokes one script binding (`auv.*`) on the host. */
-  call: (method: string, args: WireValue[], stepId: null | number) => Promise<WireValue>
   /** Values bound by a declaration or loop header, right after assignment. */
   onBind: (bindId: number, values: Record<string, WireValue>, at: number) => void
   /** Editor-only overlay from `draw()`: an area, rectangle or point. */
@@ -103,14 +98,14 @@ export interface RunRequest {
   /** Pause at the first hook (`step`) or only at breakpoints (`run`). */
   mode: 'run' | 'step'
   prelude: string
-  /** Route for the script's `device` global; absent when the backend cannot serve SDK calls. */
+  /** Route for the script's `auv` Runner client; absent when no backend is selected. */
   sdkRoute?: { deviceId?: string, runId?: string, runnerClass: string }
   steps: StepSite[]
 }
 
 /**
- * Values crossing from the execution worker to the host. Resource handles stay
- * as plain `{ $ref, kind, ... }` objects; functions and cycles are summarized.
+ * Values crossing from the execution worker to the host: plain data, with
+ * protobuf messages keeping `$typeName`; functions and cycles are summarized.
  */
 export type WireValue = unknown
 

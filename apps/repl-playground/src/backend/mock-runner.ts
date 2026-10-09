@@ -1,6 +1,7 @@
 import type { MockRouter, Transport } from '@auv-js/sdk'
 
-import type { Point, Rect, TextMatch } from '../script-api/api'
+import type { TextMatch } from '../handles'
+import type { Point, Rect } from '../script-api/api'
 import type { MockDesktop } from './mock-desktop'
 import type { DisplayInfo, WindowInfo } from './types'
 
@@ -28,8 +29,7 @@ import { rgbaToThumbHash } from 'thumbhash'
 // Serves the mock desktop through the Runner API, with the Runner's rules:
 // positions in any coordinate space, input inside the target window, global
 // clicks without window options, and captures held by reference. Scripts,
-// `auv.*` bindings, call recording and replay then run the same code paths as
-// on a device. See docs/ai/references/session-api/2026-10-08-mock-runner-design.md.
+// call recording and replay then run the same code paths as on a device. See docs/ai/references/session-api/2026-10-08-mock-runner-design.md.
 // TODO(mock-runner-tasks): seeded scene variation, task goal checks and
 // episode export (the benchmark direction in that design) are not built yet.
 

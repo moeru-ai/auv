@@ -164,7 +164,7 @@ The first slice follows the plan below, with these choices:
     without window options, captures by reference with a ThumbHash, and
     `GetCaptureImage` crop, fit and encode.
 - **Backend.** The playground's mock backend is `AuvBackend` over the mock
-  transport, so `auv.*`, direct SDK calls, the timeline and replay use one
+  transport, so scripts' `auv` calls, the timeline and replay use one
   path. The per-method `MockBackend` is deleted.
 
 Deferred, marked in code:

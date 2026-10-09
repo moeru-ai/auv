@@ -1,7 +1,7 @@
 import type { BirpcReturn } from 'birpc'
 
 import type { Recording } from '../backend/replay'
-import type { Backend } from '../backend/types'
+import type { Backend, RunBackend } from '../backend/types'
 import type { Rect } from '../script-api/api'
 import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
@@ -17,8 +17,7 @@ import { boundsOf } from '../handles'
 import { decodeThumbHash } from '../preview'
 import { StepTimer } from '../stepper/timing'
 import { actions, nowMs, usePlayground } from '../store'
-import { CallScope, decodeBitmap, invokeBinding } from './bindings'
-import { recordRpcResources } from './rpc-resources'
+import { CallScope, decodeBitmap, recordRpcResources } from './rpc-resources'
 import { SDK_PORT_MESSAGE, serveBridge } from './sdk-bridge'
 
 /** Language service + compiler worker, shared by the editor and the runner. */
@@ -91,7 +90,7 @@ class ExecSession {
   #lineHits = new Map<number, number>()
   #liveTimer?: number
   #recording?: Recording
-  #runBackend: Backend | null = null
+  #runBackend: null | RunBackend = null
   #running = false
   #seq = 0
   #steps: StepSite[] = []
@@ -172,7 +171,7 @@ class ExecSession {
         hoisted: compiled.hoisted,
         mode: options.mode,
         prelude: compiled.prelude,
-        sdkRoute: this.#runBackend?.sdk?.().route,
+        sdkRoute: this.#runBackend?.sdk().route,
         steps: compiled.steps,
       })
       this.#timer.finish(performance.timeOrigin + performance.now())
@@ -251,13 +250,13 @@ class ExecSession {
     const worker = new Worker(new URL('../workers/exec.worker.ts', import.meta.url), { type: 'module' })
     this.#worker = worker
     const lineOf = (stepId: null | number) => stepId === null ? null : this.#steps[stepId]?.line ?? null
-    // Scripts' direct `@auv-js/sdk` calls arrive here encoded, on their own port.
+    // Scripts' `auv` calls (`@auv-js/sdk`) arrive here encoded, on their own port.
     const channel = new MessageChannel()
     worker.postMessage({ type: SDK_PORT_MESSAGE }, [channel.port2])
     serveBridge(createWorkerChannel(channel.port1 as unknown as Worker).context, {
       record: async (start) => {
         const line = lineOf(start.stepId)
-        const described = await this.#runBackend?.sdk?.().describe(start.method)
+        const described = await this.#runBackend?.sdk().describe(start.method)
         const decode = (body: Uint8Array, as: 'request' | 'response') => {
           try {
             return as === 'request' ? described?.decodeRequest(body) : described?.decodeResponse(body)
@@ -307,23 +306,10 @@ class ExecSession {
           })
         }
       },
-      target: () => this.#runBackend?.sdk?.().target
-        ?? 'Direct SDK calls need a device, the mock desktop, or a replay of a run that made them',
+      target: () => this.#runBackend?.sdk().target
+        ?? '`auv` needs a device, the mock desktop, or a replay of a run that made the same calls',
     })
     const host: HostApi = {
-      call: async (method, args, stepId) => {
-        const line = lineOf(stepId)
-        return await invokeBinding(this.#runBackend, method, args, {
-          decide: async (predicateId, update) => await this.#exec.decide(predicateId, update),
-          hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
-          line,
-          nextSeq: () => {
-            const seq = this.#nextSeq()
-            this.#batch.flush()
-            return seq
-          },
-        })
-      },
       onBind: (bindId, values, at) => {
         const site = this.#binds[bindId]
         if (!site)

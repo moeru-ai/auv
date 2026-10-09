@@ -17,32 +17,18 @@ declare const performance: { now: () => number }
 type Area = import('./auv-api').Area
 type AreaEdges = import('./auv-api').AreaEdges
 type AreaLength = import('./auv-api').AreaLength
-type ClickOptions = import('./auv-api').ClickOptions
-type DisplayHandle = import('./auv-api').DisplayHandle
 type FocusOptions = import('./auv-api').FocusOptions
-type FrameHandle = import('./auv-api').FrameHandle
-type InputHandle = import('./auv-api').InputHandle
-type KeyboardOptions = import('./auv-api').KeyboardOptions
 type Point = import('./auv-api').Point
 type Positional = import('./auv-api').Positional
 type Rect = import('./auv-api').Rect
-type ScrollDelta = import('./auv-api').ScrollDelta
-type ScrollUntilUpdate = import('./auv-api').ScrollUntilUpdate
-type ScrollUntilOptions = import('./auv-api').ScrollUntilOptions
-type ScrollUntilResult = import('./auv-api').ScrollUntilResult
-type TextHandle = import('./auv-api').TextHandle
-type TextMatch = import('./auv-api').TextMatch
-type TextSearchOptions = import('./auv-api').TextSearchOptions
-type WindowHandle = import('./auv-api').WindowHandle
-type WindowSelector = import('./auv-api').WindowSelector
 
-// Direct `@auv-js/sdk` access: `sdk` is the module and `device` the Runner client
-// for the selected Device and the current Run, as `createAuv(...).runner(route)`
-// returns in a Node script.
+// `auv` is the `@auv-js/sdk` Runner client for the selected Device and the
+// current Run, as `createAuv(...).runner(route)` returns in a Node script, and
+// `sdk` is the module.
 // TODO(playground-sdk-types): typed as `any` until the editor's language service
 // loads the SDK's declarations; see
 // docs/ai/references/inspect/2026-10-08-playground-sdk-transport-design.md.
 // eslint-disable-next-line ts/no-explicit-any
-declare const sdk: any
+declare const auv: any
 // eslint-disable-next-line ts/no-explicit-any
-declare const device: any
+declare const sdk: any

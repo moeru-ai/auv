@@ -14,6 +14,15 @@ import { refOf } from '../handles'
 class ScreenArea implements Area {
   readonly kind = 'area'
 
+  // NOTICE(area-bounds-getter): a getter, so it lives on the prototype and an
+  // area crosses to the host without a duplicate rectangle. SDK point targets
+  // check `'bounds' in target` before `{ x, y }`, so `window.click(area)`
+  // clicks the area's center in screen space, not its top-left corner as a
+  // window-local point.
+  get bounds(): Rect {
+    return { height: this.height, width: this.width, x: this.x, y: this.y }
+  }
+
   get center(): Point {
     return this.at(0.5, 0.5)
   }

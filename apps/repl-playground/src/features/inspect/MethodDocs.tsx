@@ -16,7 +16,7 @@ const fetched = new Map<string, Promise<Docs | undefined>>()
 /**
  * What an SDK call's method does: its title and description from the schema,
  * and on request its full docs and examples from the Runner. Renders nothing
- * for calls without a presentation (script bindings, unannotated methods).
+ * for calls without a presentation (unannotated methods).
  */
 export function MethodDocs({ call }: { call: CallRecord }) {
   const presentation = call.rpc?.presentation
