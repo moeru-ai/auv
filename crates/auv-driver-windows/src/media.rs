@@ -598,6 +598,10 @@ impl SmtcMediaManager {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventRegistrationToken(pub i64);
+
+#[cfg(not(target_os = "windows"))]
 #[derive(Clone, Debug)]
 pub struct SmtcSession;
 
@@ -636,6 +640,28 @@ impl SmtcSession {
   }
 
   pub fn stop(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn on_media_properties_changed<F>(&self, _handler: F) -> DriverResult<EventRegistrationToken>
+  where
+    F: Fn() + Send + 'static,
+  {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn remove_media_properties_changed(&self, _token: EventRegistrationToken) -> DriverResult<()> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn on_playback_info_changed<F>(&self, _handler: F) -> DriverResult<EventRegistrationToken>
+  where
+    F: Fn() + Send + 'static,
+  {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn remove_playback_info_changed(&self, _token: EventRegistrationToken) -> DriverResult<()> {
     Err(DriverError::unsupported("SMTC is only supported on Windows"))
   }
 
