@@ -3,8 +3,8 @@ use std::ffi::OsStr;
 use auv_driver_common::{
   Capture, CaptureOptions, Click, ClickModifiers, ClickOptions, DisplayCapture, DriverError, DriverResult, InputActionResult, InputPolicy,
   InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, ObservedDisplays, PasteTextOptions, PermissionProbe, Point,
-  PressKeysOptions, RatioRect, RegionCapture, ScreenPoint, Scroll, ScrollOptions, TextRecognition, TextRecognitionOptions, TypeTextOptions,
-  WaitOptions, Window, WindowInput, WindowPoint, WindowSelector, input::MouseButton, vision::OcrMatches,
+  PressKeysOptions, RegionCapture, RelativeRect, ScreenPoint, Scroll, ScrollOptions, TextRecognition, TextRecognitionOptions,
+  TypeTextOptions, WaitOptions, Window, WindowInput, WindowPoint, WindowSelector, input::MouseButton, vision::OcrMatches,
 };
 use auv_driver_linux::{AxTreeSnapshot, LinuxDriverDescriptor, LinuxPortalProbe};
 
@@ -328,14 +328,14 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn find_text(&self, window: &Window, query: &str, region: RelativeRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     match self.session {
       LocalDriverSession::Linux(session) => session.window().find_text(window, query, region, wait),
       LocalDriverSession::LinuxX11(_) => Err(DriverError::unsupported("X11 window.find_text")),
     }
   }
 
-  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+  pub fn wait_text(&self, window: &Window, query: &str, region: RelativeRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     match self.session {
       LocalDriverSession::Linux(session) => session.window().wait_text(window, query, region, wait),
       LocalDriverSession::LinuxX11(_) => Err(DriverError::unsupported("X11 window.wait_text")),
@@ -422,14 +422,14 @@ impl PermissionApi<'_> {
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RelativeRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
   pub fn recognize_text_in_capture_with_options(
     &self,
     capture: &Capture,
-    region: RatioRect,
+    region: RelativeRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<TextRecognition> {
     match self.session {
@@ -442,7 +442,7 @@ impl VisionApi<'_> {
     &self,
     capture: &Capture,
     query: &str,
-    region: RatioRect,
+    region: RelativeRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<OcrMatches> {
     match self.session {
@@ -451,7 +451,7 @@ impl VisionApi<'_> {
     }
   }
 
-  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RelativeRect) -> DriverResult<OcrMatches> {
     self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 }
@@ -569,8 +569,8 @@ mod tests {
     let _ = session.window().resolve(WindowSelector::default());
     let _ = session.window().capture(window);
     let _ = session.window().capture_with(window, CaptureOptions::default());
-    let _ = session.window().find_text(window, "query", RatioRect::new(0.0, 0.0, 1.0, 1.0), WaitOptions::default());
-    let _ = session.window().wait_text(window, "query", RatioRect::new(0.0, 0.0, 1.0, 1.0), WaitOptions::default());
+    let _ = session.window().find_text(window, "query", RelativeRect::new(0.0, 0.0, 1.0, 1.0), WaitOptions::default());
+    let _ = session.window().wait_text(window, "query", RelativeRect::new(0.0, 0.0, 1.0, 1.0), WaitOptions::default());
     let _ = session.window().to_screen_point(window, WindowPoint::new(0.0, 0.0));
     let _ = session.window().to_window_point(window, ScreenPoint::new(0.0, 0.0));
     let _ = session.input().current_position();
@@ -600,17 +600,17 @@ mod tests {
     let _ = session.input().copy();
     let _ = session.input().paste();
     let _ = session.input().paste_text(PasteTextOptions::default());
-    let _ = session.vision().recognize_text_in_capture(capture, RatioRect::new(0.0, 0.0, 1.0, 1.0));
+    let _ = session.vision().recognize_text_in_capture(capture, RelativeRect::new(0.0, 0.0, 1.0, 1.0));
     let _ = session.vision().recognize_text_in_capture_with_options(
       capture,
-      RatioRect::new(0.0, 0.0, 1.0, 1.0),
+      RelativeRect::new(0.0, 0.0, 1.0, 1.0),
       TextRecognitionOptions::default(),
     );
-    let _ = session.vision().find_text_in_capture(capture, "query", RatioRect::new(0.0, 0.0, 1.0, 1.0));
+    let _ = session.vision().find_text_in_capture(capture, "query", RelativeRect::new(0.0, 0.0, 1.0, 1.0));
     let _ = session.vision().find_text_in_capture_with_options(
       capture,
       "query",
-      RatioRect::new(0.0, 0.0, 1.0, 1.0),
+      RelativeRect::new(0.0, 0.0, 1.0, 1.0),
       TextRecognitionOptions::default(),
     );
     let _ = session.permission().authorize_portals();
