@@ -47,12 +47,10 @@ export function Landing() {
   const [filmT, setFilmT] = useState(skip ? HANDOFF : 0)
   const [clock, setClock] = useState(0)
   const [part, setPart] = useState<null | number>(null)
-  const [deskHover, setDeskHover] = useState<null | string>(null)
   const [pointer, setPointer] = useState<null | { x: number, y: number }>(null)
   const [scrollY, setScrollY] = useState(0)
   const hole = useRef<Hole>({ h: 0, open: 0, w: 0, x: W / 2, y: H / 2 })
   const deskHoverRef = useRef<null | string>(null)
-  deskHoverRef.current = deskHover
   const fit = useFit(W, H, 'cover')
   const { h: viewH, w: viewW } = useViewport()
   // Stage px visible across the screen; below 1920 the sides are cropped.
@@ -119,25 +117,27 @@ export function Landing() {
   // Past 1 the section's own mark takes over and scrolls with the page.
   const dock = intro ? 0 : SETTLE(clamp(scrollY / (viewH * 0.8), 0, 1))
   const appear = prog(filmT, HANDOFF - 0.2, HANDOFF + 1.4)
+  // Desk hover: only outside the mark, only once the desk is up.
+  // NOTICE: derived during render, not synced by an effect. `appear` changes
+  // every frame while the desk comes up, so an effect calling setState on each
+  // change tripped React's nested passive update limit ("Maximum update depth
+  // exceeded") whenever the per-frame clock update was still pending.
+  const deskHover = useMemo(() => {
+    const p = heroPointer
+    if (!p || part !== null || appear < 0.9)
+      return null
+    const hit = DESKS.find((d) => {
+      const r = deskRect(d, visibleW)
+      return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+    })
+    return hit?.id ?? null
+  }, [heroPointer, part, appear, visibleW])
+  deskHoverRef.current = deskHover
   const scene = useMemo(
     () => (intro ? film(filmT, theme) : ambient(clock, appear, W, H, deskHover, visibleW)),
     [intro, filmT, theme, clock, appear, deskHover, visibleW],
   )
   const copyIn = prog(filmT, HANDOFF - 0.1, HANDOFF + 0.8)
-
-  // Desk hover: only outside the mark, only once the desk is up.
-  useEffect(() => {
-    const p = heroPointer
-    if (!p || part !== null || appear < 0.9) {
-      setDeskHover(null)
-      return
-    }
-    const hit = DESKS.find((d) => {
-      const r = deskRect(d, visibleW)
-      return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
-    })
-    setDeskHover(hit?.id ?? null)
-  }, [heroPointer, part, appear, visibleW])
 
   // Keep the last revealed window's card while the hole closes, so both fade together.
   const lastDesk = useRef<null | string>(null)
