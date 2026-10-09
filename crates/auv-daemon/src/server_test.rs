@@ -277,8 +277,11 @@ async fn owner_named_pipe_serves_the_typed_control_api() {
   task.await.unwrap().unwrap();
 }
 
+/// Display Runner fixture; `failure` makes `ListDisplays` fail with that message.
 #[derive(Default)]
-struct DisplayFixture;
+struct DisplayFixture {
+  failure: Option<&'static str>,
+}
 
 #[tonic::async_trait]
 impl driver_proto::display_service_server::DisplayService for DisplayFixture {
@@ -286,6 +289,9 @@ impl driver_proto::display_service_server::DisplayService for DisplayFixture {
     &self,
     _request: tonic::Request<driver_proto::ListDisplaysRequest>,
   ) -> Result<tonic::Response<driver_proto::ListDisplaysResponse>, tonic::Status> {
+    if let Some(message) = self.failure {
+      return Err(tonic::Status::not_found(message));
+    }
     Ok(tonic::Response::new(driver_proto::ListDisplaysResponse {
       displays: vec![driver_proto::Display {
         display_id: "display-fixture".into(),
@@ -296,12 +302,18 @@ impl driver_proto::display_service_server::DisplayService for DisplayFixture {
 }
 
 async fn remote_display_runner() -> (runner_provider::RunnerProviderConfig, tokio::task::JoinHandle<Result<(), tonic::transport::Error>>) {
+  remote_display_runner_with(DisplayFixture::default()).await
+}
+
+async fn remote_display_runner_with(
+  fixture: DisplayFixture,
+) -> (runner_provider::RunnerProviderConfig, tokio::task::JoinHandle<Result<(), tonic::transport::Error>>) {
   use driver_proto::display_service_server::DisplayServiceServer;
   use tokio_stream::wrappers::TcpListenerStream;
 
   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
   let address = listener.local_addr().unwrap();
-  let display = DisplayServiceServer::new(DisplayFixture);
+  let display = DisplayServiceServer::new(fixture);
   let (health_reporter, health) = tonic_health::server::health_reporter();
   health_reporter.set_serving::<DisplayServiceServer<DisplayFixture>>().await;
   let descriptor = auv_api_proto::descriptor_set_for_service(DISPLAY_SERVICE).unwrap();
@@ -706,6 +718,84 @@ async fn http_and_websocket_invoke_share_the_runner_route() {
     panic!("end message")
   };
   assert_eq!(end.grpc_status, 0);
+
+  shutdown.cancel();
+  server_task.await.unwrap().unwrap();
+  runner_task.abort();
+}
+
+// ROOT CAUSE:
+//
+// If a Runner failed with a message containing spaces, quotes, non-ASCII text
+// or `%`, REST and WebSocket invoke callers saw it percent-encoded, because
+// gRPC percent-encodes `grpc-message` and the daemon copied the raw header.
+//
+// Before the fix, `no display "Café"` arrived as
+// `no%20display%20%22Caf%C3%A9%22`. The fix decodes the header once, so both
+// invoke surfaces report the Runner's message as written.
+#[tokio::test]
+async fn http_and_websocket_invoke_decode_runner_status_messages() {
+  const MESSAGE: &str = "no display \"Café\" covers 50% of the screen";
+  let root = tempfile::tempdir().unwrap();
+  let (provider, runner_task) = remote_display_runner_with(DisplayFixture {
+    failure: Some(MESSAGE),
+  })
+  .await;
+  let mut daemon_config = config(paired_http_listeners(), root.path());
+  daemon_config.runner_providers.push(provider);
+  let server = Server::bind(daemon_config).await.unwrap();
+  let address = remote_address(&server);
+  let owner = owner_endpoint(&server);
+  let shutdown = CancellationToken::new();
+  let server_task = tokio::spawn(server.serve(shutdown.clone()));
+  let credential = pair_device(owner, address, "invoke-error-client").await;
+
+  let response = authorized_http(&credential)
+    .post(format!("http://{address}/apis/auv/runtime/v1/invoke/{DISPLAY_SERVICE}/ListDisplays"))
+    .header(reqwest::header::CONTENT_TYPE, "application/protobuf")
+    .header("auv-runner-class", TEST_RUNNER_CLASS)
+    .body(driver_proto::ListDisplaysRequest {}.encode_to_vec())
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+  let problem: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+  assert_eq!(problem["detail"], MESSAGE);
+
+  let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/apis/auv/runtime/v1/invoke")).await.unwrap();
+  for message in [
+    transport_proto::client_message::Message::Open(transport_proto::Open {
+      credential: credential.clone(),
+      service: DISPLAY_SERVICE.into(),
+      method: "ListDisplays".into(),
+      runner_class: TEST_RUNNER_CLASS.into(),
+      device_id: None,
+      run_id: None,
+    }),
+    transport_proto::client_message::Message::Input(transport_proto::Input {
+      payload: driver_proto::ListDisplaysRequest {}.encode_to_vec(),
+    }),
+    transport_proto::client_message::Message::HalfClose(transport_proto::HalfClose {}),
+  ] {
+    socket
+      .send(tokio_tungstenite::tungstenite::Message::Binary(
+        transport_proto::ClientMessage {
+          message: Some(message),
+        }
+        .encode_to_vec()
+        .into(),
+      ))
+      .await
+      .unwrap();
+  }
+  let end = loop {
+    let message = websocket_server_message(socket.next().await.unwrap().unwrap());
+    if let Some(transport_proto::server_message::Message::End(end)) = message.message {
+      break end;
+    }
+  };
+  assert_eq!(end.grpc_status, tonic::Code::NotFound as i32);
+  assert_eq!(end.message, MESSAGE);
 
   shutdown.cancel();
   server_task.await.unwrap().unwrap();

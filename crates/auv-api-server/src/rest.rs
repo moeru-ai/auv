@@ -109,12 +109,8 @@ async fn invoke_unary(
     .map_err(|error| RestError::new(StatusCode::BAD_GATEWAY, "invalid_grpc", error.to_string()))?;
 
   if grpc_status != 0 {
-    let message = parts
-      .headers
-      .get("grpc-message")
-      .or_else(|| collected.trailers().and_then(|trailers| trailers.get("grpc-message")))
-      .and_then(|value| value.to_str().ok())
-      .unwrap_or("Runner operation failed");
+    let message = crate::server::runner_grpc_proxy::runner_status_message(&parts.headers, collected.trailers())
+      .unwrap_or_else(|| "Runner operation failed".to_string());
     return Err(RestError::from(Status::new(Code::from_i32(grpc_status), message)));
   }
 

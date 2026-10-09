@@ -222,10 +222,8 @@ fn grpc_status(headers: &HeaderMap, trailers: Option<&HeaderMap>) -> Result<(), 
     return Ok(());
   }
 
-  let message = match headers.get("grpc-message").or_else(|| trailers.and_then(|trailers| trailers.get("grpc-message"))) {
-    Some(value) => value.to_str().map_err(|error| Status::internal(error.to_string()))?,
-    None => "Runner operation failed",
-  };
+  let message =
+    crate::server::runner_grpc_proxy::runner_status_message(headers, trailers).unwrap_or_else(|| "Runner operation failed".to_string());
 
   Err(Status::new(Code::from_i32(status), message))
 }

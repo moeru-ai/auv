@@ -33,6 +33,7 @@ http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 libc = "0.2"
+percent-encoding = "2"
 thiserror = "2"
 zeroize = "1"
 

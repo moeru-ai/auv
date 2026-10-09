@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use axum::body::Body as AxumBody;
-use axum::http::{Method, Request, Response, header};
+use axum::http::{HeaderMap, Method, Request, Response, header};
 use tonic::body::Body as TonicBody;
 use tonic::{Code, Status};
 use tower::ServiceExt as _;
@@ -95,6 +95,18 @@ impl http_body::Body for PermitBody {
   fn size_hint(&self) -> http_body::SizeHint {
     self.inner.size_hint()
   }
+}
+
+/// Returns the `grpc-message` a proxied Runner response ended with, decoded.
+///
+/// gRPC percent-encodes this header (`grpc-message` in
+/// `https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md`), and only
+/// gRPC clients decode it. Surfaces that re-present a Runner status to non-gRPC
+/// callers, such as REST and WebSocket invoke, must decode it once here.
+/// Trailers-only responses carry it in `headers`; others in `trailers`.
+pub(crate) fn runner_status_message(headers: &HeaderMap, trailers: Option<&HeaderMap>) -> Option<String> {
+  let value = headers.get("grpc-message").or_else(|| trailers.and_then(|trailers| trailers.get("grpc-message")))?;
+  Some(percent_encoding::percent_decode(value.as_bytes()).decode_utf8_lossy().into_owned())
 }
 
 fn require_grpc_request(request: &Request<AxumBody>) -> Result<(), Status> {

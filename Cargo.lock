@@ -409,6 +409,7 @@ dependencies = [
  "http-body-util",
  "hyper-util",
  "libc",
+ "percent-encoding",
  "prost",
  "prost-reflect",
  "prost-types",

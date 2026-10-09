@@ -3,7 +3,7 @@ import type { AuvClient, AuvConnection, Device, DiscoveredRunner, RunnerClient, 
 import type { Rect } from '../script-api/api'
 import type { Backend, CapturedFrame, DisplayInfo, RunOutcomeKind, SdkAccess, TextSearchResult, WindowInfo } from './types'
 
-import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, discoverRunner, ImageEncoding, InputDeliveryPath, pairDevice } from '@auv-js/sdk'
+import { CaptureResolution, connect, createAuv, createHttpTransport, discoverRunner, ImageEncoding, InputDeliveryPath, pairDevice } from '@auv-js/sdk'
 
 type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
@@ -136,7 +136,7 @@ export async function connectBackend(options: BackendOptions, deviceId?: string)
     ?? devices[0]
   if (!device)
     throw new Error('The daemon reported no Devices')
-  return { backend: withReadableErrors(new AuvBackend(connection, client, device, options)), device, devices }
+  return { backend: new AuvBackend(connection, client, device, options), device, devices }
 }
 
 export async function createAuvBackend(options: AuvBackendOptions): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
@@ -210,44 +210,4 @@ export function toWindow(window: NativeWindow): WindowInfo {
     pid: window.processId,
     title: window.title,
   }
-}
-
-/**
- * NOTICE(grpc-message-percent-encoding): gRPC percent-encodes `grpc-message`,
- * and AUV 0.0.28's REST proxy copies it into the problem `detail` without
- * decoding (`crates/auv-api-server/src/rest.rs`, `invoke_unary`), so messages
- * arrive as `visible%20application%20%22Todos%22`. Remove once the daemon
- * decodes it.
- */
-function readableError(error: unknown): unknown {
-  if (!(error instanceof AuvRemoteError) || !/%[0-9a-f]{2}/i.test(error.message))
-    return error
-  try {
-    error.message = decodeURIComponent(error.message)
-  }
-  catch {}
-  return error
-}
-
-/**
- * Rethrows daemon errors with a readable message from every async backend
- * method, so scripts, the call list and the run bar all see the same text.
- */
-function withReadableErrors(backend: AuvBackend): Backend {
-  return new Proxy(backend, {
-    get(target, key) {
-      const value = Reflect.get(target, key, target) as unknown
-      if (typeof value !== 'function')
-        return value
-      // Methods run on the target itself: class private fields are not reachable through a proxy.
-      return (...args: unknown[]) => {
-        const result = (value as (...args: unknown[]) => unknown).apply(target, args)
-        if (!(result instanceof Promise))
-          return result
-        return result.catch((error: unknown) => {
-          throw readableError(error)
-        })
-      }
-    },
-  })
 }
