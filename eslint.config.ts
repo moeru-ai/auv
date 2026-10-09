@@ -112,6 +112,14 @@ export default defineConfig({
     'react-refresh/only-export-components': 'off',
   },
 }, {
+  files: ['js/packages/**/*.{ts,tsx}'],
+  rules: {
+    // NOTICE: js/packages holds no React code. rules-of-hooks matches any
+    // `use*` call, so it flags `useLogg` from `@guiiai/logg` (a logger, not a
+    // hook). Remove this if the logger is renamed or these packages adopt React.
+    'react/rules-of-hooks': 'off',
+  },
+}, {
   files: ['apps/server/**/*.ts'],
   rules: {
     'no-restricted-syntax': [
