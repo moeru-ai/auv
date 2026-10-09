@@ -624,16 +624,15 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
   if !(1..=u32::from(u8::MAX)).contains(&count) {
     return Err(format!("{command_id} requires --click-count within 1..=255"));
   }
-  let interval_ms = input
+  let interval = input
     .inputs
     .get("click-interval-ms")
     .map(|value| value.parse::<u64>().map_err(|error| format!("{command_id} has invalid --click-interval-ms: {error}")))
     .transpose()?
-    .unwrap_or(75);
-  if count > 1 && interval_ms == 0 {
+    .map_or(auv_driver::Click::DEFAULT_INTERVAL, std::time::Duration::from_millis);
+  if count > 1 && interval.is_zero() {
     return Err(format!("{command_id} requires a positive --click-interval-ms for repeated clicks"));
   }
-  let interval = std::time::Duration::from_millis(interval_ms);
   let click = match count {
     1 => auv_driver::Click::Single,
     2 => auv_driver::Click::Double { interval },

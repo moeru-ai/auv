@@ -208,7 +208,7 @@ const found = await music.scrollUntil(songs, {
   condition: { case: 'textVisible', value: { query: 'Remember' } },
   step: { case: 'instant', value: { deltaY: 240 } },
 })
-await music.click(found.textMatch!, { click: { count: 2, interval: { nanos: 80_000_000 } } })
+await music.click(found.textMatch!, { click: { count: 2 } })
 await music.findText('Now playing: Remember', { screenRegion: area(music).region({ bottom: 0, height: 70 }) })
 ```
 

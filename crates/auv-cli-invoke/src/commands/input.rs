@@ -1866,18 +1866,13 @@ pub(crate) fn click_options(
   interval_ms: Option<u64>,
 ) -> auv_driver::ClickOptions {
   let count = count.unwrap_or(1);
-  let interval_ms = interval_ms.unwrap_or(75);
+  let interval = interval_ms.map_or(auv_driver::Click::DEFAULT_INTERVAL, std::time::Duration::from_millis);
   auv_driver::ClickOptions {
     policy: policy.unwrap_or_default(),
     click: match count {
       1 => auv_driver::Click::Single,
-      2 => auv_driver::Click::Double {
-        interval: std::time::Duration::from_millis(interval_ms),
-      },
-      count => auv_driver::Click::Repeated {
-        count,
-        interval: std::time::Duration::from_millis(interval_ms),
-      },
+      2 => auv_driver::Click::Double { interval },
+      count => auv_driver::Click::Repeated { count, interval },
     },
     ..Default::default()
   }

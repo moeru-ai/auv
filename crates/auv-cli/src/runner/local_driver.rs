@@ -1922,11 +1922,11 @@ fn click_from_proto(click: Option<proto::Click>) -> Result<auv_driver::Click, St
           auv_driver::Click::Single
         }
         2 => {
-          let interval = required_positive_duration(click.interval, "options.click.interval")?;
+          let interval = repeated_click_interval(click.interval)?;
           auv_driver::Click::Double { interval }
         }
         count => {
-          let interval = required_positive_duration(click.interval, "options.click.interval")?;
+          let interval = repeated_click_interval(click.interval)?;
           auv_driver::Click::Repeated {
             count: u8::try_from(count).expect("validated click count fits u8"),
             interval,
@@ -2002,11 +2002,14 @@ fn held_key_policy_from_proto(policy: i32) -> Result<auv_driver::InputPolicy, St
   }
 }
 
-fn required_positive_duration(value: Option<prost_types::Duration>, field: &'static str) -> Result<std::time::Duration, Status> {
-  let value = value.ok_or_else(|| Status::invalid_argument(format!("{field} is required for multiple clicks")))?;
-  let duration = duration_from_proto(Some(value), std::time::Duration::ZERO, field)?;
+/// Absence uses `Click::DEFAULT_INTERVAL`; an explicit interval must be positive.
+fn repeated_click_interval(value: Option<prost_types::Duration>) -> Result<std::time::Duration, Status> {
+  let Some(value) = value else {
+    return Ok(auv_driver::Click::DEFAULT_INTERVAL);
+  };
+  let duration = duration_from_proto(Some(value), std::time::Duration::ZERO, "options.click.interval")?;
   if duration.is_zero() {
-    return Err(Status::invalid_argument(format!("{field} must be positive")));
+    return Err(Status::invalid_argument("options.click.interval must be positive"));
   }
   Ok(duration)
 }

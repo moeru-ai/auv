@@ -24,6 +24,11 @@ pub enum Click {
 }
 
 impl Click {
+  /// Interval between presses when a caller asks for repeated clicks without
+  /// one. Frontends and Runners apply this same value, so a CLI, SDK or Runner
+  /// caller that omits the interval gets the same click.
+  pub const DEFAULT_INTERVAL: Duration = Duration::from_millis(75);
+
   pub const fn count(&self) -> u8 {
     match self {
       Self::Single => 1,

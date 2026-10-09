@@ -380,6 +380,53 @@ fn recognized_text_mapper_preserves_screen_bounds_and_confidence() {
   assert_eq!(response.regions[0].bounds.as_ref().map(|bounds| bounds.x), Some(10.0));
 }
 
+// ROOT CAUSE:
+//
+// If a caller asked for a double or repeated click without
+// `options.click.interval`, the Runner failed with INVALID_ARGUMENT because
+// only the CLI knew a default interval. SDK and playground callers had to copy
+// it, and lost it when the playground switched to the SDK (#297).
+//
+// Before the fix, `{ count: 2 }` was rejected. The fix keeps one default on
+// `auv_driver::Click`, which the Runner applies when the interval is absent.
+#[test]
+fn repeated_clicks_without_an_interval_use_the_default_interval() {
+  let click = |count| {
+    click_options_from_proto(Some(proto::ClickOptions {
+      click: Some(proto::Click {
+        count,
+        interval: None,
+      }),
+      ..Default::default()
+    }))
+    .unwrap()
+    .click
+  };
+  assert_eq!(
+    click(2),
+    auv_driver::Click::Double {
+      interval: auv_driver::Click::DEFAULT_INTERVAL
+    }
+  );
+  assert_eq!(
+    click(3),
+    auv_driver::Click::Repeated {
+      count: 3,
+      interval: auv_driver::Click::DEFAULT_INTERVAL,
+    }
+  );
+
+  let zero = click_options_from_proto(Some(proto::ClickOptions {
+    click: Some(proto::Click {
+      count: 2,
+      interval: Some(prost_types::Duration::default()),
+    }),
+    ..Default::default()
+  }))
+  .expect_err("an explicit zero interval is still rejected for repeated clicks");
+  assert_eq!(zero.code(), tonic::Code::InvalidArgument);
+}
+
 #[test]
 fn input_options_reject_malformed_values_before_delivery() {
   let count_error = click_options_from_proto(Some(proto::ClickOptions {

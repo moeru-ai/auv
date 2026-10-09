@@ -1439,7 +1439,9 @@ The current typed values are `background_only`, `background_preferred`, and
 not a promise that the selected path name will contain “background” or
 “foreground”; the resulting `InputActionResult` remains authoritative for the
 path actually used. Click cardinality is a separate option and may request a
-single, double, or explicitly counted repeated click with an interval.
+single, double, or explicitly counted repeated click with an interval. An
+omitted interval for a repeated click means `Click::DEFAULT_INTERVAL` (75 ms)
+on every frontend and Runner.
 
 `MouseButton` selects left, right, or middle for a complete click. Window
 `ClickOptions` and wire options default to left when omitted; Rust screen-click

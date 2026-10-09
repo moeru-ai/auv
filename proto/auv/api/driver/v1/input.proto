@@ -368,8 +368,9 @@ message Click {
   // Must be in [1, 255]. One is a single click, two is a double click, and
   // larger values are repeated clicks.
   uint32 count = 1;
-  // Required and positive when count is greater than one; omitted for a
-  // single click.
+  // Delay between presses when count is greater than one; absence uses the
+  // 75 ms default (`auv_driver::Click::DEFAULT_INTERVAL`). Must be positive
+  // when set. Omitted or zero for a single click.
   google.protobuf.Duration interval = 2;
 }
 
