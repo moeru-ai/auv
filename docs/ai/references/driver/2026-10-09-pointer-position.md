@@ -85,6 +85,14 @@ All runs use PR #257 head `ba9f08c6` on 2026-10-09.
 | Windows 11, console session, Edge window with a page that writes `scrollY` to its title | `input.scrollPoint 512 400 0 300`, then `0 -120`, then `0 240` | `scrollY` went `0 → 300 → 180 → 420`: exact logical-pixel totals and directions. Path `foreground_system_events` |
 | Debian 13, headless Sway 1.10.1 (wlroots `headless` backend, `xdg-desktop-portal-wlr`) | Pointer read | Fails: `linux.input.current_position on Wayland is not supported by this driver` |
 | Same headless Sway session | `input.scrollPoint 100 100 0 120` | Fails: `open RemoteDesktop: A portal frontend implementing org.freedesktop.portal.RemoteDesktop was not found`. The wlr portal has no input interface |
+| Debian 13, GNOME Shell 48.7 Wayland (GDM autologin on seat0, 2560×1440), RemoteDesktop portal | Pointer read | Fails: `linux.input.current_position on Wayland is not supported by this driver` |
+| Same GNOME session, maximized Firefox page that writes `scrollY` to its title | `input.scrollPoint 1280 700 0 360`, then `0 -120` | `scrollY` went `0 → 342 → 228`: 3 notches down, 1 notch up. The portal delivers whole 120 px notches; Firefox maps one notch to 114 px. Path `foreground_system_events` |
+
+GNOME note: right after autologin, GNOME 48 shows the Activities overview. The
+first two scrolls were delivered there and switched workspaces instead of
+scrolling the page. After the Firefox window was activated, delivery reached
+the page. The first input after the portal consent dialog is also not a
+reliable test point.
 
 Windows note: the first scroll attempts reported delivery but did not move the
 page. A terminal window that the test harness opened was over the scroll
@@ -105,9 +113,9 @@ Automated tests:
 - Hold controller: `crates/auv-driver-common/src/keyboard_input_test.rs`,
   including both #256 released-ID regressions.
 
-Not yet recorded: `ScrollPoint` delivery on Linux GNOME (portal or uinput),
-because no GNOME session was logged in; and a Windows pointer read or
-`ScrollPoint` through a Runner (the local CLI path was used there).
+Not yet recorded: Linux `ScrollPoint` through the uinput backend, and a
+Windows or Linux pointer read or `ScrollPoint` through a Runner (the local CLI
+path was used there).
 
 ## Research
 
