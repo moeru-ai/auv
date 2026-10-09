@@ -17,6 +17,16 @@ use crate::AuvResult;
 /// Largest accepted SVG source, matching the macOS adapter's runtime limit.
 const MAX_SOURCE_BYTES: usize = 256 * 1024;
 
+/// Most `<use>` elements a cursor SVG may contain.
+///
+/// NOTICE: usvg expands every `<use>` into a copy of its target at parse time, and nested
+/// references multiply: a 1 KB SVG whose 16 groups each use the previous group twice took
+/// 5 s to parse and render (measured 2026-10-09, depth 12: 0.3 s, depth 16: 5.1 s), well
+/// inside the 256 KiB size limit. With at most 16 `<use>` elements the expansion is bounded
+/// to a few hundred copies whatever the nesting. Cursor art is a handful of paths and does
+/// not need symbol reuse. Raise this only together with a work bound on the expansion.
+const MAX_USE_ELEMENTS: usize = 16;
+
 /// Largest sprite edge in pixels. Bounds the bitmap allocation for an untrusted
 /// `sprite_size` (1024 x 1024 x 4 bytes = 4 MiB).
 const MAX_SPRITE_PX: u32 = 1024;
@@ -32,6 +42,9 @@ pub(crate) struct Sprite {
 pub(crate) fn rasterize(source: &str, size: u32) -> AuvResult<Sprite> {
   if source.trim().is_empty() || source.len() > MAX_SOURCE_BYTES {
     return Err("cursor SVG must be non-empty and at most 256 KiB".to_string());
+  }
+  if count_use_elements(source) > MAX_USE_ELEMENTS {
+    return Err(format!("cursor SVG may contain at most {MAX_USE_ELEMENTS} <use> elements"));
   }
   if size == 0 || size > MAX_SPRITE_PX {
     return Err(format!("cursor sprite size must be between 1 and {MAX_SPRITE_PX} pixels, got {size}"));
@@ -59,6 +72,21 @@ pub(crate) fn rasterize(source: &str, size: u32) -> AuvResult<Sprite> {
     pixel.swap(0, 2);
   }
   Ok(Sprite { size, bgra })
+}
+
+/// Counts `<use>` start tags, including namespace-prefixed ones (`<s:use xmlns:s=...>`).
+///
+/// This scans tag names rather than parsing, so it also counts `<use` inside comments and
+/// CDATA. Over-counting only rejects, which is the safe direction for an input limit.
+fn count_use_elements(source: &str) -> usize {
+  source
+    .split('<')
+    .skip(1)
+    .filter(|tag| {
+      let name = tag.split(|c: char| c.is_whitespace() || c == '/' || c == '>').next().unwrap_or("");
+      name.rsplit(':').next() == Some("use")
+    })
+    .count()
 }
 
 #[cfg(test)]

@@ -81,3 +81,44 @@ fn external_image_references_are_not_loaded() {
   let _ = std::fs::remove_dir_all(&directory);
   assert!(sprite.bgra.iter().all(|&byte| byte == 0), "the local file must not be read into the cursor");
 }
+
+/// Group `g{depth}` uses `g{depth-1}` twice, so the document expands to 2^depth rects.
+fn use_bomb(depth: usize, prefix: &str) -> String {
+  let mut defs = String::from(r##"<g id="g0"><rect width="24" height="24" fill="#f00"/></g>"##);
+  for level in 1..=depth {
+    defs.push_str(&format!(r##"<g id="g{level}"><{prefix}use href="#g{}"/><{prefix}use href="#g{}"/></g>"##, level - 1, level - 1));
+  }
+  let namespace = if prefix.is_empty() {
+    String::new()
+  } else {
+    r#" xmlns:s="http://www.w3.org/2000/svg""#.to_string()
+  };
+  format!(
+    r##"<svg xmlns="http://www.w3.org/2000/svg"{namespace} viewBox="0 0 24 24"><defs>{defs}</defs><{prefix}use href="#g{depth}"/></svg>"##
+  )
+}
+
+// ROOT CAUSE:
+//
+// If a cursor SVG nested `<use>` references, usvg expanded them multiplicatively at parse
+// time, so a ~1 KB document could keep `present()` busy for many seconds even though it was
+// far below the 256 KiB size limit.
+//
+// Before the fix, a 16-level doubling document took about 5 s to rasterize.
+// The fix rejects documents with more than 16 `<use>` elements before parsing, which bounds
+// the expansion whatever the nesting.
+#[test]
+fn nested_use_expansion_is_rejected_before_it_can_stall_the_renderer() {
+  for prefix in ["", "s:"] {
+    let started = std::time::Instant::now();
+    let error = rejection(&use_bomb(16, prefix), 24);
+    assert!(error.contains("<use>"), "{error}");
+    assert!(started.elapsed() < std::time::Duration::from_millis(500), "rejected after {:?}", started.elapsed());
+  }
+}
+
+#[test]
+fn a_few_use_elements_still_render() {
+  let sprite = rasterize(&use_bomb(3, ""), 24).unwrap();
+  assert_eq!(pixel(&sprite.bgra, 24, 12, 12), [0, 0, 255, 255], "the reused red rect paints");
+}

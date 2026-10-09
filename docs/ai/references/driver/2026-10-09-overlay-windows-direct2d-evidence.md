@@ -33,6 +33,12 @@ Design constraints and why:
   1024 px are rejected. usvg's default resolver reads `<image href>` paths from the
   local disk, so the resolver for external references is replaced with one that
   refuses everything. resvg is built without text, font, or raster-image features.
+- **`<use>` expansion is capped at 16 elements.** usvg expands `<use>` multiplicatively
+  while parsing: a 1 KB SVG whose 16 groups each use the previous one twice took 5.1 s
+  (depth 12: 0.3 s), far below the 256 KiB limit, and the time is spent in parsing, so
+  a node count after parsing would not help. The cap is checked before parsing,
+  prefix-aware (`<s:use>`), and bounds the expansion to a few hundred copies. Found by
+  the review of this PR; the regression test fails (after about 5 s) without the cap.
 
 ## Evidence
 
@@ -53,7 +59,7 @@ filled with `0xAB`, cleared it, and drew an opaque red disc and a 50%-alpha blue
 
 ### Unit tests (Windows)
 
-`cargo test -p auv-driver-overlay-windows`: 23 passed. They render through the
+`cargo test -p auv-driver-overlay-windows`: 25 passed. They render through the
 production layer mapping (`draw_layers`) into an offscreen canvas and assert
 pixels, including:
 
