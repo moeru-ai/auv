@@ -35,6 +35,10 @@ button, select, input { font: inherit; color: inherit; }
 /* No gray flash on tap (WebKit, Chrome on Android): every control here draws
    its own hover, active, and focus states. */
 html { -webkit-tap-highlight-color: transparent; }
+/* No rubber-band bounce at either end of the page: the landings draw fixed
+   layers (desk, hero) under scrolling content, and a bounce slides the page
+   off them. Inner scrollers (method tabs, code blocks) keep their own. */
+html, body { overscroll-behavior: none; }
 a, button, [role='tab'] { touch-action: manipulation; }
 
 .toolbar {
@@ -242,9 +246,9 @@ a, button, [role='tab'] { touch-action: manipulation; }
   padding: 72px 24px 120px;
   /* At least a screen tall, so "Install" can scroll its top under the nav bar. */
   min-height: 100vh; min-height: 100svh;
-  /* Rubber-band overscroll past the page end would pull the section off the
-     fixed desk behind it. A copy of the section's box one screen below covers
-     that gap; as a shadow it paints without growing the scroll height. */
+  /* Fallback for browsers that bounce anyway (before Safari 16): a copy of the
+     section's box one screen below covers the gap a bounce past the page end
+     opens over the fixed desk. As a shadow it adds no scroll height. */
   box-shadow: 0 100vh 0 var(--bg);
 }
 .install::before {
