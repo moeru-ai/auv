@@ -72,6 +72,27 @@ fn an_older_released_hold_remains_idempotent_after_a_later_hold() {
 }
 
 #[test]
+fn a_released_hold_remains_idempotent_while_a_later_hold_is_active() {
+  // ROOT CAUSE:
+  //
+  // `up` compared the requested ID only against the active hold, so retrying
+  // an earlier release while a later hold was down failed as unknown.
+  //
+  // The fix answers a known released ID with Noop and leaves the active hold
+  // untouched.
+  let controller = Arc::new(KeyboardHoldController::default());
+  let first = controller.down(FakeBackend::new(1), Duration::from_secs(1)).unwrap().into_id();
+  controller.up(first).unwrap();
+  let backend = FakeBackend::new(1);
+  let second = controller.down(backend.clone(), Duration::from_secs(1)).unwrap().into_id();
+
+  assert_eq!(controller.up(first).unwrap().selected_path, InputDeliveryPath::Noop);
+  assert_eq!(*backend.events.lock().unwrap(), vec![(0, true)]);
+  controller.up(second).unwrap();
+  assert_eq!(*backend.events.lock().unwrap(), vec![(0, true), (0, false)]);
+}
+
+#[test]
 fn failed_release_retains_hold_for_explicit_retry() {
   let controller = Arc::new(KeyboardHoldController::default());
   let backend = FakeBackend::new(1);

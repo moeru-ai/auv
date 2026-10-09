@@ -140,14 +140,14 @@ impl KeyboardHoldController {
       while state.posting || state.releasing {
         state = self.changed.wait(state).unwrap();
       }
-      let held = match state.held.as_ref() {
-        Some(held) => held,
-        None if state.released_ids.contains(&id) => return Ok(InputActionResult::single_success(InputDeliveryPath::Noop)),
-        None => return Err(invalid("unknown keyboard hold")),
-      };
-      if held.id != id {
-        return Err(invalid("unknown keyboard hold"));
+      // A released ID never matches the active hold, so this check is safe
+      // even while a later hold is down.
+      if state.released_ids.contains(&id) {
+        return Ok(InputActionResult::single_success(InputDeliveryPath::Noop));
       }
+      let Some(held) = state.held.as_ref().filter(|held| held.id == id) else {
+        return Err(invalid("unknown keyboard hold"));
+      };
       let backend = held.backend.clone();
       state.releasing = true;
       backend
