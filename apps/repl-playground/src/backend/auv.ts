@@ -49,8 +49,7 @@ class AuvBackend implements Backend {
   ) {
     this.accessibilityTree = http.accessibilityTree
     this.kind = http.kind ?? 'auv'
-    // NOTICE(device-name): a local daemon may report an empty Device name.
-    this.label = http.label ?? `${device.name || device.labels.hostname || device.id.slice(0, 12)} (${device.platform})`
+    this.label = http.label ?? `${device.name || device.id.slice(0, 12)} (${device.platform})`
     this.#runner = this.#bind()
   }
 

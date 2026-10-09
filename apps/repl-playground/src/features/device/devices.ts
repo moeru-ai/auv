@@ -42,7 +42,6 @@ export interface DevicesState {
 
 /** A Device as the picker shows it: an AUV Device, or the built-in mock desktop. */
 export interface DeviceSummary {
-  hostname?: string
   id: string
   /** Whether the Device is the daemon's own machine. */
   local: boolean
@@ -318,7 +317,5 @@ function savedConnection(connectionId: string): SavedConnection {
 }
 
 function summarize(device: Device): DeviceSummary {
-  const hostname = device.labels.hostname
-  // NOTICE(device-name): a local daemon may report an empty Device name.
-  return { hostname, id: device.id, local: device.local, name: device.name || hostname || device.id.slice(0, 12), platform: device.platform }
+  return { id: device.id, local: device.local, name: device.name || device.id.slice(0, 12), platform: device.platform }
 }

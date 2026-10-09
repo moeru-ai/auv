@@ -325,6 +325,31 @@ async fn remote_display_runner() -> (runner_provider::RunnerProviderConfig, toki
   )
 }
 
+// ROOT CAUSE:
+//
+// If the daemon ran outside an interactive shell (launchd, systemd, a Windows
+// service, or `cargo test`), the local Device had an empty name, because the
+// daemon read `$HOSTNAME`, a shell variable that is not exported to children.
+//
+// Before the fix, clients fell back to Device IDs or invented labels. The fix
+// keeps the local Device named from the OS device name or host name.
+#[tokio::test]
+async fn local_device_is_named_without_a_shell_environment() {
+  let root = tempfile::tempdir().unwrap();
+  let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
+  let owner = owner_endpoint(&server);
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  let devices = GrpcClient::connect(owner).await.unwrap().devices().list_devices().await.unwrap();
+
+  let local = devices.iter().find(|device| device.local).unwrap();
+  assert!(!local.name.trim().is_empty(), "local Device name must not be empty");
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn typed_control_and_rest_share_the_daemon_backend() {
   let root = tempfile::tempdir().unwrap();

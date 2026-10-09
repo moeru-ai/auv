@@ -168,7 +168,7 @@ function buildItems(saved: SavedConnection[], states: Record<string, ConnectionS
       continue
     }
     for (const device of state.devices) {
-      if (connectionMatches || matches(device.name, device.hostname, PLATFORMS[device.platform].label))
+      if (connectionMatches || matches(device.name, PLATFORMS[device.platform].label))
         items.push({ connection, device, kind: 'device' })
     }
   }

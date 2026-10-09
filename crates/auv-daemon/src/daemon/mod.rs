@@ -69,7 +69,7 @@ impl Daemon {
     labels.insert("auv.dev/platform".to_string(), proto::DevicePlatform::try_from(platform).unwrap_or_default().as_str_name().to_string());
     let local_device = proto::Device {
       r#ref: Some(proto::DeviceRef { device_id }),
-      name: std::env::var("HOSTNAME").unwrap_or_default(),
+      name: local_device_name(),
       platform,
       local: true,
       labels,
@@ -675,6 +675,21 @@ fn validate_device_id(path: &Path, value: &str) -> Result<String, String> {
   (crate::resource_id::validate(value) || legacy)
     .then(|| value.to_string())
     .ok_or_else(|| format!("invalid local Device ID in {}", path.display()))
+}
+
+/// Names the local Device for people choosing between Devices.
+///
+/// Prefers the OS device name (macOS Computer Name, Linux `PRETTY_HOSTNAME`,
+/// Windows DNS host name) and falls back to the host name. Neither comes from
+/// the environment: `$HOSTNAME` is a shell variable that service managers and
+/// most child processes never see. Empty only when the OS reports neither.
+fn local_device_name() -> String {
+  [whoami::devicename(), whoami::hostname()]
+    .into_iter()
+    .filter_map(Result::ok)
+    .map(|name| name.trim().to_string())
+    .find(|name| !name.is_empty())
+    .unwrap_or_default()
 }
 
 #[cfg(target_os = "linux")]
