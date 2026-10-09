@@ -264,6 +264,12 @@ mod native {
   static ACTIVE_SESSION: Mutex<Option<CachedSession>> = Mutex::new(None);
   static HEALTH_SESSION: Mutex<Option<CachedSession>> = Mutex::new(None);
 
+  pub fn take_health_session() {
+    if let Ok(mut session) = HEALTH_SESSION.lock() {
+      session.take();
+    }
+  }
+
   fn try_get_next_frame(
     frame_pool: &Direct3D11CaptureFramePool,
   ) -> DriverResult<Option<windows::Graphics::Capture::Direct3D11CaptureFrame>> {
@@ -1218,7 +1224,7 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
   // 2. Slow path: ensure worker is started and wait for fresh sample
   native::ensure_worker_started(&key)?;
 
-  let deadline = Instant::now() + Duration::from_millis(50);
+  let deadline = Instant::now() + Duration::from_millis(200);
   let mut guard = native::lock_health_state();
   let mut wait_success = false;
 
@@ -1260,6 +1266,7 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
     (Ok(h), false, Some("stale_sample".to_string()))
   } else {
     drop(guard);
+    native::take_health_session();
     let health = capture_window_health_unserialized(window)?;
     if !health.is_fresh {
       return Err(backend("fresh WGC health sample unavailable"));
@@ -1354,7 +1361,7 @@ pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealt
   // 2. Slow path: ensure worker running and wait for fresh sample
   native::ensure_worker_started(&key)?;
 
-  let deadline = Instant::now() + Duration::from_millis(60);
+  let deadline = Instant::now() + Duration::from_millis(250);
   let mut guard = native::lock_health_state();
 
   while Instant::now() < deadline {
@@ -1395,6 +1402,7 @@ pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealt
   }
 
   drop(guard);
+  native::take_health_session();
   let health = capture_window_health_unserialized(window)?;
   if !health.is_fresh {
     return Err(backend("fresh WGC health sample unavailable"));
