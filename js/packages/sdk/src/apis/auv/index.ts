@@ -30,7 +30,7 @@ export type {
   MethodDocs,
   MethodPresentation,
 } from './discover'
-export { createRunnerClient, splitKeyCombination } from './driver'
+export { createRunnerClient, SCROLL_UNTIL_DEFAULTS, splitKeyCombination } from './driver'
 export type {
   CaptureImage,
   CaptureImageOptions,

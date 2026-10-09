@@ -113,9 +113,11 @@ instead: `CaptureRef.captureId`, `WindowRef.windowId` and `displayId`.
   center in screen space.
 - The README, the examples and the editor's default script use the SDK API.
   The editor types `auv` as `any` until `TODO(playground-sdk-types)`.
-- Known regression: `scrollUntil` has no client defaults, so scripts pass
-  `maxSteps`, `noMotionConfirmations` and `settle` themselves
-  (`TODO(sdk-scroll-until-defaults)`).
+- `scrollUntil` lost the playground's defaults in the switch; the JS SDK now
+  applies the same ones (`SCROLL_UNTIL_DEFAULTS`: 50 steps, 2 no-motion
+  confirmations, 400 ms settle, the `auv invoke input.scrollUntil` values) to
+  omitted fields. Rust `auv_scan::ScrollUntilRequest` has no defaults; its
+  callers set every field.
 
 Each phase is one PR, in this order.
 

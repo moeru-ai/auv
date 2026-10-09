@@ -330,6 +330,20 @@ click on the search box did not give it focus while another app was in front.
 `input.keyboard` and `input.pressKeys` take the full request, including an
 application or foreground recipient and several ordered actions.
 
+`scrollUntil` scrolls a window in steps and observes after each one on the
+Runner, until the text appears, no visual motion remains, the budget runs out,
+or a client predicate says stop. Omitted `maxSteps`, `noMotionConfirmations`
+and `settle` take `SCROLL_UNTIL_DEFAULTS` (50 steps, 2 confirmations, 400 ms),
+the `auv invoke input.scrollUntil` defaults:
+
+```ts
+const found = await window.scrollUntil(Position.screen(640, 400), {
+  condition: { case: 'textVisible', value: { query: 'Load more' } },
+  step: { case: 'instant', value: { deltaY: 600 } },
+}, { until: update => update.text?.text.includes('End of list') ?? false })
+// found.reason: ScrollUntilStopReason; found.textMatch is in screen space
+```
+
 A window reference belongs to the Device, not to a Run. Bind a known window to
 another route without a call, or refresh it by ID:
 

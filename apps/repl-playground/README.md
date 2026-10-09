@@ -186,16 +186,16 @@ const results = area(music).region({ bottom: 80, left: '22%', top: 120 })
 await music.scroll(results, { deltaY: 600 })
 const found = await music.scrollUntil(results, {
   condition: { case: 'textVisible', value: { query: 'Remember' } },
-  // TODO(sdk-scroll-until-defaults): the Runner requires these; the SDK has no defaults yet.
-  maxSteps: 50,
-  noMotionConfirmations: 2,
-  settle: { nanos: 400_000_000 },
   step: { case: 'instant', value: { deltaY: 400 } },
 }, {
   until: update => update.text?.text.includes('Reply'), // runs in the script for every update
 })
 // found.reason is a ScrollUntilStopReason; found.textMatch is screen space
 ```
+
+Omitted `maxSteps`, `noMotionConfirmations` and `settle` take the
+`auv invoke input.scrollUntil` defaults (50 steps, 2 confirmations, 400 ms;
+`sdk.SCROLL_UNTIL_DEFAULTS`).
 
 An `END_BY_NO_VISUAL_PROGRESS` stop means no visual motion was observed, not
 that no content is left. On the mock desktop, the Music window's song list
@@ -206,8 +206,6 @@ const music = await auv.windows.resolve({ appName: 'Music' })
 const songs = area(music).region({ height: 420, left: 16, top: 82, width: 448 })
 const found = await music.scrollUntil(songs, {
   condition: { case: 'textVisible', value: { query: 'Remember' } },
-  maxSteps: 50,
-  noMotionConfirmations: 2,
   step: { case: 'instant', value: { deltaY: 240 } },
 })
 await music.click(found.textMatch!, { click: { count: 2, interval: { nanos: 80_000_000 } } })

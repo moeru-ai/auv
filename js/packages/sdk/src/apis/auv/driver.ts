@@ -242,6 +242,8 @@ export interface ScrollUntilCallOptions extends OperationOptions {
 /**
  * `scrollUntil` begin fields; the window, point, and decision mode come from
  * the call. Without a `condition`, the loop stops at the end (no visual motion).
+ * Omitted `maxSteps`, `noMotionConfirmations` and `settle` take
+ * `SCROLL_UNTIL_DEFAULTS`, the `auv invoke input.scrollUntil` defaults.
  * Updates carry the capture by reference (fetch pixels with
  * `captures.image`) and the recognized text unless `output.omitText` is set.
  */
@@ -330,6 +332,19 @@ export type WindowPasteTextOptions = Init<typeof PasteTextOptionsSchema> & { pol
 
 /** Options for `WindowClient.pressKeys`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
 export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 'keys'> & { policy?: InputPolicy }
+/**
+ * What `WindowClient.scrollUntil` sends for an omitted field: 50 steps, 2
+ * no-motion confirmations and 400 ms settle.
+ * NOTICE(scroll-until-defaults): the same values as `auv invoke
+ * input.scrollUntil` (`DEFAULT_SCROLL_UNTIL_*` in
+ * `crates/auv-cli-invoke/src/commands/input.rs`); change both together.
+ */
+export const SCROLL_UNTIL_DEFAULTS = {
+  maxSteps: 50,
+  noMotionConfirmations: 2,
+  settle: { nanos: 400_000_000, seconds: 0n },
+} as const
+
 // gRPC status code NOT_FOUND.
 const GRPC_NOT_FOUND = 5
 
@@ -480,7 +495,18 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         await call.send({
           event: {
             case: 'begin',
-            value: { ...request, awaitDecisions: until !== undefined, condition, point: positionOf(point, local), window: { windowId: id } },
+            value: {
+              ...request,
+              awaitDecisions: until !== undefined,
+              condition,
+              // The Runner rejects 0 for both counts, so 0 also means "default".
+              maxSteps: request.maxSteps || SCROLL_UNTIL_DEFAULTS.maxSteps,
+              noMotionConfirmations: request.noMotionConfirmations || SCROLL_UNTIL_DEFAULTS.noMotionConfirmations,
+              point: positionOf(point, local),
+              // An explicit zero `settle` is kept; only an omitted one takes the default.
+              settle: request.settle ?? SCROLL_UNTIL_DEFAULTS.settle,
+              window: { windowId: id },
+            },
           },
         })
         for await (const response of call.responses) {

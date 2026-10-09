@@ -276,8 +276,8 @@ describe('runner Driver control surface', () => {
 
     const completed = await window.scrollUntil({ x: 10, y: 20 }, {
       maxSteps: 40,
-      noMotionConfirmations: 2,
-      settle: { nanos: 400_000_000 },
+      noMotionConfirmations: 3,
+      settle: {},
       step: { case: 'instant', value: { deltaY: 600 } },
     }, {
       onUpdate: update => void seen.push(update.steps),
@@ -294,6 +294,8 @@ describe('runner Driver control surface', () => {
     expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(true)
     expect(begin.case === 'begin' && begin.value.condition.case).toBe('end')
     expect(begin.case === 'begin' && begin.value.step.case === 'instant' && begin.value.step.value.deltaY).toBe(600)
+    // Given values are kept, including an explicit zero settle.
+    expect(begin.case === 'begin' && [begin.value.maxSteps, begin.value.noMotionConfirmations, begin.value.settle?.nanos]).toEqual([40, 3, 0])
   })
 
   it('runs scroll-until without decisions when no predicate is given', async () => {
@@ -346,6 +348,8 @@ describe('runner Driver control surface', () => {
     expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(false)
     expect(begin.case === 'begin' && begin.value.output?.omitText).toBe(true)
     expect(begin.case === 'begin' && begin.value.condition.case === 'textVisible' && begin.value.condition.value.query).toBe('Load more')
+    // Omitted budget fields take the `auv invoke input.scrollUntil` defaults; the Runner rejects 0.
+    expect(begin.case === 'begin' && [begin.value.maxSteps, begin.value.noMotionConfirmations, begin.value.settle?.nanos]).toEqual([50, 2, 400_000_000])
   })
 
   it('drives a live scroll stream from a generator and stops when it finishes', async () => {
