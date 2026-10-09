@@ -193,9 +193,10 @@ const found = await music.scrollUntil(results, {
 // found.reason is a ScrollUntilStopReason; found.textMatch is screen space
 ```
 
-Omitted `maxSteps`, `noMotionConfirmations` and `settle` take the
-`auv invoke input.scrollUntil` defaults (50 steps, 2 confirmations, 400 ms;
-`sdk.SCROLL_UNTIL_DEFAULTS`).
+Omitted `maxSteps`, `noMotionConfirmations` and `settle` take the Runner's
+defaults (50 steps, 2 confirmations, 400 ms), the same as
+`auv invoke input.scrollUntil`. The mock desktop applies
+`sdk.SCROLL_UNTIL_DEFAULTS`, the same values.
 
 An `END_BY_NO_VISUAL_PROGRESS` stop means no visual motion was observed, not
 that no content is left. On the mock desktop, the Music window's song list

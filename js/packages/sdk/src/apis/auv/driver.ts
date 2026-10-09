@@ -242,8 +242,9 @@ export interface ScrollUntilCallOptions extends OperationOptions {
 /**
  * `scrollUntil` begin fields; the window, point, and decision mode come from
  * the call. Without a `condition`, the loop stops at the end (no visual motion).
- * Omitted `maxSteps`, `noMotionConfirmations` and `settle` take
- * `SCROLL_UNTIL_DEFAULTS`, the `auv invoke input.scrollUntil` defaults.
+ * Omitted `maxSteps`, `noMotionConfirmations` and `settle` take the
+ * Runner's defaults (`SCROLL_UNTIL_DEFAULTS`), the same as
+ * `auv invoke input.scrollUntil`.
  * Updates carry the capture by reference (fetch pixels with
  * `captures.image`) and the recognized text unless `output.omitText` is set.
  */
@@ -333,11 +334,13 @@ export type WindowPasteTextOptions = Init<typeof PasteTextOptionsSchema> & { pol
 /** Options for `WindowClient.pressKeys`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
 export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 'keys'> & { policy?: InputPolicy }
 /**
- * What `WindowClient.scrollUntil` sends for an omitted field: 50 steps, 2
- * no-motion confirmations and 400 ms settle.
- * NOTICE(scroll-until-defaults): the same values as `auv invoke
- * input.scrollUntil` (`DEFAULT_SCROLL_UNTIL_*` in
- * `crates/auv-cli-invoke/src/commands/input.rs`); change both together.
+ * What a Runner uses for an omitted scroll-until field: 50 steps, 2 no-motion
+ * confirmations and 400 ms settle. `scrollUntil` leaves omitted fields unset
+ * and the Runner applies these; use them where JavaScript stands in for a
+ * Runner, such as a mock.
+ * NOTICE(scroll-until-defaults): mirrors
+ * `auv_scan::ScrollUntilRequest::DEFAULT_*`, which the Runner and the CLI use.
+ * JavaScript cannot read them, so change both together.
  */
 export const SCROLL_UNTIL_DEFAULTS = {
   maxSteps: 50,
@@ -499,12 +502,8 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
               ...request,
               awaitDecisions: until !== undefined,
               condition,
-              // The Runner rejects 0 for both counts, so 0 also means "default".
-              maxSteps: request.maxSteps || SCROLL_UNTIL_DEFAULTS.maxSteps,
-              noMotionConfirmations: request.noMotionConfirmations || SCROLL_UNTIL_DEFAULTS.noMotionConfirmations,
+              // Omitted budget fields stay unset (0 / absent); the Runner applies its defaults.
               point: positionOf(point, local),
-              // An explicit zero `settle` is kept; only an omitted one takes the default.
-              settle: request.settle ?? SCROLL_UNTIL_DEFAULTS.settle,
               window: { windowId: id },
             },
           },

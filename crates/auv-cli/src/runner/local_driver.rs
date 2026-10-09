@@ -1828,12 +1828,20 @@ fn scroll_until_request_from_proto(request: proto::ScrollUntilBegin) -> Result<a
     None => return Err(Status::invalid_argument("condition is required")),
   };
   let motion_region = request.motion_region.map(|region| relative_rect_from_proto(Some(region))).transpose()?;
+  // Zero and absence select the shared defaults; explicit values, including a
+  // zero settle, are kept and validated by the loop.
   Ok(auv_scan::ScrollUntilRequest {
     step,
     condition,
-    max_steps: request.max_steps,
-    settle: duration_from_proto(request.settle, std::time::Duration::ZERO, "settle")?,
-    no_motion_confirmations: request.no_motion_confirmations,
+    max_steps: match request.max_steps {
+      0 => auv_scan::ScrollUntilRequest::DEFAULT_MAX_STEPS,
+      steps => steps,
+    },
+    settle: duration_from_proto(request.settle, auv_scan::ScrollUntilRequest::DEFAULT_SETTLE, "settle")?,
+    no_motion_confirmations: match request.no_motion_confirmations {
+      0 => auv_scan::ScrollUntilRequest::DEFAULT_NO_MOTION_CONFIRMATIONS,
+      confirmations => confirmations,
+    },
     motion_region,
     output: auv_scan::ScrollUntilOutputOptions {
       text: !request.output.is_some_and(|output| output.omit_text),

@@ -1594,13 +1594,10 @@ struct ScrollUntilArgs {
   sample_rate_hz: u32,
 }
 
-const DEFAULT_SCROLL_UNTIL_MAX_STEPS: u32 = 50;
-// NOTICE: 400 ms lets typical infinite lists request and render the next page
-// before the update; slower feeds should raise --settle-ms.
-const DEFAULT_SCROLL_UNTIL_SETTLE_MS: u64 = 400;
-// NOTICE: two confirmations keep one slow lazy-load pause from ending the
-// scan early, matching the NetEase boundary policy.
-const DEFAULT_SCROLL_UNTIL_CONFIRMATIONS: u32 = 2;
+// The Runner applies the same defaults to omitted fields (`auv_scan::ScrollUntilRequest`).
+const DEFAULT_SCROLL_UNTIL_MAX_STEPS: u32 = auv_scan::ScrollUntilRequest::DEFAULT_MAX_STEPS;
+const DEFAULT_SCROLL_UNTIL_SETTLE_MS: u64 = auv_scan::ScrollUntilRequest::DEFAULT_SETTLE.as_millis() as u64;
+const DEFAULT_SCROLL_UNTIL_CONFIRMATIONS: u32 = auv_scan::ScrollUntilRequest::DEFAULT_NO_MOTION_CONFIRMATIONS;
 
 fn default_scroll_until_max_steps() -> u32 {
   DEFAULT_SCROLL_UNTIL_MAX_STEPS

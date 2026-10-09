@@ -86,6 +86,32 @@ impl Default for ScrollUntilOutputOptions {
 }
 
 impl ScrollUntilRequest {
+  /// Step budget when a caller sets none.
+  pub const DEFAULT_MAX_STEPS: u32 = 50;
+  // NOTICE: 400 ms lets typical infinite lists request and render the next page
+  // before the update; slower feeds should raise the settle.
+  /// Wait after each step when a caller sets none.
+  pub const DEFAULT_SETTLE: Duration = Duration::from_millis(400);
+  // NOTICE: two confirmations keep one slow lazy-load pause from ending the
+  // scan early, matching the NetEase boundary policy.
+  /// Consecutive no-motion updates that end the scan when a caller sets none.
+  pub const DEFAULT_NO_MOTION_CONFIRMATIONS: u32 = 2;
+
+  /// A request with the default budget, settle and confirmations, the whole
+  /// window as its motion region, and every update payload included. The CLI,
+  /// Runner and SDKs use these same defaults for omitted fields.
+  pub fn new(step: ScrollUntilStep, condition: ScrollUntilCondition) -> Self {
+    Self {
+      step,
+      condition,
+      max_steps: Self::DEFAULT_MAX_STEPS,
+      settle: Self::DEFAULT_SETTLE,
+      no_motion_confirmations: Self::DEFAULT_NO_MOTION_CONFIRMATIONS,
+      motion_region: None,
+      output: ScrollUntilOutputOptions::default(),
+    }
+  }
+
   pub fn validate(&self) -> DriverResult<()> {
     let delta = self.step.delta();
     if !delta.delta_x.is_finite() || !delta.delta_y.is_finite() || (delta.delta_x == 0.0 && delta.delta_y == 0.0) {

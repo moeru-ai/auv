@@ -348,8 +348,8 @@ describe('runner Driver control surface', () => {
     expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(false)
     expect(begin.case === 'begin' && begin.value.output?.omitText).toBe(true)
     expect(begin.case === 'begin' && begin.value.condition.case === 'textVisible' && begin.value.condition.value.query).toBe('Load more')
-    // Omitted budget fields take the `auv invoke input.scrollUntil` defaults; the Runner rejects 0.
-    expect(begin.case === 'begin' && [begin.value.maxSteps, begin.value.noMotionConfirmations, begin.value.settle?.nanos]).toEqual([50, 2, 400_000_000])
+    // Omitted budget fields stay unset so the Runner applies its defaults.
+    expect(begin.case === 'begin' && [begin.value.maxSteps, begin.value.noMotionConfirmations, begin.value.settle]).toEqual([0, 0, undefined])
   })
 
   it('drives a live scroll stream from a generator and stops when it finishes', async () => {

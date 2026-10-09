@@ -666,11 +666,14 @@ message ScrollUntilBegin {
     ScrollUntilEnd end = 5;
     ScrollUntilTextVisible text_visible = 6;
   }
-  // 1..=1000.
+  // 1..=1000. Zero uses the default of 50.
   uint32 max_steps = 7;
-  // Wait after each step before observing, at most 10s. Absence is zero.
+  // Wait after each step before observing, at most 10s. Absence uses the
+  // 400 ms default; an explicit zero waits for nothing.
   google.protobuf.Duration settle = 8;
-  // Consecutive no-motion updates that count as the end, 1..=10.
+  // Consecutive no-motion updates that count as the end, 1..=10. Zero uses
+  // the default of 2.
+  // The defaults are `auv_scan::ScrollUntilRequest::DEFAULT_*`.
   uint32 no_motion_confirmations = 9;
   // Region of the window compared for motion; absence is the whole window.
   optional auv.api.image.v1.RelativeRect motion_region = 10;

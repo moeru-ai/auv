@@ -410,3 +410,17 @@ fn retina_captures_detect_the_same_motion_as_one_x_captures() {
   };
   assert_eq!(run(2), run(1));
 }
+
+#[test]
+fn new_request_uses_the_shared_defaults_and_validates() {
+  let request = ScrollUntilRequest::new(
+    ScrollUntilStep::Instant {
+      delta: Scroll::new(0.0, 120.0),
+    },
+    ScrollUntilCondition::End,
+  );
+  assert_eq!((request.max_steps, request.settle, request.no_motion_confirmations), (50, Duration::from_millis(400), 2));
+  assert_eq!(request.motion_region, None);
+  assert_eq!(request.output, ScrollUntilOutputOptions::default());
+  assert!(request.validate().is_ok());
+}

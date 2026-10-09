@@ -18,6 +18,7 @@ import {
   InputPolicy,
   InputService,
   intersect,
+  SCROLL_UNTIL_DEFAULTS,
   ScrollUntilStopReason,
   serveMockDaemon,
   TextRecognitionService,
@@ -296,7 +297,11 @@ export function mockRunner(desktop: MockDesktop): Transport {
         const step = begin.step.case === 'instant' ? begin.step.value : begin.step.case === 'motion' ? begin.step.value.total : undefined
         if (!step || (step.deltaX !== 0 && step.deltaY !== 0) || (step.deltaX === 0 && step.deltaY === 0))
           throw new AuvRpcError(INVALID_ARGUMENT, 'scroll-until scrolls along one axis by a non-zero delta')
-        const settle = Number(begin.settle?.seconds ?? 0n) * 1000 + (begin.settle?.nanos ?? 0) / 1e6
+        // Like a real Runner, omitted budget fields take the shared defaults.
+        const settleDuration = begin.settle ?? SCROLL_UNTIL_DEFAULTS.settle
+        const settle = Number(settleDuration.seconds) * 1000 + settleDuration.nanos / 1e6
+        const maxSteps = begin.maxSteps || SCROLL_UNTIL_DEFAULTS.maxSteps
+        const noMotionConfirmations = begin.noMotionConfirmations || SCROLL_UNTIL_DEFAULTS.noMotionConfirmations
         const query = begin.condition.case === 'textVisible' ? begin.condition.value.query : undefined
         const action = delivered(InputDeliveryPath.WINDOW_TARGETED_WHEEL)
         let streak = 0
@@ -310,9 +315,9 @@ export function mockRunner(desktop: MockDesktop): Transport {
           const match = query ? regions.find(region => region.text.toLowerCase().includes(query.toLowerCase())) : undefined
           const stop = match
             ? ScrollUntilStopReason.TEXT_VISIBLE
-            : streak >= begin.noMotionConfirmations
+            : streak >= noMotionConfirmations
               ? ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS
-              : steps >= begin.maxSteps ? ScrollUntilStopReason.BUDGET_EXHAUSTED : ScrollUntilStopReason.UNSPECIFIED
+              : steps >= maxSteps ? ScrollUntilStopReason.BUDGET_EXHAUSTED : ScrollUntilStopReason.UNSPECIFIED
           const motion = { estimatedShift: moved ? Math.round(step.deltaY || step.deltaX) : 0, noMotion: !moved, normalizedDiff: moved ? 1 : 0 }
           const total = { deltaX: step.deltaX * steps, deltaY: step.deltaY * steps }
           const awaitingDecision = begin.awaitDecisions && stop === ScrollUntilStopReason.UNSPECIFIED

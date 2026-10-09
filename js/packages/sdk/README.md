@@ -333,8 +333,9 @@ application or foreground recipient and several ordered actions.
 `scrollUntil` scrolls a window in steps and observes after each one on the
 Runner, until the text appears, no visual motion remains, the budget runs out,
 or a client predicate says stop. Omitted `maxSteps`, `noMotionConfirmations`
-and `settle` take `SCROLL_UNTIL_DEFAULTS` (50 steps, 2 confirmations, 400 ms),
-the `auv invoke input.scrollUntil` defaults:
+and `settle` take the Runner's defaults (50 steps, 2 confirmations, 400 ms),
+the same as `auv invoke input.scrollUntil`. `SCROLL_UNTIL_DEFAULTS` mirrors
+them for JavaScript that stands in for a Runner:
 
 ```ts
 const found = await window.scrollUntil(Position.screen(640, 400), {

@@ -1211,6 +1211,49 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
   }
 }
 
+// ROOT CAUSE:
+//
+// If a Runner caller omitted the scroll-until step budget, settle or no-motion
+// confirmations, the Runner rejected `max_steps` 0 and used no settle, because
+// the defaults lived only in the CLI. The JS SDK copied them; Rust and raw RPC
+// callers had to set every field.
+//
+// Before the fix, an omitted budget failed validation. The fix keeps the
+// defaults on `auv_scan::ScrollUntilRequest`, which the Runner applies to
+// omitted fields while explicit values still win.
+#[test]
+fn scroll_until_rpc_applies_the_shared_defaults_to_omitted_fields() {
+  let begin = |max_steps, settle, no_motion_confirmations| proto::ScrollUntilBegin {
+    step: Some(proto::scroll_until_begin::Step::Instant(proto::Scroll {
+      delta_x: 0.0,
+      delta_y: 10.0,
+    })),
+    condition: Some(proto::scroll_until_begin::Condition::End(proto::ScrollUntilEnd {})),
+    max_steps,
+    settle,
+    no_motion_confirmations,
+    ..Default::default()
+  };
+
+  let omitted = scroll_until_request_from_proto(begin(0, None, 0)).unwrap();
+  assert_eq!(
+    (omitted.max_steps, omitted.settle, omitted.no_motion_confirmations),
+    (
+      auv_scan::ScrollUntilRequest::DEFAULT_MAX_STEPS,
+      auv_scan::ScrollUntilRequest::DEFAULT_SETTLE,
+      auv_scan::ScrollUntilRequest::DEFAULT_NO_MOTION_CONFIRMATIONS
+    )
+  );
+  assert!(omitted.validate().is_ok());
+
+  let explicit = scroll_until_request_from_proto(begin(7, Some(prost_types::Duration::default()), 3)).unwrap();
+  assert_eq!(
+    (explicit.max_steps, explicit.settle, explicit.no_motion_confirmations),
+    (7, std::time::Duration::ZERO, 3),
+    "an explicit zero settle still means no settle"
+  );
+}
+
 #[test]
 fn scroll_until_update_carries_capture_ref_text_and_stop_reason() {
   let captures = test_capture_store();

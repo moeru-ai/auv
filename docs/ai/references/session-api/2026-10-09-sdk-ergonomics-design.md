@@ -113,11 +113,14 @@ instead: `CaptureRef.captureId`, `WindowRef.windowId` and `displayId`.
   center in screen space.
 - The README, the examples and the editor's default script use the SDK API.
   The editor types `auv` as `any` until `TODO(playground-sdk-types)`.
-- `scrollUntil` lost the playground's defaults in the switch; the JS SDK now
-  applies the same ones (`SCROLL_UNTIL_DEFAULTS`: 50 steps, 2 no-motion
-  confirmations, 400 ms settle, the `auv invoke input.scrollUntil` values) to
-  omitted fields. Rust `auv_scan::ScrollUntilRequest` has no defaults; its
-  callers set every field.
+- `scrollUntil` lost the playground's defaults in the switch; #298 made the
+  JS SDK fill them (`SCROLL_UNTIL_DEFAULTS`: 50 steps, 2 no-motion
+  confirmations, 400 ms settle). They now live on
+  `auv_scan::ScrollUntilRequest` (`DEFAULT_*` and `new(step, condition)`).
+  The Runner applies them to omitted fields (`max_steps` 0, absent `settle`,
+  `no_motion_confirmations` 0), the CLI uses the same constants, and the JS
+  SDK leaves omitted fields unset. `SCROLL_UNTIL_DEFAULTS` stays as the JS
+  mirror for code that stands in for a Runner, such as the playground mock.
 
 Each phase is one PR, in this order.
 
