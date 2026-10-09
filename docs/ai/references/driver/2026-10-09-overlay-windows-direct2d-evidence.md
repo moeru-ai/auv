@@ -100,6 +100,26 @@ composition:
 CJK labels (`播放 · QQ音乐`, `状态 status 半透明`) render through DirectWrite's
 system font fallback.
 
+### Frame time
+
+`render()` wall time per frame (full 2560x1440 virtual-screen frame plus
+`UpdateLayeredWindow`), release build, 30 frames after one warm-up, two rounds each,
+P50/P95/mean with linear-interpolation percentiles and no outlier filtering. The "basic"
+scene (disc cursor with label, outline with label, status pill) is the one both renderers
+accept; "full" adds an SVG cursor with a glow.
+
+| Renderer, scene | Round 1 P50 / P95 / mean (ms) | Round 2 P50 / P95 / mean (ms) |
+|---|---|---|
+| main (GDI), basic | 5.59 / 6.86 / 5.78 | 5.18 / 5.74 / 5.24 |
+| Direct2D, basic | 8.89 / 9.41 / 8.98 | 8.90 / 9.87 / 9.03 |
+| Direct2D, full | 10.73 / 17.59 / 12.36 | 10.41 / 12.07 / 10.85 |
+
+Direct2D costs about 3.5 ms more per frame on this machine. Removing the full-surface
+`Clear` did not change it (P50 9.67 and 9.15 ms), so the cost is in the per-frame DC
+render target work rather than clearing. Overlay frames are one-shot visual evidence, so
+this was left as is. A candidate follow-up is to reuse one render target across frames
+(`BindDC` per frame) and measure again.
+
 Reproduce (needs an interactive desktop; the window appears for about a second):
 
 ```bash
@@ -116,7 +136,7 @@ cargo run -p auv-driver-overlay-windows --example overlay_gallery -- overlay-gal
 - The outline label keeps the Windows layout (white pill above the box); macOS fills
   it with the stroke color inside the box. `TODO(driver-overlay-windows-outline-label)`.
 - Motion easing is unchanged. `TODO(driver-overlay-windows-motion)`.
-- Not measured: render latency, scaling other than 100%, multiple monitors.
+- Not measured: scaling other than 100%, multiple monitors.
 
 The overlay remains a visual trust/debug adapter. A rendered frame does not prove
 semantic success and is not an input backend.
