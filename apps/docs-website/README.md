@@ -11,10 +11,10 @@ pnpm install                              # from the repository root
 pnpm -F @auv-js/docs-website dev               # http://127.0.0.1:5190
 pnpm -F @auv-js/docs-website build             # static site in dist/
 pnpm -F @auv-js/docs-website typecheck
-pnpm -F @auv-js/docs-website lint
+pnpm lint                                  # root ESLint + oxlint config
 ```
 
-The commands below run from this directory (`docs/website/`).
+The commands below run from this directory (`apps/docs-website/`).
 
 | Route     | What it is |
 | --------- | ---------- |
@@ -22,6 +22,18 @@ The commands below run from this directory (`docs/website/`).
 | `/film`   | Film player with scrubber, loop, theme, and 16:9 / 9:16 toggle. `?t=7.5` opens paused on a frame, `?layout=portrait` starts in 9:16. |
 | `/render` | Bare frame target for the exporter (1920x1080, or 1080x1920 with `?layout=portrait`). `?t=2.2&theme=dark` shows one frame; `window.__auvSetT(t)` repaints. |
 | `/export` | How to export. |
+| `/card`   | Static cards over the frosted ambient desk. `?kind=og` (1200x630) and `social` (1280x640, GitHub social preview): "Application Use Via ..." top left, the mark and headline on the left, one crayon stroke curling from the mark into a loose column of dashed square tiles (agent apps) on the right. `?kind=readme` (1280x480, rounded): the mark with the headline beside it. `?theme=light\|dark`. |
+
+## Cards
+
+```sh
+pnpm cards   # public/og-*.png, public/social-preview-*.png, ../../docs/assets/readme-banner-*.png
+```
+
+`index.html` points `og:image` and `twitter:image` at `/og-light.png`. Upload
+`public/social-preview-*.png` by hand in the GitHub repository settings
+(Settings -> General -> Social preview); GitHub has no API for it. Re-run
+`pnpm cards` after changing the mark, the tagline, or the ambient desk.
 
 ## Deploy
 
@@ -120,9 +132,11 @@ round in turn, and the last frame matches the icon path.
 ## Structure
 
 ```text
-docs/website/
+apps/docs-website/
 ├── index.html
+├── public/                  rendered Open Graph and social preview cards (pnpm cards)
 ├── scripts/export-video.ts   headless Chrome + ffmpeg film exporter (pnpm video:*)
+├── scripts/export-cards.ts   headless Chrome card exporter (pnpm cards)
 └── src/
     ├── main.tsx              routes: /, /film, /render, /export
     ├── theme.ts              light / dark tokens, ghost colors

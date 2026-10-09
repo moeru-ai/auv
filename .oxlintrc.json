@@ -1,4 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": [".cursor/**"]
+  "ignorePatterns": [".cursor/**"],
+  "overrides": [
+    {
+      "files": ["apps/docs-website/**"],
+      "plugins": ["typescript", "unicorn", "oxc", "import", "react"],
+      "rules": {}
+    }
+  ]
 }

@@ -1,16 +1,14 @@
 <p align="center">
   <picture>
     <source
-      width="30%"
-      srcset="./docs/assets/logo-short-height-dark.svg"
+      srcset="./docs/assets/readme-banner-dark.png"
       media="(prefers-color-scheme: dark)"
     />
     <source
-      width="30%"
-      srcset="./docs/assets/logo-short-height-light.svg"
+      srcset="./docs/assets/readme-banner-light.png"
       media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)"
     />
-    <img width="30%" src="./docs/assets/logo-short-height-light.svg" alt="logo of auv" />
+    <img width="100%" src="./docs/assets/readme-banner-light.png" alt="AUV: Application Use Via ... Programmable Computer Use, more like Playwright for the OS." />
   </picture>
 </p>
 

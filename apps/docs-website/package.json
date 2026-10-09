@@ -7,11 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:site": "pnpm build && pnpm -F @auv-js/repl-playground build && rm -rf dist/playground && cp -r ../../apps/repl-playground/dist dist/playground",
+    "build:site": "pnpm build && pnpm -F @auv-js/repl-playground build && rm -rf dist/playground && cp -r ../repl-playground/dist dist/playground",
     "preview": "vite preview",
-    "lint": "moeru-lint .",
-    "lint:fix": "moeru-lint --fix .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "cards": "node scripts/export-cards.ts",
     "video": "node scripts/export-video.ts",
     "video:landscape:light": "node scripts/export-video.ts --layout landscape --theme light",
     "video:landscape:dark": "node scripts/export-video.ts --layout landscape --theme dark",
@@ -28,18 +27,12 @@
     "three": "catalog:"
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "catalog:",
     "@iconify-json/ph": "catalog:",
-    "@moeru/eslint-config": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@types/three": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "eslint": "catalog:",
-    "eslint-plugin-oxlint": "catalog:",
-    "eslint-plugin-react-refresh": "catalog:",
-    "oxlint": "catalog:",
     "playwright": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
