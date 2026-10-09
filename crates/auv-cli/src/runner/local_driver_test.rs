@@ -912,6 +912,65 @@ fn scroll_rpc_accepts_only_finite_non_zero_deltas_before_delivery() {
   }
 }
 
+#[tokio::test]
+async fn scroll_point_rpc_reuses_window_scroll_validation_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    captures: test_capture_store(),
+  };
+  let position = proto::Position {
+    x: 10.0,
+    y: 20.0,
+    coordinate_space: Some(proto::position::CoordinateSpace::Screen(true)),
+  };
+  for scroll in [
+    None,
+    Some(proto::Scroll {
+      delta_x: 0.0,
+      delta_y: 0.0,
+    }),
+    Some(proto::Scroll {
+      delta_x: 0.0,
+      delta_y: f64::NAN,
+    }),
+  ] {
+    let error = service
+      .scroll_point(Request::new(proto::ScrollPointRequest {
+        position: Some(position.clone()),
+        scroll,
+        settle: None,
+      }))
+      .await
+      .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  }
+}
+
+#[tokio::test]
+async fn scroll_point_rpc_rejects_a_window_position_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    captures: test_capture_store(),
+  };
+  let error = service
+    .scroll_point(Request::new(proto::ScrollPointRequest {
+      position: Some(proto::Position {
+        x: 10.0,
+        y: 20.0,
+        coordinate_space: Some(proto::position::CoordinateSpace::WindowId("window-1".to_string())),
+      }),
+      scroll: Some(proto::Scroll {
+        delta_x: 0.0,
+        delta_y: 120.0,
+      }),
+      settle: None,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert!(error.message().contains("ScrollWindowPoint"), "{}", error.message());
+}
+
 #[test]
 fn scroll_rpc_preserves_candidate_order_and_rejects_unknown_or_repeated_candidates() {
   assert_eq!(scroll_options_from_proto(None).unwrap(), auv_driver::ScrollOptions::default());

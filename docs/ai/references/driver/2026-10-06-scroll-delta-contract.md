@@ -202,7 +202,12 @@ Wire:
 
 Deliberately deferred, with `TODO` markers at the code site:
 
-- screen- and display-relative scroll (`TODO(screen-point-scroll)`);
+- scrolling without a target window. This landed on 2026-10-09 as
+  `InputService/ScrollPoint` (`input.scroll`), which takes a screen or display
+  `Position` and delivers in the foreground on Linux and Windows. macOS
+  answers `UNIMPLEMENTED` (`TODO(macos-screen-scroll-point)`), and the
+  `input.scrollPoint` CLI takes screen coordinates only
+  (`TODO(scroll-point-display-cli)`);
 - a CLI flag for ordered delivery candidates
   (`TODO(scroll-delivery-candidates-cli)`).
 

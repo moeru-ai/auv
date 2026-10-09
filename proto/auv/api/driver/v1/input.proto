@@ -12,10 +12,31 @@ import "auv/api/image/v1/region.proto";
 import "google/protobuf/duration.proto";
 
 service InputService {
+  // Reads the OS pointer in logical screen coordinates. The pointer is the
+  // system's own position, not a logical mouse (its last delivered position
+  // can differ) and not an overlay cursor. This does not create a logical
+  // mouse, reserve input, move the pointer, or deliver input.
+  // TODO(pointer-click-atomic): A later click may see a different position;
+  // add an atomic at-pointer action only if a caller needs that guarantee.
+  // TODO(logical-mouse-state): reading one logical mouse's state and listing
+  // a Runner's logical mice are deferred until a caller needs them; see
+  // "Pointer, Logical Mouse and Cursor" in docs/TERMS_AND_CONCEPTS.md.
+  // TODO(pointer-watch): streamed pointer and logical-mouse updates
+  // (server-streaming, initial state first, coalesced positions) are deferred
+  // until a concrete consumer, such as a live viewer, needs them.
+  rpc GetPointerPosition(GetPointerPositionRequest) returns (GetPointerPositionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.pointer_position"
+      title: "Read the pointer position"
+      description: "Reads the OS pointer position in logical screen coordinates. It is not the position of a logical mouse or an AUV cursor, and it does not move the pointer or deliver input."
+    };
+  }
   // NOTICE: Timed hold is a local driver convenience, not an RPC capability.
   // Remote convenience awaits an approved atomic sequence contract; client-side
   // sleep cannot preserve whole-gesture admission and cancellation cleanup.
-  // Creates logical state in this Runner; it does not create an OS cursor.
+  // Creates logical state in this Runner; it does not create an OS pointer.
   rpc CreateMouse(CreateMouseRequest) returns (CreateMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -131,12 +152,23 @@ service InputService {
       description: "Clicks at a position in screen, display or window coordinates. A window position, or any position with a target window, is delivered to that window, in the background when the policy allows; a screen or display position is a global click."
     };
   }
+  // Wheel-style scroll at a screen or display position, with no target
+  // window. Delivered in the foreground; a window position is rejected, use
+  // ScrollWindowPoint for that. Delivery evidence only: a delivered wheel event
+  // does not prove any viewport moved.
+  rpc ScrollPoint(ScrollPointRequest) returns (ScrollPointResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.scroll"
+      title: "Scroll at a point"
+      description: "Sends one foreground wheel scroll at a position in screen or display coordinates, with no target window. Deltas are logical pixels, positive toward later content. The result proves delivery, not that a view moved."
+    };
+  }
   // Wheel-style scroll in a window, at a position in its space or in screen or
   // display space. Delivery evidence only: a delivered wheel event does not
-  // prove the target viewport moved.
-  // TODO(screen-point-scroll): scrolling without a target window is deferred
-  // until a caller needs it; platform global scroll primitives do not share one
-  // API.
+  // prove the target viewport moved. Use ScrollPoint to scroll without a
+  // target window.
   rpc ScrollWindowPoint(ScrollWindowPointRequest) returns (ScrollWindowPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -246,6 +278,13 @@ service InputService {
       description: "Presses a key or shortcut string in whichever app has keyboard focus. New code should use press_keys with an explicit recipient."
     };
   }
+}
+
+message GetPointerPositionRequest {}
+
+message GetPointerPositionResponse {
+  // OS pointer position in the Device screen's logical coordinate space.
+  ScreenPoint point = 1;
 }
 
 enum InputPolicy {
@@ -396,7 +435,7 @@ enum ScrollDeliveryCandidate {
   SCROLL_DELIVERY_CANDIDATE_FOREGROUND_HID = 4;
 }
 
-// Scroll amount in logical pixels of the target window's coordinate space.
+// Scroll amount in logical pixels of the target point's coordinate space.
 // Positive delta_y moves the viewport toward later content (down) and positive
 // delta_x moves it right, matching DOM WheelEvent. Both values must be finite
 // and at least one must be non-zero. The Driver converts to native wheel units;
@@ -710,6 +749,20 @@ message ScrollUntilResponse {
     ScrollUntilUpdate update = 1;
     ScrollUntilCompleted completed = 2;
   }
+}
+
+message ScrollPointRequest {
+  // A screen or display position. A window position is rejected.
+  Position position = 1;
+  Scroll scroll = 2;
+  // Delay after delivery; zero when unset.
+  google.protobuf.Duration settle = 3;
+}
+
+message ScrollPointResponse {
+  // Where the scroll was delivered, in logical screen space.
+  ScreenPoint screen_point = 1;
+  InputActionResult action = 2;
 }
 
 message MouseCurrentPosition {}

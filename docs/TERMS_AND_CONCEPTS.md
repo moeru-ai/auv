@@ -998,7 +998,29 @@ movement and from application verification.
 A logical mouse retains position and held-button state in one driver authority.
 Mouse zero is shared across Runs; explicit creation allocates separate logical
 state. A Run is recording/correlation context, not mouse ownership. A logical
-mouse does not claim an independent OS cursor or simultaneous native interaction.
+mouse does not claim an independent OS pointer or simultaneous native interaction.
+
+## Pointer, Logical Mouse and Cursor
+
+These three words name three different positions. Do not use one for another.
+
+| Term | What it is | Owner | Read through |
+| --- | --- | --- | --- |
+| Pointer | The OS pointer position, in logical screen space | The platform | `InputService/GetPointerPosition`, `auv invoke input.pointerPosition` |
+| Logical mouse | AUV's own position and held-button state for one mouse identity | `input` (`MouseCoordinator`) | Not readable yet (`TODO(logical-mouse-state)`) |
+| Cursor | A visual layer that an overlay draws, such as the AUV cursor | `overlay` | Overlay requests only |
+
+- The pointer moves with human input and other processes. A logical mouse
+  keeps its last delivered position, so the two can differ. Mouse zero is a
+  logical mouse, not the pointer.
+- A cursor is visual feedback. Its animated position is not the pointer or a
+  logical mouse, and drawing it delivers no input.
+- A pointer read that the platform cannot answer fails. It does not return
+  `(0, 0)` or the last delivered position. For example, Linux Wayland has no
+  compositor-neutral pointer read (`TODO(linux-wayland-pointer-position)`).
+- A pointer read is a snapshot. Streamed updates are deferred
+  (`TODO(pointer-watch)`); see the
+  [pointer position reference](ai/references/driver/2026-10-09-pointer-position.md).
 
 ## Input Target Coordination
 

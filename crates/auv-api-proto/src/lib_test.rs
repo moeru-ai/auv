@@ -27,6 +27,22 @@ fn every_discoverable_method_declares_a_non_unspecified_effect() {
 }
 
 #[test]
+fn pointer_position_is_a_read_only_input_capability() {
+  let pool = DescriptorPool::decode(FILE_DESCRIPTOR_SET).expect("decode descriptor pool with extensions");
+  let method = pool
+    .get_service_by_name("auv.api.driver.v1.InputService")
+    .expect("input service")
+    .methods()
+    .find(|method| method.name() == "GetPointerPosition")
+    .expect("pointer position method");
+  let effect = pool.get_extension_by_name("auv.api.annotations.v1.effect").expect("effect extension descriptor");
+
+  assert_eq!(method.options().get_extension(&effect).as_ref(), &Value::EnumNumber(1));
+  assert_eq!(method.input().full_name(), "auv.api.driver.v1.GetPointerPositionRequest");
+  assert_eq!(method.output().full_name(), "auv.api.driver.v1.GetPointerPositionResponse");
+}
+
+#[test]
 fn daemon_json_uses_proto_enum_well_known_and_uint64_shapes() {
   use crate::auv::api::daemon::v1::{Runner, RunnerLifecycle, RunnerPhase};
 

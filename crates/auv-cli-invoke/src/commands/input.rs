@@ -24,7 +24,9 @@ pub fn group() -> CommandGroup {
     .command(press_keys_named_invoke_command())
     .command(hold_keys_invoke_command())
     .command(input_keyboard_invoke_command())
+    .command(pointer_position_invoke_command())
     .command(move_mouse_invoke_command())
+    .command(scroll_point_invoke_command())
     .command(click_point_invoke_command())
     .command(drag_invoke_command())
     .command(scroll_invoke_command())
@@ -32,11 +34,51 @@ pub fn group() -> CommandGroup {
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(after_long_help = "Examples:\n  auv invoke input.pointerPosition --json")]
+struct PointerPositionArgs {}
+
+#[invoke_command(
+  id = "input.pointerPosition",
+  group = "input",
+  description = "Read the OS pointer position in logical screen coordinates without delivering input.",
+  input = PointerPositionArgs,
+)]
+async fn pointer_position(input: InvokeCommandInput, _args: PointerPositionArgs) -> InvokeCommandResult {
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::completed());
+  }
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  {
+    let session = auv::local::open().map_err(|error| error.to_string())?;
+    pointer_position_output(session.input().current_position().map_err(|error| error.to_string())?)
+  }
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  {
+    Err("input.pointerPosition is unavailable on this platform".to_string())
+  }
+}
+
+pub fn pointer_position_output(point: auv_driver::Point) -> InvokeCommandResult {
+  if !point.x.is_finite() || !point.y.is_finite() {
+    return Err("input.pointerPosition observed non-finite coordinates".to_string());
+  }
+  Ok(InvokeCommandOutput::from_result(&point)?.with_report(InvokeReport::new(
+    vec![InvokeReportField::new(
+      "Screen point",
+      format!("{:.1},{:.1}", point.x, point.y),
+    )],
+    Vec::new(),
+  )))
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.moveMouse 1032.5 1212")]
 struct MoveMouseArgs {
   /// Logical screen X coordinate.
+  #[arg(allow_hyphen_values = true)]
   x: f64,
   /// Logical screen Y coordinate.
+  #[arg(allow_hyphen_values = true)]
   y: f64,
 }
 
@@ -90,6 +132,111 @@ pub fn mouse_move_output(result: MouseMoveResult) -> InvokeCommandResult {
   };
   fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+// TODO(scroll-point-display-cli): `InputService/ScrollPoint` accepts a display
+// Position, but this command takes screen coordinates only; add
+// `--relative-to display` like `input.clickPoint` when a caller needs it.
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(after_long_help = "Examples:\n  auv invoke input.scrollPoint 640 360 0 120")]
+struct ScreenScrollArgs {
+  /// Logical screen X coordinate.
+  #[arg(allow_hyphen_values = true)]
+  x: f64,
+  /// Logical screen Y coordinate.
+  #[arg(allow_hyphen_values = true)]
+  y: f64,
+  /// Horizontal logical pixels; positive scrolls right.
+  #[arg(allow_hyphen_values = true)]
+  delta_x: f64,
+  /// Vertical logical pixels; positive scrolls down.
+  #[arg(allow_hyphen_values = true)]
+  delta_y: f64,
+  /// Delay after delivery in milliseconds.
+  #[arg(long, default_value_t = 0)]
+  #[serde(rename = "settle-ms", default)]
+  settle_ms: u64,
+}
+
+impl ScreenScrollArgs {
+  fn validated(&self) -> Result<(auv_driver::Point, auv_driver::Scroll, std::time::Duration), String> {
+    if ![self.x, self.y, self.delta_x, self.delta_y].into_iter().all(f64::is_finite) {
+      return Err("input.scrollPoint requires finite coordinates and scroll deltas".to_string());
+    }
+    if self.delta_x == 0.0 && self.delta_y == 0.0 {
+      return Err("input.scrollPoint requires at least one non-zero delta".to_string());
+    }
+    if self.settle_ms > 30_000 {
+      return Err("input.scrollPoint --settle-ms must be within 0..=30000".to_string());
+    }
+    Ok((
+      auv_driver::Point::new(self.x, self.y),
+      auv_driver::Scroll::new(self.delta_x, self.delta_y),
+      std::time::Duration::from_millis(self.settle_ms),
+    ))
+  }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScrollPointResult {
+  pub point: ScreenPoint,
+  pub scroll: auv_driver::Scroll,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+#[invoke_command(
+  id = "input.scrollPoint",
+  group = "input",
+  description = "Scroll foreground logical pixels at a screen coordinate.",
+  input = ScreenScrollArgs,
+)]
+async fn scroll_point(input: InvokeCommandInput, args: ScreenScrollArgs) -> InvokeCommandResult {
+  let (point, scroll, settle) = args.validated()?;
+  if input.dry_run {
+    return scroll_point_output(ScrollPointResult {
+      point: ScreenPoint::new(point.x, point.y),
+      scroll,
+      action: None,
+    });
+  }
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
+  {
+    let session = auv::local::open().map_err(|error| error.to_string())?;
+    let action = session.input().scroll_at(point, scroll, settle).map_err(|error| error.to_string())?;
+    emit_input_action_result(&action);
+    scroll_point_output(ScrollPointResult {
+      point: ScreenPoint::new(point.x, point.y),
+      scroll,
+      action: Some(action),
+    })
+  }
+  #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+  {
+    // TODO(macos-screen-scroll-point): local macOS scrolling is deferred because the
+    // driver exposes only window-owned scrolling; enable this command after a
+    // typed screen-point scroll capability is approved there.
+    let _ = (input, point, scroll, settle);
+    Err("local input.scrollPoint is available only on Linux and Windows; a selected Runner may expose it remotely".to_string())
+  }
+}
+
+pub fn scroll_point_output(result: ScrollPointResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
+  fields.push(InvokeReportField::new("Wheel delta", format!("{:.1},{:.1}", result.scroll.delta_x, result.scroll.delta_y)));
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+pub(crate) fn decode_screen_scroll(
+  input: &InvokeCommandInput,
+) -> Result<(auv_driver::Point, auv_driver::Scroll, std::time::Duration), String> {
+  crate::command::decode_args::<ScreenScrollArgs>(input)?.validated()
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -1143,8 +1290,8 @@ pub(crate) fn parse_timing_function(value: &str) -> Result<auv_driver::TimingFun
 
 /// A validated window scroll before its point is resolved against the target
 /// window. Local and Runner execution share this plan.
-// TODO(screen-point-scroll): screen/display-relative scroll is deferred; the
-// Runner exposes only ScrollWindowPoint until a caller needs global scroll.
+// NOTICE: scrolling without a target window is `input.scrollPoint`
+// (`InputService/ScrollPoint`), not this plan.
 // TODO(scroll-delivery-candidates-cli): the CLI keeps the Driver default
 // candidate ladder; expose an ordered candidate flag when a caller needs it.
 // TODO(scroll-stream-invoke): live velocity control (`InputService/StreamScroll`)

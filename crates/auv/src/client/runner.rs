@@ -137,6 +137,15 @@ pub struct PointClick {
   pub action: auv_driver::InputActionResult,
 }
 
+/// Typed result of a scroll delivered through [`InputClient::scroll`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PointScroll {
+  /// Delivered point in logical screen space.
+  pub screen_point: auv_driver::ScreenPoint,
+  /// Typed input-delivery evidence.
+  pub action: auv_driver::InputActionResult,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MouseMotionEvent {
   Started {
@@ -1590,6 +1599,21 @@ fn permission_status_from_proto(value: i32, field: &'static str) -> Result<auv_d
 }
 
 impl InputClient {
+  /// Reads the OS pointer in logical screen coordinates without delivering
+  /// input. This is not a logical mouse's last delivered position.
+  pub async fn pointer_position(&self) -> Result<auv_driver::ScreenPoint, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .get_pointer_position(proto::GetPointerPositionRequest {})
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    let point = required(response.point, "GetPointerPosition omitted point")?;
+    if !point.x.is_finite() || !point.y.is_finite() {
+      return Err(CapabilityError::InvalidResponse("GetPointerPosition returned non-finite coordinates".into()));
+    }
+    Ok(auv_driver::ScreenPoint::new(point.x, point.y))
+  }
+
   /// Allocates logical mouse state on this Runner; zero remains the shared mouse.
   pub async fn create_mouse(&self) -> Result<u64, CapabilityError> {
     Ok(
@@ -1738,6 +1762,38 @@ impl InputClient {
     })
   }
 
+  /// Scrolls at a screen or display position in the foreground, with no
+  /// target window. A window position is rejected; scroll in a window through
+  /// [`WindowClient::scroll`] instead.
+  pub async fn scroll(
+    &self,
+    target: &impl auv_driver::Positional,
+    scroll: auv_driver::Scroll,
+    settle: std::time::Duration,
+  ) -> Result<PointScroll, CapabilityError> {
+    let position = target.position().map_err(|error| CapabilityError::InvalidArgument(error.to_string()))?;
+    if matches!(position.coordinate_space, auv_driver::CoordinateSpace::Window(_)) {
+      return Err(CapabilityError::InvalidArgument("a window position needs its window; use WindowClient::scroll".into()));
+    }
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .scroll_point(proto::ScrollPointRequest {
+        position: Some(crate::protocol::position::encode(position)),
+        scroll: Some(proto::Scroll {
+          delta_x: scroll.delta_x,
+          delta_y: scroll.delta_y,
+        }),
+        settle: Some(duration_to_proto(settle)?),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    let screen_point = required(response.screen_point, "ScrollPoint response omitted ScreenPoint")?;
+    Ok(PointScroll {
+      screen_point: auv_driver::ScreenPoint::new(screen_point.x, screen_point.y),
+      action: input_action_result_from_proto(required(response.action, "ScrollPoint response omitted InputActionResult")?)?,
+    })
+  }
+
   /// Execute ordered keyboard actions on an explicit recipient. Older Runners
   /// return UNIMPLEMENTED; never retry through a global foreground RPC.
   pub async fn input_keyboard(
@@ -1781,6 +1837,51 @@ impl InputClient {
       .input_keyboard(target, vec![auv_driver::KeyboardInput::PressKeys { options, policy }], dry_run)
       .await
       .map(|actions| actions.map(|mut actions| actions.remove(0)))
+  }
+
+  /// Presses a bounded key combination until `key_up` or the Runner's release
+  /// deadline. The returned ID belongs to this Runner and must be released on
+  /// the same route; dropping it does not send a release request.
+  pub async fn key_down(
+    &self,
+    target: &auv_driver::InputTarget,
+    keys: Vec<String>,
+    policy: auv_driver::InputPolicy,
+    timeout: std::time::Duration,
+  ) -> Result<(auv_driver::KeyboardHoldId, auv_driver::InputActionResult), CapabilityError> {
+    if timeout.is_zero() || timeout > std::time::Duration::from_secs(30) {
+      return Err(CapabilityError::InvalidArgument("keyboard hold timeout must be in (0, 30s]".into()));
+    }
+
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .key_down(proto::KeyDownRequest {
+        target: Some(input_target_to_proto(target)),
+        keys,
+        policy: input_policy_to_proto(policy) as i32,
+        timeout: Some(duration_to_proto(timeout)?),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    if response.hold_id == 0 {
+      return Err(CapabilityError::InvalidResponse("KeyDown returned zero hold ID".into()));
+    }
+    let action = input_action_result_from_proto(required(response.action, "KeyDown response omitted InputActionResult")?)?;
+    Ok((response.hold_id, action))
+  }
+
+  /// Releases one key hold on this Runner. A timed-out, already released hold
+  /// may return a no-op action from the Runner.
+  pub async fn key_up(&self, hold_id: auv_driver::KeyboardHoldId) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    if hold_id == 0 {
+      return Err(CapabilityError::InvalidArgument("keyboard hold ID must be nonzero".into()));
+    }
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .key_up(proto::KeyUpRequest { hold_id })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    input_action_result_from_proto(required(response.action, "KeyUp response omitted InputActionResult")?)
   }
 
   /// Hold one key combination for a bounded duration and report its release.

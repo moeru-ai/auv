@@ -5,6 +5,77 @@ use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, di
 use std::sync::Arc;
 
 #[test]
+fn pointer_position_has_no_arguments_and_reports_logical_screen_coordinates() {
+  let registry = crate::default_registry();
+  let command = registry.resolve("input.pointerPosition").expect("pointer-position command");
+  let crate::InvokeCliParse::Invoke { inputs, target, .. } = crate::parse_invoke_args(&["input.pointerPosition".into()]).unwrap() else {
+    panic!("expected pointer-position invocation");
+  };
+  assert!(inputs.is_empty());
+  assert!(target.is_none());
+  let error = command
+    .target
+    .validate(&InvokeCommandInput {
+      command_id: "input.pointerPosition".into(),
+      target: Some(crate::ExecutionTarget::Display {
+        id: "primary".into(),
+      }),
+      inputs: Default::default(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .expect_err("pointer observation is global");
+  assert!(error.contains("forbids --target"), "{error}");
+
+  let output = pointer_position_output(auv_driver::Point::new(123.5, 456.25)).expect("typed position result");
+  assert_eq!(output.result(), Some(&serde_json::json!({ "x": 123.5, "y": 456.25 })));
+  assert_eq!(output.report.expect("human report").fields[0].value, "123.5,456.2");
+}
+
+#[test]
+fn scroll_parses_and_validates_screen_logical_pixel_input() {
+  let crate::InvokeCommandCliParse::Invoke {
+    inputs, typed_args, ..
+  } = scroll_point_invoke_command()
+    .parse_cli_args(&[
+      "640".into(),
+      "360".into(),
+      "-240".into(),
+      "120".into(),
+      "--settle-ms".into(),
+      "25".into(),
+    ])
+    .expect("screen scroll should parse")
+  else {
+    panic!("expected parsed invocation");
+  };
+  assert_eq!(inputs["delta_x"], "-240.0");
+  assert_eq!(inputs["delta_y"], "120.0");
+  let args = typed_args.get::<ScreenScrollArgs>().expect("typed scroll args");
+  assert_eq!(args.validated().unwrap().1, auv_driver::Scroll::new(-240.0, 120.0));
+
+  let zero = ScreenScrollArgs {
+    x: 10.0,
+    y: 20.0,
+    delta_x: 0.0,
+    delta_y: 0.0,
+    settle_ms: 0,
+  };
+  assert_eq!(zero.validated().unwrap_err(), "input.scrollPoint requires at least one non-zero delta");
+
+  let invalid: ScreenScrollArgs = serde_json::from_value(serde_json::json!({
+    "x": 10.0,
+    "y": 20.0,
+    "delta_x": 0.0,
+    "delta_y": 1.0,
+    "settle-ms": 30001
+  }))
+  .unwrap();
+  assert_eq!(invalid.validated().unwrap_err(), "input.scrollPoint --settle-ms must be within 0..=30000");
+}
+
+#[test]
 fn click_point_accepts_repeated_and_comma_separated_modifiers() {
   for values in [
     vec!["cmd", "shift"],

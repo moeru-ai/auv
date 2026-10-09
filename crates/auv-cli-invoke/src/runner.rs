@@ -38,6 +38,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
   }
 
   match input.command_id.as_str() {
+    "input.pointerPosition" if input.dry_run => return Ok(crate::InvokeCommandOutput::completed()),
     "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText" => {
       let keyboard = crate::commands::input::decode_keyboard_input(&input)
         .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
@@ -70,6 +71,12 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     .map_err(|error| format!("route core Runner for {command_id} failed: {error}"))?;
 
   let result = match command_id {
+    "input.pointerPosition" => runner
+      .input()
+      .pointer_position()
+      .await
+      .map_err(|status| format!("InputService/GetPointerPosition failed: {status}"))
+      .and_then(|point| crate::commands::input::pointer_position_output(point.point())),
     "app.activate" => {
       let target = input.application_target()?.expect("validated target").trim();
       runner
@@ -409,6 +416,23 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       .await
     }
     "input.clickPoint" => selected_click_point(&input, &runner).await,
+    "input.scrollPoint" => {
+      async {
+        let (point, scroll, settle) = crate::commands::input::decode_screen_scroll(&input)?;
+        let response = runner
+          .input()
+          .scroll(&auv_driver::ScreenPoint::new(point.x, point.y), scroll, settle)
+          .await
+          .map_err(|status| format!("InputService/ScrollPoint failed: {status}"))?;
+        crate::emit_input_action_result(&response.action);
+        crate::commands::input::scroll_point_output(crate::commands::input::ScrollPointResult {
+          point: response.screen_point,
+          scroll,
+          action: Some(response.action),
+        })
+      }
+      .await
+    }
     _ => unreachable!("typed Runner adapter was selected above"),
   };
   result.map_err(Into::into)

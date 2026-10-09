@@ -1,6 +1,24 @@
 use super::*;
 
 #[tokio::test]
+async fn selected_pointer_position_dry_run_never_resolves_a_daemon_or_observes_input() {
+  let output = invoke(
+    crate::InvokeCommandInput {
+      command_id: "input.pointerPosition".to_string(),
+      target: None,
+      inputs: Default::default(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    },
+    Default::default(),
+  )
+  .await
+  .expect("dry-run does not require a Runner");
+  assert!(output.result().is_none(), "no position was observed");
+}
+
+#[tokio::test]
 async fn selected_now_playing_rejects_application_target_before_daemon_resolution() {
   let error = invoke(
     crate::InvokeCommandInput {
