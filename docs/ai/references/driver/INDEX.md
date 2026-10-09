@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **65**
+Count: **66**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -42,6 +42,7 @@ Count: **65**
 - [`2026-08-30-linux-wayland-pipewire-capture-runtime-design.md`](2026-08-30-linux-wayland-pipewire-capture-runtime-design.md)
 
 - [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
+- [`2026-10-09-overlay-windows-direct2d-evidence.md`](2026-10-09-overlay-windows-direct2d-evidence.md): Windows overlay drawing moved from GDI to a Direct2D DC render target (real premultiplied alpha, antialiasing, DirectWrite labels, cursor glow, resvg SVG cursors); pixel tests and before/after screen captures.
 
 - [`2026-09-11-click-modifiers-contract.md`](2026-09-11-click-modifiers-contract.md)
 - [`2026-09-09-background-ax-and-media-gap-review.md`](2026-09-09-background-ax-and-media-gap-review.md): Deeper background input and AX review, plus microphone/system-audio distinctions and three media capability candidates with pinned source evidence.

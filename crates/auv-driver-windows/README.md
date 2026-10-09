@@ -18,7 +18,7 @@ UIA, and `Windows.Media.Ocr`.
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process name (`ApplicationControl::activate_process_name`)
-- Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`
+- Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor glow)
 
 ## Open TODOs
 
@@ -32,7 +32,9 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
 | `TODO(app-activate-windows-cli)` | `crates/auv-cli-invoke/src/commands/app.rs` | Wire `activate_process_name` into the `app.activate` CLI command (needs an owner decision on the shared output contract) |
 | `TODO(driver-overlay-windows-motion)` | `crates/auv-driver-overlay-windows/src/overlay.rs` | Per-layer position easing / animation |
-| SVG cursor rasterization (see `NOTICE` in `src/window.rs`) | `crates/auv-driver-overlay-windows/src/window.rs` | `CursorImage::Svg` is rejected with `Err`; needs a rasterizer |
+| `TODO(driver-overlay-windows-builtin-art)` | `crates/auv-driver-overlay-windows/src/window.rs` | Built-in cursors use the disc sprite, not the canonical SVG art and default glow macOS uses |
+| `TODO(driver-overlay-windows-silhouette-shadow)` | `crates/auv-driver-overlay-windows/src/window.rs` | Cursor glow is radial, not a blur of the art's silhouette |
+| `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 
 ## Architecture notes
 
