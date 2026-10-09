@@ -1,4 +1,4 @@
-name: Cloudflare Workers (Playground)
+name: Cloudflare Workers
 
 on:
   push:
@@ -12,14 +12,14 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy - repl-playground
+    name: Deploy - auv.moeru.ai
     runs-on: ubuntu-latest
     permissions:
       contents: read
       deployments: write
     environment:
       name: Playground Production
-      url: https://auv.moeru.ai/playground/
+      url: https://auv.moeru.ai/
     steps:
       - uses: actions/checkout@v6
       - name: Set up Buf
@@ -42,12 +42,14 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Generate Protobuf bindings
         run: pnpm generate:proto
-      - name: Build repl-playground
-        run: pnpm --filter @auv-js/repl-playground build
-      - name: Deploy repl-playground
+      # docs-website is the site root; repl-playground's dist is merged into
+      # its dist/playground/ (see docs/website/package.json `build:site`).
+      - name: Build site
+        run: pnpm --filter @auv-js/docs-website build:site
+      - name: Deploy site
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy -c ./apps/repl-playground/wrangler.toml
+          command: deploy -c ./docs/website/wrangler.toml
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}

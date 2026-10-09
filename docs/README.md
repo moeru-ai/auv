@@ -18,6 +18,7 @@ docs/
 │   │   └── YYYY-MM-DD-*.md   ← tombstones pointing at new paths
 │   └── explanations/         ← tutorials, interactive HTML
 ├── design/                   ← vendored design system + viewer/cli mock
+├── website/                  ← AUV website (Vite + React, @auv-js/docs-website) + film exporter
 ├── archive/verticals/        ← archived vertical proofs (not active roadmap)
 └── notes/<owner>/            ← personal drafts (do not commit by default)
 ```
@@ -32,6 +33,7 @@ docs/
 | Finished vertical that must not bias roadmap | `docs/archive/verticals/<name>/` + old-path tombstone |
 | Personal exploration / local logs | `docs/notes/<owner>/` (commit only if owner asks) |
 | UI tokens / viewer mock | `docs/design/` |
+| Website pages, intro film, video export | `docs/website/` (see its [`README.md`](website/README.md)) |
 
 After adding a reference: add one line to that folder’s [`INDEX.md`](ai/references/INDEX.md) (and the folder’s own `INDEX.md`).
 

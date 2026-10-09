@@ -1,0 +1,303 @@
+:root {
+  --bg: #f6f7fb;
+  --ink: #1b1d23;
+  --ink-2: #5d6271;
+  --panel: rgba(255, 255, 255, 0.72);
+  --edge: rgba(24, 28, 40, 0.1);
+  --cyan: #3fd9dd;
+  --pink: #ff74b1;
+  --violet: #9b7dff;
+  /* Hairlines are 2px at 15% ink: there, but barely. */
+  --line: color-mix(in srgb, var(--ink) 15%, transparent);
+  --fill: color-mix(in srgb, var(--ink) 4.5%, transparent);
+  --raised: #ffffff;
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  --bg: #0c0e13;
+  --ink: #eceae4;
+  --ink-2: #a5a8b3;
+  --panel: rgba(30, 33, 42, 0.72);
+  --edge: rgba(255, 255, 255, 0.1);
+  --raised: #1d2029;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+
+.toolbar {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  display: flex; gap: 10px; align-items: center;
+  padding: 8px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--edge);
+  backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+  z-index: 10; max-width: calc(100vw - 32px);
+}
+.toolbar button, .toolbar select, .toolbar a {
+  border: 1px solid var(--edge); background: transparent; border-radius: 999px;
+  padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--ink); text-decoration: none;
+}
+.toolbar input[type=range] { width: min(46vw, 520px); accent-color: var(--violet); }
+.toolbar .time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); min-width: 64px; text-align: right; }
+.fill-svg { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+
+/* Landing (inside the 1920x1080 stage) */
+.veil { position: absolute; inset: 0; pointer-events: none; mask-size: 1920px 1080px; -webkit-mask-size: 1920px 1080px; }
+.hero-copy {
+  position: absolute; left: 50%; top: 668px; translate: -50% 0; width: 900px;
+  text-align: center; pointer-events: none;
+  transition: top 0.55s cubic-bezier(0.2, 1.35, 0.4, 1);
+}
+/* Make room below the mark while a part is unfolded. */
+.hero-copy.away { top: 812px; }
+.hero-copy h1 { margin: 0 0 10px; font-size: 44px; font-weight: 750; letter-spacing: -0.02em; }
+.hero-copy p { margin: 0; color: var(--ink-2); font-size: 19px; line-height: 1.5; }
+.info-card { position: absolute; padding: 20px 22px; border-radius: 22px; pointer-events: none; }
+.info-card h3 { margin: 0 0 8px; font-size: 21px; letter-spacing: -0.01em; }
+.info-card p { margin: 0 0 14px; font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+.info-card code { display: block; font-size: 13px; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+
+/* Desk renderer */
+.desk { position: relative; overflow: hidden; }
+.desk-blobs { position: absolute; inset: 0; overflow: hidden; }
+/* Glows live on the desk plane and may extend past it (the stage clips). */
+.desk-glows { position: absolute; inset: 0; }
+.blob { position: absolute; left: 0; top: 0; will-change: transform; }
+.desk-world { position: absolute; inset: 0; transform-origin: 0 0; }
+.win { position: absolute; left: 0; top: 0; overflow: hidden; }
+.win-shadow { position: absolute; left: 0; top: 0; border-radius: 18px; filter: blur(24px); }
+.win-shadow-wrap { position: absolute; filter: blur(22px); }
+.overlay { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.fit { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.gl-desk { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+
+/* Mobile landing v2: scroll story. */
+html.m-snap { scroll-snap-type: y proximity; }
+.m2 { position: relative; min-height: 100vh; }
+.m2-bg {
+  position: fixed; inset: 0; pointer-events: none; transition: opacity 0.6s;
+  background:
+    radial-gradient(60% 34% at 20% 18%, color-mix(in srgb, var(--cyan) 13%, transparent), transparent 70%),
+    radial-gradient(55% 32% at 86% 54%, color-mix(in srgb, var(--pink) 11%, transparent), transparent 70%),
+    radial-gradient(70% 38% at 40% 94%, color-mix(in srgb, var(--violet) 13%, transparent), transparent 70%);
+}
+.m2-skip, .m2-links button {
+  height: 34px; padding: 0 14px; border-radius: 17px; font-size: 14px;
+  border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+}
+.m2-skip { position: fixed; right: 14px; z-index: 5; }
+.m2-scroller { position: relative; }
+.m2-snap { position: absolute; left: 0; width: 1px; height: 1px; scroll-snap-align: start; }
+.m2-sticky { position: sticky; top: 0; overflow: hidden; }
+.m2-show { position: absolute; touch-action: pan-y; transform-origin: 50% 80%; }
+.m2-show-item { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; will-change: transform; }
+.m2-kicker {
+  position: absolute; left: 0; right: 0; text-align: center; font-size: 13px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2); pointer-events: none;
+}
+.m2-frame { position: absolute; touch-action: pan-y; overflow: hidden; }
+.m2-card { position: absolute; transform-origin: 50% 50%; will-change: transform, opacity; }
+.m2-card-title { margin-top: 10px; text-align: center; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.m2-mark { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.m2-gal-text { position: absolute; inset-inline-start: 24px; pointer-events: none; text-align: start; }
+.m2-gal-text h3 { margin: 0 0 6px; font-size: 17px; font-weight: 680; letter-spacing: -0.01em; color: var(--ink); }
+.m2-gal-text p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+/* Capability subtitle under the showcase visual. */
+.m2-sub { position: absolute; left: 24px; right: 24px; text-align: center; pointer-events: none; }
+.m2-sub h2 { margin: 0 0 6px; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.m2-sub p { margin: 0 auto; max-width: 300px; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+/* Tagline under the gray mark, with "Computer Use" struck through by a marker. */
+.m2-tagline {
+  position: absolute; left: 0; right: 0; margin: 0; text-align: center; pointer-events: none;
+  display: flex; flex-direction: column; gap: 3px; font-size: 14px; color: var(--ink-2);
+}
+.m2-tagline strong { font-size: 15px; font-weight: 680; color: var(--ink); letter-spacing: -0.005em; }
+/* "Computer Use" struck through by a marker (src/ui/Copy.tsx). */
+.struck { position: relative; display: inline-block; }
+/* Wiped in with a clip rather than a dash offset: dashes with pathLength and a
+   non-scaling stroke come out short inside the CSS-scaled desktop stage. */
+.struck svg {
+  position: absolute; left: -4%; top: 0; width: 108%; height: 100%; overflow: visible;
+  animation: strike 0.45s cubic-bezier(0.5, 0, 0.2, 1) both;
+}
+.struck path { fill: none; stroke-width: 4.2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+@keyframes strike { from { clip-path: inset(-100% 100% -100% -10%); } to { clip-path: inset(-100% -10% -100% -10%); } }
+@keyframes m2-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.m2-hint { position: absolute; left: 50%; translate: -50% 0; font-size: 22px; color: var(--ink-2); animation: m2-bob 1.8s ease-in-out infinite; pointer-events: none; }
+@keyframes m2-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
+.m2-footer { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 20px 0; }
+.m2-snap-footer { position: absolute; top: 0; scroll-snap-align: end; }
+.m2-cmd {
+  display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 12px 14px; border-radius: 14px;
+  border: 0; color: var(--ink); font-size: 13px; cursor: pointer;
+}
+.m2-cmd span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m2-cmd-copy { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 600; color: var(--ink-2); }
+.m2-cta {
+  display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 26px; border-radius: 22px;
+  background: var(--ink); color: var(--bg); font-weight: 650; text-decoration: none;
+}
+.m2-links { display: flex; gap: 8px; }
+
+/* Tap-to-skip cover (src/lib/useTapToSkip.ts): quick fade in, slower fade out
+   over the hero's entrance. Below the nav bar. */
+.skip-cover { position: fixed; inset: 0; z-index: 19; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity 0.45s ease; }
+.skip-cover.on { opacity: 1; transition: opacity 0.22s ease-out; }
+
+/* Nav bar + floating island (desktop and mobile landings). */
+.nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 20; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: space-between; padding-left: 18px; padding-right: 10px;
+  pointer-events: none;
+}
+.nav > * { pointer-events: auto; }
+.nav-brand { display: flex; align-items: center; transition: opacity 0.3s; }
+.nav-actions { display: flex; gap: 4px; }
+.nav-icon {
+  width: 40px; height: 40px; display: grid; place-items: center; border-radius: 20px; border: 0;
+  background: transparent; color: var(--ink); cursor: pointer; text-decoration: none;
+}
+.nav-icon:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.island {
+  position: fixed; left: 50%; translate: -50% 0; z-index: 20; display: flex; gap: 4px; padding: 5px;
+  border-radius: 999px; background: var(--panel); border: 1px solid var(--edge);
+  backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+.island-btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 18px; border: 0;
+  background: transparent; color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none;
+}
+.island-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.m2-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+.m2-demo { position: absolute; transform-origin: 50% 60%; }
+
+/* "Texts reveal" from transitions.dev (src/ui/TextsReveal.tsx). Tokens and
+   rules as shipped; .t-reveal stacks the slides in one grid cell. */
+:root {
+  --stagger-dur: 500ms;
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.t-reveal { display: grid; }
+.t-reveal > .t-stagger { grid-area: 1 / 1; }
+.t-stagger-line {
+  display: block;
+  opacity: 0;
+  transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur));
+  transition:
+    opacity   var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter    var(--stagger-dur) var(--stagger-ease);
+  will-change: transform, opacity, filter;
+}
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+.t-stagger.is-shown .t-stagger-line { opacity: 1; transform: translateY(0); filter: blur(0); }
+.t-stagger.is-hiding .t-stagger-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition: opacity 200ms ease, transform 0s linear, filter 0s linear;
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-stagger-line { transition: none !important; }
+}
+/* The strike waits for the line to rise. */
+.t-stagger .struck svg { animation-delay: 0.3s; }
+
+/* Install section (src/install/InstallSection.tsx), shared by both landings.
+   Opaque, so it slides up over the fixed hero / gallery layers. */
+.install-flow { position: relative; z-index: 10; pointer-events: none; }
+.install {
+  position: relative; z-index: 10; pointer-events: auto; background: var(--bg);
+  padding: 72px 24px 120px;
+  /* At least a screen tall, so "Install" can scroll its top under the nav bar. */
+  min-height: 100vh; min-height: 100svh;
+}
+.install::before {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: 140px; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+}
+.m2 .install { z-index: 3; padding: 28px 16px 96px; scroll-margin-top: 48px; scroll-snap-align: start; }
+.m2 .install::before { height: 64px; }
+.install-inner { max-width: 780px; margin: 0 auto; }
+/* Slot for the AUV mark; GhostDemo draws it (and its ghosts) over the section. */
+.install-mark { height: 56px; aspect-ratio: 221 / 92.4; margin-bottom: 36px; }
+.install.compact .install-mark { height: 40px; margin-bottom: 24px; }
+.install-ghosts { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2; }
+.flying-mark { position: fixed; inset: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 15; }
+.install-kicker { margin: 0 0 10px; font-size: 13px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--violet); }
+.install h2 { margin: 0 0 12px; font-size: 44px; font-weight: 750; letter-spacing: -0.02em; }
+.install-lede { margin: 0 0 32px; max-width: 560px; font-size: 18px; line-height: 1.5; color: var(--ink-2); }
+.install.compact h2 { font-size: 28px; }
+.install.compact .install-lede { font-size: 15px; margin-bottom: 22px; }
+
+/* Segmented tabs (Base UI Tabs): no borders on the tabs; the active one sits
+   on a raised indicator with a faint 2px hairline that slides between them. */
+.seg { position: relative; display: flex; gap: 2px; padding: 4px; border-radius: 16px; background: var(--fill); }
+.seg-tab {
+  position: relative; z-index: 1; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-2);
+  font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; outline: none; transition: color 0.2s;
+}
+.seg-tab:hover, .seg-tab[data-active] { color: var(--ink); }
+.seg-tab:focus-visible { box-shadow: 0 0 0 2px var(--violet); }
+.seg-ind {
+  position: absolute; z-index: 0; left: 0; top: var(--active-tab-top); width: var(--active-tab-width); height: var(--active-tab-height);
+  translate: var(--active-tab-left) 0; border-radius: 12px; background: var(--raised);
+  box-shadow: inset 0 0 0 2px var(--line), 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: translate 0.35s var(--stagger-ease), width 0.35s var(--stagger-ease);
+}
+.install-os { margin-bottom: 12px; }
+.install-os .seg-tab { flex: 1; height: 52px; font-size: 16px; gap: 10px; }
+.install.compact .install-os .seg-tab { flex-direction: column; gap: 3px; height: 58px; font-size: 13px; }
+
+.install-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.install-arch .seg-tab { height: 30px; padding: 0 12px; font-size: 13px; }
+.install-arch, .install-arch .seg-ind, .install-arch .seg-tab { border-radius: 10px; }
+/* Phones: the method tabs scroll sideways instead of wrapping. */
+.install.compact .install-row > div:first-child { max-width: 100%; }
+.install.compact .install-methods { overflow-x: auto; scrollbar-width: none; }
+.install.compact .install-methods::-webkit-scrollbar { display: none; }
+
+.install-method { animation: m2-fade 0.3s ease both; }
+.install-method h3 { margin: 32px 0 10px; font-size: 16px; font-weight: 680; letter-spacing: -0.01em; }
+.install-about {
+  display: flex; gap: 10px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px;
+  background: color-mix(in srgb, var(--violet) 9%, transparent); font-size: 14px; line-height: 1.55; color: var(--ink-2);
+}
+.install-about svg { flex: none; margin-top: 1px; color: var(--violet); }
+.install-note { margin: 10px 2px 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.install.compact .install-note, .install.compact .install-about { font-size: 13px; }
+
+.code { border-radius: 16px; overflow: hidden; background: var(--fill); }
+.code-head {
+  display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 4px 6px 0 18px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink-2);
+}
+.code-head button {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 10px; border: 0;
+  background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s, color 0.2s;
+}
+.code-head button:hover { background: var(--fill); color: var(--ink); }
+.code-head button.done { color: color-mix(in srgb, var(--cyan) 70%, var(--ink)); }
+.code pre { margin: 0; padding: 4px 18px 16px; overflow-x: auto; font-size: 14px; line-height: 1.75; }
+.install.compact .code pre { padding: 2px 14px 14px; font-size: 12.5px; }
+.code-line { display: flex; white-space: pre; }
+.code-prompt { flex: none; width: 2ch; color: var(--ink-2); opacity: 0.6; user-select: none; -webkit-user-select: none; }
+.code-cmd { color: var(--violet); font-weight: 600; }
+.code-line.comment { color: var(--ink-2); font-style: italic; }

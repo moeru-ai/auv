@@ -1,0 +1,6 @@
+node_modules
+dist
+# Exported films (pnpm video:*)
+out
+*.mp4
+*.webm

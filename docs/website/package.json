@@ -1,0 +1,46 @@
+{
+  "name": "@auv-js/docs-website",
+  "type": "module",
+  "version": "0.0.31",
+  "private": true,
+  "description": "AUV website: intro film, interactive landing, install guide, and the film's video exporter",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:site": "pnpm build && pnpm -F @auv-js/repl-playground build && rm -rf dist/playground && cp -r ../../apps/repl-playground/dist dist/playground",
+    "preview": "vite preview",
+    "lint": "moeru-lint .",
+    "lint:fix": "moeru-lint --fix .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "video": "node scripts/export-video.ts",
+    "video:landscape:light": "node scripts/export-video.ts --layout landscape --theme light",
+    "video:landscape:dark": "node scripts/export-video.ts --layout landscape --theme dark",
+    "video:portrait:light": "node scripts/export-video.ts --layout portrait --theme light",
+    "video:portrait:dark": "node scripts/export-video.ts --layout portrait --theme dark",
+    "video:all": "pnpm video:landscape:light && pnpm video:landscape:dark && pnpm video:portrait:light && pnpm video:portrait:dark"
+  },
+  "dependencies": {
+    "@base-ui/react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "svg-path-properties": "catalog:",
+    "three": "catalog:"
+  },
+  "devDependencies": {
+    "@eslint-react/eslint-plugin": "catalog:",
+    "@iconify-json/ph": "catalog:",
+    "@moeru/eslint-config": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@types/three": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-oxlint": "catalog:",
+    "eslint-plugin-react-refresh": "catalog:",
+    "oxlint": "catalog:",
+    "playwright": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
