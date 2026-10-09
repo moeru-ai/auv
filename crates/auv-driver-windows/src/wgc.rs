@@ -67,7 +67,7 @@ fn is_fresh_health_entry(entry: &HealthCacheEntry, now: Instant) -> bool {
 mod native {
   use std::sync::atomic::{AtomicBool, Ordering};
   use std::sync::mpsc::sync_channel;
-  use std::sync::{Arc, Condvar, Mutex, RwLock};
+  use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
   use std::time::Duration;
 
   use super::*;
@@ -84,6 +84,7 @@ mod native {
   use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
   use windows::Win32::Graphics::Dxgi::IDXGIDevice;
   use windows::Win32::Graphics::Gdi::{HMONITOR, MONITOR_DEFAULTTONEAREST, MonitorFromPoint};
+  use windows::Win32::System::Com::CoIncrementMTAUsage;
   use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess};
   use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
   use windows::core::{Interface, factory};
@@ -100,6 +101,30 @@ mod native {
   unsafe impl Sync for D3dContext {}
 
   static D3D_CONTEXT: RwLock<Option<Arc<D3dContext>>> = RwLock::new(None);
+
+  static MTA_KEEP_ALIVE: OnceLock<Result<(), windows::core::HRESULT>> = OnceLock::new();
+
+  /// Holds one reference on the process-wide MTA for the rest of the process lifetime.
+  ///
+  /// Must run before any WGC WinRT object is created, on every path that creates one.
+  ///
+  /// NOTICE: Without it the process only has an MTA while some thread inside the capture
+  /// stack happens to hold one. windows-rs's `factory()` adds its own reference only when
+  /// the first activation runs on a thread with no apartment; a thread that owns a window
+  /// (user32/TSF makes it the main STA) skips that fallback. When the last MTA reference
+  /// drops, combase tears the MTA down and unloads unused DLLs on the thread that dropped
+  /// it. That thread can be one started by `GraphicsCapture.dll`, which then returns into an
+  /// unmapped image (`0xc0000005`, seen as the intermittent `wgc_capture` CI crash).
+  /// The cookie is intentionally never passed to `CoDecrementMTAUsage`.
+  /// Removal condition: the process guarantees a process-lifetime apartment elsewhere, or
+  /// Windows stops unloading a WinRT server from its own thread on MTA teardown.
+  fn keep_mta_alive() -> DriverResult<()> {
+    MTA_KEEP_ALIVE
+      .get_or_init(|| unsafe { CoIncrementMTAUsage() }.map(|_cookie| ()).map_err(|error| error.code()))
+      .as_ref()
+      .map(|_| ())
+      .map_err(|code| backend(format!("CoIncrementMTAUsage failed: {code:?}")))
+  }
 
   pub const DXGI_ERROR_DEVICE_REMOVED_CODE: i32 = 0x887A0005_u32 as i32;
   pub const DXGI_ERROR_DEVICE_RESET_CODE: i32 = 0x887A0007_u32 as i32;
@@ -186,6 +211,7 @@ mod native {
     }
 
     crate::desktop::ensure_input_desktop();
+    keep_mta_alive()?;
 
     // Do not reset while holding D3D_CONTEXT.write(): device creation failures can
     // themselves report a device-lost HRESULT, and reset_d3d_context acquires this
@@ -710,6 +736,7 @@ mod native {
 
   /// Creates a `GraphicsCaptureItem` for a native window handle.
   pub fn item_for_window(hwnd: HWND) -> DriverResult<GraphicsCaptureItem> {
+    keep_mta_alive()?;
     unsafe {
       let interop: IGraphicsCaptureItemInterop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
         .map_err(|e| backend(format!("failed to obtain IGraphicsCaptureItemInterop factory: {e}")))?;
@@ -719,6 +746,7 @@ mod native {
 
   /// Creates a `GraphicsCaptureItem` for a native monitor handle.
   pub fn item_for_monitor(hmonitor: HMONITOR) -> DriverResult<GraphicsCaptureItem> {
+    keep_mta_alive()?;
     unsafe {
       let interop: IGraphicsCaptureItemInterop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
         .map_err(|e| backend(format!("failed to obtain IGraphicsCaptureItemInterop factory: {e}")))?;
