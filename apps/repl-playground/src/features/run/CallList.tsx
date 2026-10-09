@@ -4,6 +4,7 @@ import type { CallRecord } from '../../store'
 import { useEffect, useRef, useState } from 'react'
 
 import { Empty } from '../../components/Empty'
+import { refOf } from '../../handles'
 import { actions, usePlayground } from '../../store'
 import { cursorSeq } from '../../timeline'
 import { RefChip } from '../inspect/ValueView'
@@ -143,8 +144,9 @@ function summarize(value: WireValue): string {
   const record = value as Record<string, unknown>
   if (typeof record.$predicate === 'number')
     return 'ƒ'
-  if (typeof record.$ref === 'string')
-    return record.$ref
+  const ref = refOf(record)
+  if (ref)
+    return ref
   if (record.kind === 'area' && typeof record.width === 'number' && typeof record.height === 'number')
     return typeof record.label === 'string' ? `▭${record.label}` : `▭${Math.round(record.width)}×${Math.round(record.height)}`
   if (typeof record.x === 'number' && typeof record.y === 'number')

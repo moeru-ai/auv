@@ -36,8 +36,21 @@ export class CallScope {
   }
 
   frame(frame: CapturedFrame): FrameHandle {
+    // Keyed by the capture ID, so SDK values holding its `CaptureRef` link to
+    // it. A capture seen again in the same run keeps its first producer.
+    const ref = `frame:${frame.ref}` as const
+    const existing = usePlayground.getState().resources[ref]
+    if (existing?.kind === 'frame' && existing.run === usePlayground.getState().runIndex) {
+      this.refs.push(ref)
+      return existing.handle
+    }
+    // A replayed recording reuses its capture IDs; free the earlier run's pixels.
+    if (existing?.kind === 'frame') {
+      existing.bitmap?.close()
+      existing.preview?.close()
+    }
     const handle: FrameHandle = {
-      $ref: `frame:${nextHandle++}`,
+      $ref: ref,
       bounds: frame.bounds,
       height: frame.height,
       kind: 'frame',

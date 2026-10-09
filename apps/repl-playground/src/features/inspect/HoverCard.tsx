@@ -4,9 +4,10 @@ import type { Tick } from './TimeTicks'
 
 import { useState } from 'react'
 
+import { refOf } from '../../handles'
 import { confidenceAlpha } from '../../ocr'
 import { actions, usePlayground } from '../../store'
-import { bindHistory, cursorSeq, framesOf, refOf, sampleIndexAt } from '../../timeline'
+import { bindHistory, cursorSeq, framesOf, sampleIndexAt } from '../../timeline'
 import { MethodDocs } from './MethodDocs'
 import { FrameView, ResourcePreview } from './ResourcePreview'
 import { TimeTicks } from './TimeTicks'

@@ -53,7 +53,7 @@ describe('recordRpcResources', () => {
     ])
 
     const [frame, text, found] = resourcesOf(scope)
-    expect(frame).toMatchObject({ frame: { ref: 'cap-1', source: 'window:w-1' }, kind: 'frame' })
+    expect(frame).toMatchObject({ frame: { ref: 'cap-1', source: 'window:w-1' }, handle: { $ref: 'frame:cap-1' }, kind: 'frame' })
     expect(text?.kind).toBe('text')
     const handle = text!.handle as TextHandle
     expect(handle.query).toBe('Reply')
@@ -89,5 +89,19 @@ describe('recordRpcResources', () => {
 
     const frames = resourcesOf(scope).filter(resource => resource.kind === 'frame')
     expect(frames.map(frame => frame.kind === 'frame' && [frame.frame.ref, frame.frame.source])).toEqual([['cap-1', 'window:w-1'], ['cap-2', 'window:w-1']])
+  })
+
+  it('keeps a capture seen again in the same run as one resource with its first producer', () => {
+    const first = new CallScope(1, 0, null)
+    recordRpcResources(first, `/${V1}.CaptureService/CaptureWindow`, message('CaptureWindowRequest', { window: message('WindowRef', { windowId: 'w-1' }) }), [
+      message('CaptureWindowResponse', { capture: capture('cap-7'), window }),
+    ])
+    const again = new CallScope(2, 5, null)
+    recordRpcResources(again, `/${V1}.TextRecognitionService/FindWindowText`, message('FindWindowTextRequest', { query: 'x', window: message('WindowRef', { windowId: 'w-1' }) }), [
+      message('FindWindowTextResponse', { capture: capture('cap-7'), matches: [], window }),
+    ])
+
+    expect(again.refs).toContain('frame:cap-7')
+    expect(usePlayground.getState().resources['frame:cap-7']).toMatchObject({ callId: 1, seq: 0 })
   })
 })

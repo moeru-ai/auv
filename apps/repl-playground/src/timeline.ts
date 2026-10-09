@@ -3,6 +3,8 @@ import type { WireValue } from './runtime/protocol'
 import type { Point } from './script-api/api'
 import type { CallRecord, PlaygroundState, Resource } from './store'
 
+import { mentionedRefs } from './handles'
+
 // Pure "as of time t" queries over the event log. A seq is a position in the
 // run's event log (steps, binds, calls and logs share one counter); `null`
 // means "follow the latest event".
@@ -112,10 +114,6 @@ export function pickAxNode(node: AxNode, point: Point): AxNode | undefined {
   return undefined
 }
 
-export function refOf(value: WireValue): string | undefined {
-  return typeof value === 'object' && value !== null ? (value as { $ref?: unknown }).$ref as string | undefined : undefined
-}
-
 /** Index of the sample shown by default: the latest one at or before `seq`. */
 export function sampleIndexAt(samples: { seq: number }[], seq: number): number {
   let index = -1
@@ -137,11 +135,6 @@ export function varsAt(state: PlaygroundState, seq: number): Record<string, Wire
   return vars
 }
 
-function references(value: WireValue, ref: string, depth = 0): boolean {
-  if (depth > 6 || value === null || typeof value !== 'object')
-    return false
-  if (refOf(value) === ref)
-    return true
-  const values = Array.isArray(value) ? value : Object.values(value as Record<string, WireValue>)
-  return values.some(item => references(item, ref, depth + 1))
+function references(value: WireValue, ref: string): boolean {
+  return mentionedRefs(value).has(ref)
 }

@@ -2,6 +2,8 @@ import type { Area, AreaEdges, AreaSource, Point, Rect } from '../script-api/api
 
 import { above, at, below, contains, inset, leftOf, offset, region, rightOf } from '@auv-js/sdk'
 
+import { refOf } from '../handles'
+
 /**
  * Script-side implementation of `Area`: an immutable screen-space rectangle
  * derived from handles or other areas. The geometry is the SDK's (the same
@@ -74,9 +76,11 @@ class ScreenArea implements Area {
 /** Starts an area from a handle, an OCR match, a rectangle or another area. */
 export function areaOf(source: AreaSource, label?: string): Area {
   const object = source as unknown as Record<string, unknown>
-  const from = typeof object.$ref === 'string' ? object.$ref : typeof object.from === 'string' ? object.from : undefined
-  const rect = (isRect(object.frame) ? object.frame : isRect(object.bounds) ? object.bounds : object) as Rect
-  if (!isRect(rect))
+  const from = refOf(object) ?? (typeof object.from === 'string' ? object.from : undefined)
+  // An SDK `WindowClient` keeps its frame on `window`.
+  const window = object.window as undefined | { frame?: unknown }
+  const rect = [object.frame, window?.frame, object.bounds, object].find(isRect)
+  if (!rect)
     throw new TypeError('area() expects a window, display, frame, OCR match or { x, y, width, height }')
   const inherited = typeof object.label === 'string' && object.kind === 'area' ? object.label : undefined
   return new ScreenArea(rect.x, rect.y, rect.width, rect.height, label ?? inherited, from)

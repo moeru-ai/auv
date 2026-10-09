@@ -29,7 +29,9 @@ controlled desktop.
 - **Per-line timing**: `Σ` inclusive time on multi-line statements, self time ×
   hits inside loops and functions.
 - **Inspector** (right): the selected handle with its lineage (produced by,
-  bound to, used by — each jumps the time cursor), and an **AX tree** panel
+  bound to, used by — each jumps the time cursor). Lineage follows window,
+  display and capture IDs, so direct `device.*` SDK values and calls take
+  part as well as `auv.*` handles. Also an **AX tree** panel
   (DevTools-style; hover highlights the element on the canvas, clicking the
   canvas selects the element under the pointer).
 - **Offline replay**: every live run records its device calls, including direct

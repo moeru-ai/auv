@@ -4,7 +4,7 @@ import type { Resource } from '../../store'
 import { PreviewCard } from '@base-ui/react/preview-card'
 import { useState } from 'react'
 
-import { refHint } from '../../handles'
+import { refHint, refOf } from '../../handles'
 import { actions, usePlayground } from '../../store'
 import { ResourcePreview } from './ResourcePreview'
 
@@ -90,6 +90,10 @@ export function RefChip({ children, className, refId }: {
 /** Compact, expandable rendering of values coming from the script worker. */
 export function ValueView({ depth = 0, value }: { depth?: number, value: WireValue }) {
   const [open, setOpen] = useState(depth < 1)
+  // SDK values (a `Window`, a `WindowClient`, a `CaptureRef`) show as a chip
+  // once the playground recorded the resource; otherwise as plain data.
+  const ref = refOf(value)
+  const known = usePlayground(state => ref !== undefined && ref in state.resources)
 
   if (value === null)
     return <span className="text-fg-subtle">null</span>
@@ -103,8 +107,8 @@ export function ValueView({ depth = 0, value }: { depth?: number, value: WireVal
     return <span>{String(value)}</span>
 
   const record = value as Record<string, WireValue>
-  if (typeof record.$ref === 'string')
-    return <RefChip refId={record.$ref} />
+  if (ref && (typeof record.$ref === 'string' || known))
+    return <RefChip refId={ref} />
   if (record.kind === 'area' && typeof record.x === 'number' && typeof record.width === 'number')
     return <AreaChip area={record as unknown as AreaValue} />
   if ('$fn' in record) {

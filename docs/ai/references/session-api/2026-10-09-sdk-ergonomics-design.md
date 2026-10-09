@@ -2,7 +2,7 @@
 
 Date: 2026-10-09
 
-Status: **Phase 1 implemented** (this branch); Phases 2 and 3 accepted, not
+Status: **Phases 1 (#295) and 2 implemented**; Phase 3 accepted, not
 started. Names marked *provisional* are open.
 
 ## Problem
@@ -77,17 +77,25 @@ Names *provisional*: `Insets`, `Edges`, `Length::{Points, Percent}`,
 
 ## Phase 2: playground lineage by IDs
 
-The inspector's lineage (produced by, bound to, used by) keys on `$ref`
+The inspector's lineage (produced by, bound to, used by) keyed on `$ref`
 strings that only `auv.*` results carry. SDK results carry stable IDs
 instead: `CaptureRef.captureId`, `WindowRef.windowId` and `displayId`.
 
-- **Producers.** `runtime/rpc-resources.ts` already registers frames,
-  windows and displays from SDK responses. Those resources are keyed by
-  these IDs.
-- **Users.** A call uses a resource when its request names the ID, for
-  example `capture_ref`, `window.window_id` or a `Position`'s window.
-- **Values.** Values bound in the worker are recognized by the same IDs,
-  so hover, pins and "used by" work on plain SDK objects.
+- **Keys.** Playground resources are keyed by those IDs: `window:<windowId>`,
+  `display:<displayId>` and now `frame:<captureId>` (it was a per-page
+  counter). `runtime/rpc-resources.ts` registers SDK responses under them. A
+  capture seen again in the same run keeps its first producer.
+- **Users.** A call uses a resource when its request names the ID anywhere:
+  `window.windowId`, `source.captureRef.captureId`, a `Position`'s window, or
+  a script handle's `$ref` (`handles.ts` `mentionedRefs`).
+- **Values.** `refOf` recognizes what a bound value stands for: a `Window`,
+  `CapturedFrame`, `Display`, `WindowRef` or `CaptureRef` message, a
+  `WindowClient`, or a script handle. Hover, pins, `focus()`, `area()`'s
+  source and the value chips use it. Values that only mention a resource,
+  such as a capture response, render as data with chips inside.
+- Text results and input receipts have no Runner ID, so SDK values holding
+  them link to their producing call only
+  (`NOTICE(lineage-without-ids)` in `handles.ts`).
 
 ## Phase 3: switch `auv` to the SDK client
 
@@ -103,5 +111,4 @@ Each phase is one PR, in this order.
 
 ## Open questions
 
-- The playground `area()`'s `from` field (the source `$ref`) is to be
-  replaced by Phase 2's IDs.
+None open. `area()`'s `from` field now holds the ID-based key from `refOf`.

@@ -16,6 +16,13 @@ describe('areaOf', () => {
     expect(area.label).toBe('music')
   })
 
+  it('starts from an SDK window client and remembers its window ID', () => {
+    const client = { id: 'w-1', window: { $typeName: 'auv.api.driver.v1.Window', frame: { height: 300, width: 400, x: 10, y: 20 }, ref: { windowId: 'w-1' } } }
+    const area = areaOf(client as never)
+    expect(box(area)).toEqual({ height: 300, width: 400, x: 10, y: 20 })
+    expect(area.from).toBe('window:w-1')
+  })
+
   it('starts from an OCR match through its bounds', () => {
     const area = areaOf({ bounds: { height: 20, width: 80, x: 10, y: 30 }, confidence: 1, text: 'Done' })
     expect(box(area)).toEqual({ height: 20, width: 80, x: 10, y: 30 })
