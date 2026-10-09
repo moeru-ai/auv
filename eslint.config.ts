@@ -160,3 +160,12 @@ export default defineConfig({
     ],
   },
 })
+  // NOTICE: `react: true` applies React rules to every source file, so
+  // `react/rules-of-hooks` flagged `useLogg()` (a logger factory, not a hook) in
+  // `js/packages/sdk`. `OptionsReact` has no `files`, and merging would append to
+  // the default glob, so replace the config. Remove once `@antfu/eslint-config`
+  // accepts `react: { files }`.
+  .override('antfu/react/rules', config => ({
+    ...config,
+    files: ['apps/docs-website/**/*.{ts,tsx}'],
+  }))
