@@ -194,7 +194,8 @@ pub struct CursorStyle {
   pub label_corner_radius: f64,
   pub sprite_size: f64,
   pub label_gap: f64,
-  /// Optional native silhouette shadow override, currently supported on macOS.
+  /// Optional native silhouette shadow override. macOS blurs the silhouette;
+  /// Windows approximates it with a radial glow.
   /// None uses renderer defaults: built-in AUV cursors glow; custom SVGs do not.
   /// An explicit transparent shadow disables a built-in's default glow.
   #[serde(default, skip_serializing_if = "Option::is_none")]

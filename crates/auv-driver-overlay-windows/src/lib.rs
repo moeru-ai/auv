@@ -5,8 +5,12 @@
 //! [`Err`], mirroring how `auv-driver-overlay-macos` behaves off its own
 //! platform.
 
+#[cfg(target_os = "windows")]
+mod canvas;
 mod error;
 mod overlay;
+#[cfg(target_os = "windows")]
+mod svg;
 mod window;
 
 pub use error::AuvResult;
