@@ -82,7 +82,6 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
       "--discovery-file",
       discovery.to_str().unwrap(),
     ])
-    .env("HOSTNAME", "mcp-entry-device")
     .kill_on_drop(true)
     .spawn()?;
 
@@ -93,6 +92,17 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
 
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
   }
+
+  // The daemon names its local Device from the OS, so select it by the name it reports.
+  let device_name = auv_api_client::protocol::grpc::Client::connect(auv_api_client::ConnectEndpoint::Unix(socket.clone()))
+    .await?
+    .devices()
+    .list_devices()
+    .await?
+    .into_iter()
+    .find(|device| device.local)
+    .map(|device| device.name)
+    .expect("daemon lists its local Device");
 
   let mut mcp = tokio::process::Command::new(env!("CARGO_BIN_EXE_auv"))
     .args(["mcp", "serve"])
@@ -108,8 +118,8 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   let client = TestClient.serve(transport).await?;
 
   for invalid in [
-    serde_json::json!({ "device_name": "mcp-entry-device" }),
-    serde_json::json!({ "device_name": "mcp-entry-device", "user": "neko", "session_selector": "seat0:42" }),
+    serde_json::json!({ "device_name": device_name }),
+    serde_json::json!({ "device_name": device_name, "user": "neko", "session_selector": "seat0:42" }),
   ] {
     for name in [
       "device_ensure_user_session_unlocked",
@@ -130,7 +140,7 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   let list = client
     .call_tool(CallToolRequestParam {
       name: "device_list_user_sessions".into(),
-      arguments: Some(serde_json::json!({ "device_name": "mcp-entry-device" }).as_object().unwrap().clone()),
+      arguments: Some(serde_json::json!({ "device_name": device_name }).as_object().unwrap().clone()),
     })
     .await?;
   // ROOT CAUSE:
@@ -160,17 +170,17 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   for (name, arguments, expected_reason) in [
     (
       "device_get_user_session",
-      serde_json::json!({ "device_name": "mcp-entry-device", "session_selector": "seat0:42" }),
+      serde_json::json!({ "device_name": device_name, "session_selector": "seat0:42" }),
       inventory_error.as_deref().unwrap_or("STALE_SESSION"),
     ),
     (
       "device_ensure_user_session_unlocked",
-      serde_json::json!({ "device_name": "mcp-entry-device", "user": "__auv_no_such_user__" }),
+      serde_json::json!({ "device_name": device_name, "user": "__auv_no_such_user__" }),
       inventory_error.as_deref().unwrap_or("UNSUPPORTED_OS_STATE"),
     ),
     (
       "device_ensure_user_session_locked",
-      serde_json::json!({ "device_name": "mcp-entry-device", "user": "__auv_no_such_user__" }),
+      serde_json::json!({ "device_name": device_name, "user": "__auv_no_such_user__" }),
       inventory_error.as_deref().unwrap_or("UNSUPPORTED_OS_STATE"),
     ),
   ] {
@@ -218,7 +228,7 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   let unavailable = client
     .call_tool(CallToolRequestParam {
       name: "device_list_user_sessions".into(),
-      arguments: Some(serde_json::json!({ "device_name": "mcp-entry-device" }).as_object().unwrap().clone()),
+      arguments: Some(serde_json::json!({ "device_name": device_name }).as_object().unwrap().clone()),
     })
     .await
     .expect_err("an unavailable selected daemon must fail");

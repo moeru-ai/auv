@@ -27,6 +27,19 @@ impl Drop for ChildGuard {
   }
 }
 
+/// The name the daemon at `endpoint` reports for its local Device. The daemon
+/// takes it from the OS, so tests select the Device by this value.
+fn local_device_name(endpoint: &str) -> String {
+  let listed = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["devices", "list", "--endpoint", endpoint, "--json"])
+    .output()
+    .expect("list daemon Devices");
+  assert!(listed.status.success(), "stderr={}", stderr(&listed));
+  let devices: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("Device JSON");
+  let local = devices.as_array().and_then(|devices| devices.iter().find(|device| device["local"] == true)).expect("local Device");
+  local["name"].as_str().filter(|name| !name.is_empty()).expect("local Device name").to_string()
+}
+
 fn wait_for_path(child: &mut Child, path: &std::path::Path) {
   let deadline = Instant::now() + Duration::from_secs(10);
   while Instant::now() < deadline {
@@ -197,7 +210,6 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
       "--discovery-file",
       discovery.to_str().unwrap(),
     ])
-    .env("HOSTNAME", "inherited-device")
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
@@ -223,11 +235,12 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   let classes_table = stdout(&classes_table);
   assert!(classes_table.lines().next().is_some_and(|header| header.contains("CLASS") && header.contains("LIFECYCLES")), "{classes_table}");
   assert!(classes_table.contains("auv.core.local"), "{classes_table}");
+  let device_name = local_device_name(&endpoint);
 
   let created_run = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "--device",
-      "inherited-device",
+      &device_name,
       "run",
       "create",
       "--endpoint",
@@ -299,7 +312,7 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   let sessions = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "--device",
-      "inherited-device",
+      &device_name,
       "devices",
       "sessions",
       "--endpoint",
@@ -335,7 +348,7 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   let unlock = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "--device",
-      "inherited-device",
+      &device_name,
       "devices",
       "unlock",
       "--user",
@@ -772,7 +785,6 @@ fn root_device_and_run_flags_resolve_into_plugin_context() {
       "--discovery-file",
       discovery.to_str().unwrap(),
     ])
-    .env("HOSTNAME", "fixture-device")
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
@@ -789,6 +801,7 @@ fn root_device_and_run_flags_resolve_into_plugin_context() {
   assert!(devices.status.success(), "stderr={}", stderr(&devices));
   let devices: serde_json::Value = serde_json::from_slice(&devices.stdout).expect("Device JSON");
   let device_id = devices[0]["device_id"].as_str().expect("Device ID");
+  let device_name = local_device_name(&endpoint);
 
   let created_run = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
@@ -815,7 +828,7 @@ fn root_device_and_run_flags_resolve_into_plugin_context() {
   let output = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "--device",
-      "fixture-device",
+      &device_name,
       "--device-id",
       device_id,
       "--run",
@@ -831,7 +844,7 @@ fn root_device_and_run_flags_resolve_into_plugin_context() {
   assert!(output.status.success(), "stderr={}", stderr(&output));
   let context: serde_json::Value = serde_json::from_slice(&output.stdout).expect("plugin context JSON");
   assert_eq!(context["device_id"], device_id);
-  assert_eq!(context["device_name"], "fixture-device");
+  assert_eq!(context["device_name"], device_name.as_str());
   assert_eq!(context["run_id"], run_id);
   assert_eq!(context["daemon_endpoint"], endpoint);
   assert!(context.get("version").is_none());
