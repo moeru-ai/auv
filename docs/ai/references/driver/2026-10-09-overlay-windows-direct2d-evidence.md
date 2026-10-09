@@ -114,6 +114,10 @@ accept; "full" adds an SVG cursor with a glow.
 | Direct2D, basic | 8.89 / 9.41 / 8.98 | 8.90 / 9.87 / 9.03 |
 | Direct2D, full | 10.73 / 17.59 / 12.36 | 10.41 / 12.07 / 10.85 |
 
+```bash
+cargo run --release -p auv-driver-overlay-windows --example present_latency_probe -- 30 basic
+```
+
 Direct2D costs about 3.5 ms more per frame on this machine. Removing the full-surface
 `Clear` did not change it (P50 9.67 and 9.15 ms), so the cost is in the per-frame DC
 render target work rather than clearing. Overlay frames are one-shot visual evidence, so
