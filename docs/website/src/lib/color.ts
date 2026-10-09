@@ -1,5 +1,7 @@
 // Minimal color mixing for '#rrggbb' and 'rgba(r,g,b,a)' strings.
 
+import { clamp } from 'es-toolkit'
+
 type RGBA = [number, number, number, number]
 
 const cache = new Map<string, RGBA>()
@@ -81,5 +83,5 @@ function toLin(c: number) {
 
 function toSrgb(v: number) {
   const c = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055
-  return Math.round(Math.min(1, Math.max(0, c)) * 255)
+  return Math.round(clamp(c, 0, 1) * 255)
 }

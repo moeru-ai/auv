@@ -4,10 +4,11 @@
 import type { WindowData, WindowNode } from '../scene/types'
 import type { Theme } from '../theme'
 
+import { clamp } from 'es-toolkit'
 import { memo } from 'react'
 
 import { alpha, mix } from '../lib/color'
-import { clamp, easeOutBack } from '../lib/ease'
+import { easeOutBack } from '../lib/ease'
 import { GHOSTS } from '../theme'
 
 export const TITLE_H = 40
@@ -225,7 +226,7 @@ function Chart({ theme, win }: { accent: string, theme: Theme, win: WindowNode }
       <Bar fill={theme.skeleton} h={10} w={130} x={24} y={TITLE_H + 20} />
       <line stroke={theme.hairline} strokeWidth={1.5} x1={24} x2={win.rect.w - 24} y1={base} y2={base} />
       {heights.map((v, i) => {
-        const hh = v * 160 * clamp(p * 1.6 - i * 0.09)
+        const hh = v * 160 * clamp(p * 1.6 - i * 0.09, 0, 1)
         return <rect fill={alpha(colors[i], 0.8)} height={hh} key={i} rx={7} width={30} x={34 + i * 50} y={base - hh} />
       })}
     </g>
@@ -276,10 +277,10 @@ function Term({ accent, win }: { accent: string, theme: Theme, win: WindowNode }
   let caretX = 0
   const rows = REPL_LINES.map((line, i) => {
     if (!line.input) {
-      const shown = clamp(output * 2 - (i - 3))
+      const shown = clamp(output * 2 - (i - 3), 0, 1)
       return { i, line, opacity: shown, text: line.text }
     }
-    const n = Math.max(0, Math.min(line.text.length, budget))
+    const n = clamp(budget, 0, line.text.length)
     budget -= n
     if (n > 0 || caretLine < 0) {
       caretLine = i
@@ -312,7 +313,7 @@ function Todo({ accent, theme, win }: { accent: string, theme: Theme, win: Windo
     <g>
       {[0, 1, 2, 3].map((i) => {
         const cy = 74 + i * 44
-        const p = clamp((checks - i) * 1)
+        const p = clamp((checks - i) * 1, 0, 1)
         const pop = p > 0 ? easeOutBack(p) : 0
         return (
           <g key={i}>

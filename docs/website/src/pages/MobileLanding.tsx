@@ -20,13 +20,14 @@
 import type { Desk } from '../scene/ambient'
 import type { Rect, SceneState } from '../scene/types'
 
+import { clamp } from 'es-toolkit'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { GLDesk } from '../gl/GLDesk'
 import { MobileHero } from '../hero/MobileHero'
 import { INSTALL_ID, InstallSection } from '../install/InstallSection'
 import { mixOklab } from '../lib/color'
-import { clamp, cubicBezier, easeInOutSine, lerp, prog } from '../lib/ease'
+import { cubicBezier, easeInOutSine, lerp, prog } from '../lib/ease'
 import { ICON_CENTER, PART_PATHS } from '../lib/icon'
 import { useSafeArea } from '../lib/useSafeArea'
 import { useTapToSkip } from '../lib/useTapToSkip'
@@ -42,7 +43,7 @@ import { TextsReveal } from '../ui/TextsReveal'
 /** Film time at which the mark has turned gray (same as desktop). */
 const HANDOFF = FILM_HANDOFF
 const SETTLE = cubicBezier(0.3, 0, 0.1, 1)
-const seg = (p: number, a: number, b: number) => clamp((p - a) / (b - a))
+const seg = (p: number, a: number, b: number) => clamp((p - a) / (b - a), 0, 1)
 /** Auto-advance period, and how long a tapped part holds before cycling on. */
 const CYCLE = 4.5
 const TAP_HOLD = 9
@@ -131,15 +132,15 @@ export function MobileLanding() {
   // --- Scroll ranges ---------------------------------------------------------
   const enter = vh * 0.9
   const span = vh * 0.55 * (ORDER.length - 1)
-  const g = clamp(scrollY / enter)
+  const g = clamp(scrollY / enter, 0, 1)
   gRef.current = g
-  const gp = clamp((scrollY - enter) / span)
+  const gp = clamp((scrollY - enter) / span, 0, 1)
   const pos = (ORDER.length - 1) * easeInOutSine(gp)
   // Snap points sit where the eased sweep puts a window dead center.
   const snaps = [0, ...ORDER.map((_, k) => enter + (Math.acos(1 - 2 * (k / (ORDER.length - 1))) / Math.PI) * span)]
 
   // --- Screen 1 geometry (CSS px) ------------------------------------------
-  const settle = SETTLE(clamp(t0 / 0.9))
+  const settle = SETTLE(clamp(t0 / 0.9, 0, 1))
   const markH = clamp(vw * 0.15, 50, 80)
   const icon = filmIcon(PORTRAIT)
   const filmMark = { s: icon.s * filmFit.k, x: filmFit.x + icon.cx * filmFit.k, y: filmFit.y + icon.cy * filmFit.k }
@@ -295,7 +296,7 @@ export function MobileLanding() {
                     // Anchored to the lower start corner (left in LTR, right in RTL),
                     // drifting a little with the row so neighbours cross-fade.
                     bottom: safe.bottom + 96,
-                    opacity: galleryIn * clamp(1 - Math.abs(off) * 1.6),
+                    opacity: galleryIn * clamp(1 - Math.abs(off) * 1.6, 0, 1),
                     transform: `translateX(${off * pitchS * 0.3}px)`,
                     width: Math.min(vw - 48, 420),
                   }}

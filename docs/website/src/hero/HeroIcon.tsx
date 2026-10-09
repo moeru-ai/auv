@@ -14,10 +14,11 @@ import type { CSSProperties } from 'react'
 
 import type { Theme } from '../theme'
 
+import { clamp } from 'es-toolkit'
 import { memo, useEffect, useRef, useState } from 'react'
 
 import { alpha, mix } from '../lib/color'
-import { clamp, easeOutBack, lerp } from '../lib/ease'
+import { easeOutBack, lerp } from '../lib/ease'
 import { ghostTemplate, ICON_CENTER, PART_PATHS, partTemplates, placedPart } from '../lib/icon'
 import { bbox, morph, placeByHeight } from '../lib/shape'
 import { partSlab, rectSlab, slabBox, slabPath, windowToU } from '../lib/slab'
@@ -107,8 +108,8 @@ export function replAt(t: number) {
   const run = lt - TYPE
   const step = run < 0 ? 0 : Math.min(4, Math.floor(run / STEP))
   const since = run < 0 ? 1 : run - step * STEP
-  const typed = clamp(lt / TYPE)
-  const clearing = clamp((lt - (TYPE + STEP * 4 + DONE)) / CLEAR)
+  const typed = clamp(lt / TYPE, 0, 1)
+  const clearing = clamp((lt - (TYPE + STEP * 4 + DONE)) / CLEAR, 0, 1)
   return { clearing, program, run, since, step, typed }
 }
 
@@ -128,7 +129,7 @@ export function ReplBody({ fluid = false, run, theme, w }: { fluid?: boolean, ru
       <g opacity={1 - clearing}>
         {rt >= 0 && step < 4 && <rect fill={alpha(GHOSTS.pink.fill, 0.14)} height={32} rx={8} width={w - 20} x={10} y={lineCenter(step) - 16} />}
         {program.lines.map((line, i) => {
-          const n = Math.max(0, Math.min(line.length, budget))
+          const n = clamp(budget, 0, line.length)
           budget -= n
           const ran = rt >= 0 && (i < step || done)
           return (
@@ -180,14 +181,14 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
     rectSlab(winRect.x, winRect.y, winRect.w, winRect.h, 22),
     uSlab,
     1 - seg(hU, 0.3, 1),
-    clamp(1 - seg(hU, 0.12, 0.6)),
-    clamp(1 - seg(hU, 0, 0.45)),
+    clamp(1 - seg(hU, 0.12, 0.6), 0, 1),
+    clamp(1 - seg(hU, 0, 0.45), 0, 1),
   )
   const frontBox = slabBox(front)
   const frontD = slabPath(front, frontBox.x, frontBox.y)
-  const restU = mix(theme.icon[1], COLORFUL[1], clamp(hAny))
-  const frontFill = mix(restU, theme.tint, clamp(seg(hU, 0.2, 0.7)))
-  const backs = clamp(seg(hU, 0.45, 1))
+  const restU = mix(theme.icon[1], COLORFUL[1], clamp(hAny, 0, 1))
+  const frontFill = mix(restU, theme.tint, clamp(seg(hU, 0.2, 0.7), 0, 1))
+  const backs = clamp(seg(hU, 0.45, 1), 0, 1)
 
   // V: the REPL window springs out of V's top-left corner (its scale origin)
   // and settles to the right of the mark; V becomes the line pointer.
@@ -198,15 +199,15 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
   const run = replAt(time)
   const fromY = lineCenter(Math.max(0, run.step - 1))
   const toY = lineCenter(run.step)
-  const pointerLocal = { x: 24, y: run.run < 0 ? lineCenter(0) : lerp(fromY, toY, easeOutBack(clamp(run.since / 0.24), 2.4)) }
+  const pointerLocal = { x: 24, y: run.run < 0 ? lineCenter(0) : lerp(fromY, toY, easeOutBack(clamp(run.since / 0.24, 0, 1), 2.4)) }
   const toRepl = (p: { x: number, y: number }) => ({ x: repl.x + origin.x + (p.x - origin.x) * replScale, y: repl.y + origin.y + (p.y - origin.y) * replScale })
   const gutter = toRepl(pointerLocal)
   const vRest = toStage(214.75, 141.8)
-  const vMove = clamp(seg(hV, 0.3, 0.95))
+  const vMove = clamp(seg(hV, 0.3, 0.95), 0, 1)
   const vPos = { x: lerp(vRest.x + push[2], gutter.x, vMove), y: lerp(vRest.y, gutter.y, vMove) }
   // Counter-clockwise quarter turn: the down arrow becomes a right-pointing line marker.
   const vRot = -90 * hV
-  const vScale = s * lerp(1, 0.12, clamp(seg(hV, 0.15, 0.75)))
+  const vScale = s * lerp(1, 0.12, clamp(seg(hV, 0.15, 0.75), 0, 1))
 
   // Hit zones are horizontal bands split at U's current extent: everything left
   // of U is A, everything right of it is V. Parts move as their neighbours
@@ -221,7 +222,7 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
   const bandY = engaged ? { y0: cy - 260, y1: cy + 220 } : { y0: iconTop - 30, y1: iconBottom + 30 }
   const uZone = hover === 1 ? pad(winRect, 6) : pad(boxes[1], 18)
   const aLeft = engaged ? cx - 520 : boxes[0].x - 60
-  const vRight = engaged ? Math.max(cx + 520, repl.x + repl.w * clamp(replScale) + 40) : boxes[2].x + boxes[2].w + 60
+  const vRight = engaged ? Math.max(cx + 520, repl.x + repl.w * clamp(replScale, 0, 1) + 40) : boxes[2].x + boxes[2].w + 60
   const zones: Box[] = [
     { h: bandY.y1 - bandY.y0, w: uZone.x - aLeft, x: aLeft, y: bandY.y0 },
     uZone,
@@ -241,8 +242,8 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
     }
   })
 
-  const colorA = mix(theme.icon[0], COLORFUL[0], clamp(Math.max(hAny, hA)))
-  const colorV = mix(theme.icon[2], COLORFUL[2], clamp(Math.max(hAny, hV)))
+  const colorA = mix(theme.icon[0], COLORFUL[0], clamp(Math.max(hAny, hA), 0, 1))
+  const colorV = mix(theme.icon[2], COLORFUL[2], clamp(Math.max(hAny, hV), 0, 1))
   const backStyle = (dx: number, dy: number, rot: number, tint: string): CSSProperties => ({
     borderRadius: 22,
     height: winRect.h,
@@ -265,9 +266,9 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
       )}
       <div className="win" style={{ clipPath: `path('${frontD}')`, height: frontBox.h, left: frontBox.x, top: frontBox.y, width: frontBox.w, ...glassStyle(theme, false, frontFill), opacity: fade }}>
         <svg height={frontBox.h} style={{ inset: 0, position: 'absolute' }} width={frontBox.w}>
-          <path d={frontD} fill="none" stroke={alpha(theme.edge, clamp(seg(hU, 0.3, 0.8)))} strokeWidth={2} />
+          <path d={frontD} fill="none" stroke={alpha(theme.edge, clamp(seg(hU, 0.3, 0.8), 0, 1))} strokeWidth={2} />
           {hU > 0.7 && (
-            <g opacity={clamp(seg(hU, 0.75, 1))} transform={`translate(${winRect.x - frontBox.x} ${winRect.y - frontBox.y})`}>
+            <g opacity={clamp(seg(hU, 0.75, 1), 0, 1)} transform={`translate(${winRect.x - frontBox.x} ${winRect.y - frontBox.y})`}>
               <WindowChrome
                 clipId="h-browser-clip"
                 theme={theme}
@@ -279,15 +280,15 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
       </div>
 
       {replScale > 0.01 && (
-        <div className="win" style={{ borderRadius: 22, height: repl.h, left: repl.x, top: repl.y, width: repl.w, ...glassStyle(theme, true), boxShadow: `inset 0 0 0 1px ${theme.edge}`, opacity: clamp(replScale * 3), transform: `scale(${replScale})`, transformOrigin: `${origin.x}px ${origin.y}px` }}>
+        <div className="win" style={{ borderRadius: 22, height: repl.h, left: repl.x, top: repl.y, width: repl.w, ...glassStyle(theme, true), boxShadow: `inset 0 0 0 1px ${theme.edge}`, opacity: clamp(replScale * 3, 0, 1), transform: `scale(${replScale})`, transformOrigin: `${origin.x}px ${origin.y}px` }}>
           <ReplBody run={run} theme={theme} w={repl.w} />
         </div>
       )}
 
       <svg className="overlay" height={1080} style={{ opacity: fade }} viewBox="0 0 1920 1080" width={1920}>
-        <path d={morph(parts[0], ghost, clamp(hA), [partTemplates()[0], ghostTemplate()])} fill={colorA} stroke={alpha('#ffffff', 0.75 * clamp(hA))} strokeLinejoin="round" strokeWidth={4} />
+        <path d={morph(parts[0], ghost, clamp(hA, 0, 1), [partTemplates()[0], ghostTemplate()])} fill={colorA} stroke={alpha('#ffffff', 0.75 * clamp(hA, 0, 1))} strokeLinejoin="round" strokeWidth={4} />
         {hA > 0.4 && <HeroLabel color="cyan" p={(hA - 0.4) / 0.6} text="clicking “Send” for you" x={tip[0] + 90} y={tip[1] + 150} />}
-        {hA > 0.6 && <LoopRipple o={clamp((hA - 0.6) / 0.4)} t={time} x={tip[0]} y={tip[1]} />}
+        {hA > 0.6 && <LoopRipple o={clamp((hA - 0.6) / 0.4, 0, 1)} t={time} x={tip[0]} y={tip[1]} />}
         <g transform={`translate(${vPos.x} ${vPos.y}) rotate(${vRot}) scale(${vScale}) translate(${-214.75} ${-141.8})`}>
           <path d={PART_PATHS[2]} fill={colorV} />
         </g>
@@ -297,7 +298,7 @@ function HeroIconImpl({ dim = 0, onHover, pointer, scale = FILM_ICON.s, theme }:
 }
 
 function HeroLabel({ color, p, text, x, y }: { color: keyof typeof GHOSTS, p: number, text: string, x: number, y: number }) {
-  const pop = easeOutBack(clamp(p), 2.2)
+  const pop = easeOutBack(clamp(p, 0, 1), 2.2)
   const w = textWidth(text, 20) + 40
   return (
     <g transform={`translate(${x} ${y}) scale(${pop})`}>

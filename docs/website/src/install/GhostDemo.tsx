@@ -9,10 +9,11 @@ import type { RefObject } from 'react'
 import type { Pt } from '../lib/shape'
 import type { Theme } from '../theme'
 
+import { clamp } from 'es-toolkit'
 import { useEffect, useRef, useState } from 'react'
 
 import { alpha, mix } from '../lib/color'
-import { bump, clamp, easeInOutCubic, easeOutBack } from '../lib/ease'
+import { bump, easeInOutCubic, easeOutBack } from '../lib/ease'
 import { GHOST_HOTSPOT, ghostTemplate, ICON_CENTER, PART_PATHS, partTemplates } from '../lib/icon'
 import { bbox, morph, placeByHeight, transform } from '../lib/shape'
 import { textWidth } from '../render/Overlay'
@@ -145,15 +146,15 @@ function Ghost({ run, s, t, theme, tx, ty, width }: { run: Run, s: number, t: nu
   const tip: Pt = [(GHOST_HOTSPOT.x - GHOST_BOX.cx) * k + pb.cx, (GHOST_HOTSPOT.y - GHOST_BOX.cy) * k + pb.cy]
 
   // Shape: part -> cursor at the start, cursor -> part at the end.
-  const m = t < T.home ? easeInOutCubic(clamp(t / T.morph)) : 1 - easeInOutCubic(clamp((t - T.home) / (T.end - T.home)))
+  const m = t < T.home ? easeInOutCubic(clamp(t / T.morph, 0, 1)) : 1 - easeInOutCubic(clamp((t - T.home) / (T.end - T.home), 0, 1))
   // Path: an arc out to the target, a short hold for the clicks, an arc back.
   const arc = (f: number, a: Pt, b: Pt): Pt => {
     const c: Pt = [(a[0] + b[0]) / 2 + 40, Math.min(a[1], b[1]) - 50]
     const u = 1 - f
     return [u * u * a[0] + 2 * u * f * c[0] + f * f * b[0], u * u * a[1] + 2 * u * f * c[1] + f * f * b[1]]
   }
-  const out = easeInOutCubic(clamp((t - T.morph) / T.fly))
-  const back = easeInOutCubic(clamp((t - T.leave) / (T.home - T.leave)))
+  const out = easeInOutCubic(clamp((t - T.morph) / T.fly, 0, 1))
+  const back = easeInOutCubic(clamp((t - T.leave) / (T.home - T.leave), 0, 1))
   const at = t < T.leave ? arc(out, tip, run.tgt) : arc(back, run.tgt, tip)
   const dx = at[0] - tip[0]
   const dy = at[1] - tip[1]
@@ -161,7 +162,7 @@ function Ghost({ run, s, t, theme, tx, ty, width }: { run: Run, s: number, t: nu
   const fill = mix(theme.icon[run.part], color.fill, m)
 
   // Label pops in beside the cursor while it works; flips left near the edge.
-  const labelIn = clamp((t - (T.morph + T.fly * 0.7)) / 0.3) * (1 - clamp((t - T.leave) / 0.2))
+  const labelIn = clamp((t - (T.morph + T.fly * 0.7)) / 0.3, 0, 1) * (1 - clamp((t - T.leave) / 0.2, 0, 1))
   const lw = textWidth(run.label, 13) + 24
   const flip = at[0] + 14 + lw > width - 8
 

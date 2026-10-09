@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
+    "es-toolkit": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "svg-path-properties": "catalog:",

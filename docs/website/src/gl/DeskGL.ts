@@ -17,6 +17,8 @@
 import type { Blob, Camera, CursorNode, DisplayNode, Ripple, SceneState, Vec3, WindowNode } from '../scene/types'
 import type { Theme } from '../theme'
 
+import { clamp } from 'es-toolkit'
+
 import * as THREE from 'three'
 
 import { parse } from '../lib/color'
@@ -337,7 +339,7 @@ export class DeskGL {
     r.render(this.scene, this.view)
 
     // 2. Windows, back to front.
-    const contentScale = Math.min(2.5, Math.max(1, this.pixelRatio * fit.k))
+    const contentScale = clamp(this.pixelRatio * fit.k, 1, 2.5)
     for (const [id, m] of this.windows) {
       if (!byId.has(id)) {
         m.group.visible = false

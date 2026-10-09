@@ -9,6 +9,8 @@ import type { Key } from '../lib/ease'
 import type { GhostColor } from '../theme'
 import type { CursorNode, Rect, Ripple, SceneState, WindowKind, WindowNode } from './types'
 
+import { clamp } from 'es-toolkit'
+
 import { bump, easeOutBack, easeOutCubic, prog, track } from '../lib/ease'
 import { GHOSTS } from '../theme'
 import { glowsFor } from './blobs'
@@ -208,5 +210,5 @@ export function ambient(t: number, appear: number, width: number, height: number
 export function deskRect(d: Desk, visibleW = 1920): Rect {
   const left = (1920 - visibleW) / 2 + 24
   const right = (1920 + visibleW) / 2 - 24 - d.rect.w
-  return { ...d.rect, x: Math.min(Math.max(d.rect.x, left), Math.max(left, right)) }
+  return { ...d.rect, x: clamp(d.rect.x, left, Math.max(left, right)) }
 }

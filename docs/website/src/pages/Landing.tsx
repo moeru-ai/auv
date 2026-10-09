@@ -12,12 +12,13 @@
 import type { DeskInfo } from '../scene/ambient'
 import type { Theme } from '../theme'
 
+import { clamp } from 'es-toolkit'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { GLDesk } from '../gl/GLDesk'
 import { HeroIcon } from '../hero/HeroIcon'
 import { INSTALL_ID, INSTALL_MARK_ID, InstallSection } from '../install/InstallSection'
-import { clamp, cubicBezier, lerp, prog } from '../lib/ease'
+import { cubicBezier, lerp, prog } from '../lib/ease'
 import { ICON_CENTER, PART_PATHS } from '../lib/icon'
 import { useTapToSkip } from '../lib/useTapToSkip'
 import { useClock, useTheme } from '../lib/useTheme'
@@ -116,7 +117,7 @@ export function Landing() {
   const heroPointer = scrollY > 24 ? null : pointer
   // Mark flight into the install section's slot: 0 at the top, 1 once docked.
   // Past 1 the section's own mark takes over and scrolls with the page.
-  const dock = intro ? 0 : SETTLE(clamp(scrollY / (viewH * 0.8)))
+  const dock = intro ? 0 : SETTLE(clamp(scrollY / (viewH * 0.8), 0, 1))
   const appear = prog(filmT, HANDOFF - 0.2, HANDOFF + 1.4)
   const scene = useMemo(
     () => (intro ? film(filmT, theme) : ambient(clock, appear, W, H, deskHover, visibleW)),
@@ -161,7 +162,7 @@ export function Landing() {
           {intro && <Overlay cursors={scene.cursors.filter(c => c.outline)} height={H} icon={scene.icon} id="intro" ripples={[]} theme={theme} width={W} />}
           {/* While a desk window is revealed, the mark shrinks and the copy fades so the card has room. */}
           {!intro && dock === 0 && <HeroIcon dim={deskFocus} onHover={setPart} pointer={heroPointer} scale={FILM_ICON.s * (1 - 0.3 * deskFocus)} theme={theme} />}
-          <div className={`hero-copy ${part !== null ? 'away' : ''}`} style={{ opacity: (1 - 0.85 * deskFocus) * (1 - clamp(dock * 1.6)), transform: `translateY(${-40 * deskFocus - 120 * dock}px)` }}>
+          <div className={`hero-copy ${part !== null ? 'away' : ''}`} style={{ opacity: (1 - 0.85 * deskFocus) * (1 - clamp(dock * 1.6, 0, 1)), transform: `translateY(${-40 * deskFocus - 120 * dock}px)` }}>
             {/* Same tagline and capability lines as the mobile landing; a
                 hovered part swaps the text in place. */}
             <TextsReveal

@@ -36,8 +36,10 @@ import type { Pt } from '../lib/shape'
 import type { GhostColor, Theme } from '../theme'
 import type { Camera, CursorNode, DisplayNode, LabelState, Rect, Ripple, SceneState, Vec3, WindowKind, WindowNode } from './types'
 
+import { clamp } from 'es-toolkit'
+
 import { mix } from '../lib/color'
-import { bump, clamp, cubicBezier, easeInCubic, easeInOutCubic, easeInOutSine, easeOutBack, easeOutCubic, lerp, prog, track, vtrack } from '../lib/ease'
+import { bump, cubicBezier, easeInCubic, easeInOutCubic, easeInOutSine, easeOutBack, easeOutCubic, lerp, prog, track, vtrack } from '../lib/ease'
 import { ghostTemplate, partTemplates, placedGhost, placedPart } from '../lib/icon'
 import { bbox, morph, morphPts } from '../lib/shape'
 import { partSlab, rectSlab, slabBox, windowToU } from '../lib/slab'
@@ -466,7 +468,7 @@ function displaysAt(t: number, theme: Theme): DisplayNode[] {
   // The cards behind the desk display recede (per theme) as it lights up and its windows bloom.
   const behind = lerp(1, theme.displayBehindLit, prog(t, OPEN.lightUp[0], OPEN.bloom, easeInOutCubic))
   const speed = Math.abs(focus - focusAt(t - 1 / 60)) * 60
-  const trail = clamp((speed - 2) / 10)
+  const trail = clamp((speed - 2) / 10, 0, 1)
   const out: DisplayNode[] = []
   for (let i = Math.floor(focus - REACH); i <= Math.ceil(focus + REACH); i++) {
     const f = Math.abs(i - focus)
@@ -476,7 +478,7 @@ function displaysAt(t: number, theme: Theme): DisplayNode[] {
     const s = cardScale(i, t)
     const w = LAYOUT.width * s
     const h = LAYOUT.height * s
-    const soft = 0.1 * w * clamp((f - 1.5) / 6)
+    const soft = 0.1 * w * clamp((f - 1.5) / 6, 0, 1)
     const card = { h, radius: 0.035 * Math.min(w, h), w }
     out.push({ center: cardCenter(i), id: `display-${i}`, ...card, opacity: base, soft })
     if (trail <= 0)
@@ -708,7 +710,7 @@ function windowAt(spec: WinSpec, t: number, theme: Theme): null | WindowNode {
     node.contentSize = { h: rect.h, w: rect.w }
     node.radius = lerp(BLOCK.r, 18, open)
     node.opacity = prog(t, t0, t0 + 0.18, easeOutCubic)
-    node.fill = mix(accent, glass, clamp(open))
+    node.fill = mix(accent, glass, clamp(open, 0, 1))
     node.chrome = prog(t, ...OPEN.chrome, easeOutCubic)
     node.glow = prog(t, t0, OPEN.settle + 0.3)
   }

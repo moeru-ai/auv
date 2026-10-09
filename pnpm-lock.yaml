@@ -448,6 +448,9 @@ importers:
       '@base-ui/react':
         specifier: 'catalog:'
         version: 1.8.0(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      es-toolkit:
+        specifier: 'catalog:'
+        version: 1.50.0
       react:
         specifier: 'catalog:'
         version: 19.3.0

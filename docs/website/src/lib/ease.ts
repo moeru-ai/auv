@@ -2,9 +2,10 @@
 // function of `t` (seconds), so the same frame renders identically in the live
 // player and in the video exporter.
 
+import { clamp } from 'es-toolkit'
+
 export type Ease = (t: number) => number
 
-export const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v))
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 export const linear: Ease = t => t
@@ -32,7 +33,7 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number): Eas
       const d = dx(u)
       if (Math.abs(d) < 1e-6)
         break
-      u = clamp(u - (bx(u) - t) / d)
+      u = clamp(u - (bx(u) - t) / d, 0, 1)
     }
     // Bisection fallback for flat spots where Newton stalls.
     let lo = 0
@@ -81,7 +82,7 @@ export function hash(n: number) {
 
 /** Eased progress of `t` across the window [t0, t1]. */
 export function prog(t: number, t0: number, t1: number, ease: Ease = linear) {
-  return ease(clamp((t - t0) / (t1 - t0)))
+  return ease(clamp((t - t0) / (t1 - t0), 0, 1))
 }
 
 /**
@@ -96,7 +97,7 @@ export function track(keys: Key[], t: number) {
     if (t > b.t)
       continue
     const a = keys[i - 1]
-    const u = (b.ease ?? easeInOutCubic)(clamp((t - a.t) / (b.t - a.t)))
+    const u = (b.ease ?? easeInOutCubic)(clamp((t - a.t) / (b.t - a.t), 0, 1))
     const dx = b.x - a.x
     const dy = b.y - a.y
     const bow = Math.sin(u * Math.PI) * (b.arc ?? 0.1)
@@ -115,7 +116,7 @@ export function vtrack(keys: [number, number][], t: number, ease: Ease = easeInO
     if (t > t1)
       continue
     const [t0, v0] = keys[i - 1]
-    return lerp(v0, v1, ease(clamp((t - t0) / (t1 - t0))))
+    return lerp(v0, v1, ease(clamp((t - t0) / (t1 - t0), 0, 1)))
   }
   return keys[keys.length - 1][1]
 }
