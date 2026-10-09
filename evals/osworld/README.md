@@ -203,8 +203,5 @@ git diff --check
 
 ShellCheck is optional for development; running the script does not require it.
 
-Evidence: [PR #294](https://github.com/moeru-ai/auv/pull/294) records a live
-software-emulated Ubuntu guest with a visible GNOME desktop and working
-screenshot/noVNC endpoints. KVM and AUV pairing have not been live-tested.
 Upstream: [classic Docker provider](https://github.com/xlang-ai/OSWorld/blob/b138d348256078fa634fc3b73567a7337c793e6b/desktop_env/providers/docker/provider.py),
 [official guest image](https://huggingface.co/datasets/xlangai/ubuntu_osworld/tree/a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133).
