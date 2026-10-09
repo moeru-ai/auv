@@ -12,29 +12,40 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "browser": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js"
-      },
-      "node": {
-        "types": "./dist/node.d.ts",
-        "import": "./dist/node.js"
-      },
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "browser": "./src/web/index.ts",
+      "node": "./src/node/index.ts",
+      "default": "./src/web/index.ts"
     },
-    "./node": {
-      "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
-    },
+    "./node": "./src/node/index.ts",
     "./package.json": "./package.json"
   },
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "browser": {
+          "types": "./dist/index.d.ts",
+          "import": "./dist/index.js"
+        },
+        "node": {
+          "types": "./dist/node.d.ts",
+          "import": "./dist/node.js"
+        },
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./node": {
+        "types": "./dist/node.d.ts",
+        "import": "./dist/node.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
   "scripts": {
     "build": "tsdown",
     "prepack": "pnpm run build",

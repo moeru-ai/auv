@@ -5,10 +5,6 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    // The REPL runs against the SDK source in this repository (see vite.config.ts).
-    "paths": {
-      "@auv-js/sdk": ["../../js/packages/sdk/src/web/index.ts"]
-    },
     "resolveJsonModule": true,
     "types": ["vite/client"],
     "strict": true,
