@@ -1081,6 +1081,26 @@ fn validate_cli_mode(mode: &str) -> Result<(), String> {
   }
 }
 
+/// Fail-closed check that the CLI `--mode` agrees with the mode the compiled operation declares.
+///
+/// Matching pairs must pass: an earlier version of this check only listed the two conflicting pairs and
+/// sent the matching ones to `unreachable!`, which made every `fast` and `verified` run panic at startup.
+fn validate_mode_contract(cli_mode: &str, operation_name: &str, operation_mode: ExecutionMode) -> Result<(), String> {
+  match (cli_mode, operation_mode) {
+    ("fast", ExecutionMode::Fast) | ("verified", ExecutionMode::Verified) => Ok(()),
+    // Baseline is a harness path, not an operation execution mode. It uses the verified fixture to
+    // measure the unoptimized implementation.
+    ("baseline", _) => Ok(()),
+    ("fast", ExecutionMode::Verified) => Err(format!(
+      "Mode conflict: CLI requested 'fast' mode, but compiled operation '{operation_name}' requires 'verified' mode (fail-closed)"
+    )),
+    ("verified", ExecutionMode::Fast) => Err(format!(
+      "Mode conflict: CLI requested 'verified' mode, but compiled operation '{operation_name}' declares 'fast' mode (fail-closed)"
+    )),
+    (other, _) => Err(format!("Unsupported --mode '{other}'; expected baseline, verified, or fast")),
+  }
+}
+
 pub(super) fn main() {
   let args: Vec<String> = env::args().collect();
   let mut replays_count = 20usize;
@@ -1204,25 +1224,7 @@ pub(super) fn main() {
   }
 
   // Validate execution mode compatibility between CLI and operation declaration
-  match (mode.as_str(), compiled_op.execution_mode) {
-    ("fast", ExecutionMode::Verified) => {
-      panic!(
-        "Mode conflict: CLI requested 'fast' mode, but compiled operation '{}' requires 'verified' mode (fail-closed)",
-        compiled_op.name
-      );
-    }
-    ("verified", ExecutionMode::Fast) => {
-      panic!(
-        "Mode conflict: CLI requested 'verified' mode, but compiled operation '{}' declares 'fast' mode (fail-closed)",
-        compiled_op.name
-      );
-    }
-    ("baseline", _) => {
-      // Baseline is a harness path, not an operation execution mode. It uses
-      // the verified fixture to measure the unoptimized implementation.
-    }
-    _ => unreachable!("CLI mode was validated above"),
-  }
+  validate_mode_contract(&mode, &compiled_op.name, compiled_op.execution_mode).unwrap_or_else(|message| panic!("{message}"));
 
   println!("================================================================================");
   println!("QQ Music Hotpath Profiling & Replay Harness (Zero VLM / Zero Token)");
@@ -1438,7 +1440,7 @@ pub(super) fn main() {
 
 #[cfg(test)]
 mod tests {
-  use super::validate_cli_mode;
+  use super::{ExecutionMode, validate_cli_mode, validate_mode_contract};
 
   #[test]
   fn cli_mode_validation_accepts_supported_modes() {
@@ -1450,6 +1452,41 @@ mod tests {
   #[test]
   fn cli_mode_validation_rejects_unknown_modes() {
     let error = validate_cli_mode("fastt").unwrap_err();
+    assert!(error.contains("Unsupported --mode 'fastt'"));
+  }
+
+  // ROOT CAUSE:
+  //
+  // If `--mode fast` was paired with the fast operation (or `--mode verified` with the verified one), the
+  // harness panicked at startup with "internal error: entered unreachable code: CLI mode was validated above".
+  //
+  // Before the fix, the contract check listed only the two conflicting pairs plus baseline and routed every
+  // other pair, including the matching ones, to `unreachable!`, so only `--mode baseline` could run.
+  // The fix keeps matching pairs valid and still rejects the conflicting ones.
+  #[test]
+  fn mode_contract_accepts_matching_cli_and_operation_modes() {
+    assert_eq!(validate_mode_contract("fast", "qqmusic.prepare_playback_fast", ExecutionMode::Fast), Ok(()));
+    assert_eq!(validate_mode_contract("verified", "qqmusic.prepare_playback", ExecutionMode::Verified), Ok(()));
+  }
+
+  #[test]
+  fn mode_contract_accepts_baseline_with_either_operation_mode() {
+    assert_eq!(validate_mode_contract("baseline", "qqmusic.prepare_playback", ExecutionMode::Verified), Ok(()));
+    assert_eq!(validate_mode_contract("baseline", "qqmusic.prepare_playback_fast", ExecutionMode::Fast), Ok(()));
+  }
+
+  #[test]
+  fn mode_contract_rejects_conflicting_modes_naming_the_operation() {
+    let fast_on_verified = validate_mode_contract("fast", "qqmusic.prepare_playback", ExecutionMode::Verified).unwrap_err();
+    assert!(fast_on_verified.contains("qqmusic.prepare_playback") && fast_on_verified.contains("requires 'verified'"));
+
+    let verified_on_fast = validate_mode_contract("verified", "qqmusic.prepare_playback_fast", ExecutionMode::Fast).unwrap_err();
+    assert!(verified_on_fast.contains("qqmusic.prepare_playback_fast") && verified_on_fast.contains("declares 'fast'"));
+  }
+
+  #[test]
+  fn mode_contract_rejects_unknown_cli_mode() {
+    let error = validate_mode_contract("fastt", "qqmusic.prepare_playback_fast", ExecutionMode::Fast).unwrap_err();
     assert!(error.contains("Unsupported --mode 'fastt'"));
   }
 }
