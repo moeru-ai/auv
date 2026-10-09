@@ -8,13 +8,14 @@
 //            Tap a part to switch; it cycles on its own until the first tap.
 //   scroll   the gray mark flies into the nav bar; the showcase fades; the
 //            background windows come out of the frost and line up in a row.
-//   gallery  scrolling sweeps the row (eased, with a light snap per window).
+//   gallery  scrolling sweeps the row, one window per page.
 //            Every window keeps its own ghost cursor, as on desktop, with a
 //            short title and description underneath.
 //   install  an opaque install section slides up over the gallery.
 //
 // Everything after the intro is scrubbed by scroll position, so scrolling
-// back plays it in reverse.
+// back plays it in reverse. Between the hero, each gallery window, and the
+// install section the scroll pages like a carousel (useSnapPaging).
 // NOTICE: copy is provisional, like the desktop explainers.
 
 import type { Desk } from '../scene/ambient'
@@ -27,9 +28,10 @@ import { GLDesk } from '../gl/GLDesk'
 import { MobileHero } from '../hero/MobileHero'
 import { INSTALL_ID, InstallSection } from '../install/InstallSection'
 import { mixOklab } from '../lib/color'
-import { cubicBezier, easeInOutSine, lerp, prog } from '../lib/ease'
+import { cubicBezier, lerp, prog } from '../lib/ease'
 import { ICON_CENTER, PART_PATHS } from '../lib/icon'
 import { useSafeArea } from '../lib/useSafeArea'
+import { useSnapPaging } from '../lib/useSnapPaging'
 import { useTapToSkip } from '../lib/useTapToSkip'
 import { useClock, useTheme } from '../lib/useTheme'
 import { COLORFUL } from '../render/Overlay'
@@ -79,12 +81,10 @@ export function MobileLanding() {
   useEffect(() => {
     // The intro owns the screen; the page scrolls only after it.
     document.documentElement.style.overflow = intro ? 'hidden' : ''
-    document.documentElement.classList.toggle('m-snap', !intro)
     if (intro)
       scrollTo({ top: 0 })
     return () => {
       document.documentElement.style.overflow = ''
-      document.documentElement.classList.remove('m-snap')
     }
   }, [intro])
   useEffect(() => {
@@ -135,9 +135,13 @@ export function MobileLanding() {
   const g = clamp(scrollY / enter, 0, 1)
   gRef.current = g
   const gp = clamp((scrollY - enter) / span, 0, 1)
-  const pos = (ORDER.length - 1) * easeInOutSine(gp)
-  // Snap points sit where the eased sweep puts a window dead center.
-  const snaps = [0, ...ORDER.map((_, k) => enter + (Math.acos(1 - 2 * (k / (ORDER.length - 1))) / Math.PI) * span)]
+  // Linear, so every window takes the same drag; the paging does the easing.
+  const pos = (ORDER.length - 1) * gp
+  // Pages: the hero, each window dead center, then the install section's top
+  // (its scroll-margin-top in styles.css).
+  const installSnap = vh + enter + span - 48
+  const snaps = useMemo(() => [0, ...ORDER.map((_, k) => enter + (k / (ORDER.length - 1)) * span), installSnap], [enter, span, installSnap])
+  useSnapPaging(snaps, !intro)
 
   // --- Screen 1 geometry (CSS px) ------------------------------------------
   const settle = SETTLE(clamp(t0 / 0.9, 0, 1))
@@ -239,9 +243,7 @@ export function MobileLanding() {
 
       {!intro && (
         <>
-          <section className="m2-scroller" style={{ height: vh + enter + span }}>
-            {snaps.map((y, i) => <div className="m2-snap" key={i} style={{ top: y }} />)}
-          </section>
+          <section className="m2-scroller" style={{ height: vh + enter + span }} />
           {/* Opaque, above the fixed layers: it slides up over the end of the gallery. */}
           <InstallSection bottomPad={safe.bottom} compact theme={theme} />
 

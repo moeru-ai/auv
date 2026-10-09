@@ -122,14 +122,44 @@ export const SYSTEMS: Os[] = [
   },
 ]
 
+interface UaData {
+  getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>
+  platform?: string
+}
+
 export function codeOf(m: Method, arch: string) {
   return typeof m.code === 'function' ? m.code(arch) : m.code
 }
 
-/** Best guess at the visitor's system and CPU; phones fall back to macOS. */
+const uaData = () => (navigator as Navigator & { userAgentData?: UaData }).userAgentData
+
+/**
+ * The CPU from User-Agent Client Hints (Chromium browsers), or undefined.
+ *
+ * NOTICE: Windows on ARM still says `Win64; x64` in the user agent string, so
+ * only the high-entropy `architecture` hint tells ARM64 apart. Safari and
+ * Firefox have no client hints and keep the `detectSystem` guess.
+ */
+export async function detectArch(): Promise<string | undefined> {
+  try {
+    const { architecture } = await uaData()?.getHighEntropyValues?.(['architecture']) ?? {}
+    return architecture === 'arm' ? 'aarch64' : architecture === 'x86' ? 'x86_64' : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * Best guess at the visitor's system and CPU from the user agent.
+ *
+ * Phones and tablets have no AUV build, so they map to the desktop system
+ * they sit closest to: iOS and iPadOS to macOS, Android and ChromeOS to Linux.
+ * The CPU here is a first guess only; see `detectArch`.
+ */
 export function detectSystem(): { arch: string, os: OsId } {
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } }
-  const p = `${nav.userAgentData?.platform ?? ''} ${navigator.platform} ${navigator.userAgent}`.toLowerCase()
-  const os: OsId = p.includes('win') ? 'windows' : p.includes('linux') && !p.includes('android') ? 'linux' : 'macos'
-  return { arch: /arm|aarch64/.test(p) ? 'aarch64' : 'x86_64', os }
+  const p = `${uaData()?.platform ?? ''} ${navigator.platform} ${navigator.userAgent}`.toLowerCase()
+  // NOTICE: match `windows` / `win32` / `win64`, not a bare `win`, which also hits `darwin`.
+  const os: OsId = /windows|win32|win64/.test(p) ? 'windows' : /linux|android|cros/.test(p) ? 'linux' : 'macos'
+  return { arch: /\barm|aarch64/.test(p) ? 'aarch64' : 'x86_64', os }
 }

@@ -32,6 +32,10 @@ body {
   overflow-x: hidden;
 }
 button, select, input { font: inherit; color: inherit; }
+/* No gray flash on tap (WebKit, Chrome on Android): every control here draws
+   its own hover, active, and focus states. */
+html { -webkit-tap-highlight-color: transparent; }
+a, button, [role='tab'] { touch-action: manipulation; }
 
 .toolbar {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
@@ -91,7 +95,6 @@ button, select, input { font: inherit; color: inherit; }
 .gl-desk { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
 
 /* Mobile landing v2: scroll story. */
-html.m-snap { scroll-snap-type: y proximity; }
 .m2 { position: relative; min-height: 100vh; }
 .m2-bg {
   position: fixed; inset: 0; pointer-events: none; transition: opacity 0.6s;
@@ -107,7 +110,6 @@ html.m-snap { scroll-snap-type: y proximity; }
 }
 .m2-skip { position: fixed; right: 14px; z-index: 5; }
 .m2-scroller { position: relative; }
-.m2-snap { position: absolute; left: 0; width: 1px; height: 1px; scroll-snap-align: start; }
 .m2-sticky { position: sticky; top: 0; overflow: hidden; }
 .m2-show { position: absolute; touch-action: pan-y; transform-origin: 50% 80%; }
 .m2-show-item { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; will-change: transform; }
@@ -177,7 +179,9 @@ html.m-snap { scroll-snap-type: y proximity; }
   width: 40px; height: 40px; display: grid; place-items: center; border-radius: 20px; border: 0;
   background: transparent; color: var(--ink); cursor: pointer; text-decoration: none;
 }
-.nav-icon:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* Hover only where a pointer hovers; on touch, :hover sticks after a tap. */
+@media (hover: hover) { .nav-icon:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); } }
+.nav-icon:active { background: color-mix(in srgb, var(--ink) 12%, transparent); }
 .island {
   position: fixed; left: 50%; translate: -50% 0; z-index: 20; display: flex; gap: 4px; padding: 5px;
   border-radius: 999px; background: var(--panel); border: 1px solid var(--edge);
@@ -188,7 +192,8 @@ html.m-snap { scroll-snap-type: y proximity; }
   display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 18px; border: 0;
   background: transparent; color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none;
 }
-.island-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+@media (hover: hover) { .island-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); } }
+.island-btn:active { background: color-mix(in srgb, var(--ink) 12%, transparent); }
 .m2-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
 .m2-demo { position: absolute; transform-origin: 50% 60%; }
 
@@ -237,12 +242,16 @@ html.m-snap { scroll-snap-type: y proximity; }
   padding: 72px 24px 120px;
   /* At least a screen tall, so "Install" can scroll its top under the nav bar. */
   min-height: 100vh; min-height: 100svh;
+  /* Rubber-band overscroll past the page end would pull the section off the
+     fixed desk behind it. A copy of the section's box one screen below covers
+     that gap; as a shadow it paints without growing the scroll height. */
+  box-shadow: 0 100vh 0 var(--bg);
 }
 .install::before {
   content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: 140px; pointer-events: none;
   background: linear-gradient(to bottom, transparent, var(--bg));
 }
-.m2 .install { z-index: 3; padding: 28px 16px 96px; scroll-margin-top: 48px; scroll-snap-align: start; }
+.m2 .install { z-index: 3; padding: 28px 16px 96px; scroll-margin-top: 48px; }
 .m2 .install::before { height: 64px; }
 .install-inner { max-width: 780px; margin: 0 auto; }
 /* Slot for the AUV mark; GhostDemo draws it (and its ghosts) over the section. */
@@ -264,7 +273,8 @@ html.m-snap { scroll-snap-type: y proximity; }
   height: 36px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-2);
   font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; outline: none; transition: color 0.2s;
 }
-.seg-tab:hover, .seg-tab[data-active] { color: var(--ink); }
+.seg-tab[data-active] { color: var(--ink); }
+@media (hover: hover) { .seg-tab:hover { color: var(--ink); } }
 .seg-tab:focus-visible { box-shadow: 0 0 0 2px var(--violet); }
 .seg-ind {
   position: absolute; z-index: 0; left: 0; top: var(--active-tab-top); width: var(--active-tab-width); height: var(--active-tab-height);
@@ -303,7 +313,8 @@ html.m-snap { scroll-snap-type: y proximity; }
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 10px; border: 0;
   background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s, color 0.2s;
 }
-.code-head button:hover { background: var(--fill); color: var(--ink); }
+@media (hover: hover) { .code-head button:hover { background: var(--fill); color: var(--ink); } }
+.code-head button:active { background: var(--fill); color: var(--ink); }
 .code-head button.done { color: color-mix(in srgb, var(--cyan) 70%, var(--ink)); }
 .code pre { margin: 0; padding: 4px 18px 16px; overflow-x: auto; font-size: 14px; line-height: 1.75; }
 .install.compact .code pre { padding: 2px 14px 14px; font-size: 12.5px; }

@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MONO } from '../render/WindowContent'
 import { Icon } from '../ui/Chrome'
 import { GhostDemo } from './GhostDemo'
-import { codeOf, detectSystem, SYSTEMS } from './methods'
+import { codeOf, detectArch, detectSystem, SYSTEMS } from './methods'
 
 export const INSTALL_ID = 'install'
 /** The mark's slot; the desktop landing flies its hero mark into it. */
@@ -94,6 +94,11 @@ export function InstallSection({ bottomPad = 0, compact = false, markHidden = fa
   const [arch, setArch] = useState(detected.arch)
   // Until the visitor touches the section, the ghosts may switch methods for them.
   const [touched, setTouched] = useState(false)
+  const archPickedRef = useRef(false)
+  useEffect(() => {
+    // The client-hint CPU arrives late; it never overrides the visitor's own pick.
+    void detectArch().then(a => a && !archPickedRef.current && setArch(a))
+  }, [])
   const section = useRef<HTMLElement>(null)
   const mark = useRef<HTMLDivElement>(null)
 
@@ -137,7 +142,13 @@ export function InstallSection({ bottomPad = 0, compact = false, markHidden = fa
             </Tabs.List>
           </Tabs.Root>
           {method.archs && (
-            <Tabs.Root onValueChange={v => setArch(v as string)} value={arch}>
+            <Tabs.Root
+              onValueChange={(v) => {
+                archPickedRef.current = true
+                setArch(v as string)
+              }}
+              value={arch}
+            >
               <Tabs.List aria-label="CPU" className="seg install-arch">
                 {method.archs.map(a => <Tabs.Tab className="seg-tab" key={a.id} value={a.id}>{a.label}</Tabs.Tab>)}
                 <Tabs.Indicator className="seg-ind" />
