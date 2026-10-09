@@ -454,6 +454,11 @@ mod native {
           let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
           ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
 
+          if mapped.pData.is_null() {
+            ctx.Unmap(&staging, 0);
+            return Err(backend("D3D11 mapped staging texture pData is null"));
+          }
+
           let width = desc.Width as usize;
           let height = desc.Height as usize;
           let row_pitch = mapped.RowPitch as usize;
@@ -514,6 +519,11 @@ mod native {
     item: &GraphicsCaptureItem,
     timeout: Duration,
   ) -> DriverResult<WindowHealth> {
+    let hwnd = HWND(target_id as _);
+    if unsafe { !windows::Win32::UI::WindowsAndMessaging::IsWindow(hwnd).as_bool() } {
+      return Err(backend("target window no longer exists (destroyed)"));
+    }
+
     let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
 
     if size.Width <= 0 || size.Height <= 0 {
@@ -605,6 +615,11 @@ mod native {
 
           let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
           ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
+
+          if mapped.pData.is_null() {
+            ctx.Unmap(&staging, 0);
+            return Err(backend("D3D11 mapped staging texture pData is null"));
+          }
 
           let width = desc.Width as usize;
           let height = desc.Height as usize;
@@ -916,6 +931,15 @@ mod native {
     };
 
     while !stop_flag.load(Ordering::SeqCst) {
+      if unsafe { !windows::Win32::UI::WindowsAndMessaging::IsWindow(hwnd).as_bool() } {
+        break;
+      }
+      let mut current_pid = 0u32;
+      let tid = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut current_pid)) };
+      if tid == 0 || current_pid != key.pid {
+        break;
+      }
+
       // 1. Idle timeout check (250ms)
       let mut superseded = false;
       let mut idle = false;
@@ -1556,10 +1580,14 @@ pub fn inject_health_cache_entry(key: HealthCacheKey, health: WindowHealth, age:
   });
 }
 
-#[cfg(all(test, target_os = "windows"))]
+/// Explicitly clears the health cache and requests any active health worker to terminate.
+#[cfg(target_os = "windows")]
 pub fn clear_health_cache() {
   native::clear_health_cache();
 }
+
+#[cfg(not(target_os = "windows"))]
+pub fn clear_health_cache() {}
 
 // The tests drive Direct3D and WGC directly, so they only build on Windows.
 #[cfg(all(test, target_os = "windows"))]

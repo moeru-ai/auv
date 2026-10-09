@@ -56,5 +56,5 @@ pub use track_identity::{
 };
 pub use wgc::{
   FastWindowVerification, WindowHealth, capture_window_health, capture_window_health_cached, capture_window_health_strict,
-  capture_window_wgc, check_window_liveness, prewarm_wgc, prewarm_wgc_window, reset_d3d_context,
+  capture_window_wgc, check_window_liveness, clear_health_cache, prewarm_wgc, prewarm_wgc_window, reset_d3d_context,
 };

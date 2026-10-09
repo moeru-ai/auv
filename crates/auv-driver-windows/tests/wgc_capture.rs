@@ -5,7 +5,7 @@ use auv_driver_common::geometry::Rect;
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{CoordinateSpace, Driver};
 use auv_driver_windows::{
-  WindowsDriver, capture_window_health_cached, capture_window_health_strict, check_window_liveness, prewarm_wgc_window,
+  WindowsDriver, capture_window_health_cached, capture_window_health_strict, check_window_liveness, clear_health_cache, prewarm_wgc_window,
 };
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
@@ -335,6 +335,7 @@ fn test_wgc_health_cached_and_liveness() {
   barrier.wait();
   assert!(first.join().expect("first health request panicked").expect("first target health failed").is_fresh);
   assert!(second.join().expect("second health request panicked").expect("second target health failed").is_fresh);
+  clear_health_cache();
 }
 
 #[test]
@@ -360,4 +361,5 @@ fn test_wgc_worker_concurrent_with_capture_wgc_no_deadlock() {
     let health = capture_window_health_cached(&driver_win).expect("cached health during capture failed");
     assert!(health.alive);
   }
+  clear_health_cache();
 }
