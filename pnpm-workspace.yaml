@@ -38,7 +38,7 @@ packages:
   - 'apps/repl-playground'
   - 'evals/auv-base/platforms/desktop-universal/test-objects'
   - 'crates/auv-inspect-server/viewer'
-  - 'docs/website'
+  - 'apps/docs-website'
   - 'js/packages/*'
   - 'js/packages/cli/npm/*'
   - 'proto/sdk/js'

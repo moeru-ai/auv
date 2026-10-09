@@ -15,7 +15,7 @@ mod embedded {
 /// Which helper app setup manages.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Options {
-  /// Absolute path of the unpacked, notarized helper app shipped by the
+  /// Absolute path of the unpacked, signed helper app shipped by the
   /// application embedding AUV. Its signing identifier and Team ID become the
   /// managed identity, and it installs under
   /// `~/Library/Application Support/<bundle identifier>/`. `None` manages the
@@ -732,11 +732,12 @@ fn install_payload(identity: &super::HelperIdentity, payload: Payload) -> Result
       }
     }
   }
+  // NOTICE(helper-install-gatekeeper): Setup checks only the identity the
+  // daemon trusts. Whether code needs notarization to run is Gatekeeper's
+  // policy, which macOS enforces on quarantined downloads, so a locally built,
+  // Developer ID-signed helper installs for testing. Release workflows assess
+  // their artifacts with `spctl` before publishing.
   verify_app_signature(identity, &candidate).map_err(Error::ArchiveRejected)?;
-  let assessment = std::process::Command::new("/usr/sbin/spctl").args(["--assess", "--type", "execute"]).arg(&candidate).output()?;
-  if !assessment.status.success() {
-    return Err(Error::ArchiveRejected(String::from_utf8_lossy(&assessment.stderr).trim().to_string()));
-  }
 
   let backup = work.path().join(format!("Previous {}", identity.app_name));
   let result = replace_installed_app(

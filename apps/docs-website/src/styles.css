@@ -61,6 +61,16 @@ button, select, input { font: inherit; color: inherit; }
 .hero-copy.away { top: 812px; }
 .hero-copy h1 { margin: 0 0 10px; font-size: 44px; font-weight: 750; letter-spacing: -0.02em; }
 .hero-copy p { margin: 0; color: var(--ink-2); font-size: 19px; line-height: 1.5; }
+/* Static cards (src/pages/Card.tsx): sizes come inline, scaled to the card. */
+.card-kicker { position: absolute; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+.card-headline { position: absolute; }
+.card-headline h1 { margin: 0 0 6px; line-height: 1.1; font-weight: 750; letter-spacing: -0.025em; }
+.card-headline p { margin: 0; line-height: 1.35; font-weight: 500; letter-spacing: -0.01em; }
+.card-tile { position: absolute; }
+.card-lockup { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.card-headline-static h1 { margin: 0 0 6px; line-height: 1.1; font-weight: 750; letter-spacing: -0.025em; }
+.card-headline-static p { margin: 0; line-height: 1.35; font-weight: 500; letter-spacing: -0.01em; }
+.card-strokes { position: absolute; inset: 0; overflow: visible; }
 .info-card { position: absolute; padding: 20px 22px; border-radius: 22px; pointer-events: none; }
 .info-card h3 { margin: 0 0 8px; font-size: 21px; letter-spacing: -0.01em; }
 .info-card p { margin: 0 0 14px; font-size: 15px; line-height: 1.55; color: var(--ink-2); }

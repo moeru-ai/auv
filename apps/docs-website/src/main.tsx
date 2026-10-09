@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { CardPage } from './pages/Card'
 import { ExportPage } from './pages/Export'
 import { FilmPage } from './pages/Film'
 import { Landing } from './pages/Landing'
@@ -10,12 +11,14 @@ import { useViewport } from './ui/FitStage'
 
 import './styles.css'
 
-// Three routes, no router dependency:
+// Routes, no router dependency:
 //   /        landing (intro film, then the interactive mark over an ambient desk)
 //   /film    film player with scrubber, for reviewing timing
 //   /render  bare frame-addressable stage for the video exporter
 //   /export  how to export the film to video
+//   /card    static Open Graph, social preview, and README banner images
 const routes: Record<string, () => React.ReactNode> = {
+  '/card': () => <CardPage />,
   '/export': () => <ExportPage />,
   '/film': () => <FilmPage />,
   '/render': () => <RenderPage />,

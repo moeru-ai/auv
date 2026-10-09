@@ -43,7 +43,7 @@ jobs:
       - name: Generate Protobuf bindings
         run: pnpm generate:proto
       # docs-website is the site root; repl-playground's dist is merged into
-      # its dist/playground/ (see docs/website/package.json `build:site`).
+      # its dist/playground/ (see apps/docs-website/package.json `build:site`).
       - name: Build site
         run: pnpm --filter @auv-js/docs-website build:site
       - name: Deploy site
@@ -51,5 +51,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy -c ./docs/website/wrangler.toml
+          command: deploy -c ./apps/docs-website/wrangler.toml
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}

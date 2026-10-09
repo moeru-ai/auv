@@ -6,6 +6,7 @@ export default defineConfig({
   masknet: false,
   perfectionist: true,
   preferArrow: false,
+  react: true,
   sonarjs: false,
   sortPackageJsonScripts: false,
   typescript: true,
@@ -101,6 +102,21 @@ export default defineConfig({
     'style/padding-line-between-statements': 'error',
     'vue/prefer-separate-static-class': 'off',
     'yaml/plain-scalar': 'off',
+  },
+}, {
+  files: ['apps/docs-website/**/*.{ts,tsx}'],
+  rules: {
+    // Scene drawing modules export their constants (fonts, colors, layout
+    // sizes) next to the components that use them. Fast refresh falls back to
+    // a full reload for those files, which is fine for this site.
+    'react-refresh/only-export-components': 'off',
+  },
+}, {
+  files: ['js/packages/**/*.{ts,mts,cts,js,mjs,cjs}'],
+  rules: {
+    // The React preset applies to every source file, but these packages do not
+    // use React. `useLogg` from `@guiiai/logg` is a logger factory, not a hook.
+    'react/rules-of-hooks': 'off',
   },
 }, {
   files: ['apps/server/**/*.ts'],

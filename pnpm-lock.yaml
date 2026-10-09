@@ -255,6 +255,9 @@ importers:
       '@decimalturn/toml-patch':
         specifier: 'catalog:'
         version: 3.0.2
+      '@eslint-react/eslint-plugin':
+        specifier: 'catalog:'
+        version: 3.0.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3)
       '@moeru/eslint-config':
         specifier: 'catalog:'
         version: 0.1.0-beta.20(@antfu/eslint-config@8.3.0(@eslint-react/eslint-plugin@3.0.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@typescript-eslint/typescript-estree@8.71.0(typescript@6.0.3))(@typescript-eslint/utils@8.71.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@unocss/eslint-plugin@66.10.5(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@vue/compiler-sfc@3.5.41)(eslint-plugin-react-refresh@0.5.7(eslint@10.8.1(jiti@2.7.0)))(eslint@10.8.1(jiti@2.7.0))(oxlint@1.78.0)(typescript@6.0.3)(vitest@4.1.10))(eslint-plugin-oxlint@1.78.0(oxlint@1.78.0))(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3)
@@ -279,6 +282,9 @@ importers:
       eslint-plugin-oxlint:
         specifier: 'catalog:'
         version: 1.78.0(oxlint@1.78.0)
+      eslint-plugin-react-refresh:
+        specifier: 'catalog:'
+        version: 0.5.7(eslint@10.8.1(jiti@2.7.0))
       eslint-plugin-slop:
         specifier: 'catalog:'
         version: 0.1.3(eslint@10.8.1(jiti@2.7.0))
@@ -321,6 +327,55 @@ importers:
       vitest:
         specifier: catalog:vitest
         version: 4.1.10(@types/node@26.1.1)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.6)(jsdom@27.4.0)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  apps/docs-website:
+    dependencies:
+      '@base-ui/react':
+        specifier: 'catalog:'
+        version: 1.8.0(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      es-toolkit:
+        specifier: 'catalog:'
+        version: 1.50.0
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.0(react@19.3.0)
+      svg-path-properties:
+        specifier: 'catalog:'
+        version: 2.1.0
+      three:
+        specifier: 'catalog:'
+        version: 0.186.1
+    devDependencies:
+      '@iconify-json/ph':
+        specifier: 'catalog:'
+        version: 1.2.2
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.1.1
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
+      '@types/three':
+        specifier: 'catalog:'
+        version: 0.186.0
+      '@vitejs/plugin-react':
+        specifier: 'catalog:'
+        version: 6.1.1(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      playwright:
+        specifier: 'catalog:'
+        version: 1.62.1
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite:
+        specifier: 'catalog:'
+        version: 8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0)
 
   apps/repl-playground:
     dependencies:
@@ -442,73 +497,6 @@ importers:
       vitest:
         specifier: catalog:vitest
         version: 4.1.10(@types/node@26.1.1)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.6)(jsdom@27.4.0)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
-
-  docs/website:
-    dependencies:
-      '@base-ui/react':
-        specifier: 'catalog:'
-        version: 1.8.0(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      es-toolkit:
-        specifier: 'catalog:'
-        version: 1.50.0
-      react:
-        specifier: 'catalog:'
-        version: 19.3.0
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.3.0(react@19.3.0)
-      svg-path-properties:
-        specifier: 'catalog:'
-        version: 2.1.0
-      three:
-        specifier: 'catalog:'
-        version: 0.186.1
-    devDependencies:
-      '@eslint-react/eslint-plugin':
-        specifier: 'catalog:'
-        version: 3.0.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3)
-      '@iconify-json/ph':
-        specifier: 'catalog:'
-        version: 1.2.2
-      '@moeru/eslint-config':
-        specifier: 'catalog:'
-        version: 0.1.0-beta.20(@antfu/eslint-config@8.3.0(@eslint-react/eslint-plugin@3.0.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@typescript-eslint/typescript-estree@8.71.0(typescript@6.0.3))(@typescript-eslint/utils@8.71.0(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@unocss/eslint-plugin@66.10.5(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3))(@vue/compiler-sfc@3.5.41)(eslint-plugin-react-refresh@0.5.7(eslint@10.8.1(jiti@2.7.0)))(eslint@10.8.1(jiti@2.7.0))(oxlint@1.78.0)(typescript@6.0.3)(vitest@4.1.10))(eslint-plugin-oxlint@1.78.0(oxlint@1.78.0))(eslint@10.8.1(jiti@2.7.0))(typescript@6.0.3)
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.1.1
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.3.0(@types/react@19.3.0)
-      '@types/three':
-        specifier: 'catalog:'
-        version: 0.186.0
-      '@vitejs/plugin-react':
-        specifier: 'catalog:'
-        version: 6.1.1(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
-      eslint:
-        specifier: 'catalog:'
-        version: 10.8.1(jiti@2.7.0)
-      eslint-plugin-oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint@1.78.0)
-      eslint-plugin-react-refresh:
-        specifier: 'catalog:'
-        version: 0.5.7(eslint@10.8.1(jiti@2.7.0))
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0
-      playwright:
-        specifier: 'catalog:'
-        version: 1.62.1
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-      vite:
-        specifier: 'catalog:'
-        version: 8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0)
 
   evals/auv-base/platforms/desktop-universal/test-objects:
     devDependencies:
