@@ -96,19 +96,19 @@ export function CardPage() {
   desk.windows = desk.windows.filter(w => w.id !== 'a-term')
   desk.glows = glowsFor(desk.windows, CLOCK)
   if (card.layout === 'lockup') {
-    const h = 150 * u
+    const h = 196 * u
     const w = (ICON_BOX.w / ICON_BOX.h) * h
     return (
       <div id="card" style={{ background: theme.bg, borderRadius: card.radius, color: theme.ink, height: card.h, overflow: 'hidden', position: 'relative', width: card.w }}>
         <GLDesk fit={fit} maxPixels={Infinity} state={desk} style={{ height: card.h, inset: 0, position: 'absolute', width: card.w }} theme={theme} veil={veil} />
-        <div className="card-lockup" style={{ gap: 56 * u }}>
+        <div className="card-lockup" style={{ gap: 68 * u }}>
           <svg aria-hidden="true" height={h} viewBox={`${ICON_BOX.x} ${ICON_BOX.y} ${ICON_BOX.w} ${ICON_BOX.h}`} width={w}>
             {PART_PATHS.map((d, i) => <path d={d} fill={theme.icon[i]} key={d} />)}
           </svg>
           <div className="card-headline-static">
-            <p style={{ color: theme.ink2, fontSize: 24 * u, fontWeight: 650, marginBottom: 10 * u }}>Application Use Via ...</p>
-            <h1 style={{ fontSize: 50 * u }}>Programmable Computer Use,</h1>
-            <p style={{ color: theme.ink2, fontSize: 30 * u }}>more like Playwright for the OS.</p>
+            <p style={{ color: theme.ink2, fontSize: 30 * u, fontWeight: 650, marginBottom: 12 * u }}>Application Use Via ...</p>
+            <h1 style={{ fontSize: 63 * u }}>Programmable Computer Use,</h1>
+            <p style={{ color: theme.ink2, fontSize: 38 * u }}>more like Playwright for the OS.</p>
           </div>
         </div>
       </div>
