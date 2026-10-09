@@ -1370,7 +1370,34 @@ pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealt
     }
   }
 
-  Err(backend("fresh WGC health sample unavailable"))
+  drop(guard);
+  let health = capture_window_health_unserialized(window)?;
+  if !health.is_fresh {
+    return Err(backend("fresh WGC health sample unavailable"));
+  }
+  let mut guard = native::lock_health_state();
+  let state = native::get_or_init_state(&mut guard);
+  if state.target_key.as_ref() == Some(&key) {
+    state.cached_entry = Some(HealthCacheEntry {
+      health: health.clone(),
+      captured_at: Instant::now(),
+      sample_duration: Duration::ZERO,
+      target_size: (key.width, key.height),
+    });
+  }
+
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  let target_name = window.app_name.as_deref().or(window.title.as_deref());
+  let details =
+    format!("cache_hit=false;age_ms=0.0;refresh_ms=0.0;target={};kind=strict;sync_fallback=true", target_name.unwrap_or("unknown"));
+  crate::latency::record_latency_event(
+    "capture_window_health_strict",
+    elapsed_ms,
+    Some((health.width, health.height)),
+    Some(WGC_BACKEND),
+    Some(&details),
+  );
+  Ok(health)
 }
 
 #[cfg(not(target_os = "windows"))]
