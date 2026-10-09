@@ -72,10 +72,26 @@ These are accepted directions, not approved slices. Each has a marker at the
 
 ## Evidence
 
-| Date | Environment | Command | Result |
-| --- | --- | --- | --- |
-| 2026-10-09 | macOS 26.3, local CLI at PR #257 head | `auv invoke input.pointerPosition --json` | `{ "x": 1318.5546875, "y": 778.375 }`, the live pointer |
-| 2026-10-09 | macOS 26.3, local CLI at PR #257 head | `auv invoke input.scrollPoint 640 360 0 120` | Fails as documented: only Linux and Windows deliver locally |
+All runs use PR #257 head `ba9f08c6` on 2026-10-09.
+
+| Environment | Check | Result |
+| --- | --- | --- |
+| macOS 26.3, local CLI | `auv invoke input.pointerPosition --json` | The live pointer, for example `{ "x": 1318.55, "y": 778.38 }` |
+| macOS 26.3, through the local daemon's Runner (`auv --device-id <local> invoke …`) | 3 pointer reads | Each matched a local read at the same time |
+| macOS 26.3, through the Runner | `input.moveMouse 800 500`, then a pointer read | `{ "x": 800, "y": 500 }`: the read follows the pointer, it is not cached. The pointer was moved back afterwards |
+| macOS 26.3, through the Runner | `input.scrollPoint 640 360 0 120` | `UNIMPLEMENTED`: "scrolling without a target window is unavailable on this Runner platform" |
+| Windows 11, 1024×768 at scale 1, local CLI in the logged-on console session | `input.moveMouse 300 200` and `700 550`, each followed by a pointer read | `{ "x": 300, "y": 200 }` and `{ "x": 700, "y": 550 }` |
+| Windows 11, local CLI from an SSH session (no interactive desktop) | Pointer read | Fails: `GetCursorPos failed: This operation requires an interactive window station. (0x800705B3)`. No fake point |
+| Windows 11, console session, Edge window with a page that writes `scrollY` to its title | `input.scrollPoint 512 400 0 300`, then `0 -120`, then `0 240` | `scrollY` went `0 → 300 → 180 → 420`: exact logical-pixel totals and directions. Path `foreground_system_events` |
+| Debian 13, headless Sway 1.10.1 (wlroots `headless` backend, `xdg-desktop-portal-wlr`) | Pointer read | Fails: `linux.input.current_position on Wayland is not supported by this driver` |
+| Same headless Sway session | `input.scrollPoint 100 100 0 120` | Fails: `open RemoteDesktop: A portal frontend implementing org.freedesktop.portal.RemoteDesktop was not found`. The wlr portal has no input interface |
+
+Windows note: the first scroll attempts reported delivery but did not move the
+page. A terminal window that the test harness opened was over the scroll
+point, and Windows routes the wheel to the window under the pointer
+(`MouseWheelRouting = 2`). With the harness window hidden, delivery was exact.
+This is test-harness behavior, not an AUV defect, but it shows that delivery
+evidence alone does not prove that the intended window scrolled.
 
 Automated tests:
 
@@ -89,8 +105,9 @@ Automated tests:
 - Hold controller: `crates/auv-driver-common/src/keyboard_input_test.rs`,
   including both #256 released-ID regressions.
 
-Not yet recorded: a pointer read through a selected Runner, a Windows pointer
-read, and live `ScrollPoint` delivery on Windows or Linux.
+Not yet recorded: `ScrollPoint` delivery on Linux GNOME (portal or uinput),
+because no GNOME session was logged in; and a Windows pointer read or
+`ScrollPoint` through a Runner (the local CLI path was used there).
 
 ## Research
 
