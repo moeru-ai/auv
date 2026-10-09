@@ -547,12 +547,14 @@ a platform only when their support is different.
 
 [^device-entry]: **Evidence level: configuration-specific installed-host test.**
   This API locks and unlocks an existing login session. It does not sign in a
-  user from the signed-out screen. The 2026-10-01 test ran 300 normal-use
-  lock/unlock cycles. The API passed 298 cycles on the first attempt (99.33%).
-  The requested OS state occurred on the first attempt in 299 cycles (99.67%).
-  All 300 cycles ended in the `USABLE` state. The test used dwell times of 15,
-  20, 25, and 30 seconds. A separate stress test used delays near zero. It
-  measured OS transition readiness, not normal-use reliability. Read the
+  user from the signed-out screen. After the Device restarts, sign in to it
+  once. Then remote lock and unlock work for that session. The 2026-10-01
+  test ran 300 normal-use lock/unlock cycles. The API passed 298 cycles on the
+  first attempt (99.33%). The requested OS state occurred on the first attempt
+  in 299 cycles (99.67%). All 300 cycles ended in the `USABLE` state. The test
+  used dwell times of 15, 20, 25, and 30 seconds. A separate stress test used
+  delays near zero. It measured OS transition readiness, not normal-use
+  reliability. Read the
   [Device lock contract and platform evidence](docs/ai/references/session-api/2026-09-30-device-lock-contract-and-review.md)
   for the typed contract, native mechanisms, and configuration limits. The raw
   logs remain local. They are not in a durable evidence pack.
