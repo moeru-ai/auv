@@ -3,9 +3,11 @@ import type { sendUnaryData, ServerDuplexStream, ServerUnaryCall, ServiceDefinit
 import type { AuvAbortError } from './index'
 
 import { Buffer } from 'node:buffer'
+import { fileURLToPath } from 'node:url'
 
 import { create, toBinary } from '@bufbuild/protobuf'
 import { Server, ServerCredentials } from '@grpc/grpc-js'
+import { x } from 'tinyexec'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -111,6 +113,27 @@ describe('node gRPC transport', () => {
         reject(error)
       else resolve()
     }))
+  })
+
+  // ROOT CAUSE:
+  //
+  // A script awaiting only `connect(...)` exited unsettled: grpc-js holds no
+  // ref'd handle while a channel connects. Vitest keeps its loop alive, so the
+  // child process reproduces it. The fix keeps the process alive until then.
+  it('connects from a script whose only pending work is the connection', async () => {
+    const entry = new URL('./index.ts', import.meta.url).href
+    const script = `import { connect } from ${JSON.stringify(entry)}
+const connection = await connect({ endpoint: ${JSON.stringify(endpoint)}, transport: 'grpc' })
+console.log('connected')
+await connection.close()`
+    // The child runs from the workspace root, where `tsx` is installed.
+    const result = await x(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', script], {
+      nodeOptions: { cwd: fileURLToPath(new URL('../../../../..', import.meta.url)) },
+      timeout: 20_000,
+    })
+
+    expect(result.stdout).toContain('connected')
+    expect(result.exitCode).toBe(0)
   })
 
   it('calls the standard daemon gRPC method', async () => {

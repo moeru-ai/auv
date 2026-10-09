@@ -208,11 +208,17 @@ function waitForReady(client: Client, options: OperationOptions): Promise<void> 
   return new Promise((resolve, reject) => {
     let settled = false
     let onAbort: () => void
+    // NOTICE(grpc-ready-keepalive): grpc-js unrefs its sockets and timers while
+    // a channel connects, so a script whose only pending work is this wait sees
+    // an empty event loop and exits with the await unsettled. This ref'd timer
+    // keeps the process alive until the wait settles; it never fires.
+    const keepAlive = setInterval(() => {}, 2 ** 31 - 1)
 
     const finish = (result: () => void) => {
       if (settled)
         return
       settled = true
+      clearInterval(keepAlive)
       options.signal?.removeEventListener('abort', onAbort)
       result()
     }
