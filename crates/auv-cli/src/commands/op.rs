@@ -9,12 +9,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use auv_auto_loop::decision_log::DecisionLogger;
 use auv_auto_loop::models::{ExecutionMode, ReasonCode};
 use auv_auto_loop::runtime::{ExecutionResult, OperationExecutor};
 use auv_auto_loop::scheduler::{FastLoopScheduler, OperationCatalog, TaskRequest};
 use clap::{Args, Subcommand, ValueEnum};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_os = "windows"))]
@@ -57,7 +59,7 @@ pub struct OpRunArgs {
   pub json: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionModeArg {
   Fast,
@@ -120,22 +122,27 @@ pub async fn run(args: impl Into<OpArgs>) -> Result<i32, String> {
   }
 }
 
-/// Executes a compiled operation with platform-appropriate executor.
-pub fn run_op(args: OpRunArgs) -> Result<i32, String> {
+/// Platform-appropriate executor shared by every frontend (CLI, MCP).
+///
+/// Windows drives the real production executor; other platforms have none yet and use the fake one.
+pub fn default_executor() -> Arc<dyn OperationExecutor> {
   #[cfg(target_os = "windows")]
   {
-    let executor = WindowsProductionExecutor::default();
-    run_with_executor(args, &executor)
+    Arc::new(WindowsProductionExecutor::default())
   }
   #[cfg(not(target_os = "windows"))]
   {
-    let executor = FakeOperationExecutor::new();
-    run_with_executor(args, &executor)
+    Arc::new(FakeOperationExecutor::new())
   }
 }
 
+/// Executes a compiled operation with platform-appropriate executor.
+pub fn run_op(args: OpRunArgs) -> Result<i32, String> {
+  run_with_executor(args, default_executor().as_ref())
+}
+
 /// Executes an operation against a given `OperationExecutor`.
-pub fn run_with_executor(args: OpRunArgs, executor: &impl OperationExecutor) -> Result<i32, String> {
+pub fn run_with_executor<E: OperationExecutor + ?Sized>(args: OpRunArgs, executor: &E) -> Result<i32, String> {
   let (exit_code, output) = run_with_executor_inner(&args, executor)?;
   if args.json {
     println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
@@ -163,7 +170,10 @@ pub fn run_with_executor(args: OpRunArgs, executor: &impl OperationExecutor) -> 
 }
 
 /// Inner execution logic returning exit code and structured output.
-pub fn run_with_executor_inner(args: &OpRunArgs, executor: &impl OperationExecutor) -> Result<(i32, OpRunOutput), String> {
+///
+/// `E: ?Sized` lets frontends that hold the executor as `dyn OperationExecutor` (the MCP server)
+/// share this exact path instead of re-implementing it.
+pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, executor: &E) -> Result<(i32, OpRunOutput), String> {
   let logger = DecisionLogger::new();
   let mut catalog = OperationCatalog::new();
 

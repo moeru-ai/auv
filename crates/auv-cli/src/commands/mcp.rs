@@ -41,7 +41,10 @@ mod frontend {
   use serde::Serialize;
   use serde_json::Value;
 
+  use auv_auto_loop::runtime::OperationExecutor;
   use auv_cli_invoke::{ExecutionTarget, InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeRegistry, default_registry};
+
+  use crate::commands::op::{ExecutionModeArg, OpRunArgs, default_executor, run_with_executor_inner};
 
   tokio::task_local! {
     static MCP_REQUEST_CANCELLATION: InvokeCancellation;
@@ -127,6 +130,8 @@ mod frontend {
     invoke_registry: Arc<InvokeRegistry>,
     invoke_adapters: Arc<BTreeMap<&'static str, McpInvokeAdapter>>,
     invoke_dispatch: InvokeDispatch,
+    /// Executor behind the `op_run` tool. The same platform default as `auv op run`.
+    op_executor: Arc<dyn OperationExecutor>,
   }
 
   impl McpServer {
@@ -161,7 +166,17 @@ mod frontend {
         invoke_registry,
         invoke_adapters: Arc::new(invoke_adapters),
         invoke_dispatch,
+        op_executor: default_executor(),
       })
+    }
+
+    // TODO(mcp-op-executor-injection): executor injection is test-only for now. Windows defaults to the
+    // real production executor, so tests must substitute a fake. Open it to library callers
+    // (e.g. a `serve_stdio_with_registry` parameter) only when an embedder needs a non-default executor.
+    #[cfg(test)]
+    fn with_op_executor(mut self, op_executor: Arc<dyn OperationExecutor>) -> Self {
+      self.op_executor = op_executor;
+      self
     }
 
     pub fn invoke_registry(&self) -> &Arc<InvokeRegistry> {
@@ -487,6 +502,53 @@ mod frontend {
         Err(error) => Err(McpError::internal_error(error.to_string(), None)),
       }
     }
+
+    /// Triggering workflow: MCP `tools/call` for `op_run` reaches this handler through
+    /// `tool_router`, then `execute_op_run` -> `commands::op::run_with_executor_inner`, the same
+    /// path as `auv op run`.
+    #[tool(
+      description = "Run one compiled mode-aware operation through the same scheduler and executor as `auv op run`. `mode` is required and must match the operation's declared mode: fast dispatches without waiting for verification and is never confirmed; verified waits for the verification gate and is confirmed only when it passes. A mode mismatch is rejected before any driver side effect. The result carries status, execution_mode, confirmed and reason_code."
+    )]
+    async fn op_run(&self, Parameters(req): Parameters<OpRunToolRequest>) -> Result<CallToolResult, McpError> {
+      self.execute_op_run(req).await
+    }
+  }
+
+  impl McpServer {
+    /// Translates one `op_run` request into `OpRunArgs` and maps the shared result back.
+    ///
+    /// This is deliberately thin: scheduling, mode-conflict rejection, gate handling and output
+    /// construction (including "fast is never confirmed") all stay in `run_with_executor_inner`.
+    async fn execute_op_run(&self, req: OpRunToolRequest) -> Result<CallToolResult, McpError> {
+      let has_custom_file = req.file.is_some();
+      let args = OpRunArgs {
+        operation: req.operation,
+        mode: req.mode,
+        file: req.file,
+        json: true,
+      };
+      let executor = Arc::clone(&self.op_executor);
+      // The executor is synchronous and a production run drives real UI automation for seconds;
+      // keep it off the async worker threads so other MCP requests (and cancellation) stay responsive.
+      let outcome = tokio::task::spawn_blocking(move || run_with_executor_inner(&args, executor.as_ref()))
+        .await
+        .map_err(|error| McpError::internal_error(format!("op_run worker failed: {error}"), None))?;
+
+      match outcome {
+        Ok((exit_code, output)) => {
+          let value = serde_json::to_value(&output).map_err(|error| McpError::internal_error(error.to_string(), None))?;
+          Ok(if exit_code == 0 {
+            CallToolResult::structured(value)
+          } else {
+            CallToolResult::structured_error(value)
+          })
+        }
+        // `Err` is raised only while building the catalog: reading/admitting the caller's `file`, or
+        // the compiled-in built-ins. Scheduler, mode and gate failures are `Ok` with a reason_code.
+        Err(message) if has_custom_file => Err(invalid_params(message)),
+        Err(message) => Err(McpError::internal_error(message, None)),
+      }
+    }
   }
 
   impl ServerHandler for McpServer {
@@ -520,7 +582,7 @@ mod frontend {
     fn get_info(&self) -> ServerInfo {
       ServerInfo {
         instructions: Some(
-          "MCP exposes explicit AUV invoke commands and typed Device unlock tools; no planner or NL parsing is present.".into(),
+          "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools; no planner or NL parsing is present.".into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
         ..Default::default()
@@ -623,6 +685,18 @@ mod frontend {
     dry_run: bool,
     #[serde(default)]
     store_root: Option<String>,
+  }
+
+  #[derive(Debug, Deserialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
+  struct OpRunToolRequest {
+    /// Operation name, e.g. qqmusic.prepare_playback or qqmusic.prepare_playback_fast.
+    operation: String,
+    /// Execution mode. Required: there is no default, and a request without it is rejected before
+    /// scheduling. Must match the mode the operation declares.
+    mode: ExecutionModeArg,
+    /// Optional path to a custom compiled operation JSON file, admitted alongside the built-ins.
+    file: Option<PathBuf>,
   }
 
   #[derive(Debug, Deserialize, JsonSchema)]

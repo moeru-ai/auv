@@ -1,6 +1,14 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use super::{McpInvokeInput, McpServer, core_invoke_adapters, mcp_command_inputs};
+use auv_auto_loop::runtime::FakeOperationExecutor;
+use rmcp::{
+  ClientHandler, ServiceExt,
+  model::{CallToolRequestParam, ClientInfo, ErrorCode},
+};
+
+use super::{McpInvokeInput, McpServer, OpRunToolRequest, core_invoke_adapters, mcp_command_inputs};
+use crate::commands::op::ExecutionModeArg;
 
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
@@ -188,4 +196,174 @@ fn keyboard_sequence_metadata_exposes_repeat_arguments_and_target_contract() {
   assert!(arguments.iter().any(|arg| arg["input_key"] == "interval-ms"));
   let sequence = super::invoke_command_metadata(registry.resolve("input.keyboard").unwrap());
   assert_eq!(sequence["target"], keys["target"]);
+}
+
+/// Server whose `op_run` executor is a counting fake, so no test drives real automation
+/// (on Windows the default executor would).
+fn op_run_server() -> (McpServer, Arc<FakeOperationExecutor>) {
+  let fake = Arc::new(FakeOperationExecutor::new());
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap().with_op_executor(fake.clone());
+  (server, fake)
+}
+
+fn op_run_request(operation: &str, mode: ExecutionModeArg) -> OpRunToolRequest {
+  OpRunToolRequest {
+    operation: operation.to_string(),
+    mode,
+    file: None,
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TestClient;
+
+impl ClientHandler for TestClient {
+  fn get_info(&self) -> ClientInfo {
+    ClientInfo::default()
+  }
+}
+
+#[test]
+fn op_run_tool_schema_requires_an_explicit_mode_without_default() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let tools = server.tool_router.list_all();
+  let op_run = tools.iter().find(|tool| tool.name == "op_run").expect("op_run tool must be registered");
+  let schema = serde_json::to_value(&op_run.input_schema).unwrap();
+
+  let required = schema["required"].as_array().expect("required list").iter().filter_map(|name| name.as_str()).collect::<Vec<_>>();
+  assert!(required.contains(&"operation"));
+  assert!(required.contains(&"mode"), "mode must be required in the schema: {schema}");
+  assert!(!required.contains(&"file"));
+  assert_eq!(schema["additionalProperties"], false);
+
+  // rmcp emits draft-07, so the enum lives behind a `$ref` into `definitions`.
+  let mode_reference = schema["properties"]["mode"]["$ref"].as_str().expect("mode must reference the ExecutionModeArg enum");
+  let mode = schema["definitions"][mode_reference.rsplit('/').next().unwrap()].clone();
+  assert_eq!(mode["enum"], serde_json::json!(["fast", "verified"]));
+  assert!(mode.get("default").is_none(), "mode must have no default: {mode}");
+  assert!(schema["properties"]["mode"].get("default").is_none());
+}
+
+#[tokio::test]
+async fn execute_op_run_fast_succeeds_without_confirmation() {
+  let (server, fake) = op_run_server();
+
+  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback_fast", ExecutionModeArg::Fast)).await.unwrap();
+
+  assert_eq!(result.is_error, Some(false));
+  let output = result.structured_content.expect("structured op_run output");
+  assert_eq!(output["status"], "success");
+  assert_eq!(output["execution_mode"], "fast");
+  assert_eq!(output["confirmed"], false, "Fast must never be confirmed:true");
+  assert_eq!(output["reason_code"], "EXACT_KEY_MATCH");
+  assert_eq!(fake.calls_count(), 1);
+}
+
+#[tokio::test]
+async fn execute_op_run_verified_is_confirmed_when_the_gate_passes() {
+  let (server, _fake) = op_run_server();
+
+  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Verified)).await.unwrap();
+
+  assert_eq!(result.is_error, Some(false));
+  let output = result.structured_content.expect("structured op_run output");
+  assert_eq!(output["status"], "success");
+  assert_eq!(output["execution_mode"], "verified");
+  assert_eq!(output["confirmed"], true);
+  assert_eq!(output["reason_code"], "GATE_PASSED");
+}
+
+#[tokio::test]
+async fn execute_op_run_verified_gate_failure_is_an_unconfirmed_tool_error() {
+  let (server, fake) = op_run_server();
+  fake.set_verified_should_pass(false);
+
+  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Verified)).await.unwrap();
+
+  assert_eq!(result.is_error, Some(true));
+  let output = result.structured_content.expect("structured op_run output");
+  assert_eq!(output["status"], "failed");
+  assert_eq!(output["confirmed"], false, "a failed gate must never report confirmed:true");
+  assert_eq!(output["reason_code"], "GATE_FAILED");
+}
+
+#[tokio::test]
+async fn execute_op_run_mode_mismatch_is_rejected_with_zero_driver_calls() {
+  let (server, fake) = op_run_server();
+
+  // qqmusic.prepare_playback is Verified-only, so requesting Fast must be refused before the executor runs.
+  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Fast)).await.unwrap();
+
+  assert_eq!(result.is_error, Some(true));
+  let output = result.structured_content.expect("structured op_run output");
+  assert_eq!(output["status"], "failed");
+  assert_eq!(output["confirmed"], false);
+  assert_eq!(output["reason_code"], "MODE_MISMATCH_ESCALATE_VLM");
+  assert_eq!(fake.calls_count(), 0, "a mode mismatch must cause zero driver side effects");
+}
+
+#[tokio::test]
+async fn execute_op_run_unreadable_custom_file_is_invalid_params() {
+  let (server, fake) = op_run_server();
+  let request = OpRunToolRequest {
+    file: Some(std::path::PathBuf::from("does-not-exist.operation.json")),
+    ..op_run_request("qqmusic.prepare_playback_fast", ExecutionModeArg::Fast)
+  };
+
+  let error = server.execute_op_run(request).await.expect_err("an unreadable file must fail the call");
+
+  assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+  assert_eq!(fake.calls_count(), 0);
+}
+
+// Drives the request through the real MCP transport and tool router, so argument deserialization
+// is the code under test rather than a hand-built `OpRunToolRequest`.
+#[tokio::test]
+async fn op_run_over_mcp_rejects_a_missing_or_invalid_mode_before_scheduling() {
+  let (server, fake) = op_run_server();
+  let (server_transport, client_transport) = tokio::io::duplex(16_384);
+  let server_handle = tokio::spawn(async move {
+    let service = server.serve(server_transport).await?;
+    service.waiting().await?;
+    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+
+  let listed = client.list_all_tools().await.unwrap();
+  assert!(listed.iter().any(|tool| tool.name == "op_run"), "tools/list must include op_run");
+
+  let bad_arguments = [
+    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast" }),
+    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": null }),
+    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "turbo" }),
+    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "fast", "unexpected": true }),
+  ];
+  for arguments in bad_arguments {
+    let outcome = client
+      .call_tool(CallToolRequestParam {
+        name: "op_run".into(),
+        arguments: arguments.as_object().cloned(),
+      })
+      .await;
+    match outcome {
+      Err(rmcp::service::ServiceError::McpError(error)) => {
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS, "{arguments} must be rejected as invalid params")
+      }
+      other => panic!("{arguments} must fail closed with invalid_params, got {other:?}"),
+    }
+  }
+  assert_eq!(fake.calls_count(), 0, "rejected requests must never reach the executor");
+
+  let accepted = client
+    .call_tool(CallToolRequestParam {
+      name: "op_run".into(),
+      arguments: serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "fast" }).as_object().cloned(),
+    })
+    .await
+    .unwrap();
+  assert_eq!(accepted.structured_content.expect("structured output")["confirmed"], false);
+  assert_eq!(fake.calls_count(), 1);
+
+  client.cancel().await.unwrap();
+  server_handle.await.unwrap().unwrap();
 }
