@@ -46,6 +46,7 @@ import type { Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/
 import type { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
+import type { WithMillis } from './duration'
 
 import { create } from '@bufbuild/protobuf'
 
@@ -60,6 +61,7 @@ import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
+import { durationsFromMillis } from './duration'
 import { center } from './geometry'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 
@@ -372,7 +374,11 @@ export type WindowTarget = string | Window | WindowClient | WindowRef
 
 type CoordinateSpaceInit = NonNullable<Init<typeof PositionSchema>['coordinateSpace']>
 
-type Init<T extends DescMessage> = MessageInitShape<T>
+/** A duplex call whose `send` takes millisecond Durations like the other Runner calls. */
+type DuplexCall<I extends DescMessage, O extends DescMessage> = Omit<TypedDuplexCall<I, O>, 'send'> & { send: (input: Init<I>) => Promise<void> }
+// Every Duration a caller passes may be milliseconds; the call wrappers convert them.
+type Init<T extends DescMessage> = WithMillis<MessageInitShape<T>>
+
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
 
 type Shape<T extends DescMessage> = MessageShape<T>
@@ -384,41 +390,44 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
   })
   const unary = <I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
-    request: MessageInitShape<I>,
+    request: Init<I>,
     options?: OperationOptions,
   ) => invokeUnary(connection, {
     ...route,
     input: method.input,
     method: method.name,
     output: method.output,
-    request,
+    request: durationsFromMillis(method.input, request),
     service: method.parent.typeName,
     ...callOptions(options),
   })
   const serverStream = <I extends DescMessage, O extends DescMessage>(
     method: DescMethodServerStreaming<I, O>,
-    request: MessageInitShape<I>,
+    request: Init<I>,
     options?: OperationOptions,
   ) => invokeServerStream(connection, {
     ...route,
     input: method.input,
     method: method.name,
     output: method.output,
-    request,
+    request: durationsFromMillis(method.input, request),
     service: method.parent.typeName,
     ...callOptions(options),
   })
-  const duplex = <I extends DescMessage, O extends DescMessage>(
+  const duplex = async <I extends DescMessage, O extends DescMessage>(
     method: DescMethodBiDiStreaming<I, O>,
     options?: OperationOptions,
-  ) => invokeDuplex(connection, {
-    ...route,
-    input: method.input,
-    method: method.name,
-    output: method.output,
-    service: method.parent.typeName,
-    ...callOptions(options),
-  })
+  ): Promise<DuplexCall<I, O>> => {
+    const call = await invokeDuplex(connection, {
+      ...route,
+      input: method.input,
+      method: method.name,
+      output: method.output,
+      service: method.parent.typeName,
+      ...callOptions(options),
+    })
+    return { ...call, send: input => call.send(durationsFromMillis(method.input, input)) }
+  }
   const openScrollStream = async (windowId: string, begin: ScrollStreamBegin, options?: OperationOptions): Promise<ScrollStreamController> => {
     const call = await duplex(InputService.method.streamScroll, options)
     await call.send({ event: { case: 'begin', value: { ...begin, point: positionOf(begin.point, { case: 'windowId', value: windowId }), window: { windowId } } } })
@@ -687,6 +696,8 @@ async function delay(ms: number, signal?: AbortSignal): Promise<void> {
 function durationMilliseconds(duration: ScrollStreamBegin['lease']): number {
   if (!duration)
     return 0
+  if (typeof duration === 'number')
+    return duration
   return Number(duration.seconds ?? 0n) * 1000 + (duration.nanos ?? 0) / 1_000_000
 }
 

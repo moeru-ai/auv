@@ -259,6 +259,10 @@ const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
 ```
 
+Every `google.protobuf.Duration` a Runner call takes can be a number of
+milliseconds instead, at any depth: `{ click: { count: 2, interval: 80 } }`,
+`{ settle: 400 }` or `lease: 250`. A `{ seconds, nanos }` Duration still works.
+
 `windows.resolve` and `windows.list` return `WindowClient`s that carry their
 `Window` metadata (`window.window.title`, `frame`, …). A listed window acts
 directly, without resolving it again:
