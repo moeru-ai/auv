@@ -383,7 +383,9 @@ requires a dedicated OS-authenticated IPC endpoint and is not available to
 paired remote callers. The CLI groups session access under `auv devices
 access`: `enrollments add|get|list|remove`, `policy status|enable|disable`,
 and `audit list` run only on the target Device and reject Device or Run
-selection; `sessions list|lock|unlock` act on the selected Device. A session's lock state may be locked, usable, or unknown;
+selection; `sessions list|lock|unlock` act on the selected Device. Audit pages
+use an opaque `page_token`; callers must not build or parse it. A session's
+lock state may be locked, usable, or unknown;
 `is_locked` and `is_unlocked` are true only for the corresponding known state.
 The typed Device API returns an explicit unsupported-host result where no
 validated native host is configured. Installed locked-session gates passed on
@@ -540,7 +542,11 @@ independent decisions:
   overrides the default `<store-root>/pairings.json` location.
 - **Registration.** A registered daemon is the caller's default local daemon:
   its owner socket sits next to the discovery descriptor and it publishes that
-  descriptor. `auv serve --no-register` binds a private owner socket and
+  descriptor, including its canonical store root. Target-local commands
+  (`auv devices access enrollments|policy|audit`) use that store when no
+  `--store-root` is given; descriptors from older daemons omit it, and those
+  commands then fall back to `.auv/store` under the current directory.
+  `auv serve --no-register` binds a private owner socket and
   publishes nothing, so temporary or test daemons never replace the default
   one. Discovery is this local descriptor, not network service discovery.
 

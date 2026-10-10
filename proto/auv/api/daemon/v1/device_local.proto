@@ -112,16 +112,22 @@ message SetPolicyResponse {
 }
 
 message ListAuditRequest {
-  // Byte offset returned by the preceding page; zero starts at the beginning.
-  uint64 cursor = 1;
-  // Required number of visible records, from 1 through 100.
+  reserved 1;
+  reserved "cursor";
+  // Number of visible records, from 1 through 100; zero selects 50.
   uint32 limit = 2;
+  // Opaque token from the preceding page's `next_page_token`. Empty starts at
+  // the oldest record. Callers must not build or parse tokens.
+  string page_token = 3;
 }
 
 message ListAuditResponse {
   repeated AuditEntry entries = 1;
-  // Absent at end of the current audit file.
-  optional uint64 next_cursor = 2;
+  reserved 2;
+  reserved "next_cursor";
+  // Opaque token for the following page. Empty when no later record exists
+  // yet; a later request with the last token may return new records.
+  string next_page_token = 3;
 }
 
 // A fixed, non-secret allowlist. Native errors and credential material never

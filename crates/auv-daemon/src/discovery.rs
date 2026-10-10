@@ -13,7 +13,7 @@ pub struct PublishedDescriptor {
 }
 
 impl PublishedDescriptor {
-  pub fn publish(path: PathBuf, endpoint: String) -> Result<Self, String> {
+  pub fn publish(path: PathBuf, endpoint: String, store_root: &Path) -> Result<Self, String> {
     let parent = path.parent().ok_or_else(|| format!("daemon descriptor path has no parent: {}", path.display()))?;
     let parent_existed = parent.exists();
     fs::create_dir_all(parent).map_err(|error| format!("failed to create daemon state directory {}: {error}", parent.display()))?;
@@ -33,7 +33,11 @@ impl PublishedDescriptor {
     lock.try_lock_exclusive().map_err(|error| format!("another AUV API server owns {}: {error}", lock_path.display()))?;
 
     let instance_id = uuid::Uuid::now_v7().to_string();
-    let descriptor = auv::discovery::Descriptor::for_current_process(endpoint, instance_id.clone());
+    // Readers resolve target-local sockets from this path, so publish the same
+    // canonical form the local service derives its socket name from.
+    let store_root =
+      fs::canonicalize(store_root).map_err(|error| format!("failed to resolve store root {}: {error}", store_root.display()))?;
+    let descriptor = auv::discovery::Descriptor::for_current_process(endpoint, instance_id.clone(), store_root);
     let temporary = path.with_extension(format!("tmp-{instance_id}"));
     let mut file = OpenOptions::new()
       .write(true)

@@ -233,11 +233,9 @@ pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection, p
         SessionsCommand::Lock(args) => change_lock_state(args, selection, true).await,
         SessionsCommand::Unlock(args) => change_lock_state(args, selection, false).await,
       },
-      AccessCommand::Enrollments(args) => {
-        local(selection, args.store.store_root, LocalRequest::Enrollments(args.command), project_root).await
-      }
-      AccessCommand::Policy(args) => local(selection, args.store.store_root, LocalRequest::Policy(args.command), project_root).await,
-      AccessCommand::Audit(args) => local(selection, args.store.store_root, LocalRequest::Audit(args.command), project_root).await,
+      AccessCommand::Enrollments(args) => local(selection, args.store, LocalRequest::Enrollments(args.command), project_root).await,
+      AccessCommand::Policy(args) => local(selection, args.store, LocalRequest::Policy(args.command), project_root).await,
+      AccessCommand::Audit(args) => local(selection, args.store, LocalRequest::Audit(args.command), project_root).await,
     },
     DevicesCommand::Pair(args) => pairing(args, selection).await,
     DevicesCommand::Unpair(args) => trust(args, selection, TrustAction::Unpair).await,
@@ -252,14 +250,14 @@ pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection, p
 /// network, so these commands do not follow Device or Run selection.
 async fn local(
   selection: &auv::selection::RootSelection,
-  store_root: Option<std::path::PathBuf>,
+  options: crate::commands::device_local::LocalStore,
   request: crate::commands::device_local::LocalRequest,
   project_root: &std::path::Path,
 ) -> Result<i32, String> {
   if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
     return Err("this command runs only on this Device; it cannot use --device, --device-id, or --run".to_string());
   }
-  crate::commands::device_local::run(store_root.as_deref(), request, project_root).await
+  crate::commands::device_local::run(options, request, project_root).await
 }
 
 async fn list(args: DeviceListArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
@@ -648,7 +646,7 @@ fn platform_name(value: auv::devices::DevicePlatform, wire: bool) -> String {
   }
 }
 
-fn print_table<R: table::TableRow>(rows: &[R], empty_message: &'static str) {
+pub(crate) fn print_table<R: table::TableRow>(rows: &[R], empty_message: &'static str) {
   println!("{}", table::render(rows, TableOptions::default().empty_message(empty_message)));
 }
 

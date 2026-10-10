@@ -366,16 +366,24 @@ mod tests {
     assert!(matches!(policy.command, crate::commands::device_local::PolicyCommand::Disable));
     assert_eq!(policy.store.store_root.as_deref(), Some(std::path::Path::new("state")));
 
-    let AccessCommand::Audit(audit) = access_command(&["auv", "devices", "access", "audit", "list", "--limit", "20"]) else {
+    let AccessCommand::Audit(audit) = access_command(&[
+      "auv",
+      "devices",
+      "access",
+      "audit",
+      "list",
+      "--limit",
+      "20",
+      "--page-token",
+      "v1.42",
+      "--json",
+    ]) else {
       panic!("access audit")
     };
-    assert!(matches!(
-      audit.command,
-      crate::commands::device_local::AuditCommand::List {
-        cursor: 0,
-        limit: 20
-      }
-    ));
+    assert!(audit.store.json);
+    let crate::commands::device_local::AuditCommand::List { page_token, limit } = audit.command;
+    assert_eq!((page_token.as_deref(), limit), (Some("v1.42"), 20));
+    assert!(RootArgs::try_parse_from(["auv", "devices", "access", "audit", "list", "--cursor", "0"]).is_err());
     assert!(
       RootArgs::try_parse_from([
         "auv", "devices", "access", "audit", "list", "--limit", "101"

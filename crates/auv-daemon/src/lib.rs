@@ -109,6 +109,7 @@ pub struct Server {
   device_local: std::sync::Arc<devices::LocalState>,
   discovery_file: Option<PathBuf>,
   register: bool,
+  store_root: PathBuf,
 }
 
 impl Server {
@@ -121,6 +122,7 @@ impl Server {
     let mut listeners = config.listeners.into_iter().chain(owner);
     let listen = listeners.next().ok_or_else(|| "daemon requires at least one listener".to_string())?;
     let store_root = config.store_root;
+    let published_store_root = store_root.clone();
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let device_local = std::sync::Arc::new(devices::LocalState::open(&store_root, pairing.clone())?);
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -153,6 +155,7 @@ impl Server {
       device_local,
       discovery_file: config.discovery_file,
       register: config.register,
+      store_root: published_store_root,
     })
   }
 
@@ -173,7 +176,11 @@ impl Server {
   pub async fn serve(self, shutdown: tokio_util::sync::CancellationToken) -> Result<(), String> {
     let _descriptor = if self.register {
       let path = self.discovery_file.map_or_else(discovery::default_path, Ok).map_err(|error| error.to_string())?;
-      self.inner.discovery_endpoint().map(|endpoint| discovery::PublishedDescriptor::publish(path, endpoint.to_string())).transpose()?
+      self
+        .inner
+        .discovery_endpoint()
+        .map(|endpoint| discovery::PublishedDescriptor::publish(path, endpoint.to_string(), &self.store_root))
+        .transpose()?
     } else {
       None
     };

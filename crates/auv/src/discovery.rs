@@ -11,13 +11,20 @@ use auv_api_client::{ConnectEndpoint, EndpointParseError};
 pub struct Descriptor {
   endpoint: String,
   instance_id: String,
+  /// Absolute store root of the publishing daemon. Target-local commands use
+  /// it to find that daemon's local service without a `--store-root` flag.
+  /// NOTICE(discovery-store-root): descriptors written before 2026-10-11 omit
+  /// it; readers then fall back to their default store.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  store_root: Option<PathBuf>,
 }
 
 impl Descriptor {
-  pub fn for_current_process(endpoint: String, instance_id: String) -> Self {
+  pub fn for_current_process(endpoint: String, instance_id: String, store_root: PathBuf) -> Self {
     Self {
       endpoint,
       instance_id,
+      store_root: Some(store_root),
     }
   }
 
@@ -27,6 +34,10 @@ impl Descriptor {
 
   pub fn instance_id(&self) -> &str {
     &self.instance_id
+  }
+
+  pub fn store_root(&self) -> Option<&Path> {
+    self.store_root.as_deref()
   }
 }
 
@@ -81,6 +92,12 @@ pub fn read_descriptor(path: &Path) -> Result<Option<Descriptor>, DiscoveryError
     source,
   })?;
   Ok(Some(descriptor))
+}
+
+/// Store root published by the current user's discovered daemon, if one is
+/// registered and its descriptor records it.
+pub fn discovered_store_root() -> Result<Option<PathBuf>, DiscoveryError> {
+  Ok(read_descriptor(&default_path()?)?.and_then(|descriptor| descriptor.store_root))
 }
 
 /// Selects an API endpoint using explicit argument, `AUV_ENDPOINT`, then the

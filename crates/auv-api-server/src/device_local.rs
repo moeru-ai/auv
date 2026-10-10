@@ -48,6 +48,25 @@ pub struct AuditEntry {
   pub at_unix_millis: u128,
 }
 
+/// Audit records per page when a caller leaves `limit` unset.
+const DEFAULT_AUDIT_PAGE: u32 = 50;
+
+/// The wire hides the audit store's byte offset behind a versioned token, so
+/// the store can change its layout without changing the protocol.
+fn encode_audit_page_token(offset: u64) -> String {
+  format!("v1.{offset}")
+}
+
+fn decode_audit_page_token(token: &str) -> Result<u64, Status> {
+  if token.is_empty() {
+    return Ok(0);
+  }
+  token
+    .strip_prefix("v1.")
+    .and_then(|offset| offset.parse::<u64>().ok())
+    .ok_or_else(|| Status::invalid_argument("page_token is not a token from this service"))
+}
+
 /// Bounded audit page. The cursor is an opaque byte offset returned to the
 /// same local reader; callers must not infer account visibility from it.
 pub struct AuditPage {
@@ -172,11 +191,14 @@ impl DeviceLocalService for DeviceLocalGrpc {
     let principal = peer_principal(&request)?;
     let input = request.get_ref();
 
-    if !(1..=100).contains(&input.limit) {
-      return Err(Status::invalid_argument("limit must be 1..=100"));
-    }
+    let limit = match input.limit {
+      0 => DEFAULT_AUDIT_PAGE,
+      limit @ 1..=100 => limit,
+      _ => return Err(Status::invalid_argument("limit must be 0..=100")),
+    };
+    let cursor = decode_audit_page_token(&input.page_token)?;
 
-    let page = self.control.list_audit(&principal, input.cursor, input.limit as usize).await.map_err(status)?;
+    let page = self.control.list_audit(&principal, cursor, limit as usize).await.map_err(status)?;
     let entries = page
       .entries
       .into_iter()
@@ -195,7 +217,7 @@ impl DeviceLocalService for DeviceLocalGrpc {
       .collect::<Result<Vec<_>, Status>>()?;
     Ok(Response::new(proto::ListAuditResponse {
       entries,
-      next_cursor: page.next_cursor,
+      next_page_token: page.next_cursor.map(encode_audit_page_token).unwrap_or_default(),
     }))
   }
 }
@@ -377,6 +399,15 @@ impl Drop for SocketCleanup {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn audit_page_tokens_round_trip_and_reject_raw_offsets() {
+    assert_eq!(decode_audit_page_token("").unwrap(), 0);
+    assert_eq!(decode_audit_page_token(&encode_audit_page_token(4096)).unwrap(), 4096);
+    for forged in ["4096", "v2.4096", "v1.", "v1.-1", "v1.x"] {
+      assert_eq!(decode_audit_page_token(forged).unwrap_err().code(), tonic::Code::InvalidArgument, "{forged}");
+    }
+  }
+
   use super::*;
 
   #[test]
@@ -458,6 +489,13 @@ mod tests {
         return Err(LocalControlError::PermissionDenied);
       };
 
+      // An unset wire limit must reach the control port as the default page.
+      if limit == 50 {
+        return Ok(AuditPage {
+          entries: Vec::new(),
+          next_cursor: None,
+        });
+      }
       assert_eq!(limit, 1);
 
       if cursor != 0 {
@@ -583,7 +621,7 @@ mod tests {
 
     let invalid_page = client
       .list_audit(proto::ListAuditRequest {
-        cursor: 0,
+        page_token: String::new(),
         limit: 101,
       })
       .await
@@ -591,9 +629,31 @@ mod tests {
 
     assert_eq!(invalid_page.code(), tonic::Code::InvalidArgument);
 
+    let default_page = client
+      .list_audit(proto::ListAuditRequest {
+        page_token: String::new(),
+        limit: 0,
+      })
+      .await
+      .unwrap()
+      .into_inner();
+
+    assert!(default_page.entries.is_empty());
+
+    // The token is opaque: a caller-built byte offset is not accepted.
+    let forged_token = client
+      .list_audit(proto::ListAuditRequest {
+        page_token: "42".into(),
+        limit: 1,
+      })
+      .await
+      .unwrap_err();
+
+    assert_eq!(forged_token.code(), tonic::Code::InvalidArgument);
+
     let first_page = client
       .list_audit(proto::ListAuditRequest {
-        cursor: 0,
+        page_token: String::new(),
         limit: 1,
       })
       .await
@@ -602,11 +662,11 @@ mod tests {
 
     assert_eq!(first_page.entries.len(), 1);
     assert_eq!(first_page.entries[0].os_account_id.as_deref(), Some(format!("uid:{}", current_euid()).as_str()));
-    assert_eq!(first_page.next_cursor, Some(42));
+    assert!(!first_page.next_page_token.is_empty());
 
     let last_page = client
       .list_audit(proto::ListAuditRequest {
-        cursor: 42,
+        page_token: first_page.next_page_token,
         limit: 1,
       })
       .await
@@ -614,7 +674,7 @@ mod tests {
       .into_inner();
 
     assert!(last_page.entries.is_empty());
-    assert_eq!(last_page.next_cursor, None);
+    assert!(last_page.next_page_token.is_empty());
 
     shutdown.cancel();
     server.await.unwrap().unwrap();

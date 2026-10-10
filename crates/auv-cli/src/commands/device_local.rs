@@ -2,15 +2,21 @@
 
 use std::path::{Path, PathBuf};
 
+use auv_cli_common::TableRow;
 use clap::{Args, Subcommand};
 
-/// The control store of the local `auv serve` that these commands administer.
+/// Options shared by every target-local command: which local `auv serve` to
+/// administer, and how to render the result.
 #[derive(Clone, Debug, Args)]
 pub struct LocalStore {
   /// Store root that the local `auv serve` uses (its `--store-root`). Defaults
-  /// to `.auv/store` under the current directory.
+  /// to the store of the discovered local daemon, then `.auv/store` under the
+  /// current directory.
   #[arg(long, value_name = "PATH", global = true)]
   pub store_root: Option<PathBuf>,
+  /// Render machine-readable JSON.
+  #[arg(long, global = true)]
+  pub json: bool,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -88,59 +94,85 @@ pub enum PolicyCommand {
 pub enum AuditCommand {
   /// List audit records, oldest first.
   List {
-    #[arg(long, default_value_t = 0)]
-    cursor: u64,
+    /// Continue from the token that the previous page printed.
+    #[arg(long, value_name = "TOKEN")]
+    page_token: Option<String>,
+    /// Records per page.
     #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=100))]
     limit: u32,
   },
 }
 
-/// Match the same store-root and relative-path rules as `auv serve`.
-#[cfg(any(unix, windows))]
-fn store_root_path(project_root: &Path, store_root: Option<&Path>) -> PathBuf {
-  match store_root {
-    Some(path) if path.is_absolute() => path.to_path_buf(),
-    Some(path) => project_root.join(path),
-    None => project_root.join(".auv").join("store"),
+/// Where the administered store came from, so a missing service can say so.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoreSource {
+  Flag,
+  Discovered,
+  Default,
+}
+
+/// Picks the store whose local service to contact: `--store-root`, then the
+/// store that the discovered local daemon published, then `auv serve`'s own
+/// default. Relative flags follow `auv serve`'s rule and resolve against the
+/// current directory.
+fn local_store(
+  project_root: &Path,
+  flag: Option<&Path>,
+  discovered: impl FnOnce() -> Result<Option<PathBuf>, String>,
+) -> Result<(PathBuf, StoreSource), String> {
+  if let Some(path) = flag {
+    let path = if path.is_absolute() {
+      path.to_path_buf()
+    } else {
+      project_root.join(path)
+    };
+    return Ok((path, StoreSource::Flag));
   }
+  if let Some(path) = discovered()? {
+    return Ok((path, StoreSource::Discovered));
+  }
+  Ok((project_root.join(".auv").join("store"), StoreSource::Default))
 }
 
 #[cfg(unix)]
-fn socket_path(project_root: &Path, store_root: Option<&Path>) -> Result<PathBuf, String> {
-  let store_root = store_root_path(project_root, store_root);
-  auv_api_client::device_local::unix_socket_path(&store_root).map_err(|error| format!("{}: {error}", no_local_daemon(&store_root)))
+fn socket_path(store_root: &Path, source: StoreSource) -> Result<PathBuf, String> {
+  auv_api_client::device_local::unix_socket_path(store_root).map_err(|error| format!("{} ({error})", no_local_daemon(store_root, source)))
 }
 
-/// The local service exists only while `auv serve` runs on the same store, so
-/// a missing service usually means a different `--store-root`.
-#[cfg(any(unix, windows))]
-fn no_local_daemon(store_root: &Path) -> String {
-  format!(
-    "no local `auv serve` owned by this user is running on store {}; start it, or pass --store-root with the store that `auv serve` uses",
-    store_root.display()
-  )
+/// The local service exists only while `auv serve` runs on the same store.
+fn no_local_daemon(store_root: &Path, source: StoreSource) -> String {
+  let store = store_root.display();
+  match source {
+    StoreSource::Flag => format!("no local `auv serve` owned by this user is running on store {store} (from --store-root)"),
+    StoreSource::Discovered => {
+      format!("the discovered local `auv serve` (store {store}) is not answering; check that it is still running")
+    }
+    StoreSource::Default => format!(
+      "no local `auv serve` is registered, and none runs on the default store {store}; start `auv serve`, or pass --store-root with the store it uses"
+    ),
+  }
 }
 
 #[cfg(any(unix, windows))]
-pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root: &Path) -> Result<i32, String> {
+pub async fn run(options: LocalStore, request: LocalRequest, project_root: &Path) -> Result<i32, String> {
   use auv_api_client::device_local::DeviceLocalClient;
   use auv_api_proto::auv::api::daemon::v1 as proto;
 
+  let (store_root, source) =
+    local_store(project_root, options.store_root.as_deref(), || auv::discovery::discovered_store_root().map_err(|error| error.to_string()))?;
+  let missing = |error: &dyn std::fmt::Display| format!("{} ({error})", no_local_daemon(&store_root, source));
   #[cfg(unix)]
   let mut client = {
-    let path = socket_path(project_root, store_root)?;
-    let missing = || no_local_daemon(&store_root_path(project_root, store_root));
+    let path = socket_path(&store_root, source)?;
     // TODO(device-local-cross-uid): A root CLI cannot administer a user-owned
     // daemon until an explicit target-UID path and server-identity gate exists.
-    auv_api_client::device_local::verify_unix_socket_directory(&path).map_err(|error| format!("{} ({error})", missing()))?;
-    DeviceLocalClient::connect_unix(&path).await.map_err(|error| format!("{} ({error})", missing()))?
+    auv_api_client::device_local::verify_unix_socket_directory(&path).map_err(|error| missing(&error))?;
+    DeviceLocalClient::connect_unix(&path).await.map_err(|error| missing(&error))?
   };
   #[cfg(windows)]
-  let mut client = {
-    let store_root = store_root_path(project_root, store_root);
-    DeviceLocalClient::connect_windows(&store_root).await.map_err(|error| format!("{} ({error})", no_local_daemon(&store_root)))?
-  };
+  let mut client = DeviceLocalClient::connect_windows(&store_root).await.map_err(|error| missing(&error))?;
   let service = client.service();
+  let json = options.json;
 
   match request {
     LocalRequest::Enrollments(EnrollmentsCommand::Add { user }) => {
@@ -158,7 +190,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         .map_err(|status| format!("enrollment failed ({})", status.code()))?
         .into_inner()
         .enrollment;
-      print_enrollment(enrollment)?;
+      print_enrollments(&[required_enrollment(enrollment)?], json, false)?;
     }
     LocalRequest::Enrollments(EnrollmentsCommand::Get { user }) => {
       let enrollment = service
@@ -167,7 +199,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         .map_err(|status| format!("get enrollment failed ({})", status.code()))?
         .into_inner()
         .enrollment;
-      print_enrollment(enrollment)?;
+      print_enrollments(&[required_enrollment(enrollment)?], json, false)?;
     }
     LocalRequest::Enrollments(EnrollmentsCommand::List) => {
       let entries = service
@@ -177,16 +209,18 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         .into_inner()
         .enrollments;
 
-      for enrollment in entries {
-        print_enrollment(Some(enrollment))?;
-      }
+      print_enrollments(&entries, json, true)?;
     }
     LocalRequest::Enrollments(EnrollmentsCommand::Remove { user }) => {
       service
-        .remove_enrollment(proto::RemoveEnrollmentRequest { user })
+        .remove_enrollment(proto::RemoveEnrollmentRequest { user: user.clone() })
         .await
         .map_err(|status| format!("remove enrollment failed ({})", status.code()))?;
-      println!("enrollment removed");
+      if json {
+        print_json(&serde_json::json!({ "removed": user }))?;
+      } else {
+        println!("enrollment removed: {user}");
+      }
     }
     LocalRequest::Policy(command) => {
       let enabled = match command {
@@ -209,32 +243,24 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
             .enabled
         }
       };
-      let state = if enabled { "enabled" } else { "disabled" };
-      println!("session access from paired Devices: {state}");
+      if json {
+        print_json(&serde_json::json!({ "enabled": enabled }))?;
+      } else {
+        let state = if enabled { "enabled" } else { "disabled" };
+        println!("session access from paired Devices: {state}");
+      }
     }
 
-    LocalRequest::Audit(AuditCommand::List { cursor, limit }) => {
+    LocalRequest::Audit(AuditCommand::List { page_token, limit }) => {
       let page = service
-        .list_audit(proto::ListAuditRequest { cursor, limit })
+        .list_audit(proto::ListAuditRequest {
+          page_token: page_token.unwrap_or_default(),
+          limit,
+        })
         .await
         .map_err(|status| format!("list audit failed ({})", status.code()))?
         .into_inner();
-
-      for entry in page.entries {
-        println!(
-          "{}\t{}\t{}\t{}\t{}\t{}",
-          entry.at_unix_millis,
-          entry.event,
-          entry.attempt_id,
-          entry.user.unwrap_or_default(),
-          entry.session_selector.unwrap_or_default(),
-          entry.result.unwrap_or_default()
-        );
-      }
-
-      if let Some(next) = page.next_cursor {
-        println!("next cursor: {next}");
-      }
+      print_audit(page, json)?;
     }
   }
 
@@ -247,17 +273,129 @@ pub async fn run(_store_root: Option<&Path>, _request: LocalRequest, _project_ro
 }
 
 #[cfg(any(unix, windows))]
-fn print_enrollment(enrollment: Option<auv_api_proto::auv::api::daemon::v1::Enrollment>) -> Result<(), String> {
+fn required_enrollment(
+  enrollment: Option<auv_api_proto::auv::api::daemon::v1::Enrollment>,
+) -> Result<auv_api_proto::auv::api::daemon::v1::Enrollment, String> {
+  enrollment.ok_or_else(|| "the local service returned no enrollment".to_string())
+}
+
+#[cfg(any(unix, windows))]
+fn enrollment_state(enrollment: &auv_api_proto::auv::api::daemon::v1::Enrollment) -> &'static str {
   use auv_api_proto::auv::api::daemon::v1::EnrollmentState;
 
-  let enrollment = enrollment.ok_or_else(|| "the local service returned no enrollment".to_string())?;
-  let state = match EnrollmentState::try_from(enrollment.state) {
+  match EnrollmentState::try_from(enrollment.state) {
     Ok(EnrollmentState::Ready) => "ready",
     Ok(EnrollmentState::Suspended) => "suspended",
     Ok(EnrollmentState::Pending) => "pending",
     _ => "unknown",
-  };
-  println!("{}\t{}\t{}", enrollment.user, enrollment.os_account_id, state);
+  }
+}
+
+#[derive(TableRow)]
+struct EnrollmentTableRow {
+  user: String,
+  #[table(header = "OS ACCOUNT")]
+  os_account_id: String,
+  state: &'static str,
+}
+
+/// Renders enrollments as a table or JSON. A list renders a JSON array even
+/// when it has one entry; a single lookup renders one object.
+#[cfg(any(unix, windows))]
+fn print_enrollments(enrollments: &[auv_api_proto::auv::api::daemon::v1::Enrollment], json: bool, list: bool) -> Result<(), String> {
+  if json {
+    let values = enrollments
+      .iter()
+      .map(|enrollment| {
+        serde_json::json!({
+          "user": enrollment.user,
+          "os_account_id": enrollment.os_account_id,
+          "state": enrollment_state(enrollment),
+        })
+      })
+      .collect::<Vec<_>>();
+    return match (list, values.as_slice()) {
+      (false, [value]) => print_json(value),
+      _ => print_json(&values),
+    };
+  }
+  let rows = enrollments
+    .iter()
+    .map(|enrollment| EnrollmentTableRow {
+      user: enrollment.user.clone(),
+      os_account_id: enrollment.os_account_id.clone(),
+      state: enrollment_state(enrollment),
+    })
+    .collect::<Vec<_>>();
+  crate::commands::devices::print_table(&rows, "(no enrollments)");
+  Ok(())
+}
+
+#[derive(TableRow)]
+struct AuditTableRow {
+  time: String,
+  event: String,
+  user: Option<String>,
+  session: Option<String>,
+  result: Option<String>,
+  caller: String,
+  attempt: String,
+}
+
+/// Audit timestamps are UTC milliseconds; render them as RFC 3339.
+fn audit_time(at_unix_millis: u64) -> String {
+  i64::try_from(at_unix_millis)
+    .ok()
+    .and_then(chrono::DateTime::from_timestamp_millis)
+    .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .unwrap_or_else(|| at_unix_millis.to_string())
+}
+
+#[cfg(any(unix, windows))]
+fn print_audit(page: auv_api_proto::auv::api::daemon::v1::ListAuditResponse, json: bool) -> Result<(), String> {
+  if json {
+    let entries = page
+      .entries
+      .iter()
+      .map(|entry| {
+        serde_json::json!({
+          "time": audit_time(entry.at_unix_millis),
+          "at_unix_millis": entry.at_unix_millis,
+          "event": entry.event,
+          "attempt_id": entry.attempt_id,
+          "caller": entry.caller,
+          "os_account_id": entry.os_account_id,
+          "user": entry.user,
+          "session_selector": entry.session_selector,
+          "result": entry.result,
+        })
+      })
+      .collect::<Vec<_>>();
+    let next = (!page.next_page_token.is_empty()).then_some(page.next_page_token.as_str());
+    return print_json(&serde_json::json!({ "entries": entries, "next_page_token": next }));
+  }
+  let rows = page
+    .entries
+    .into_iter()
+    .map(|entry| AuditTableRow {
+      time: audit_time(entry.at_unix_millis),
+      event: entry.event,
+      user: entry.user,
+      session: entry.session_selector,
+      result: entry.result,
+      caller: entry.caller,
+      attempt: entry.attempt_id,
+    })
+    .collect::<Vec<_>>();
+  crate::commands::devices::print_table(&rows, "(no audit records)");
+  if !page.next_page_token.is_empty() {
+    println!("more records: auv devices access audit list --page-token {}", page.next_page_token);
+  }
+  Ok(())
+}
+
+fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
+  println!("{}", serde_json::to_string_pretty(value).map_err(|error| format!("failed to encode JSON output: {error}"))?);
   Ok(())
 }
 
@@ -444,7 +582,7 @@ mod tests {
     std::fs::create_dir(store.join("control")).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(store.join("control"), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let socket = socket_path(root.path(), Some(Path::new("state"))).unwrap();
+    let socket = socket_path(&store, StoreSource::Flag).unwrap();
 
     assert!(socket.starts_with(std::fs::canonicalize("/tmp").unwrap()));
     assert_eq!(socket.file_name().unwrap(), "socket");
@@ -463,9 +601,47 @@ mod tests {
     let root = tempfile::tempdir().unwrap();
     let store = root.path().join("state");
     std::fs::create_dir(&store).unwrap();
-    let expected = socket_path(root.path(), Some(Path::new("state"))).unwrap();
+    let expected = socket_path(&store, StoreSource::Flag).unwrap();
     symlink(root.path(), store.join("control")).unwrap();
 
-    assert_eq!(socket_path(root.path(), Some(Path::new("state"))).unwrap(), expected);
+    assert_eq!(socket_path(&store, StoreSource::Flag).unwrap(), expected);
+  }
+
+  #[test]
+  fn store_flag_wins_then_the_discovered_daemon_then_the_default() {
+    let project = Path::new("/work/project");
+    let discovered = || Ok(Some(PathBuf::from("/home/neko/.local/state/auv/daemon-store")));
+
+    assert_eq!(local_store(project, Some(Path::new("state")), discovered).unwrap(), (project.join("state"), StoreSource::Flag));
+    assert_eq!(local_store(project, Some(Path::new("/srv/store")), discovered).unwrap(), (PathBuf::from("/srv/store"), StoreSource::Flag));
+    assert_eq!(
+      local_store(project, None, discovered).unwrap(),
+      (PathBuf::from("/home/neko/.local/state/auv/daemon-store"), StoreSource::Discovered)
+    );
+    assert_eq!(local_store(project, None, || Ok(None)).unwrap(), (project.join(".auv").join("store"), StoreSource::Default));
+  }
+
+  #[test]
+  fn discovered_store_is_not_consulted_when_a_flag_is_given() {
+    // An unreadable discovery descriptor must not block an explicit store.
+    let (store, source) = local_store(Path::new("/work"), Some(Path::new("/srv/store")), || Err("broken descriptor".into())).unwrap();
+
+    assert_eq!((store.as_path(), source), (Path::new("/srv/store"), StoreSource::Flag));
+    assert!(local_store(Path::new("/work"), None, || Err("broken descriptor".into())).is_err());
+  }
+
+  #[test]
+  fn missing_service_message_names_where_the_store_came_from() {
+    let store = Path::new("/srv/store");
+
+    assert!(no_local_daemon(store, StoreSource::Flag).contains("(from --store-root)"));
+    assert!(no_local_daemon(store, StoreSource::Discovered).contains("discovered local `auv serve`"));
+    assert!(no_local_daemon(store, StoreSource::Default).contains("pass --store-root"));
+  }
+
+  #[test]
+  fn audit_time_renders_utc_milliseconds_as_rfc3339() {
+    assert_eq!(audit_time(1_760_140_800_123), "2025-10-11T00:00:00.123Z");
+    assert_eq!(audit_time(u64::MAX), u64::MAX.to_string());
   }
 }

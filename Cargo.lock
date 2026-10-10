@@ -522,6 +522,7 @@ dependencies = [
  "auv-tracing",
  "axum",
  "blake3",
+ "chrono",
  "clap",
  "futures-core",
  "image",

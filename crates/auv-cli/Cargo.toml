@@ -25,6 +25,7 @@ auv-auto-loop = { version = "0.0.32", path = "../auv-auto-loop" }
 auv-driver = { version = "0.0.32", path = "../auv-driver" }
 auv-driver-macos = { version = "0.0.32", path = "../auv-driver-macos" }
 auv-cli-common = { version = "0.0.32", path = "../auv-cli-common" }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 auv-cli-invoke = { version = "0.0.32", path = "../auv-cli-invoke" }
 auv-scan = { version = "0.0.32", path = "../auv-scan" }
 auv-media-macos = { version = "0.0.32", path = "../auv-media-macos" }
