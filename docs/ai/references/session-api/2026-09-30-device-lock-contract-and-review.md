@@ -71,8 +71,9 @@ same broad target authority as the earlier bearer.
 For a new controller, the normal flow is:
 
 1. The target owner installs and starts its daemon and, if needed, enrolls the
-   target OS account with `auv device-local enroll --user USER --kind
-   os-password` in a target-local terminal. The hidden credential prompt stays
+   target OS account with `auv devices credentials enroll --user USER --kind
+   os-password` in a target-local terminal (named `auv device-local enroll`
+   before 2026-10-10). The hidden credential prompt stays
    on the target. Windows PIN enrollment uses `--kind windows-pin`.
 2. For the first pairing, the target owner runs `auv devices pair create-token
    --ttl 300` against its local daemon. An already paired controller may issue

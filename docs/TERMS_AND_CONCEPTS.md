@@ -380,7 +380,9 @@ Target-local credential management belongs to `DeviceLocalService`: `Enroll`,
 `GetEnrollment`, `ListEnrollments`, and `RemoveEnrollment`; its local policy and
 audit methods are `GetPolicy`, `SetPolicy`, and `ListAudit`. The local service
 requires a dedicated OS-authenticated IPC endpoint and is not available to
-paired remote callers. A session's lock state may be locked, usable, or unknown;
+paired remote callers. The CLI exposes it as `auv devices credentials`,
+`auv devices unlock-policy`, and `auv devices audit`; these commands run only
+on the target Device and reject Device or Run selection. A session's lock state may be locked, usable, or unknown;
 `is_locked` and `is_unlocked` are true only for the corresponding known state.
 The typed Device API returns an explicit unsupported-host result where no
 validated native host is configured. Installed locked-session gates passed on

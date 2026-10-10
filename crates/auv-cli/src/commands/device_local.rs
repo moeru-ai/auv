@@ -4,17 +4,49 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
 
+/// The control store of the local `auv serve` that these commands administer.
 #[derive(Clone, Debug, Args)]
-pub struct DeviceLocalArgs {
-  /// Root directory used by `auv serve` for local control state.
-  #[arg(long, value_name = "PATH")]
+pub struct LocalStore {
+  /// Store root that the local `auv serve` uses (its `--store-root`). Defaults
+  /// to `.auv/store` under the current directory.
+  #[arg(long, value_name = "PATH", global = true)]
   pub store_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct CredentialsArgs {
+  #[command(flatten)]
+  pub store: LocalStore,
   #[command(subcommand)]
-  pub command: DeviceLocalCommand,
+  pub command: CredentialsCommand,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct UnlockPolicyArgs {
+  #[command(flatten)]
+  pub store: LocalStore,
+  #[command(subcommand)]
+  pub command: PolicyCommand,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct AuditArgs {
+  #[command(flatten)]
+  pub store: LocalStore,
+  #[command(subcommand)]
+  pub command: AuditCommand,
+}
+
+/// One target-local request, whichever `auv devices` subcommand parsed it.
+#[derive(Clone, Debug)]
+pub enum LocalRequest {
+  Credentials(CredentialsCommand),
+  Policy(PolicyCommand),
+  Audit(AuditCommand),
 }
 
 #[derive(Clone, Debug, Subcommand)]
-pub enum DeviceLocalCommand {
+pub enum CredentialsCommand {
   /// Store an OS login credential entered only on this Device's terminal.
   Enroll {
     #[arg(long)]
@@ -34,16 +66,6 @@ pub enum DeviceLocalCommand {
     #[arg(long)]
     user: String,
   },
-  /// Read or change the target-wide remote unlock switch.
-  Policy {
-    #[command(subcommand)]
-    command: PolicyCommand,
-  },
-  /// Read locally visible Device entry audit records.
-  Audit {
-    #[command(subcommand)]
-    command: AuditCommand,
-  },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -54,7 +76,9 @@ pub enum CredentialKind {
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum PolicyCommand {
+  /// Show whether paired Devices may unlock this Device.
   Get,
+  /// Allow or reject remote unlock and session listing from paired Devices.
   Set {
     #[arg(long, action = clap::ArgAction::Set, value_parser = clap::value_parser!(bool))]
     enabled: bool,
@@ -63,6 +87,7 @@ pub enum PolicyCommand {
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum AuditCommand {
+  /// List audit records, oldest first.
   List {
     #[arg(long, default_value_t = 0)]
     cursor: u64,
@@ -84,36 +109,42 @@ fn store_root_path(project_root: &Path, store_root: Option<&Path>) -> PathBuf {
 #[cfg(unix)]
 fn socket_path(project_root: &Path, store_root: Option<&Path>) -> Result<PathBuf, String> {
   let store_root = store_root_path(project_root, store_root);
-  auv_api_client::device_local::unix_socket_path(&store_root).map_err(|error| format!("failed to locate Device-local socket: {error}"))
+  auv_api_client::device_local::unix_socket_path(&store_root).map_err(|error| format!("{}: {error}", no_local_daemon(&store_root)))
+}
+
+/// The local service exists only while `auv serve` runs on the same store, so
+/// a missing service usually means a different `--store-root`.
+#[cfg(any(unix, windows))]
+fn no_local_daemon(store_root: &Path) -> String {
+  format!(
+    "no local `auv serve` owned by this user is running on store {}; start it, or pass --store-root with the store that `auv serve` uses",
+    store_root.display()
+  )
 }
 
 #[cfg(any(unix, windows))]
-pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, String> {
+pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root: &Path) -> Result<i32, String> {
   use auv_api_client::device_local::DeviceLocalClient;
   use auv_api_proto::auv::api::daemon::v1 as proto;
 
   #[cfg(unix)]
   let mut client = {
-    let path = socket_path(project_root, args.store_root.as_deref())?;
+    let path = socket_path(project_root, store_root)?;
+    let missing = || no_local_daemon(&store_root_path(project_root, store_root));
     // TODO(device-local-cross-uid): A root CLI cannot administer a user-owned
     // daemon until an explicit target-UID path and server-identity gate exists.
-    auv_api_client::device_local::verify_unix_socket_directory(&path)
-      .map_err(|error| format!("Device-local socket directory is unsafe: {error}"))?;
-    DeviceLocalClient::connect_unix(&path)
-      .await
-      .map_err(|error| format!("Device-local service unavailable at {}: {error}", path.display()))?
+    auv_api_client::device_local::verify_unix_socket_directory(&path).map_err(|error| format!("{} ({error})", missing()))?;
+    DeviceLocalClient::connect_unix(&path).await.map_err(|error| format!("{} ({error})", missing()))?
   };
   #[cfg(windows)]
   let mut client = {
-    let store_root = store_root_path(project_root, args.store_root.as_deref());
-    DeviceLocalClient::connect_windows(&store_root)
-      .await
-      .map_err(|error| format!("Device-local service unavailable or not owned by this user; start `auv serve` first: {error}"))?
+    let store_root = store_root_path(project_root, store_root);
+    DeviceLocalClient::connect_windows(&store_root).await.map_err(|error| format!("{} ({error})", no_local_daemon(&store_root)))?
   };
   let service = client.service();
 
-  match args.command {
-    DeviceLocalCommand::Enroll { user, kind } => {
+  match request {
+    LocalRequest::Credentials(CredentialsCommand::Enroll { user, kind }) => {
       #[cfg(windows)]
       if !matches!(kind, CredentialKind::WindowsPin) {
         // TODO(device-entry-windows-password): The installed worker currently
@@ -145,7 +176,7 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
         .enrollment;
       print_enrollment(enrollment)?;
     }
-    DeviceLocalCommand::Get { user } => {
+    LocalRequest::Credentials(CredentialsCommand::Get { user }) => {
       let enrollment = service
         .get_enrollment(proto::GetEnrollmentRequest { user })
         .await
@@ -154,7 +185,7 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
         .enrollment;
       print_enrollment(enrollment)?;
     }
-    DeviceLocalCommand::List => {
+    LocalRequest::Credentials(CredentialsCommand::List) => {
       let entries = service
         .list_enrollments(proto::ListEnrollmentsRequest {})
         .await
@@ -166,14 +197,14 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
         print_enrollment(Some(enrollment))?;
       }
     }
-    DeviceLocalCommand::Remove { user } => {
+    LocalRequest::Credentials(CredentialsCommand::Remove { user }) => {
       service
         .remove_enrollment(proto::RemoveEnrollmentRequest { user })
         .await
         .map_err(|status| format!("remove enrollment failed ({})", status.code()))?;
       println!("enrollment removed");
     }
-    DeviceLocalCommand::Policy { command } => {
+    LocalRequest::Policy(command) => {
       let enabled = match command {
         PolicyCommand::Get => {
           service
@@ -195,9 +226,7 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
       println!("remote unlock enabled: {enabled}");
     }
 
-    DeviceLocalCommand::Audit {
-      command: AuditCommand::List { cursor, limit },
-    } => {
+    LocalRequest::Audit(AuditCommand::List { cursor, limit }) => {
       let page = service
         .list_audit(proto::ListAuditRequest { cursor, limit })
         .await
@@ -226,15 +255,15 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
 }
 
 #[cfg(not(any(unix, windows)))]
-pub async fn run(_args: DeviceLocalArgs, _project_root: &Path) -> Result<i32, String> {
-  Err("Device-local control requires a supported OS-local transport".to_string())
+pub async fn run(_store_root: Option<&Path>, _request: LocalRequest, _project_root: &Path) -> Result<i32, String> {
+  Err("local Device administration requires a supported OS-local transport".to_string())
 }
 
 #[cfg(any(unix, windows))]
 fn print_enrollment(enrollment: Option<auv_api_proto::auv::api::daemon::v1::Enrollment>) -> Result<(), String> {
   use auv_api_proto::auv::api::daemon::v1::{EnrollmentState, EnrollmentStorageKind};
 
-  let enrollment = enrollment.ok_or_else(|| "Device-local service returned no enrollment".to_string())?;
+  let enrollment = enrollment.ok_or_else(|| "the local service returned no enrollment".to_string())?;
   let state = match EnrollmentState::try_from(enrollment.state) {
     Ok(EnrollmentState::Ready) => "ready",
     Ok(EnrollmentState::Suspended) => "suspended",
