@@ -1,11 +1,12 @@
 //! Native Win32 layered-window overlay renderer.
 //!
-//! Every [`present`] call redraws all requested layers into one ARGB32
-//! bitmap sized to the virtual screen and blits it onto a single topmost,
-//! click-through, alpha-blended window via `UpdateLayeredWindow`. Layers are
-//! one-shot visual evidence (see `Overlay::with_layer`'s deferral note in
-//! `auv-driver-overlay-common`), so there is no incremental per-layer update
-//! path to maintain; each call fully replaces the previous frame.
+//! Every [`present`] call redraws all requested layers into one premultiplied
+//! BGRA bitmap sized to the virtual screen (see `canvas.rs`, which draws with
+//! Direct2D) and blits it onto a single topmost, click-through, alpha-blended
+//! window via `UpdateLayeredWindow`. Layers are one-shot visual evidence (see
+//! `Overlay::with_layer`'s deferral note in `auv-driver-overlay-common`), so
+//! there is no incremental per-layer update path to maintain; each call fully
+//! replaces the previous frame.
 
 #[cfg(target_os = "windows")]
 pub(crate) use native::{hide_all, present};
@@ -20,31 +21,6 @@ pub(crate) fn hide_all() -> crate::AuvResult<()> {
   Err("windows overlay native window is unsupported on this target".to_string())
 }
 
-/// BGRA pixel value used to seed the offscreen canvas before drawing. Any
-/// pixel that still matches this exact color after all layers are drawn is
-/// treated as transparent; every other pixel becomes fully opaque.
-///
-/// NOTICE: raw GDI drawing ignores the destination alpha channel, so this
-/// sentinel-key technique is what turns solid-color GDI output into a
-/// layered, alpha-blended window without a GDI+/Direct2D dependency. The
-/// tradeoff is no antialiasing and a theoretical (practically negligible)
-/// collision if a drawn pixel exactly matches the sentinel value.
-const SENTINEL_BGRA: [u8; 4] = [3, 2, 1, 0];
-
-/// Converts a sentinel-keyed BGRA buffer in place into a premultiplied-alpha
-/// buffer suitable for `UpdateLayeredWindow`'s `ULW_ALPHA` mode: sentinel
-/// pixels become fully transparent black, all other pixels become fully
-/// opaque (premultiplication is a no-op at alpha 255).
-fn key_sentinel_to_alpha(pixels: &mut [u8]) {
-  for pixel in pixels.chunks_exact_mut(4) {
-    if pixel == SENTINEL_BGRA {
-      pixel.copy_from_slice(&[0, 0, 0, 0]);
-    } else {
-      pixel[3] = 255;
-    }
-  }
-}
-
 #[cfg(target_os = "windows")]
 mod native {
   use std::sync::{Mutex, OnceLock};
@@ -52,22 +28,28 @@ mod native {
   use auv_driver_common::geometry::Point;
   use auv_driver_overlay_common::Layer;
   use auv_driver_overlay_common::layers::{BuiltInCursor, Cursor, CursorImage, Outline, Status};
-  use auv_driver_overlay_common::style::{Color, Insets};
-  use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
-  use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection, CreatePen,
-    CreateSolidBrush, DIB_RGB_COLORS, DT_CALCRECT, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse,
-    GetStockObject, HBITMAP, HDC, HGDIOBJ, NULL_BRUSH, PS_SOLID, RoundRect, SYSTEM_FONT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
-  };
+  use auv_driver_overlay_common::style::{Color, CursorStyle, Insets};
+  use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
   use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WNDCLASSEXW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, ShowWindow, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
   };
 
-  use super::{SENTINEL_BGRA, key_sentinel_to_alpha};
   use crate::AuvResult;
+  use windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F;
+
+  use crate::canvas::{Canvas, LabelPill, point, px, rect};
+
+  /// Label sizes match the macOS renderer (`Overlay.swift`): 11 pt cursor and outline
+  /// labels, 12 pt status text, as device pixels at 96 DPI.
+  const LABEL_FONT_SIZE: f32 = 11.0;
+  const STATUS_FONT_SIZE: f32 = 12.0;
+
+  /// Radius of the disc the glow follows behind SVG art, as a fraction of the sprite
+  /// edge. Cursor art fills most of its box without reaching the corners.
+  const SVG_GLOW_SILHOUETTE: f32 = 0.35;
 
   const WINDOW_CLASS_NAME: &str = "AuvOverlayWindowWindows";
 
@@ -147,277 +129,125 @@ mod native {
     Ok(hwnd)
   }
 
-  fn colorref(color: Color) -> COLORREF {
-    let r = (color.red.clamp(0.0, 1.0) * 255.0).round() as u32;
-    let g = (color.green.clamp(0.0, 1.0) * 255.0).round() as u32;
-    let b = (color.blue.clamp(0.0, 1.0) * 255.0).round() as u32;
-    COLORREF(r | (g << 8) | (b << 16))
-  }
-
-  /// Offscreen ARGB32 canvas backing one `present()` frame. Drawing uses
-  /// plain GDI primitives against solid colors; [`Canvas::finish`] then
-  /// alpha-keys the buffer (see [`key_sentinel_to_alpha`]) before blitting it
-  /// onto the layered window.
-  struct Canvas {
-    dc: HDC,
-    bitmap: HBITMAP,
-    previous: HGDIOBJ,
-    bits: *mut u8,
-    width: i32,
-    height: i32,
-    origin: POINT,
-  }
-
-  impl Canvas {
-    fn new(rect: RECT) -> AuvResult<Self> {
-      let width = rect.right - rect.left;
-      let height = rect.bottom - rect.top;
-      let dc = unsafe { CreateCompatibleDC(None) };
-      if dc.is_invalid() {
-        return Err("failed to create overlay memory device context".to_string());
-      }
-
-      let mut bmi = BITMAPINFO::default();
-      bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-      bmi.bmiHeader.biWidth = width;
-      bmi.bmiHeader.biHeight = -height;
-      bmi.bmiHeader.biPlanes = 1;
-      bmi.bmiHeader.biBitCount = 32;
-      bmi.bmiHeader.biCompression = 0;
-
-      let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
-      let bitmap = unsafe { CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) }
-        .map_err(|error| format!("failed to create overlay bitmap: {error}"))?;
-      if bits.is_null() {
-        unsafe {
-          let _ = DeleteDC(dc);
-        }
-        return Err("overlay bitmap allocation returned a null pixel buffer".to_string());
-      }
-
-      let previous = unsafe { SelectObject(dc, bitmap) };
-      unsafe { SetBkMode(dc, TRANSPARENT) };
-
-      let pixel_count = (width as usize) * (height as usize);
-      let pixels = unsafe { std::slice::from_raw_parts_mut(bits.cast::<u8>(), pixel_count * 4) };
-      for pixel in pixels.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&SENTINEL_BGRA);
-      }
-
-      Ok(Self {
-        dc,
-        bitmap,
-        previous,
-        bits: bits.cast::<u8>(),
-        width,
-        height,
-        origin: POINT {
-          x: rect.left,
-          y: rect.top,
-        },
-      })
-    }
-
-    fn to_local(&self, point: Point) -> POINT {
-      POINT {
-        x: (point.x - f64::from(self.origin.x)).round() as i32,
-        y: (point.y - f64::from(self.origin.y)).round() as i32,
-      }
-    }
-
-    fn fill_circle(&self, center: POINT, radius: i32, color: COLORREF) {
-      let radius = radius.max(1);
-      let brush = unsafe { CreateSolidBrush(color) };
-      let pen = unsafe { CreatePen(PS_SOLID, 1, color) };
-      let previous_brush = unsafe { SelectObject(self.dc, brush) };
-      let previous_pen = unsafe { SelectObject(self.dc, pen) };
-      unsafe {
-        let _ = Ellipse(self.dc, center.x - radius, center.y - radius, center.x + radius, center.y + radius);
-        SelectObject(self.dc, previous_brush);
-        SelectObject(self.dc, previous_pen);
-        let _ = DeleteObject(brush);
-        let _ = DeleteObject(pen);
-      }
-    }
-
-    fn stroke_circle(&self, center: POINT, radius: i32, color: COLORREF, width: i32) {
-      let radius = radius.max(1);
-      let pen = unsafe { CreatePen(PS_SOLID, width.max(1), color) };
-      let previous_pen = unsafe { SelectObject(self.dc, pen) };
-      let null_brush = unsafe { GetStockObject(NULL_BRUSH) };
-      let previous_brush = unsafe { SelectObject(self.dc, null_brush) };
-      unsafe {
-        let _ = Ellipse(self.dc, center.x - radius, center.y - radius, center.x + radius, center.y + radius);
-        SelectObject(self.dc, previous_pen);
-        SelectObject(self.dc, previous_brush);
-        let _ = DeleteObject(pen);
-      }
-    }
-
-    fn stroke_rounded_rect(&self, rect: RECT, color: COLORREF, width: i32, corner_radius: i32) {
-      let pen = unsafe { CreatePen(PS_SOLID, width.max(1), color) };
-      let previous_pen = unsafe { SelectObject(self.dc, pen) };
-      let null_brush = unsafe { GetStockObject(NULL_BRUSH) };
-      let previous_brush = unsafe { SelectObject(self.dc, null_brush) };
-      unsafe {
-        let _ = RoundRect(self.dc, rect.left, rect.top, rect.right, rect.bottom, corner_radius.max(0) * 2, corner_radius.max(0) * 2);
-        SelectObject(self.dc, previous_pen);
-        SelectObject(self.dc, previous_brush);
-        let _ = DeleteObject(pen);
-      }
-    }
-
-    fn fill_rounded_rect(&self, rect: RECT, color: COLORREF, corner_radius: i32) {
-      let brush = unsafe { CreateSolidBrush(color) };
-      let pen = unsafe { CreatePen(PS_SOLID, 1, color) };
-      let previous_brush = unsafe { SelectObject(self.dc, brush) };
-      let previous_pen = unsafe { SelectObject(self.dc, pen) };
-      unsafe {
-        let _ = RoundRect(self.dc, rect.left, rect.top, rect.right, rect.bottom, corner_radius.max(0) * 2, corner_radius.max(0) * 2);
-        SelectObject(self.dc, previous_brush);
-        SelectObject(self.dc, previous_pen);
-        let _ = DeleteObject(brush);
-        let _ = DeleteObject(pen);
-      }
-    }
-
-    /// Draws a solid pill behind `text`, anchored with its vertical center at
-    /// `anchor` and growing to the right, sized from measured text extents
-    /// plus `padding`.
-    fn draw_label_pill(&self, anchor: POINT, text: &str, foreground: COLORREF, background: COLORREF, padding: Insets, corner_radius: f64) {
-      let wide: Vec<u16> = text.encode_utf16().collect();
-      let font = unsafe { GetStockObject(SYSTEM_FONT) };
-      let previous_font = unsafe { SelectObject(self.dc, font) };
-
-      let mut measured = RECT::default();
-      unsafe {
-        DrawTextW(self.dc, &mut wide.clone(), &mut measured, DT_CALCRECT | DT_SINGLELINE);
-      }
-
-      let pill_width = (measured.right - measured.left) + (padding.left + padding.right).round() as i32;
-      let pill_height = (measured.bottom - measured.top) + (padding.top + padding.bottom).round() as i32;
-      let pill = RECT {
-        left: anchor.x,
-        top: anchor.y - pill_height / 2,
-        right: anchor.x + pill_width,
-        bottom: anchor.y - pill_height / 2 + pill_height,
-      };
-
-      self.fill_rounded_rect(pill, background, corner_radius.round() as i32);
-
-      unsafe {
-        SetTextColor(self.dc, foreground);
-        let mut text_rect = pill;
-        let _ = DrawTextW(self.dc, &mut wide.clone(), &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(self.dc, previous_font);
-      }
-    }
-
-    fn finish(&self, hwnd: HWND) -> AuvResult<()> {
-      let pixel_count = (self.width as usize) * (self.height as usize);
-      let pixels = unsafe { std::slice::from_raw_parts_mut(self.bits, pixel_count * 4) };
-      key_sentinel_to_alpha(pixels);
-
-      let size = SIZE {
-        cx: self.width,
-        cy: self.height,
-      };
-      let src_point = POINT { x: 0, y: 0 };
-      let blend = BLENDFUNCTION {
-        BlendOp: AC_SRC_OVER as u8,
-        BlendFlags: 0,
-        SourceConstantAlpha: 255,
-        AlphaFormat: AC_SRC_ALPHA as u8,
-      };
-
-      unsafe {
-        UpdateLayeredWindow(hwnd, None, Some(&self.origin), Some(&size), self.dc, Some(&src_point), COLORREF(0), Some(&blend), ULW_ALPHA)
-      }
-      .map_err(|error| format!("failed to update overlay layered window: {error}"))?;
-
-      unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-      }
-      Ok(())
-    }
-  }
-
-  impl Drop for Canvas {
-    fn drop(&mut self) {
-      unsafe {
-        SelectObject(self.dc, self.previous);
-        let _ = DeleteObject(self.bitmap);
-        let _ = DeleteDC(self.dc);
-      }
-    }
-  }
-
+  /// Draws one cursor: its sprite (with an optional glow behind it) and its label pill.
   fn draw_cursor(canvas: &Canvas, cursor: &Cursor) -> AuvResult<()> {
-    if cursor.style().shadow.is_some() {
-      // TODO: Native silhouette blur is a macOS-only slice; add Windows rendering
-      // when an owner requests it, rather than silently dropping a supplied shadow.
-      return Err("windows overlay does not support native cursor shadows".to_string());
-    }
-    let CursorImage::BuiltIn { variant } = cursor.image() else {
-      // TODO(driver-overlay-windows-svg): SVG cursor rasterization is
-      // deferred; this crate has no vector-graphics dependency yet. Revisit
-      // if a consumer needs custom cursor art rather than the built-in set.
-      return Err("windows overlay does not support SVG cursor images in this slice".to_string());
-    };
-
     let style = cursor.style();
-    let center = canvas.to_local(cursor.point().point());
-    let radius = (style.sprite_size / 2.0).max(1.0).round() as i32;
-    let accent = colorref(style.label_background);
-
-    canvas.fill_circle(center, radius, accent);
-    if matches!(variant, BuiltInCursor::AuvClick) {
-      let ring_radius = (style.sprite_size * 0.8).round() as i32;
-      canvas.stroke_circle(center, ring_radius, accent, 2);
+    if let Some(shadow) = style.shadow {
+      shadow.validate()?;
     }
+    let target = canvas.to_local(cursor.point().point());
+    let (sprite_right, sprite_middle) = match cursor.image() {
+      CursorImage::BuiltIn { variant } => draw_disc_sprite(canvas, target, *variant, &style)?,
+      CursorImage::Svg { source } => draw_svg_sprite(canvas, target, source, &style)?,
+    };
 
     if cursor.label_visible()
       && let Some(label) = cursor.label()
     {
-      let anchor = POINT {
-        x: center.x + radius + style.label_gap.round() as i32,
-        y: center.y,
-      };
+      let anchor = point(sprite_right + px(style.label_gap).round(), sprite_middle);
       canvas.draw_label_pill(
         anchor,
-        label,
-        colorref(style.label_foreground),
-        colorref(style.label_background),
-        style.label_padding,
-        style.label_corner_radius,
-      );
+        &LabelPill {
+          text: label,
+          foreground: style.label_foreground,
+          background: style.label_background,
+          padding: style.label_padding,
+          corner_radius: style.label_corner_radius,
+          font_size: LABEL_FONT_SIZE,
+        },
+      )?;
     }
 
     Ok(())
   }
 
+  /// Draws the Windows built-in sprite, a disc centered on the target point, and returns
+  /// the sprite's right edge and vertical middle for label placement.
+  fn draw_disc_sprite(canvas: &Canvas, center: D2D_POINT_2F, variant: BuiltInCursor, style: &CursorStyle) -> AuvResult<(f32, f32)> {
+    let radius = px(style.sprite_size / 2.0).max(1.0).round();
+    let accent = style.label_background;
+
+    // TODO(driver-overlay-windows-builtin-art): built-in cursors keep the
+    // Windows disc sprite. macOS swaps Auv/AuvClick for their canonical SVG art
+    // and a default `Shadow::auv()` glow (`cursor_for_rendering` in
+    // auv-driver-overlay-macos); here only an explicit shadow glows. Adopt the
+    // macOS defaults when the owner asks for built-in art parity.
+    if let Some(shadow) = &style.shadow {
+      canvas.draw_glow(center, radius, shadow)?;
+    }
+    canvas.fill_circle(center, radius, accent)?;
+    if matches!(variant, BuiltInCursor::AuvClick) {
+      let ring_radius = px(style.sprite_size * 0.8).round();
+      canvas.stroke_circle(center, ring_radius, accent, 2.0)?;
+    }
+    Ok((center.x + radius, center.y))
+  }
+
+  /// Draws custom SVG art and returns the sprite's right edge and vertical middle.
+  ///
+  /// NOTICE: placement mirrors the macOS adapter (`placeCursor` in `Overlay.swift`):
+  /// the sprite box's top-left sits 4px right of and below the target point, so an
+  /// arrow drawn from the box corner hovers just off the target instead of covering it.
+  fn draw_svg_sprite(canvas: &Canvas, target: D2D_POINT_2F, source: &str, style: &CursorStyle) -> AuvResult<(f32, f32)> {
+    const SPRITE_OFFSET: f32 = 4.0;
+    let size = px(style.sprite_size).round().max(1.0) as u32;
+    let sprite = crate::svg::rasterize(source, size)?;
+    let edge = sprite.size as f32;
+    let left = target.x + SPRITE_OFFSET;
+    let top = target.y + SPRITE_OFFSET;
+    let middle = point(left + edge / 2.0, top + edge / 2.0);
+
+    if let Some(shadow) = &style.shadow {
+      // TODO(driver-overlay-windows-silhouette-shadow): the glow is radial around the
+      // sprite box, not a blur of the art's own silhouette as on macOS. A silhouette blur
+      // needs a blur of the rasterized alpha (no D2D effects without a device context);
+      // revisit if the round halo reads wrong for non-round cursor art.
+      canvas.draw_glow(middle, edge * SVG_GLOW_SILHOUETTE, shadow)?;
+    }
+    canvas.draw_sprite(point(left, top), &sprite)?;
+    Ok((left + edge, middle.y))
+  }
+
   fn draw_outline(canvas: &Canvas, outline: &Outline) -> AuvResult<()> {
     let style = outline.style();
-    let rect = outline.rect();
-    let top_left = canvas.to_local(rect.origin);
-    let bottom_right = canvas.to_local(Point::new(rect.origin.x + rect.size.width, rect.origin.y + rect.size.height));
-    let padded = RECT {
-      left: top_left.x + style.padding.left.round() as i32,
-      top: top_left.y + style.padding.top.round() as i32,
-      right: bottom_right.x - style.padding.right.round() as i32,
-      bottom: bottom_right.y - style.padding.bottom.round() as i32,
-    };
+    let bounds = outline.rect();
+    let top_left = canvas.to_local(bounds.origin);
+    let bottom_right = canvas.to_local(Point::new(bounds.origin.x + bounds.size.width, bounds.origin.y + bounds.size.height));
+    let padded = rect(
+      top_left.x + px(style.padding.left).round(),
+      top_left.y + px(style.padding.top).round(),
+      bottom_right.x - px(style.padding.right).round(),
+      bottom_right.y - px(style.padding.bottom).round(),
+    );
 
-    canvas.stroke_rounded_rect(padded, colorref(style.stroke.color), style.stroke.width.round() as i32, style.corner_radius.round() as i32);
+    let width = px(style.stroke.width).round().max(1.0);
+    if padded.right > padded.left && padded.bottom > padded.top {
+      // A stroke is centered on its path. Shifting odd widths by half a pixel puts both
+      // edges of every straight side on pixel boundaries, so the box stays as crisp as
+      // the old GDI pen (which covered the same pixels) and only the corners antialias.
+      let shift = (width / 2.0).fract();
+      let centerline = rect(padded.left + shift, padded.top + shift, padded.right + shift, padded.bottom + shift);
+      canvas.stroke_rounded_rect(centerline, px(style.corner_radius), style.stroke.color, width)?;
+    }
 
     if outline.label_visible()
       && let Some(label) = outline.label()
     {
-      let anchor = POINT {
-        x: padded.left,
-        y: padded.top - 12,
-      };
-      canvas.draw_label_pill(anchor, label, colorref(style.stroke.color), COLORREF(0x00FF_FFFF), Insets::default(), 6.0);
+      // TODO(driver-overlay-windows-outline-label): macOS fills this label pill with
+      // the stroke color inside the box (`NativeOverlayOutlineView`); Windows keeps its
+      // original white pill above the box until an owner asks for layout parity.
+      let anchor = point(padded.left, padded.top - 12.0);
+      canvas.draw_label_pill(
+        anchor,
+        &LabelPill {
+          text: label,
+          foreground: style.stroke.color,
+          background: Color::WHITE,
+          padding: Insets::default(),
+          corner_radius: 6.0,
+          font_size: LABEL_FONT_SIZE,
+        },
+      )?;
     }
 
     Ok(())
@@ -428,28 +258,33 @@ mod native {
     let anchor = canvas.to_local(status.point().point());
     canvas.draw_label_pill(
       anchor,
-      status.text(),
-      colorref(style.foreground),
-      colorref(style.background),
-      style.padding,
-      style.corner_radius,
-    );
+      &LabelPill {
+        text: status.text(),
+        foreground: style.foreground,
+        background: style.background,
+        padding: style.padding,
+        corner_radius: style.corner_radius,
+        font_size: STATUS_FONT_SIZE,
+      },
+    )
+  }
+
+  /// Draws `layers` in order onto an open canvas frame.
+  pub(super) fn draw_layers(canvas: &Canvas, layers: &[Layer]) -> AuvResult<()> {
+    for layer in layers {
+      match layer {
+        Layer::Cursor(cursor) => draw_cursor(canvas, cursor)?,
+        Layer::Outline(outline) => draw_outline(canvas, outline)?,
+        Layer::Status(status) => draw_status(canvas, status)?,
+      }
+    }
     Ok(())
   }
 
   pub(crate) fn present(layers: &[Layer]) -> AuvResult<()> {
     let hwnd = ensure_window()?;
-    let rect = virtual_screen_rect();
-    let canvas = Canvas::new(rect)?;
-
-    for layer in layers {
-      match layer {
-        Layer::Cursor(cursor) => draw_cursor(&canvas, cursor)?,
-        Layer::Outline(outline) => draw_outline(&canvas, outline)?,
-        Layer::Status(status) => draw_status(&canvas, status)?,
-      }
-    }
-
+    let canvas = Canvas::new(virtual_screen_rect())?;
+    draw_layers(&canvas, layers)?;
     canvas.finish(hwnd)
   }
 

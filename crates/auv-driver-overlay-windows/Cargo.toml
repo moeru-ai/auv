@@ -17,9 +17,12 @@ auv-driver-common = { version = "0.0.31", path = "../auv-driver-common" }
 auv-driver-overlay-common = { version = "0.0.31", path = "../auv-driver-overlay-common" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# SVG cursor art rasterizer only (wraps usvg); overlay shapes and text are drawn with Direct2D.
+resvg = { version = "0.48", default-features = false }
 windows = { version = "0.58", features = [
   "Foundation",
   "Foundation_Collections",
+  "Foundation_Numerics",
   "Media_Ocr",
   "Graphics_Imaging",
   "Security_Cryptography",
@@ -31,7 +34,11 @@ windows = { version = "0.58", features = [
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_Graphics_DirectWrite",
   "Win32_Graphics_Dwm",
+  "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
   "Win32_System_Com",

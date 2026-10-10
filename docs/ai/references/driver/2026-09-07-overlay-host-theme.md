@@ -15,7 +15,9 @@ stroke (`#cefffd`); the click variant brightens its fill to `#92eeef`.
 `Shadow::auv()` supplies pale mint `#CEFFFD` at 55% opacity, an 8-point
 blur radius, and a 2-point downward offset. The user cursor retains its previous
 artwork. Windows retains its existing built-in renderer; the new vector artwork
-and native shadow are currently a macOS capability.
+and default glow for built-in cursors are a macOS capability. Since 2026-10-09
+Windows renders custom SVG cursor art and explicit shadows (as a radial glow); see
+[Windows overlay renderer on Direct2D](2026-10-09-overlay-windows-direct2d-evidence.md).
 
 The preview below shows the implemented cyan palette using real AppKit shadow
 rendering at 1:1 on dark and light backgrounds.
@@ -127,7 +129,8 @@ The window's generic `hasShadow` remains off.
 Use a clean SVG with a 24-point canvas and `--sprite-size 24` for 1:1 rendering.
 Remove any SVG glow layers to avoid stacking native blur on a baked-in effect.
 
-Windows explicitly rejects requested SVG cursor art and native cursor shadows.
+Windows rejected requested SVG cursor art and native cursor shadows until
+2026-10-09; it now renders both (see the Direct2D evidence note linked above).
 The single `cursor_image` theme override replaces all cursor-layer artwork; omit
 it to preserve distinct built-in identities. Variant-specific host artwork is
 intentionally deferred until a host needs multiple simultaneous cursor identities.
