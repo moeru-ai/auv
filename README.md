@@ -62,13 +62,13 @@ auv --version
 Alternatively, without [Homebrew](https://brew.sh/):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+curl -fsSL https://auv.moeru.ai/install.sh | sh
 ```
 
 #### Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+curl -fsSL https://auv.moeru.ai/install.sh | sh
 auv --version
 ```
 
