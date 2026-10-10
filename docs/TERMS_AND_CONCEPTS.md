@@ -346,7 +346,7 @@ For the first native Device unlock release, every active paired Device bearer
 may request unlock of an **existing OS login session** without a separate
 per-Device grant. The target-wide capability is
 enabled by default; a target-local OS administrator may explicitly disable it.
-Disabling rejects remote unlock and remote OS login-session listing requests,
+Disabling rejects remote OS login-session listing, lock, and unlock requests,
 but retains locally enrolled credentials. Re-enabling does not require
 per-account re-enrollment; credential deletion is separate. A user with no
 existing session cannot be signed in by this release.
@@ -371,7 +371,7 @@ target-local capability switch, account enrollment boundary, and restricted
 audit. It does not read or transmit the enrolled credential. The target
 revalidates the selected existing login instance and independently reads back
 `LOCKED`; a session already locked returns `ALREADY_LOCKED` without input.
-The CLI and MCP expose this typed operation as `devices lock` and
+The CLI and MCP expose this typed operation as `devices sessions lock` and
 `device_ensure_user_session_locked`. This is an implementation contract with
 build and narrow native test evidence; installed three-Device lock gates are
 still pending.
@@ -381,8 +381,10 @@ Target-local credential management belongs to `DeviceLocalService`: `Enroll`,
 audit methods are `GetPolicy`, `SetPolicy`, and `ListAudit`. The local service
 requires a dedicated OS-authenticated IPC endpoint and is not available to
 paired remote callers. The CLI exposes it as `auv devices credentials`,
-`auv devices unlock-policy`, and `auv devices audit`; these commands run only
-on the target Device and reject Device or Run selection. A session's lock state may be locked, usable, or unknown;
+`auv devices sessions policy status|enable|disable`, and `auv devices audit`;
+these commands run only on the target Device and reject Device or Run
+selection. The session operations themselves are `auv devices sessions
+list|lock|unlock`. A session's lock state may be locked, usable, or unknown;
 `is_locked` and `is_unlocked` are true only for the corresponding known state.
 The typed Device API returns an explicit unsupported-host result where no
 validated native host is configured. Installed locked-session gates passed on
@@ -461,7 +463,8 @@ Confirmed OS rejection of a stored credential suspends that account's remote
 entry until local re-enrollment; subsequent paired requests do not resubmit
 the rejected credential. Input-delivery failure alone does not confirm rejection.
 
-The accepted CLI action name is `auv devices unlock`. Its first native effect
+The accepted CLI action name is `auv devices sessions unlock` (`auv devices
+unlock` before 2026-10-11). Its first native effect
 unlocks one existing OS login session. If that session is already usable, the
 operation succeeds with an explicit no-op outcome without reading a credential,
 posting input, or changing focus. A user with no current session returns an

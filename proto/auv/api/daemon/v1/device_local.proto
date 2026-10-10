@@ -30,7 +30,9 @@ message Enrollment {
   // Platform-stable account identity, such as a numeric UID or account SID.
   string os_account_id = 2;
   EnrollmentState state = 3;
-  EnrollmentStorageKind storage_kind = 4;
+  // Every current backend stores the credential in a protected OS store.
+  reserved 4;
+  reserved "storage_kind";
 }
 
 enum EnrollmentState {
@@ -42,13 +44,6 @@ enum EnrollmentState {
   // Stored locally, but locked-session retrieval under the installed host
   // identity has not yet been verified. Remote unlock is ineligible.
   ENROLLMENT_STATE_PENDING = 3;
-}
-
-enum EnrollmentStorageKind {
-  ENROLLMENT_STORAGE_KIND_UNSPECIFIED = 0;
-  ENROLLMENT_STORAGE_KIND_PROTECTED = 1;
-  // Requires an explicit choice by a target-local OS administrator.
-  ENROLLMENT_STORAGE_KIND_PLAINTEXT_FILE = 2;
 }
 
 message GetEnrollmentRequest {
@@ -81,9 +76,14 @@ message EnrollRequest {
   // host accepts more than one kind.
   reserved 3;
   reserved "credential_kind";
-  // Must be explicit. Plaintext is administrator-only and never a fallback;
+  // Every current backend stores the credential in a protected OS store;
   // READY requires a retrieval test by the actual installed unlock host.
-  EnrollmentStorageKind storage_kind = 4;
+  // TODO(device-entry-plaintext): the credential decision allows a future
+  // administrator-only plaintext store, chosen explicitly and never as a
+  // fallback. Add a storage field only with an owner-approved store and
+  // removal gate.
+  reserved 4;
+  reserved "storage_kind";
 }
 
 message EnrollResponse {

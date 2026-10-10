@@ -13,7 +13,9 @@
 > NOTICE (2026-10-11): `EnrollRequest.credential_kind` and the CLI `--kind`
 > flag were removed. Each unlock host accepts one credential kind and derives
 > it; the macOS host still accepts only the OS login password. The CLI command
-> below is now `auv devices credentials enroll --user neko`.
+> below is now `auv devices credentials enroll --user neko`, and `devices
+> sessions` / `devices unlock` are now `devices sessions list` / `devices
+> sessions unlock`.
 
 Status: configuration-specific installed-host and local Unix DeviceService
 proof on macOS 26.3, recorded on 2026-09-29. Two supervised black-display

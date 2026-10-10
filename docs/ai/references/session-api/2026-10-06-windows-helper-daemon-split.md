@@ -1,5 +1,12 @@
 # Windows Helper and daemon split
 
+> NOTICE (2026-10-11): The session CLI is now `auv devices sessions
+> list|lock|unlock`, and the remote session switch is `auv devices sessions
+> policy status|enable|disable` (formerly `auv devices sessions`,
+> `devices lock`, `devices unlock`, and `auv device-local policy`).
+> Credential enrollment is `auv devices credentials enroll --user USER`, with no
+> `--kind` or storage choice. Commands below are kept as recorded.
+
 Status: implemented on 2026-10-06. Native Windows unit tests and one installed
 gate passed on a single Windows 11 (build 26100) host that had the 0.0.28
 `AuvDevice` installation. This is configuration-specific evidence, not a

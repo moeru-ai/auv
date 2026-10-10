@@ -19,7 +19,8 @@ still use the existing common result names. An explicit operation field needs
 a persisted-record and local-read contract change and is deferred at the
 `AuditAttempt` call site.
 
-The CLI `devices lock` and MCP `device_ensure_user_session_locked` use the same
+The CLI `devices sessions lock` (`devices lock` before 2026-10-11) and MCP
+`device_ensure_user_session_locked` use the same
 typed Rust operation. The protobuf method remains gRPC-only like the initial
 unlock method. A validated HTTP request/OpenAPI contract is deferred; see the
 inline `TODO(device-entry-http)` at the RPC.
@@ -87,15 +88,17 @@ For a new controller, the normal flow is:
    shell history or process listings; a stdin/file input is a candidate next
    slice.
 4. A newly enrolled account is `PENDING`. The paired controller may remotely
-   `devices lock` its `USABLE` desktop. That operation does not read the stored
-   credential or promote enrollment. The first successful `devices unlock`
+   `devices sessions lock` its `USABLE` desktop. That operation does not read
+   the stored credential or promote enrollment. The first successful
+   `devices sessions unlock`
    probes the locked host credential and promotes the account to `READY`.
    This first-use sequence has a policy regression test; a new enrollment on
    each installed platform has not yet been live-tested with this change.
 5. The controller runs `auv devices list`, selects the target by stable Device
-   ID, and runs `auv --device-id ID devices sessions`. Subsequent `devices
-   lock` and `devices unlock` calls use exactly one `--user USER` or fresh
-   `--session SELECTOR`; success requires same-session state readback.
+   ID, and runs `auv --device-id ID devices sessions list`. Subsequent
+   `devices sessions lock` and `devices sessions unlock` calls use exactly one
+   `--user USER` or fresh `--session SELECTOR`; success requires same-session
+   state readback.
 
 Pairing grants current broad Device authority, not an unlock-specific grant.
 The target owner can disable or unpair a controller; removing an OS enrollment

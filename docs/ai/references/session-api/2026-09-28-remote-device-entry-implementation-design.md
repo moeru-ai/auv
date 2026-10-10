@@ -1,5 +1,12 @@
 # Remote Device unlock: existing locked sessions first
 
+> NOTICE (2026-10-11): The session CLI is now `auv devices sessions
+> list|lock|unlock`, and the remote session switch is `auv devices sessions
+> policy status|enable|disable` (formerly `auv devices sessions`,
+> `devices lock`, `devices unlock`, and `auv device-local policy`).
+> Credential enrollment is `auv devices credentials enroll --user USER`, with no
+> `--kind` or storage choice. Commands below are kept as recorded.
+
 Status: owner-approved implementation design as of 2026-09-28, not a support
 claim. The first native Device release targets an **already logged-in OS
 session that was subsequently locked** on macOS, Debian GNOME, and Windows. An

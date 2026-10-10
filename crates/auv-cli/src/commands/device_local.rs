@@ -22,7 +22,7 @@ pub struct CredentialsArgs {
 }
 
 #[derive(Clone, Debug, Args)]
-pub struct UnlockPolicyArgs {
+pub struct SessionPolicyArgs {
   #[command(flatten)]
   pub store: LocalStore,
   #[command(subcommand)]
@@ -70,15 +70,17 @@ pub enum CredentialsCommand {
   },
 }
 
+/// One switch covers listing, locking and unlocking: a paired Device may do
+/// all of them on this Device's sessions, or none.
 #[derive(Clone, Debug, Subcommand)]
 pub enum PolicyCommand {
-  /// Show whether paired Devices may unlock this Device.
-  Get,
-  /// Allow or reject remote unlock and session listing from paired Devices.
-  Set {
-    #[arg(long, action = clap::ArgAction::Set, value_parser = clap::value_parser!(bool))]
-    enabled: bool,
-  },
+  /// Show whether paired Devices may list, lock and unlock sessions here.
+  Status,
+  /// Let paired Devices list, lock and unlock sessions on this Device.
+  Enable,
+  /// Stop paired Devices from listing, locking or unlocking sessions here.
+  /// Enrolled credentials are kept.
+  Disable,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -147,9 +149,6 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         // The generated gRPC encoder takes ownership of this buffer. The
         // temporary terminal buffer is wiped on all earlier error paths.
         credential: std::mem::take(&mut *credential),
-        // TODO(device-entry-plaintext): No backend offers the plaintext
-        // fallback yet; expose a storage choice only when one does.
-        storage_kind: proto::EnrollmentStorageKind::Protected as i32,
       };
       let enrollment = service
         .enroll(request)
@@ -190,24 +189,27 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
     }
     LocalRequest::Policy(command) => {
       let enabled = match command {
-        PolicyCommand::Get => {
+        PolicyCommand::Status => {
           service
             .get_policy(proto::GetPolicyRequest {})
             .await
-            .map_err(|status| format!("get policy failed ({})", status.code()))?
+            .map_err(|status| format!("read session policy failed ({})", status.code()))?
             .into_inner()
             .enabled
         }
-        PolicyCommand::Set { enabled } => {
+        PolicyCommand::Enable | PolicyCommand::Disable => {
           service
-            .set_policy(proto::SetPolicyRequest { enabled })
+            .set_policy(proto::SetPolicyRequest {
+              enabled: matches!(command, PolicyCommand::Enable),
+            })
             .await
-            .map_err(|status| format!("set policy failed ({})", status.code()))?
+            .map_err(|status| format!("change session policy failed ({})", status.code()))?
             .into_inner()
             .enabled
         }
       };
-      println!("remote unlock enabled: {enabled}");
+      let state = if enabled { "enabled" } else { "disabled" };
+      println!("remote session control from paired Devices: {state}");
     }
 
     LocalRequest::Audit(AuditCommand::List { cursor, limit }) => {
@@ -245,7 +247,7 @@ pub async fn run(_store_root: Option<&Path>, _request: LocalRequest, _project_ro
 
 #[cfg(any(unix, windows))]
 fn print_enrollment(enrollment: Option<auv_api_proto::auv::api::daemon::v1::Enrollment>) -> Result<(), String> {
-  use auv_api_proto::auv::api::daemon::v1::{EnrollmentState, EnrollmentStorageKind};
+  use auv_api_proto::auv::api::daemon::v1::EnrollmentState;
 
   let enrollment = enrollment.ok_or_else(|| "the local service returned no enrollment".to_string())?;
   let state = match EnrollmentState::try_from(enrollment.state) {
@@ -254,12 +256,7 @@ fn print_enrollment(enrollment: Option<auv_api_proto::auv::api::daemon::v1::Enro
     Ok(EnrollmentState::Pending) => "pending",
     _ => "unknown",
   };
-  let storage = match EnrollmentStorageKind::try_from(enrollment.storage_kind) {
-    Ok(EnrollmentStorageKind::Protected) => "protected",
-    Ok(EnrollmentStorageKind::PlaintextFile) => "plaintext-file",
-    _ => "unknown",
-  };
-  println!("{}\t{}\t{}\t{}", enrollment.user, enrollment.os_account_id, state, storage);
+  println!("{}\t{}\t{}", enrollment.user, enrollment.os_account_id, state);
   Ok(())
 }
 

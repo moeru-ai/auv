@@ -315,19 +315,47 @@ mod tests {
   }
 
   #[test]
-  fn devices_unlock_policy_accepts_explicit_false() {
-    let crate::commands::devices::DevicesCommand::UnlockPolicy(args) = devices_command(&[
-      "auv",
-      "devices",
-      "unlock-policy",
-      "set",
-      "--enabled",
-      "false",
-    ]) else {
-      panic!("unlock-policy command")
+  fn devices_sessions_groups_list_lock_unlock_and_policy() {
+    use crate::commands::devices::{DevicesCommand, SessionsCommand};
+
+    let sessions = |arguments: &[&str]| {
+      let DevicesCommand::Sessions(args) = devices_command(arguments) else {
+        panic!("sessions command")
+      };
+      args.command
     };
 
-    assert!(matches!(args.command, crate::commands::device_local::PolicyCommand::Set { enabled: false }));
+    assert!(matches!(sessions(&["auv", "devices", "sessions", "list", "--json"]), SessionsCommand::List(_)));
+    let SessionsCommand::Lock(lock) = sessions(&["auv", "devices", "sessions", "lock", "--user", "neko"]) else {
+      panic!("sessions lock")
+    };
+    assert_eq!(lock.user.as_deref(), Some("neko"));
+    let SessionsCommand::Unlock(unlock) = sessions(&["auv", "devices", "sessions", "unlock", "--session", "s-1"]) else {
+      panic!("sessions unlock")
+    };
+    assert_eq!(unlock.session.as_deref(), Some("s-1"));
+    let SessionsCommand::Policy(policy) = sessions(&[
+      "auv",
+      "devices",
+      "sessions",
+      "policy",
+      "disable",
+      "--store-root",
+      "state",
+    ]) else {
+      panic!("sessions policy")
+    };
+    assert!(matches!(policy.command, crate::commands::device_local::PolicyCommand::Disable));
+    assert_eq!(policy.store.store_root.as_deref(), Some(std::path::Path::new("state")));
+
+    // The former top-level forms are gone, without aliases.
+    for removed in [
+      &["auv", "devices", "lock", "--user", "neko"][..],
+      &["auv", "devices", "unlock", "--user", "neko"][..],
+      &["auv", "devices", "unlock-policy", "status"][..],
+    ] {
+      assert!(RootArgs::try_parse_from(removed).is_err(), "{removed:?}");
+    }
   }
 
   #[test]

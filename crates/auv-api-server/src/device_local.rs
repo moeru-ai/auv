@@ -140,17 +140,6 @@ impl DeviceLocalService for DeviceLocalGrpc {
       return Err(Status::invalid_argument("credential must be 1..=1024 UTF-8 bytes"));
     }
 
-    match proto::EnrollmentStorageKind::try_from(input.storage_kind) {
-      Ok(proto::EnrollmentStorageKind::Protected) => {}
-      // TODO(device-entry-plaintext): The wire keeps the administrator-only
-      // plaintext fallback from the credential decision, but no platform has
-      // a restricted plaintext store. Add a backend storage choice only with
-      // an owner-approved store and removal gate.
-      Ok(proto::EnrollmentStorageKind::PlaintextFile) => {
-        return Err(Status::failed_precondition("storage kind is unavailable on this host"));
-      }
-      _ => return Err(Status::invalid_argument("storage_kind must be explicit")),
-    }
     let enrollment = self.control.enroll(&principal, EnrollAccount { user, credential }).await.map_err(status)?;
     Ok(Response::new(proto::EnrollResponse {
       enrollment: Some(wire_enrollment(enrollment)),
@@ -228,7 +217,6 @@ fn wire_enrollment(value: Enrollment) -> proto::Enrollment {
       EnrollmentState::Ready => proto::EnrollmentState::Ready as i32,
       EnrollmentState::Suspended => proto::EnrollmentState::Suspended as i32,
     },
-    storage_kind: proto::EnrollmentStorageKind::Protected as i32,
   }
 }
 
@@ -565,31 +553,16 @@ mod tests {
       .enroll(proto::EnrollRequest {
         user: "neko".into(),
         credential: Vec::new(),
-        storage_kind: proto::EnrollmentStorageKind::Protected as i32,
       })
       .await
       .unwrap_err();
 
     assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
 
-    // The plaintext fallback stays on the wire but has no backend store, so
-    // the protocol boundary rejects it before the local control port runs.
-    let plaintext = client
-      .enroll(proto::EnrollRequest {
-        user: "neko".into(),
-        credential: b"fixture-only".to_vec(),
-        storage_kind: proto::EnrollmentStorageKind::PlaintextFile as i32,
-      })
-      .await
-      .unwrap_err();
-
-    assert_eq!(plaintext.code(), tonic::Code::FailedPrecondition);
-
     let unavailable = client
       .enroll(proto::EnrollRequest {
         user: "neko".into(),
         credential: b"fixture-only".to_vec(),
-        storage_kind: proto::EnrollmentStorageKind::Protected as i32,
       })
       .await
       .unwrap_err();
