@@ -380,17 +380,12 @@ impl Devices {
   /// Lists current OS login instances on this Device. A selector may become
   /// stale immediately and is revalidated by `get_user_session` or unlock.
   pub async fn list_user_sessions(&self) -> Result<Vec<UserSession>, DeviceError> {
-    let response = self
-      .client
-      .grpc_client()
-      .devices()
-      .list_user_sessions()
-      .await
-      .map_err(|status| ClientError::from_status("ListUserSessions", status))?;
+    let response =
+      self.client.grpc_client().devices().list_user_sessions().await.map_err(|status| entry_status_error("ListUserSessions", status))?;
 
     match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
       proto::list_user_sessions_response::Result::List(list) => list.sessions.into_iter().map(UserSession::try_from).collect(),
-      proto::list_user_sessions_response::Result::Error(error) => Err(entry_error(error)?.into()),
+      proto::list_user_sessions_response::Result::Error(error) => Err(legacy_entry_error(error)),
     }
   }
 
@@ -402,11 +397,11 @@ impl Devices {
       .devices()
       .get_user_session(session_selector)
       .await
-      .map_err(|status| ClientError::from_status("GetUserSession", status))?;
+      .map_err(|status| entry_status_error("GetUserSession", status))?;
 
     match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
       proto::get_user_session_response::Result::Session(session) => UserSession::try_from(session),
-      proto::get_user_session_response::Result::Error(error) => Err(entry_error(error)?.into()),
+      proto::get_user_session_response::Result::Error(error) => Err(legacy_entry_error(error)),
     }
   }
 
@@ -425,11 +420,11 @@ impl Devices {
         target: Some(target),
       })
       .await
-      .map_err(|status| ClientError::from_status("EnsureUserSessionUnlocked", status))?;
+      .map_err(|status| entry_status_error("EnsureUserSessionUnlocked", status))?;
 
     match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
       proto::ensure_user_session_unlocked_response::Result::Effect(effect) => effect.try_into(),
-      proto::ensure_user_session_unlocked_response::Result::Error(error) => Err(entry_error(error)?.into()),
+      proto::ensure_user_session_unlocked_response::Result::Error(error) => Err(legacy_entry_error(error)),
     }
   }
 
@@ -448,11 +443,11 @@ impl Devices {
         target: Some(target),
       })
       .await
-      .map_err(|status| ClientError::from_status("EnsureUserSessionLocked", status))?;
+      .map_err(|status| entry_status_error("EnsureUserSessionLocked", status))?;
 
     match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
       proto::ensure_user_session_locked_response::Result::Effect(effect) => effect.try_into(),
-      proto::ensure_user_session_locked_response::Result::Error(error) => Err(entry_error(error)?.into()),
+      proto::ensure_user_session_locked_response::Result::Error(error) => Err(legacy_entry_error(error)),
     }
   }
 
@@ -620,6 +615,31 @@ impl TryFrom<proto::EnsureUserSessionLockedEffect> for EnsureUserSessionLockedEf
   }
 }
 
+/// A daemon reports a failed session request as a gRPC status that carries
+/// the typed reason; any other status stays a client error.
+fn entry_status_error(method: &'static str, status: tonic::Status) -> DeviceError {
+  match auv_api_proto::device_entry::reason(&status) {
+    Some(reason) => match entry_error(proto::DeviceEntryError {
+      reason: reason as i32,
+    }) {
+      Ok(reason) => reason.into(),
+      Err(error) => error,
+    },
+    None => ClientError::from_status(method, status).into(),
+  }
+}
+
+/// NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return a
+/// failed session request as an OK response whose `result` holds the error.
+/// TODO(device-entry-error-oneof-removal): drop this read path together with
+/// the proto field once no supported daemon sends it.
+fn legacy_entry_error(error: proto::DeviceEntryError) -> DeviceError {
+  match entry_error(error) {
+    Ok(reason) => reason.into(),
+    Err(error) => error,
+  }
+}
+
 fn entry_error(error: proto::DeviceEntryError) -> Result<DeviceEntryErrorReason, DeviceError> {
   Ok(match proto::DeviceEntryErrorReason::try_from(error.reason).map_err(|_| DeviceError::InvalidEntryResponse)? {
     proto::DeviceEntryErrorReason::Unspecified => return Err(DeviceError::InvalidEntryResponse),
@@ -642,6 +662,32 @@ fn entry_error(error: proto::DeviceEntryError) -> Result<DeviceEntryErrorReason,
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_typed_status_becomes_the_entry_reason() {
+    let status = auv_api_proto::device_entry::status(proto::DeviceEntryErrorReason::Unenrolled);
+
+    assert!(matches!(entry_status_error("EnsureUserSessionUnlocked", status), DeviceError::Entry(DeviceEntryErrorReason::Unenrolled)));
+  }
+
+  #[test]
+  fn a_status_without_a_reason_stays_a_client_error() {
+    let status = tonic::Status::invalid_argument("exactly one non-empty user or session_selector is required");
+
+    assert!(matches!(entry_status_error("EnsureUserSessionUnlocked", status), DeviceError::Client(_)));
+  }
+
+  #[test]
+  fn an_older_daemons_in_body_error_is_still_read() {
+    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
+    // reason inside an OK response.
+    let error = proto::DeviceEntryError {
+      reason: proto::DeviceEntryErrorReason::StaleSession as i32,
+    };
+
+    assert!(matches!(legacy_entry_error(error), DeviceError::Entry(DeviceEntryErrorReason::StaleSession)));
+    assert!(matches!(legacy_entry_error(proto::DeviceEntryError { reason: 0 }), DeviceError::InvalidEntryResponse));
+  }
 
   #[test]
   fn user_session_decodes_current_os_state_and_opaque_selector() {

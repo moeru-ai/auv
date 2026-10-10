@@ -14,7 +14,7 @@ import {
   UserSessionLockState,
 } from '../../gen/auv/api/daemon/v1/device_pb'
 import { AuvConnection } from '../../transport/connection'
-import { AuvProtocolError } from '../../transport/errors'
+import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { createAuv } from '../auv/client'
 import { AuvDeviceEntryError, ensureUserSessionUnlocked, listUserSessions } from './devices'
 
@@ -105,6 +105,37 @@ describe('device user sessions', () => {
     expect(calls).toBe(0)
     await expect(ensureUserSessionUnlocked(connection, { user: 'neko' })).rejects.toEqual(new AuvDeviceEntryError('unenrolled'))
     expect(calls).toBe(1)
+  })
+
+  // Bytes of `auv_api_proto::device_entry::status(Unenrolled).details()`;
+  // the Rust test `unenrolled_status_matches_the_shared_fixture` pins them.
+  const unenrolledStatusDetails = Uint8Array.from(
+    '0809123944657669636520656e747279206661696c65643a204445564943455f454e5452595f4552524f525f524541534f4e5f554e454e524f4c4c45441a3c0a36747970652e676f6f676c65617069732e636f6d2f6175762e6170692e6461656d6f6e2e76312e446576696365456e7472794572726f7212020802'.match(/../g)!.map(byte => Number.parseInt(byte, 16)),
+  )
+
+  function failingConnection(error: unknown): AuvConnection {
+    return new AuvConnection({
+      close() {},
+      async connect() {},
+      async duplex() { throw new Error('unexpected duplex call') },
+      async unary() { throw error },
+    })
+  }
+
+  it('decodes a typed reason from the status details', async () => {
+    const status = new AuvRpcError(9, 'Device entry failed: DEVICE_ENTRY_ERROR_REASON_UNENROLLED', undefined, unenrolledStatusDetails)
+
+    await expect(ensureUserSessionUnlocked(failingConnection(status), { user: 'neko' })).rejects.toEqual(new AuvDeviceEntryError('unenrolled'))
+    await expect(listUserSessions(failingConnection(status))).rejects.toEqual(new AuvDeviceEntryError('unenrolled'))
+    await expect(createAuv(failingConnection(status)).devices.getUserSession({ sessionSelector: 'wts:1' })).rejects.toEqual(new AuvDeviceEntryError('unenrolled'))
+  })
+
+  it('passes other RPC failures through unchanged', async () => {
+    const plain = new AuvRpcError(3, 'exactly one non-empty user or session_selector is required')
+    const foreign = new AuvRpcError(13, 'internal', undefined, Uint8Array.of(0xFF, 0xFF))
+
+    await expect(ensureUserSessionUnlocked(failingConnection(plain), { user: 'neko' })).rejects.toBe(plain)
+    await expect(ensureUserSessionUnlocked(failingConnection(foreign), { user: 'neko' })).rejects.toBe(foreign)
   })
 
   it('exposes an incompatible target host as a typed entry error', async () => {

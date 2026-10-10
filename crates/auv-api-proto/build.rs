@@ -25,6 +25,8 @@ const SCHEMA_PATHS: &[&str] = &[
   "auv/api/driver/macos/v1/media_control.proto",
   "auv/api/image/v1/image.proto",
   "auv/api/image/v1/region.proto",
+  // Device entry failures carry a typed detail inside `google.rpc.Status`.
+  "vendor/google/rpc/status.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

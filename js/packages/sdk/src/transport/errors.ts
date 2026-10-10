@@ -43,9 +43,13 @@ export class AuvProtocolError extends Error {
   }
 }
 
-/** A routed RPC completed with a non-success status. */
+/**
+ * A routed RPC completed with a non-success status. `details` holds the raw
+ * `grpc-status-details-bin` trailer (a serialized `google.rpc.Status`) when
+ * the transport received one.
+ */
 export class AuvRpcError extends AuvRemoteError {
-  constructor(readonly rpcCode: number, message: string, cause?: unknown) {
+  constructor(readonly rpcCode: number, message: string, cause?: unknown, readonly details?: Uint8Array) {
     super(message, cause)
     this.name = 'AuvRpcError'
   }

@@ -21,6 +21,9 @@ service DeviceService {
       body: "*"
     };
   }
+  // Session RPCs below fail with a gRPC status: the code follows the reason
+  // (see `DeviceEntryError`), and `google.rpc.Status.details` carries one
+  // `DeviceEntryError` with the typed reason.
   // Lists current OS login instances on this Device. These selectors are not
   // SessionService resources and must be revalidated before an unlock attempt.
   // TODO(device-entry-http): Add REST exposure only after a validated OpenAPI
@@ -104,6 +107,11 @@ message UserSessionList {
 message ListUserSessionsResponse {
   oneof result {
     UserSessionList list = 1;
+    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
+    // instead (see `DeviceEntryError`). Clients still read it from older
+    // daemons.
+    // TODO(device-entry-error-oneof-removal): reserve this field once no
+    // supported daemon sends it.
     DeviceEntryError error = 2;
   }
 }
@@ -116,6 +124,11 @@ message GetUserSessionRequest {
 message GetUserSessionResponse {
   oneof result {
     UserSession session = 1;
+    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
+    // instead (see `DeviceEntryError`). Clients still read it from older
+    // daemons.
+    // TODO(device-entry-error-oneof-removal): reserve this field once no
+    // supported daemon sends it.
     DeviceEntryError error = 2;
   }
 }
@@ -167,6 +180,12 @@ enum DeviceEntryErrorReason {
   DEVICE_ENTRY_ERROR_REASON_HOST_INCOMPATIBLE = 13;
 }
 
+// Typed reason for a failed session request. It travels as the single detail
+// of the failing gRPC status (`google.rpc.Status.details`, packed in `Any`).
+// The status code follows the reason: UNAUTHORIZED and DISABLED map to
+// PERMISSION_DENIED; AMBIGUOUS_USER to INVALID_ARGUMENT; STALE_SESSION to
+// ABORTED; SERVICE_UNAVAILABLE and AUDIT_UNAVAILABLE to UNAVAILABLE;
+// OUTCOME_UNVERIFIED to UNKNOWN; every other reason to FAILED_PRECONDITION.
 message DeviceEntryError {
   DeviceEntryErrorReason reason = 1;
 }
@@ -174,6 +193,11 @@ message DeviceEntryError {
 message EnsureUserSessionUnlockedResponse {
   oneof result {
     EnsureUserSessionUnlockedEffect effect = 1;
+    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
+    // instead (see `DeviceEntryError`). Clients still read it from older
+    // daemons.
+    // TODO(device-entry-error-oneof-removal): reserve this field once no
+    // supported daemon sends it.
     DeviceEntryError error = 2;
   }
 }
@@ -201,6 +225,11 @@ message EnsureUserSessionLockedEffect {
 message EnsureUserSessionLockedResponse {
   oneof result {
     EnsureUserSessionLockedEffect effect = 1;
+    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
+    // instead (see `DeviceEntryError`). Clients still read it from older
+    // daemons.
+    // TODO(device-entry-error-oneof-removal): reserve this field once no
+    // supported daemon sends it.
     DeviceEntryError error = 2;
   }
 }

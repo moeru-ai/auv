@@ -365,6 +365,10 @@ grants authority to ask the target Device to act, not an OS login credential.
 The target keeps any OS credential local and must verify the intended existing
 session became usable. Remote session operations belong to `DeviceService`:
 `ListUserSessions`, `GetUserSession`, and `EnsureUserSessionUnlocked`.
+A rejected session request fails with a gRPC status whose code follows the
+`DeviceEntryErrorReason` and whose `google.rpc.Status` details carry the typed
+`DeviceEntryError`; see the
+[Device entry error status note](ai/references/session-api/2026-10-11-device-entry-error-status.md).
 The paired Device surface also includes `EnsureUserSessionLocked` for the
 owner-approved lock action. It uses the same directed pairing authority,
 target-local capability switch, account enrollment boundary, and restricted

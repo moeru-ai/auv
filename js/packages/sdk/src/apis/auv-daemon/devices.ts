@@ -8,9 +8,13 @@ import {
   deviceServiceGetDevice,
   deviceServiceListDevices,
 } from '@auv-js/api-client'
+import { fromBinary } from '@bufbuild/protobuf'
+import { BinaryReader, WireType } from '@bufbuild/protobuf/wire'
+import { AnySchema, anyUnpack } from '@bufbuild/protobuf/wkt'
 
 import {
   DeviceEntryEffectKind,
+  DeviceEntryErrorSchema,
   DeviceService,
   EnsureUserSessionUnlockedRequestSchema,
   EnsureUserSessionUnlockedResponseSchema,
@@ -27,7 +31,7 @@ import {
   UserSessionConnectionKind as ProtoUserSessionConnectionKind,
   UserSessionLockState as ProtoUserSessionLockState,
 } from '../../gen/auv/api/daemon/v1/device_pb'
-import { AuvConfigurationError, AuvProtocolError, AuvRemoteError } from '../../transport/errors'
+import { AuvConfigurationError, AuvProtocolError, AuvRemoteError, AuvRpcError } from '../../transport/errors'
 import { unknownEnum } from './wire'
 
 /** One Device visible to the connected AUV caller. */
@@ -150,7 +154,7 @@ export async function ensureUserSessionUnlocked(
   if (target === undefined || ('user' in options && 'sessionSelector' in options)) {
     throw new AuvConfigurationError('exactly one non-empty user or sessionSelector is required')
   }
-  const response = await connection.unary(ensureUserSessionUnlockedRpc, { target }, options)
+  const response = await entryCall(connection.unary(ensureUserSessionUnlockedRpc, { target }, options))
   switch (response.result.case) {
     case 'effect': {
       const effect = response.result.value
@@ -170,6 +174,8 @@ export async function ensureUserSessionUnlocked(
       }
       return { kind, sessionSelector: effect.sessionSelector || undefined, user: effect.user }
     }
+    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
+    // reason inside an OK response; newer ones fail the call (see entryCall).
     case 'error':
       throw deviceEntryError(response.result.value.reason)
     default:
@@ -191,10 +197,12 @@ export async function getUserSession(connection: AuvConnection, options: GetUser
   if (!options.sessionSelector) {
     throw new AuvConfigurationError('sessionSelector must be non-empty')
   }
-  const response = await connection.unary(getUserSessionRpc, { sessionSelector: options.sessionSelector }, options)
+  const response = await entryCall(connection.unary(getUserSessionRpc, { sessionSelector: options.sessionSelector }, options))
   switch (response.result.case) {
     case 'session':
       return userSession(response.result.value)
+    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
+    // reason inside an OK response; newer ones fail the call (see entryCall).
     case 'error':
       throw deviceEntryError(response.result.value.reason)
     default:
@@ -210,10 +218,12 @@ export async function listDevices(connection: AuvConnection, options: OperationO
 
 /** Lists current OS login instances on the connected Device. */
 export async function listUserSessions(connection: AuvConnection, options: OperationOptions = {}): Promise<readonly UserSession[]> {
-  const response = await connection.unary(listUserSessionsRpc, {}, options)
+  const response = await entryCall(connection.unary(listUserSessionsRpc, {}, options))
   switch (response.result.case) {
     case 'list':
       return response.result.value.sessions.map(userSession)
+    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
+    // reason inside an OK response; newer ones fail the call (see entryCall).
     case 'error':
       throw deviceEntryError(response.result.value.reason)
     default:
@@ -269,6 +279,48 @@ function devicePlatform(value: ProtoDevicePlatform): DevicePlatform {
     default:
       return unknownEnum('Device.platform', value)
   }
+}
+
+/**
+ * A failed session request arrives as an RPC status whose details carry the
+ * typed reason; rethrow it as `AuvDeviceEntryError`. Other failures pass
+ * through unchanged.
+ */
+async function entryCall<T>(call: Promise<T>): Promise<T> {
+  try {
+    return await call
+  }
+  catch (error) {
+    const reason = error instanceof AuvRpcError && error.details !== undefined ? entryReason(error.details) : undefined
+    throw reason === undefined ? error : deviceEntryError(reason)
+  }
+}
+
+/**
+ * Reads the `DeviceEntryError` packed in a serialized `google.rpc.Status`.
+ * NOTICE(device-entry-status-decode): the SDK does not generate
+ * `google.rpc.Status`, so this walks its `details` field (number 3, repeated
+ * `Any`) directly. Unknown or malformed details yield `undefined`.
+ */
+function entryReason(details: Uint8Array): ProtoDeviceEntryErrorReason | undefined {
+  try {
+    const reader = new BinaryReader(details)
+    while (reader.pos < reader.len) {
+      const [field, wireType] = reader.tag()
+      if (field !== 3 || wireType !== WireType.LengthDelimited) {
+        reader.skip(wireType)
+        continue
+      }
+      const error = anyUnpack(fromBinary(AnySchema, reader.bytes()), DeviceEntryErrorSchema)
+      if (error !== undefined && error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED) {
+        return error.reason
+      }
+    }
+  }
+  catch {
+    return undefined
+  }
+  return undefined
 }
 
 function userSession(value: ProtoUserSession): UserSession {

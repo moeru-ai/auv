@@ -121,6 +121,15 @@ fn device_entry_denied_reason() -> proto::DeviceEntryErrorReason {
   return proto::DeviceEntryErrorReason::UnsupportedOsState;
 }
 
+/// A rejected session request fails as a gRPC status whose code follows the
+/// reason and whose details carry that typed reason.
+fn assert_entry_denied(status: &tonic::Status) {
+  let reason = device_entry_denied_reason();
+
+  assert_eq!(status.code(), auv_api_proto::device_entry::code(reason), "{status:?}");
+  assert_eq!(auv_api_proto::device_entry::reason(status), Some(reason), "{status:?}");
+}
+
 const DISPLAY_SERVICE: &str = "auv.api.driver.v1.DisplayService";
 const TEST_RUNNER_CLASS: &str = "example.runner.remote";
 
@@ -615,23 +624,19 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
   let task = tokio::spawn(server.serve(shutdown.clone()));
   let mut devices = GrpcClient::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.unwrap().devices();
 
-  let sessions = devices.list_user_sessions().await.unwrap();
-  let Some(proto::list_user_sessions_response::Result::Error(error)) = sessions.result else {
-    panic!("verified Unix caller must reach the Device entry policy")
-  };
+  // A verified Unix caller reaches the Device entry policy, which rejects it
+  // with a typed status.
+  let error = devices.list_user_sessions().await.unwrap_err();
 
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&error);
 
   let blank_get = devices.get_user_session(" ").await.unwrap_err();
 
   assert_eq!(blank_get.code(), tonic::Code::InvalidArgument);
 
-  let session = devices.get_user_session("seat0:42").await.unwrap();
-  let Some(proto::get_user_session_response::Result::Error(error)) = session.result else {
-    panic!("verified Unix caller must reach the Device entry policy")
-  };
+  let error = devices.get_user_session("seat0:42").await.unwrap_err();
 
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&error);
 
   let missing = devices.ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest { target: None }).await.unwrap_err();
 
@@ -641,31 +646,23 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
 
   assert_eq!(missing_lock.code(), tonic::Code::InvalidArgument);
 
-  let outcome = devices
+  let error = devices
     .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
       target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
     })
     .await
-    .unwrap();
+    .unwrap_err();
 
-  let Some(proto::ensure_user_session_unlocked_response::Result::Error(error)) = outcome.result else {
-    panic!("verified Unix caller must reach the Device entry policy")
-  };
+  assert_entry_denied(&error);
 
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
-
-  let lock_outcome = devices
+  let lock_error = devices
     .ensure_user_session_locked(proto::EnsureUserSessionLockedRequest {
       target: Some(proto::ensure_user_session_locked_request::Target::User("neko".into())),
     })
     .await
-    .unwrap();
+    .unwrap_err();
 
-  let Some(proto::ensure_user_session_locked_response::Result::Error(lock_error)) = lock_outcome.result else {
-    panic!("verified Unix caller must reach the Device lock policy")
-  };
-
-  assert_eq!(lock_error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&lock_error);
 
   shutdown.cancel();
   task.await.unwrap().unwrap();
@@ -1002,33 +999,25 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   let runs = paired.runs().list_runs().await.unwrap();
   assert!(runs.iter().any(|run| run.r#ref.as_ref().is_some_and(|value| value.run_id == run_id)));
 
-  let sessions = paired.devices().list_user_sessions().await.unwrap();
-  let Some(proto::list_user_sessions_response::Result::Error(error)) = sessions.result else {
-    panic!("paired request must reach the native support gate")
-  };
+  // The paired request reaches the native support gate, which rejects it
+  // with a typed status.
+  let error = paired.devices().list_user_sessions().await.unwrap_err();
 
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&error);
 
-  let session = paired.devices().get_user_session("seat0:42").await.unwrap();
-  let Some(proto::get_user_session_response::Result::Error(error)) = session.result else {
-    panic!("paired request must reach the native support gate")
-  };
+  let error = paired.devices().get_user_session("seat0:42").await.unwrap_err();
 
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&error);
 
-  let outcome = paired
+  let error = paired
     .devices()
     .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
       target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
     })
     .await
-    .unwrap();
+    .unwrap_err();
 
-  let Some(proto::ensure_user_session_unlocked_response::Result::Error(error)) = outcome.result else {
-    panic!("paired request must reach the native support gate")
-  };
-
-  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+  assert_entry_denied(&error);
 
   #[cfg(target_os = "linux")]
   {
