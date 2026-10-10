@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Rounded pointer on a 24 x 24 box, chosen by the owner on 2026-10-10 ("Vector modern"
+       at 24 px). A white rim 3.12 units wide is stroked with round joins, then the fill and
+       a 1.2 unit stroke of the same gradient paint over its inner part, leaving about one
+       unit of white outside the colored shape.
+
+       The hotspot is (1, 1), the outermost point of the rounded tip: the tip vertex
+       (1.65, 2.42) sits half a rim width (1.56) further along the tip's inner bisector
+       (0.417, 0.909), so the rim ends exactly on the point the cursor acts on.
+
+       The fill gradient's two colors are filled in per variant before rasterizing. -->
+  <defs>
+    <linearGradient id="fill" gradientUnits="userSpaceOnUse" x1="1.65" y1="2.42" x2="11.25" y2="19.22">
+      <stop offset="0" stop-color="{TOP}"/>
+      <stop offset="1" stop-color="{BOTTOM}"/>
+    </linearGradient>
+  </defs>
+  <path d="M1.65 2.42 L2.13 21.62 L7.65 16.46 L16.53 15.86 Z" fill="none" stroke="#ffffff" stroke-width="3.12" stroke-linejoin="round"/>
+  <path d="M1.65 2.42 L2.13 21.62 L7.65 16.46 L16.53 15.86 Z" fill="url(#fill)" stroke="url(#fill)" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>

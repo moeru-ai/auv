@@ -46,7 +46,7 @@ mod live {
     ClickOptions, DisturbanceLevel, Driver, InputDeliveryPath, InputPolicy, InputTarget, MouseButton, MouseCubicBezierSegment, MouseCurve,
     MouseCurveMapping, MouseMotionOptions, MouseStart, MoveMouseRequest, Point, WindowInput, WindowPoint,
   };
-  use auv_driver_overlay::{LifecycleOptions, ShowOptions};
+  use auv_driver_overlay::LifecycleOptions;
   use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
   use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
   use windows::Win32::Graphics::Gdi::{BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, PAINTSTRUCT};
@@ -218,10 +218,7 @@ mod live {
     let pointer_before = session.input().current_position().ok();
     let foreground_before = unsafe { GetForegroundWindow() };
 
-    let follower = session
-      .overlay()
-      .follow_operations(ShowOptions::new().with_lifecycle_options(LifecycleOptions::manual()))
-      .map_err(|error| error.to_string())?;
+    let follower = session.overlay().follow_operations(LifecycleOptions::manual()).map_err(|error| error.to_string())?;
 
     let snapshot = |name: &str| -> Result<(), String> {
       pump(Duration::from_millis(140));

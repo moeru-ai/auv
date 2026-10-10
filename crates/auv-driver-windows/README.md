@@ -18,8 +18,8 @@ UIA, and `Windows.Media.Ocr`.
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process name (`ApplicationControl::activate_process_name`)
-- Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor glow)
-- Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): an eased cursor, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
+- Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
+- Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): a cursor that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
 ## Open TODOs
 
@@ -32,7 +32,6 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
 | `TODO(app-activate-windows-cli)` | `crates/auv-cli-invoke/src/commands/app.rs` | Wire `activate_process_name` into the `app.activate` CLI command (needs an owner decision on the shared output contract) |
-| `TODO(driver-overlay-windows-silhouette-shadow)` | `crates/auv-driver-overlay-windows/src/window.rs` | Cursor glow is radial, not a blur of the art's silhouette |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |

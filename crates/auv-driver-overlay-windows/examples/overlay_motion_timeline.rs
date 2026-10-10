@@ -13,7 +13,7 @@
 //! stream so the animation can be tested without touching anything. It sends no input, takes
 //! no focus and restores no window. Pass 1 measures frame time and event latency with nothing
 //! else competing for the CPU; pass 2 captures the screen at every step and finds the cursor
-//! tip in each capture (the one pixel color only the built-in pointer's edge uses).
+//! tip in each capture (the bright cyan only the built-in pointer's body uses).
 //!
 //! Exits non-zero when a check fails.
 
@@ -41,7 +41,7 @@ mod harness {
   use std::time::{Duration, Instant};
 
   use auv_driver_common::{MouseButton, Rect, ScreenPoint};
-  use auv_driver_overlay_common::{ActionEvent, FrameStats, LifecycleOptions, ShowOptions, Travel};
+  use auv_driver_overlay_common::{ActionEvent, FrameStats, LifecycleOptions, Travel};
   use auv_driver_overlay_windows::Animator;
 
   use super::backdrop::{Backdrop, pump, write_bmp};
@@ -51,9 +51,21 @@ mod harness {
   const WIDTH: i32 = 900;
   const HEIGHT: i32 = 420;
 
-  /// Edge color of the built-in AUV pointer (`#0b3a4a`) as BGRX. No other layer uses it, so
-  /// the pointer's tip can be found in a capture without knowing where the model put it.
-  const POINTER_EDGE: [u8; 3] = [0x4a, 0x3a, 0x0b];
+  /// Whether a captured BGRX pixel is the built-in pointer's body: its saturated cyan
+  /// (`#2fd3df` fading to `#0896a6`), or the pale cyan of the pressed art (`#8cecf2`).
+  ///
+  /// No other layer has those colors. Window marks, status pills and the right-click ripple
+  /// use the deeper `#009ba6`, which is too dark on its own; blended into the light backdrop
+  /// by antialiasing it gets brighter but also grayer, never as saturated (green over red by
+  /// 130) or as pale-but-blue (red under 160 with green over 225) as the pointer. The
+  /// left-click ripple is lime and the backdrop is gray. So the pointer can be found in a
+  /// capture without knowing where the model put it.
+  fn is_pointer_body(pixel: &[u8]) -> bool {
+    let (blue, green, red) = (i32::from(pixel[0]), i32::from(pixel[1]), i32::from(pixel[2]));
+    let body = green >= 180 && blue >= 190 && green - red >= 130;
+    let pressed = green >= 225 && blue >= 235 && red <= 160;
+    body || pressed
+  }
 
   fn at(x: f64, y: f64) -> ScreenPoint {
     ScreenPoint::new(f64::from(LEFT) + x, f64::from(TOP) + y)
@@ -141,8 +153,8 @@ mod harness {
 
   const END: Duration = Duration::from_millis(3100);
 
-  fn options() -> ShowOptions {
-    ShowOptions::new().with_lifecycle_options(LifecycleOptions::manual())
+  fn options() -> LifecycleOptions {
+    LifecycleOptions::manual()
   }
 
   /// Pass 1: nothing but the animator and the script, so the numbers are the animator's own.
@@ -161,12 +173,15 @@ mod harness {
     animator.stop()
   }
 
-  /// Where the pointer tip is in a capture: the top-most, then left-most pointer-edge pixel.
+  /// Where the pointer tip is in a capture: the top-most, then left-most pixel of the
+  /// pointer's bright body. The body starts about two pixels inside the white rim, so this
+  /// is within about two pixels of the hotspot, tilted or not (the tip stays the top of the
+  /// pointer at any tilt the scene uses).
   fn find_tip(pixels: &[u8]) -> Option<(i32, i32)> {
     for y in 0..HEIGHT {
       for x in 0..WIDTH {
         let index = ((y * WIDTH + x) * 4) as usize;
-        if pixels[index..index + 3] == POINTER_EDGE {
+        if is_pointer_body(&pixels[index..index + 3]) {
           return Some((x, y));
         }
       }
@@ -246,8 +261,8 @@ mod harness {
     }
   }
 
-  /// Checks one eased glide: the pointer leaves `from`, passes through intermediate places on
-  /// the way and settles on `to`, never jumping most of the distance between two captures.
+  /// Checks one jump from rest: the pointer leaves `from`, passes through intermediate places
+  /// on the way and settles on `to`, never jumping most of the distance between two captures.
   fn check_glide(report: &mut Report, samples: &[Sample], name: &str, from_ms: u64, to_ms: u64, from: (i32, i32), to: (i32, i32)) {
     let seen = window(samples, from_ms, to_ms);
     let total = distance(from, to);
@@ -295,15 +310,16 @@ mod harness {
     report.check(found * 10 >= samples.len() * 8, format!("pointer visible in at least 80% of captures ({found}/{})", samples.len()));
 
     let tip = |x: f64, y: f64| (x as i32, y as i32);
-    // The glide from the first click's point to the second click's point is the longest
-    // eased move on the script (about 650 px over the default 320 ms).
+    // The jump from the first click's point to the second click's point is the longest move
+    // on the script (617 px). The pointer is at rest when it starts, so its path is straight.
     check_glide(&mut report, &samples, "click to click glide", 1000, 1450, tip(150.0, 160.0), tip(760.0, 250.0));
 
-    // The jump at 1600 ms blends into the live stream and has arrived by 1920 ms; from then
-    // on the pointer must be where the driver's samples are, within the pipeline's own delay:
-    // up to one frame of pacing, one frame of rendering and one compositor tick, about 50 ms.
-    // The stream moves 1.33 px per millisecond, so an eased copy (320 ms behind) would be
-    // hundreds of pixels off and still fail this.
+    // The jump at 1600 ms blends into the live stream and has caught up well before 1950 ms;
+    // from then on the pointer must be where the driver's samples are, within the pipeline's
+    // own delay (up to one frame of pacing, one frame of rendering and one compositor tick,
+    // about 50 ms) plus the 25 ms the stream's spring trails it by: 75 ms in all. The stream
+    // moves 1.33 px per millisecond, so a jump-length spring per sample (a cursor that falls
+    // behind by the 110 ms smooth time and more) would fail this.
     let sampled = window(&samples, 1950, 2150);
     let worst_lag = sampled
       .iter()
@@ -319,8 +335,8 @@ mod harness {
       sampled.len()
     );
     report.check(
-      !sampled.is_empty() && lag_ms < 50.0,
-      format!("sampled stream: the pointer tracks the driver's samples within 50 ms, not an eased copy ({lag_ms:.0} ms)"),
+      !sampled.is_empty() && lag_ms < 75.0,
+      format!("sampled stream: the pointer tracks the driver's samples within 75 ms ({lag_ms:.0} ms)"),
     );
 
     for snapshot in &snapshots {

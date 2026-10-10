@@ -1,4 +1,4 @@
-use auv_driver_overlay_common::style::{Color, Insets, Shadow};
+use auv_driver_overlay_common::style::{Color, Insets};
 use windows::Win32::Foundation::RECT;
 
 use super::{Canvas, LabelPill, point, rect};
@@ -35,16 +35,19 @@ fn a_new_canvas_is_fully_transparent() {
 }
 
 #[test]
-fn circles_are_antialiased_with_partial_alpha_edges() {
+fn rounded_rect_corners_are_antialiased_with_partial_alpha_edges() {
   let canvas = canvas(48, 48);
   let (width, _) = canvas.size();
-  canvas.fill_circle(point(24.0, 24.0), 12.0, Color::rgb(1.0, 0.0, 0.0)).unwrap();
+  canvas.fill_rounded_rect(rect(8.0, 8.0, 40.0, 40.0), 12.0, Color::rgb(1.0, 0.0, 0.0)).unwrap();
   let pixels = canvas.into_pixels().unwrap();
 
   assert_eq!(pixel(&pixels, width, 24, 24), [0, 0, 255, 255], "opaque red interior");
   assert_eq!(alpha(&pixels, width, 0, 0), 0, "untouched corner stays transparent");
-  let edge = (0..48).map(|x| alpha(&pixels, width, x, 24)).filter(|&a| a > 0 && a < 255).count();
-  assert!(edge >= 2, "the disc's left and right edges must blend with partial alpha");
+  let corner = (8..20).flat_map(|y| (8..20).map(move |x| (x, y))).filter(|&(x, y)| {
+    let a = alpha(&pixels, width, x, y);
+    a > 0 && a < 255
+  });
+  assert!(corner.count() >= 2, "the rounded corner must blend with partial alpha");
 }
 
 #[test]
@@ -58,52 +61,6 @@ fn translucent_fills_are_stored_as_premultiplied_alpha() {
   assert!((126..=129).contains(&a), "half alpha, got {a}");
   assert_eq!(red, a, "a premultiplied full-red channel equals alpha");
   assert_eq!((blue, green), (0, 0));
-}
-
-#[test]
-fn glow_peaks_at_the_shadow_alpha_and_fades_past_the_silhouette() {
-  let canvas = canvas(80, 80);
-  let (width, _) = canvas.size();
-  let shadow = Shadow {
-    offset_x: 0.0,
-    offset_y: 0.0,
-    ..Shadow::auv()
-  };
-  canvas.draw_glow(point(40.0, 40.0), 12.0, &shadow).unwrap();
-  let pixels = canvas.into_pixels().unwrap();
-
-  let ray = (0..40).map(|distance| alpha(&pixels, width, 40 + distance, 40)).collect::<Vec<_>>();
-  let peak = (Shadow::auv().color.alpha * 255.0).round() as u8;
-  assert!(ray[0].abs_diff(peak) <= 3, "center alpha {} should be the shadow alpha {peak}", ray[0]);
-  assert!(ray.windows(2).all(|pair| pair[1] <= pair[0] + 1), "alpha must not grow away from the center: {ray:?}");
-  assert!(ray[12] > 0 && ray[12] < ray[0], "the silhouette edge is half-covered: {ray:?}");
-  assert!(ray[16] > 0, "the glow reaches past the silhouette: {ray:?}");
-  assert_eq!(ray[39], 0, "the glow ends within three blur sigmas: {ray:?}");
-}
-
-#[test]
-fn a_transparent_shadow_draws_nothing() {
-  let canvas = canvas(32, 32);
-  let shadow = Shadow {
-    color: Color::CLEAR,
-    ..Shadow::auv()
-  };
-  canvas.draw_glow(point(16.0, 16.0), 8.0, &shadow).unwrap();
-  assert!(canvas.into_pixels().unwrap().iter().all(|&byte| byte == 0));
-}
-
-#[test]
-fn shadow_offset_moves_the_glow() {
-  let canvas = canvas(80, 80);
-  let (width, _) = canvas.size();
-  let shadow = Shadow {
-    offset_x: 0.0,
-    offset_y: 10.0,
-    ..Shadow::auv()
-  };
-  canvas.draw_glow(point(40.0, 30.0), 8.0, &shadow).unwrap();
-  let pixels = canvas.into_pixels().unwrap();
-  assert!(alpha(&pixels, width, 40, 40) > alpha(&pixels, width, 40, 30), "the brightest point follows the offset");
 }
 
 /// Columns covered by any non-transparent pixel.

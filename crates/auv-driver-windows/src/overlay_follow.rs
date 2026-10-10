@@ -15,7 +15,7 @@ use auv_driver_common::geometry::{Point, ScreenPoint};
 use auv_driver_common::mouse_input::MotionEvent;
 use auv_driver_common::window::Window;
 use auv_driver_common::{Click, InputTarget, MouseButton};
-use auv_driver_overlay::{ActionEvent, FrameStats, LiveOverlay, ShowOptions, Travel};
+use auv_driver_overlay::{ActionEvent, FrameStats, LifecycleOptions, LiveOverlay, Travel};
 
 // TODO(overlay-follow-other-input): scroll, key, text and held-button delivery do not
 // report yet. The overlay has no visual for them, and drawing a click-shaped ripple for a
@@ -35,12 +35,12 @@ pub struct OperationFollower {
   _private: (),
 }
 
-pub(crate) fn follow(options: ShowOptions) -> DriverResult<OperationFollower> {
+pub(crate) fn follow(lifecycle: LifecycleOptions) -> DriverResult<OperationFollower> {
   let mut slot = FOLLOWER.lock().map_err(|_| backend("overlay follower state lock poisoned"))?;
   if slot.is_some() {
     return Err(backend("an overlay is already following this process's input"));
   }
-  let live = LiveOverlay::start(options).map_err(|error| backend(&error.to_string()))?;
+  let live = LiveOverlay::start(lifecycle).map_err(|error| backend(&error.to_string()))?;
   *slot = Some(live);
   Ok(OperationFollower { _private: () })
 }

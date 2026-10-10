@@ -4,7 +4,7 @@ use auv_driver_common::geometry::{CoordinateSpace, Point, Rect, ScreenPoint};
 use auv_driver_common::mouse_input::MotionEvent;
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{Click, InputTarget, MouseButton, MouseMotionSample};
-use auv_driver_overlay::{ActionEvent, ShowOptions, Travel};
+use auv_driver_overlay::{ActionEvent, LifecycleOptions, Travel};
 
 use super::*;
 
@@ -158,13 +158,13 @@ fn a_pointer_warp_is_a_jump_to_the_delivered_point() {
 fn reporting_without_a_follower_is_a_no_op_and_only_one_follower_runs_at_a_time() {
   report([moved_to(Point::new(1.0, 1.0))]);
 
-  let first = follow(ShowOptions::new()).expect("first follower starts");
-  let second = follow(ShowOptions::new());
+  let first = follow(LifecycleOptions::new()).expect("first follower starts");
+  let second = follow(LifecycleOptions::new());
   assert!(second.is_err(), "a second follower must be rejected, not replace the first");
 
   let stats = first.stop().expect("stop returns the run's stats");
   assert_eq!(stats.frames, 0, "nothing was reported, so nothing was drawn");
 
-  let again = follow(ShowOptions::new()).expect("stopping frees the slot");
+  let again = follow(LifecycleOptions::new()).expect("stopping frees the slot");
   drop(again);
 }

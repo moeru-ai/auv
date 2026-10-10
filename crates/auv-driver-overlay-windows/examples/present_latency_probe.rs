@@ -4,7 +4,7 @@
 //! cargo run --release -p auv-driver-overlay-windows --example present_latency_probe -- [frames] [basic]
 //! ```
 //!
-//! `basic` draws only layers every Windows renderer accepts (disc cursor, outline, status),
+//! `basic` draws only layers every Windows renderer accepts (built-in cursor, outline, status),
 //! so the same scene can run against an older renderer. Without it, an SVG cursor with a
 //! glow is added. Prints P50/P95/mean with linear-interpolation percentiles and no outlier
 //! filtering. Needs an interactive desktop; the overlay stays visible while it runs.

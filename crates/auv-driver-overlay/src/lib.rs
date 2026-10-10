@@ -79,8 +79,8 @@ pub fn remove() -> OverlayResult<()> {
   }
 }
 
-/// A running overlay that animates the actions a driver reports: a cursor gliding between
-/// the points operations acted on, click ripples and marks on targeted windows.
+/// A running overlay that animates the actions a driver reports: a cursor that springs
+/// between the points operations acted on, click ripples and marks on targeted windows.
 ///
 /// It draws only what [`ActionEvent`]s describe and never delivers input. Dropping it
 /// stops the animation and removes the overlay.
@@ -98,11 +98,10 @@ pub struct LiveOverlay {
 #[cfg(all(target_os = "windows", feature = "windows"))]
 impl LiveOverlay {
   /// Starts animating and returns once the renderer has warmed up, so the first reported
-  /// action is not delayed. `options.motion()` sets how the cursor eases between jumps;
-  /// `options.lifecycle()` sets whether the overlay removes itself after it has been
-  /// still for a while.
-  pub fn start(options: ShowOptions) -> OverlayResult<Self> {
-    auv_driver_overlay_windows::Animator::start(options).map(|animator| Self { animator }).map_err(OverlayError::backend)
+  /// action is not delayed. `lifecycle` sets whether the overlay removes itself after it
+  /// has been still for a while. The cursor's motion is the live scene's own spring.
+  pub fn start(lifecycle: LifecycleOptions) -> OverlayResult<Self> {
+    auv_driver_overlay_windows::Animator::start(lifecycle).map(|animator| Self { animator }).map_err(OverlayError::backend)
   }
 
   /// Reports one real action. Returns immediately.
@@ -119,8 +118,8 @@ impl LiveOverlay {
 #[cfg(not(all(target_os = "windows", feature = "windows")))]
 impl LiveOverlay {
   /// Always fails: no live overlay adapter is enabled for this target.
-  pub fn start(options: ShowOptions) -> OverlayResult<Self> {
-    let _ = options;
+  pub fn start(lifecycle: LifecycleOptions) -> OverlayResult<Self> {
+    let _ = lifecycle;
     Err(unavailable())
   }
 

@@ -1218,10 +1218,15 @@ surface as an overlay display: it delivers no input and proves no semantic succe
   succeeded, so a failed delivery is never drawn. The name and shape are provisional; it is
   not a tracing event and not a second action-result schema (`InputActionResult` stays the
   delivery record).
-- A **jump** is a reported position the cursor eases to with the shared `MotionOptions`. A
-  **sampled** position belongs to a trajectory the driver already timed; the cursor is drawn
-  at it with no added delay. Easing changes how the cursor reaches a real point; it never
-  moves toward a point nobody reported.
+- A **jump** is a reported position the cursor springs to from wherever it is drawn,
+  keeping its speed when a new point arrives mid-flight. A **sampled** position belongs to a
+  trajectory the driver already timed; the cursor follows it with a short spring, about
+  25 ms behind. A live overlay's motion is its own; the shared `MotionOptions` easing
+  governs one-shot overlays only. Motion changes how the cursor reaches a real point; it
+  never moves toward a point nobody reported and never passes the point it heads for.
+- A **cursor pose** turns and scales the cursor art about its hotspot, so the tip stays on
+  the reported point: a live cursor tilts with its horizontal speed and dips briefly when a
+  click lands.
 - A **ripple** marks a delivered click at its true point and time. A **window mark** is an
   outline and label on a window an action was delivered to, and fades after a few seconds.
 - The platform adapter owns the frame loop. Callers report events and never drive frames,

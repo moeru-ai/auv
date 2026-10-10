@@ -138,10 +138,12 @@ cargo run -p auv-driver-overlay-windows --example overlay_gallery -- overlay-gal
 
 ## Not covered, and deferred on purpose
 
-> Update 2026-10-10: the built-in art and motion items below were done in
+> Update 2026-10-10: the built-in art, shadow and motion items below were done in
 > [the Windows overlay motion reference](2026-10-10-windows-overlay-motion.md). Built-in
-> cursors now draw a pixel-art pointer with the default glow, and motion is the live
-> animator. The text below records the state when #306 landed.
+> cursors now draw the owner-chosen rounded pointer with a soft drop shadow, every cursor
+> shadow is a blur of the art's own silhouette (the radial glow and `Canvas::draw_glow` are
+> gone), and motion is the live animator. The text below records the state when #306
+> landed.
 
 - Built-in cursors still draw the Windows disc sprite with no default glow. macOS
   draws the canonical SVG art with `Shadow::auv()` by default.

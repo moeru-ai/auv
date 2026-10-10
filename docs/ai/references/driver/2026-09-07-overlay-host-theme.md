@@ -16,8 +16,11 @@ stroke (`#cefffd`); the click variant brightens its fill to `#92eeef`.
 blur radius, and a 2-point downward offset. The user cursor retains its previous
 artwork. Windows retains its existing built-in renderer; the new vector artwork
 and default glow for built-in cursors are a macOS capability. Since 2026-10-09
-Windows renders custom SVG cursor art and explicit shadows (as a radial glow); see
+Windows renders custom SVG cursor art and explicit shadows; see
 [Windows overlay renderer on Direct2D](2026-10-09-overlay-windows-direct2d-evidence.md).
+Since 2026-10-10 Windows blurs the art's own silhouette for every cursor shadow, and its
+built-in cursors draw their own rounded pointer with a soft drop shadow rather than this
+artwork and glow; see [Windows overlay motion](2026-10-10-windows-overlay-motion.md).
 
 The preview below shows the implemented cyan palette using real AppKit shadow
 rendering at 1:1 on dark and light backgrounds.

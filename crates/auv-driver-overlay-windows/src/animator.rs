@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use auv_driver_overlay_common::{ActionEvent, FrameStats, ShowOptions};
+use auv_driver_overlay_common::{ActionEvent, FrameStats, LifecycleOptions};
 
 use crate::AuvResult;
 
@@ -41,12 +41,15 @@ pub struct Animator {
 
 impl Animator {
   /// Starts the animation thread and returns once it has warmed up, so the first reported
-  /// action is never delayed by first-use initialization. `options.motion()` sets how the
-  /// cursor eases between jumps; `options.lifecycle()` sets whether the overlay removes
-  /// itself after the scene has been still for a while (`Removal::Manual` keeps it until
-  /// [`Animator::stop`]).
+  /// action is never delayed by first-use initialization. `lifecycle` sets whether the
+  /// overlay removes itself after the scene has been still for a while (`Removal::Manual`
+  /// keeps it until [`Animator::stop`]).
+  ///
+  /// There are no motion options: a live overlay moves its cursor with the spring that
+  /// [`MotionScene`](auv_driver_overlay_common::MotionScene) owns, not with the one-shot
+  /// `MotionOptions` easing.
   #[cfg(target_os = "windows")]
-  pub fn start(options: ShowOptions) -> AuvResult<Self> {
+  pub fn start(lifecycle: LifecycleOptions) -> AuvResult<Self> {
     /// Warm-up measured 40 to 330 ms; this bound only stops a wedged window system from
     /// blocking the caller forever.
     const WARM_UP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -56,7 +59,7 @@ impl Animator {
     let epoch = Instant::now();
     let worker = std::thread::Builder::new()
       .name("auv-overlay-animator".into())
-      .spawn(move || native::Worker::new(receiver, options, epoch).run(ready_sender))
+      .spawn(move || native::Worker::new(receiver, lifecycle, epoch).run(ready_sender))
       .map_err(|error| format!("failed to start the overlay animator thread: {error}"))?;
     let animator = Self {
       sender,
@@ -67,7 +70,7 @@ impl Animator {
   }
 
   #[cfg(not(target_os = "windows"))]
-  pub fn start(_options: ShowOptions) -> AuvResult<Self> {
+  pub fn start(_lifecycle: LifecycleOptions) -> AuvResult<Self> {
     Err("windows overlay animator is unsupported on this target".to_string())
   }
 
@@ -110,7 +113,7 @@ mod native {
 
   use auv_driver_common::ScreenPoint;
   use auv_driver_overlay_common::layers::{Cursor, Status};
-  use auv_driver_overlay_common::{ActionEvent, FrameStats, Layer, MotionScene, Overlay, Removal, ShowOptions, Wake};
+  use auv_driver_overlay_common::{ActionEvent, FrameStats, Layer, LifecycleOptions, MotionScene, Overlay, Removal, Wake};
   use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
   use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
 
@@ -188,15 +191,15 @@ mod native {
   }
 
   impl Worker {
-    pub(super) fn new(receiver: Receiver<Message>, options: ShowOptions, epoch: Instant) -> Self {
-      let idle_removal = match options.lifecycle().removal() {
+    pub(super) fn new(receiver: Receiver<Message>, lifecycle: LifecycleOptions, epoch: Instant) -> Self {
+      let idle_removal = match lifecycle.removal() {
         Removal::Manual => None,
         Removal::AutoAfter(after) => Some(after),
       };
       Self {
         receiver,
         epoch,
-        scene: MotionScene::new(options.motion()),
+        scene: MotionScene::new(),
         pacer: Pacer::new(FRAME_INTERVAL, idle_removal),
         last_overlay: None,
         unshown: Vec::new(),

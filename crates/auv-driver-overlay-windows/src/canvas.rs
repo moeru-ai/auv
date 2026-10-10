@@ -18,15 +18,14 @@
 
 use std::sync::OnceLock;
 
-use auv_driver_overlay_common::style::{Color, Insets, Shadow};
+use auv_driver_overlay_common::style::{Color, Insets};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
-  D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT,
+  D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-  D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_BITMAP_PROPERTIES, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-  D2D1_EXTEND_MODE_CLAMP, D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_GAMMA_2_2,
-  D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES, D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1_RENDER_TARGET_USAGE_NONE,
+  D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_BITMAP_PROPERTIES, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_MULTI_THREADED,
+  D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1_RENDER_TARGET_USAGE_NONE,
   D2D1_ROUNDED_RECT, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1SolidColorBrush,
   ID2D1StrokeStyle,
 };
@@ -284,17 +283,6 @@ impl Canvas {
     unsafe { self.target.CreateSolidColorBrush(&d2d_color(color), None) }.map_err(|error| format!("failed to create overlay brush: {error}"))
   }
 
-  pub(crate) fn fill_circle(&self, center: D2D_POINT_2F, radius: f32, color: Color) -> AuvResult<()> {
-    let brush = self.brush(color)?;
-    let ellipse = D2D1_ELLIPSE {
-      point: center,
-      radiusX: radius.max(1.0),
-      radiusY: radius.max(1.0),
-    };
-    unsafe { self.target.FillEllipse(&ellipse, &brush) };
-    Ok(())
-  }
-
   pub(crate) fn fill_rounded_rect(&self, bounds: D2D_RECT_F, radius: f32, color: Color) -> AuvResult<()> {
     let brush = self.brush(color)?;
     let radius = clamp_radius(bounds, radius);
@@ -340,65 +328,6 @@ impl Canvas {
     Ok(())
   }
 
-  /// Draws a soft radial glow, the Direct2D stand-in for a blurred silhouette shadow.
-  ///
-  /// `silhouette_radius` is the radius of the disc whose blurred edge the glow follows.
-  /// The falloff samples a Gaussian-blurred disc (sigma = blur radius / 2, the same
-  /// relation Core Graphics uses) into gradient stops, so the halo reads like the macOS
-  /// `Shadow::auv()` glow without needing a D2D effect (which would need a device context).
-  pub(crate) fn draw_glow(&self, center: D2D_POINT_2F, silhouette_radius: f32, shadow: &Shadow) -> AuvResult<()> {
-    let color = shadow.color;
-    let peak = channel(color.alpha);
-    if peak <= 0.0 {
-      return Ok(());
-    }
-    let center = point(center.x + px(shadow.offset_x), center.y + px(shadow.offset_y));
-    let blur = px(shadow.blur_radius).max(0.0);
-    let silhouette_radius = silhouette_radius.max(1.0);
-
-    if blur < 0.5 {
-      // No blur: the shadow is just the offset silhouette.
-      return self.fill_circle(center, silhouette_radius, color);
-    }
-
-    let sigma = blur / 2.0;
-    let reach = silhouette_radius + 3.0 * sigma;
-    const STOPS: usize = 16;
-    let stops = (0..STOPS)
-      .map(|index| {
-        let position = index as f32 / (STOPS - 1) as f32;
-        let distance = position * reach;
-        // Logistic approximation of the normal CDF (max error ~0.01), plenty for a glow.
-        let coverage = 1.0 / (1.0 + (-1.702 * (silhouette_radius - distance) / sigma).exp());
-        D2D1_GRADIENT_STOP {
-          position,
-          color: D2D1_COLOR_F {
-            a: peak * coverage,
-            ..d2d_color(color)
-          },
-        }
-      })
-      .collect::<Vec<_>>();
-
-    let collection = unsafe { self.target.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) }
-      .map_err(|error| format!("failed to create glow gradient: {error}"))?;
-    let properties = D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
-      center,
-      gradientOriginOffset: point(0.0, 0.0),
-      radiusX: reach,
-      radiusY: reach,
-    };
-    let brush = unsafe { self.target.CreateRadialGradientBrush(&properties, None, &collection) }
-      .map_err(|error| format!("failed to create glow brush: {error}"))?;
-    let extent = D2D1_ELLIPSE {
-      point: center,
-      radiusX: reach,
-      radiusY: reach,
-    };
-    unsafe { self.target.FillEllipse(&extent, &brush) };
-    Ok(())
-  }
-
   /// Draws premultiplied BGRA art 1:1 with its top-left corner at `top_left`.
   pub(crate) fn draw_sprite(&self, top_left: D2D_POINT_2F, sprite: &Sprite) -> AuvResult<()> {
     let properties = D2D1_BITMAP_PROPERTIES {
@@ -410,13 +339,12 @@ impl Canvas {
       dpiY: 96.0,
     };
     let size = D2D_SIZE_U {
-      width: sprite.size,
-      height: sprite.size,
+      width: sprite.width,
+      height: sprite.height,
     };
-    let bitmap = unsafe { self.target.CreateBitmap(size, Some(sprite.bgra.as_ptr().cast()), sprite.size * 4, &properties) }
+    let bitmap = unsafe { self.target.CreateBitmap(size, Some(sprite.bgra.as_ptr().cast()), sprite.width * 4, &properties) }
       .map_err(|error| format!("failed to upload cursor sprite: {error}"))?;
-    let edge = sprite.size as f32;
-    let destination = rect(top_left.x, top_left.y, top_left.x + edge, top_left.y + edge);
+    let destination = rect(top_left.x, top_left.y, top_left.x + sprite.width as f32, top_left.y + sprite.height as f32);
     // The art is rasterized at its final pixel size and placed on whole pixels, so
     // nearest-neighbor copies it exactly instead of resampling it.
     unsafe { self.target.DrawBitmap(&bitmap, Some(&destination), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None) };

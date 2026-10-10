@@ -29,7 +29,7 @@ use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture}
 use crate::window::{activate_window, list_windows, resolve_window};
 
 #[cfg(feature = "overlay")]
-use auv_driver_overlay::{Overlay, ShowOptions};
+use auv_driver_overlay::{LifecycleOptions, Overlay, ShowOptions};
 
 /// Display-targeted capture capabilities.
 ///
@@ -155,11 +155,12 @@ impl OverlayApi<'_> {
   }
 
   /// Starts a live overlay that mirrors the input this process delivers from now on: the
-  /// cursor glides between the points input acted on, clicks ripple and targeted windows
+  /// cursor springs between the points input acted on, clicks ripple and targeted windows
   /// are marked. The overlay only draws what was delivered and never sends input itself.
-  /// One follower runs at a time; stop it with [`OperationFollower::stop`] or by dropping it.
-  pub fn follow_operations(&self, options: ShowOptions) -> DriverResult<crate::OperationFollower> {
-    crate::overlay_follow::follow(options)
+  /// `lifecycle` sets whether it removes itself after a still period. One follower runs at
+  /// a time; stop it with [`OperationFollower::stop`] or by dropping it.
+  pub fn follow_operations(&self, lifecycle: LifecycleOptions) -> DriverResult<crate::OperationFollower> {
+    crate::overlay_follow::follow(lifecycle)
   }
 }
 

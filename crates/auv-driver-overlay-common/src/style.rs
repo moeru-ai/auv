@@ -194,10 +194,10 @@ pub struct CursorStyle {
   pub label_corner_radius: f64,
   pub sprite_size: f64,
   pub label_gap: f64,
-  /// Optional native silhouette shadow override. macOS blurs the silhouette;
-  /// Windows approximates it with a radial glow.
-  /// None uses renderer defaults: built-in AUV cursors glow; custom SVGs do not.
-  /// An explicit transparent shadow disables a built-in's default glow.
+  /// Optional native silhouette shadow override. Both renderers blur the art's own
+  /// silhouette. None uses renderer defaults: built-in AUV cursors cast their renderer's
+  /// shadow (a mint glow on macOS, a soft drop shadow under the Windows pointer); custom
+  /// SVGs cast none. An explicit transparent shadow turns a built-in's default off.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub shadow: Option<Shadow>,
 }
@@ -251,7 +251,7 @@ impl CursorStyle {
   }
 
   /// Sets or clears an explicit shadow override without changing sprite size.
-  /// Use a transparent shadow to suppress a built-in renderer's default glow.
+  /// Use a transparent shadow to suppress a built-in renderer's default shadow.
   pub fn with_shadow(mut self, shadow: Option<Shadow>) -> Self {
     self.shadow = shadow;
     self
