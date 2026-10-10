@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "os-v1-e0df059f-rename-desktop-directory",
+  "task": "../upstream/os/e0df059f-28a6-4169-924f-b9623e7184cc.json",
+  "upstream": {
+    "repository": "https://github.com/xlang-ai/OSWorld",
+    "revision": "b138d348256078fa634fc3b73567a7337c793e6b"
+  },
+  "infrastructure": {
+    "namespace": "benchmark-osworld-auv",
+    "basePvc": "osworld-v1-base",
+    "runtimeImage": "happysixd/osworld-docker@sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9",
+    "localSetupPort": 15101,
+    "localAuvPort": 18101
+  },
+  "auv": {
+    "linuxSha256": "76cbb138eb79cf04bf8ae2448df02c571ad7ff653704c8ab32f0c099e7897c75",
+    "macosSha256": "c8804645ed2de165910afa08576d210524dfcbbf273fc44e36caa6567926beda"
+  },
+  "actions": [
+    { "command": "input.keys", "args": ["alt", "f2"], "settleMs": 500 },
+    { "command": "input.typeText", "args": ["gnome-terminal"], "settleMs": 250 },
+    { "command": "input.keys", "args": ["return"], "settleMs": 2000 },
+    { "command": "input.typeText", "args": ["mv ~/Desktop/todo_list_Jan_1 ~/Desktop/todo_list_Jan_2"], "settleMs": 250 },
+    { "command": "input.keys", "args": ["return"], "settleMs": 1000 }
+  ]
+}

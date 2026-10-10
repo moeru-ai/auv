@@ -7,6 +7,11 @@ Use `--profile selkies` for the original Plasma GPU X11 desktop through HAMi DRA
 **NOTICE:** This provisions the desktop environment. OSWorld task setup, reset,
 evaluation, and AUV installation/pairing remain separate work.
 
+The [Vieval-managed live path](VIEVAL.md) provisions one fresh VM per
+case, uploads paired Linux/macOS AUV binaries, runs typed AUV operations, and
+uses the pinned upstream evaluator as the semantic scoring authority. Its first
+checked-in deterministic case completed with exact score `1`.
+
 ## Before you start
 
 - **Client:** Bash 3.2+, `kubectl`, and `jq`. Python is not required.
