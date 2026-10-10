@@ -60,6 +60,22 @@ pub fn click_at(
   click: Click,
   modifiers: ClickModifiers,
 ) -> DriverResult<InputActionResult> {
+  #[cfg(feature = "overlay")]
+  let reported = click.clone();
+  let result = deliver_click(point, button, click, modifiers)?;
+  #[cfg(feature = "overlay")]
+  crate::overlay_follow::report(crate::overlay_follow::clicked(point, button, &reported, None));
+  Ok(result)
+}
+
+/// Delivers a click without reporting it to the live overlay, for a caller that reports
+/// it together with the window it was aimed at.
+pub(crate) fn deliver_click(
+  point: Point,
+  button: auv_driver_common::MouseButton,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<InputActionResult> {
   let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   let (count, interval) = click_parts(&click)?;
   let start_time = std::time::Instant::now();
@@ -67,8 +83,6 @@ pub fn click_at(
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let button_desc = format!("{button:?}");
   crate::latency::record_latency_event("click_at", elapsed_ms, None, Some("SendInput"), Some(&button_desc));
-  #[cfg(feature = "overlay")]
-  crate::overlay_follow::report(crate::overlay_follow::clicked(point, button, &click));
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 

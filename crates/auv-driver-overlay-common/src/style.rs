@@ -200,6 +200,16 @@ pub struct CursorStyle {
   /// SVGs cast none. An explicit transparent shadow turns a built-in's default off.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub shadow: Option<Shadow>,
+  /// Optional color for built-in cursor art; its alpha is ignored. None draws each
+  /// variant's own colors. The renderer shades the art from it, for example the Windows
+  /// pointer's gradient and its lighter pressed tint. Custom SVGs ignore it.
+  ///
+  /// NOTICE: only live overlays set it today, to give each window's cursor its own
+  /// color (`MotionScene`). The Runner wire does not carry it (`cursor_style_to_proto` in
+  /// `crates/auv/src/client/runner.rs`) and the macOS adapter ignores it; see
+  /// TODO(overlay-motion-event-wire) and TODO(overlay-live-macos).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub accent: Option<Color>,
 }
 
 impl CursorStyle {
@@ -261,6 +271,12 @@ impl CursorStyle {
     self.label_gap = gap;
     self
   }
+
+  /// Sets or clears the color built-in cursor art is drawn in.
+  pub fn with_accent(mut self, accent: Option<Color>) -> Self {
+    self.accent = accent;
+    self
+  }
 }
 
 impl Default for CursorStyle {
@@ -273,6 +289,7 @@ impl Default for CursorStyle {
       sprite_size: 24.0,
       label_gap: 6.0,
       shadow: None,
+      accent: None,
     }
   }
 }

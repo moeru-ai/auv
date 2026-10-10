@@ -179,6 +179,14 @@ fn builtin_variants_draw_distinct_art() {
 }
 
 #[test]
+fn builtin_cursor_is_drawn_in_its_style_accent() {
+  let pink = "#ff74b1".parse::<Color>().unwrap();
+  let cursor = plain_pointer().with_style(no_shadow().with_accent(Some(pink)));
+  let [blue, green, red, body] = pixel(&render(&[Layer::Cursor(cursor)]).unwrap(), 44, 49);
+  assert!(body == 255 && red > 200 && green < 120 && blue > 90, "a pink body, got {:?}", [blue, green, red, body]);
+}
+
+#[test]
 fn invalid_cursor_shadow_is_rejected() {
   let shadow = Shadow {
     blur_radius: f64::NAN,

@@ -54,16 +54,32 @@ fn a_click_request_reports_one_click_per_press_at_the_delivered_point() {
   };
 
   for (click, presses) in [(Click::Single, 1), (double, 2), (triple, 3)] {
-    let events = clicked(point, MouseButton::Right, &click);
+    let events = clicked(point, MouseButton::Right, &click, None);
     assert_eq!(events.len(), presses);
     assert!(events.iter().all(|event| {
       *event
         == ActionEvent::Clicked {
           point: ScreenPoint(point),
           button: MouseButton::Right,
+          window: None,
         }
     }));
   }
+}
+
+#[test]
+fn a_click_aimed_at_a_window_names_that_window_for_its_cursor() {
+  let target = window(Some("Editor"), Some("editor.exe"));
+  let events = clicked(Point::new(310.0, 220.0), MouseButton::Left, &Click::Single, Some(&target));
+  assert_eq!(
+    events,
+    vec![ActionEvent::Clicked {
+      point: ScreenPoint::new(310.0, 220.0),
+      button: MouseButton::Left,
+      window: Some("4242".to_string()),
+    }],
+    "the same id the window's mark reports"
+  );
 }
 
 #[test]
@@ -97,6 +113,16 @@ fn moved(x: f64, y: f64, travel: Travel) -> ActionEvent {
   ActionEvent::Moved {
     point: ScreenPoint::new(x, y),
     travel,
+    window: None,
+  }
+}
+
+/// A movement of the test window's cursor.
+fn moved_in_window(x: f64, y: f64, travel: Travel) -> ActionEvent {
+  ActionEvent::Moved {
+    point: ScreenPoint::new(x, y),
+    travel,
+    window: Some("4242".to_string()),
   }
 }
 
@@ -128,13 +154,23 @@ fn every_new_movement_starts_with_a_jump_again() {
 }
 
 #[test]
-fn a_movement_aimed_at_a_window_marks_it_once_with_its_first_delivered_sample() {
+fn a_movement_aimed_at_a_window_marks_it_once_and_moves_its_cursor() {
   let target = window(Some("Editor"), Some("editor.exe"));
   let mut reporter = MotionReporter::new(Some(&InputTarget::Window(target.clone())));
   assert_eq!(reporter.event(&started(10.0, 10.0)), vec![], "nothing is marked before anything is delivered");
 
-  assert_eq!(reporter.event(&progress(0, 10.0, 10.0)), vec![window_targeted(&target), moved(10.0, 10.0, Travel::Jump)]);
-  assert_eq!(reporter.event(&progress(1, 20.0, 10.0)), vec![moved(20.0, 10.0, Travel::Sampled)], "the mark is not repeated per sample");
+  assert_eq!(
+    reporter.event(&progress(0, 10.0, 10.0)),
+    vec![
+      window_targeted(&target),
+      moved_in_window(10.0, 10.0, Travel::Jump)
+    ]
+  );
+  assert_eq!(
+    reporter.event(&progress(1, 20.0, 10.0)),
+    vec![moved_in_window(20.0, 10.0, Travel::Sampled)],
+    "the mark is not repeated per sample"
+  );
 }
 
 #[test]
@@ -150,6 +186,7 @@ fn a_pointer_warp_is_a_jump_to_the_delivered_point() {
     ActionEvent::Moved {
       point: ScreenPoint::new(5.0, 6.0),
       travel: Travel::Jump,
+      window: None,
     }
   );
 }

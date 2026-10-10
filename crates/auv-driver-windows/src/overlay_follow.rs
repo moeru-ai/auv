@@ -46,6 +46,21 @@ pub(crate) fn follow(lifecycle: LifecycleOptions) -> DriverResult<OperationFollo
 }
 
 impl OperationFollower {
+  /// Shows `text`, the caller's description of its work such as "Recording the run",
+  /// beside the cursor of `window` (None: of actions aimed at the screen), or removes it
+  /// with `None`. Each window AUV acts in has its own cursor; a status keeps that cursor
+  /// from fading out like an action does. The overlay shows the text as given and never
+  /// writes one itself.
+  ///
+  /// TODO(overlay-live-status-producers): `auv invoke`, MCP and Runner callers cannot pass
+  /// a status yet, because nothing starts a follower outside this API. Wire a producer when
+  /// the owner names that slice, together with starting the follower from the CLI.
+  pub fn set_status(&self, window: Option<&Window>, text: Option<&str>) -> DriverResult<()> {
+    let slot = FOLLOWER.lock().map_err(|_| backend("overlay follower state lock poisoned"))?;
+    let live = slot.as_ref().ok_or_else(|| backend("the overlay follower has stopped"))?;
+    live.set_status(window.map(|window| window.reference.id.as_str()), text).map_err(|error| backend(&error.to_string()))
+  }
+
   /// Stops following and returns the frame and latency measurements of the run.
   pub fn stop(self) -> DriverResult<FrameStats> {
     match take_live() {
@@ -84,12 +99,15 @@ pub(crate) fn report(events: impl IntoIterator<Item = ActionEvent>) {
   }
 }
 
-/// The clicks one delivered click request produced, one event per press.
-pub(crate) fn clicked(point: Point, button: MouseButton, click: &Click) -> Vec<ActionEvent> {
+/// The clicks one delivered click request produced, one event per press. `window` is the
+/// window the click was aimed at, whose cursor shows it; None for a click aimed at the
+/// screen.
+pub(crate) fn clicked(point: Point, button: MouseButton, click: &Click, window: Option<&Window>) -> Vec<ActionEvent> {
   (0..click.count())
     .map(|_| ActionEvent::Clicked {
       point: ScreenPoint(point),
       button,
+      window: window.map(|window| window.reference.id.clone()),
     })
     .collect()
 }
@@ -108,7 +126,8 @@ pub(crate) fn window_targeted(window: &Window) -> ActionEvent {
 /// `Started` reports nothing: the movement has not delivered anything yet. The first
 /// delivered sample is where the logical mouse now is, so the cursor jumps there, and a
 /// movement aimed at a window marks that window; later samples belong to the timed
-/// trajectory and are followed without added delay.
+/// trajectory and are followed without added delay. A movement aimed at a window moves
+/// that window's cursor.
 pub(crate) struct MotionReporter {
   target_window: Option<Window>,
   awaiting_first_sample: bool,
@@ -140,6 +159,7 @@ impl MotionReporter {
         events.push(ActionEvent::Moved {
           point: ScreenPoint(sample.point),
           travel: if first { Travel::Jump } else { Travel::Sampled },
+          window: self.target_window.as_ref().map(|window| window.reference.id.clone()),
         });
         events
       }
@@ -147,11 +167,12 @@ impl MotionReporter {
   }
 }
 
-/// A delivered pointer warp to `point`.
+/// A delivered pointer warp to `point`, which aims at the screen rather than a window.
 pub(crate) fn moved_to(point: Point) -> ActionEvent {
   ActionEvent::Moved {
     point: ScreenPoint(point),
     travel: Travel::Jump,
+    window: None,
   }
 }
 

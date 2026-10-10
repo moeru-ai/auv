@@ -22,8 +22,9 @@ pub fn render(overlay: &Overlay, options: ShowOptions) -> AuvResult<()> {
     match layer {
       Layer::Cursor(cursor) => {
         // TODO(overlay-live-macos): the native cursor ignores `Cursor::pose` (tilt and press
-        // scale). Only the Windows live animator poses cursors today; draw the pose here
-        // when live overlays route to macOS.
+        // scale) and `CursorStyle::accent` (per-window color). Only the Windows live
+        // animator poses and tints cursors today; draw both here when live overlays route
+        // to macOS.
         let cursor = cursor_for_rendering(cursor);
         let id = internal_id("cursor", cursor_index);
         cursor_index += 1;

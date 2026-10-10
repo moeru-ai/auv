@@ -43,7 +43,7 @@ Count: **66**
 
 - [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
 - [`2026-10-09-overlay-windows-direct2d-evidence.md`](2026-10-09-overlay-windows-direct2d-evidence.md): Windows overlay drawing moved from GDI to a Direct2D DC render target (real premultiplied alpha, antialiasing, DirectWrite labels, cursor glow, resvg SVG cursors); pixel tests and before/after screen captures.
-- [`2026-10-10-windows-overlay-motion.md`](2026-10-10-windows-overlay-motion.md): Windows live overlay that follows real driver input (spring-following cursor with tilt and press, click ripples, window marks), its faithfulness rules, report sites, the owner-chosen rounded built-in pointer with a silhouette shadow, and frame-time and latency evidence from a scripted harness and from real window-targeted operations.
+- [`2026-10-10-windows-overlay-motion.md`](2026-10-10-windows-overlay-motion.md): Windows live overlay that follows real driver input (spring-following cursor with tilt and press, click ripples, window marks), with one colored cursor per window and caller-written status pills, its faithfulness rules, report sites, the owner-chosen rounded built-in pointer with a silhouette shadow, and frame-time, latency and per-window color evidence from a scripted harness and from real window-targeted operations.
 
 - [`2026-09-11-click-modifiers-contract.md`](2026-09-11-click-modifiers-contract.md)
 - [`2026-09-09-background-ax-and-media-gap-review.md`](2026-09-09-background-ax-and-media-gap-review.md): Deeper background input and AX review, plus microphone/system-audio distinctions and three media capability candidates with pinned source evidence.

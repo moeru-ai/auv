@@ -276,10 +276,18 @@ impl WindowApi<'_> {
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       let activation_attempt = foreground_window_attempt(window, "pointer delivery");
-      let mut result = self.session.input().click_at(screen_point, options.button, options.click, options.modifiers)?;
+      #[cfg(feature = "overlay")]
+      let click = options.click.clone();
+      // Delivered like a global click, but reported below as aimed at `window`, so the
+      // live overlay shows it with that window's cursor.
+      let mut result = crate::input::deliver_click(screen_point, options.button, options.click, options.modifiers)?;
       result.attempts.insert(0, activation_attempt);
       #[cfg(feature = "overlay")]
-      crate::overlay_follow::report([crate::overlay_follow::window_targeted(window)]);
+      {
+        let mut events = vec![crate::overlay_follow::window_targeted(window)];
+        events.extend(crate::overlay_follow::clicked(screen_point, options.button, &click, Some(window)));
+        crate::overlay_follow::report(events);
+      }
       return Ok(result);
     }
     let _ = options.window_strategy;
@@ -289,7 +297,7 @@ impl WindowApi<'_> {
     #[cfg(feature = "overlay")]
     {
       let mut events = vec![crate::overlay_follow::window_targeted(window)];
-      events.extend(crate::overlay_follow::clicked(screen_point, options.button, &click));
+      events.extend(crate::overlay_follow::clicked(screen_point, options.button, &click, Some(window)));
       crate::overlay_follow::report(events);
     }
     Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
