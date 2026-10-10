@@ -28,7 +28,7 @@ use crate::driver::MacosDriverSession;
 use crate::native::ocr::NativeOcrTextCapture;
 use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
 use crate::native::window::ListWindowsOptions;
-use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
+use crate::support::{AppLiveness, app_resolution_message, build_window_candidates, parse_app_selector, resolve_app_ref};
 use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
 
 #[cfg(feature = "overlay")]
@@ -257,8 +257,19 @@ impl WindowApi<'_> {
           // an app-filtered query returns. Retry with the explicit app selector
           // before reporting target_window_not_found.
           let filtered_snapshot = crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector)).map_err(backend)?;
-          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector)
-            .map_err(|_| not_found(format!("visible application {app_selector:?}")))?;
+          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(|_| {
+            // The snapshot cannot separate "not running" from "running without
+            // a visible window": both leave nothing to resolve. Ask the process
+            // list, which answers without needing a WindowServer window, so the
+            // caller learns whether to launch the application or bring back one
+            // of its windows.
+            let liveness = parsed_app_selector
+              .bundle_id
+              .as_deref()
+              .map(|bundle_id| AppLiveness::from_probe(crate::native::window::running_application_pid(bundle_id)))
+              .unwrap_or(AppLiveness::Unknown);
+            not_found(app_resolution_message(&app_selector, liveness))
+          })?;
           snapshot = filtered_snapshot;
           resolved_app
         }

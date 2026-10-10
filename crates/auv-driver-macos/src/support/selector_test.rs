@@ -1,7 +1,9 @@
+use auv_driver_common::DriverError;
+
 use crate::capture::types::{CaptureBackend, DisplayDescriptor, Rect, Scale2D, Size};
 use crate::types::{AppSelector, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef, WindowSelection};
 
-use super::{resolve_window_candidate, resolve_window_candidate_for_input};
+use super::{AppLiveness, app_resolution_message, resolve_window_candidate, resolve_window_candidate_for_input};
 
 #[test]
 fn input_window_candidate_allows_partially_visible_default_window() {
@@ -27,6 +29,60 @@ fn capture_window_candidate_still_requires_fully_contained_default_window() {
     .expect_err("capture candidate should reject partial windows");
 
   assert!(error.contains("fully contained visible window"));
+}
+
+// ROOT CAUSE:
+//
+// App resolution reads only the window snapshot, so an application that is not
+// running and an application that is running without a visible window both
+// failed with `visible application "..."`, which reads as "no such
+// application". A caller could not tell whether to launch the application or
+// to bring back one of its windows.
+//
+// Before the fix, both cases produced the same message.
+// The fix keeps the NotFound error kind and names the liveness that was
+// actually observed.
+#[test]
+fn app_resolution_failure_names_the_observed_liveness() {
+  assert_eq!(app_resolution_message("com.apple.Preview", AppLiveness::NotRunning), "application \"com.apple.Preview\" (not running)");
+  assert_eq!(
+    app_resolution_message("com.apple.Preview", AppLiveness::Running),
+    "application \"com.apple.Preview\" (running, but resolved no visible window)"
+  );
+  assert_eq!(
+    app_resolution_message("com.apple.Preview", AppLiveness::MultipleInstances),
+    "application \"com.apple.Preview\" (multiple running instances; select a window)"
+  );
+  // A selector without a bundle id cannot be probed, so the message stays as it
+  // was rather than claiming a liveness nobody observed.
+  assert_eq!(app_resolution_message("Preview", AppLiveness::Unknown), "visible application \"Preview\"");
+}
+
+// `NotFound` renders as `"{target} was not found"`, so the reason has to read as
+// a qualifier on a noun phrase. Written as a sentence it produced
+// `application "X" is not running was not found`, which no unit test of the
+// message alone would catch — only the rendered form shows it.
+#[test]
+fn resolution_reason_reads_as_a_qualifier_after_the_shared_suffix() {
+  let rendered = |liveness| {
+    DriverError::NotFound {
+      target: app_resolution_message("com.apple.Preview", liveness),
+    }
+    .to_string()
+  };
+
+  assert_eq!(rendered(AppLiveness::NotRunning), "application \"com.apple.Preview\" (not running) was not found");
+  assert_eq!(rendered(AppLiveness::Running), "application \"com.apple.Preview\" (running, but resolved no visible window) was not found");
+  assert_eq!(rendered(AppLiveness::Unknown), "visible application \"com.apple.Preview\" was not found");
+}
+
+#[test]
+fn liveness_maps_the_running_application_pid_contract() {
+  assert_eq!(AppLiveness::from_probe(Ok(0)), AppLiveness::NotRunning);
+  assert_eq!(AppLiveness::from_probe(Ok(4242)), AppLiveness::Running);
+  assert_eq!(AppLiveness::from_probe(Ok(-1)), AppLiveness::MultipleInstances);
+  assert_eq!(AppLiveness::from_probe(Ok(-7)), AppLiveness::Unknown);
+  assert_eq!(AppLiveness::from_probe(Err("application resolution is unavailable".to_string())), AppLiveness::Unknown);
 }
 
 fn sample_resolved_app() -> ResolvedAppRef {

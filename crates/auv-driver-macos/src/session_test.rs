@@ -713,6 +713,22 @@ fn missing_application_keyboard_target_is_not_found() {
   assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
 }
 
+// The window snapshot cannot separate a bundle that is not running from one
+// that is running without a visible window. The error must say which was
+// observed, because the recovery differs: launch the application, or bring
+// back one of its windows. Only a live probe can answer this, hence the gate.
+#[test]
+#[ignore = "requires a live macOS WindowServer"]
+fn unresolved_bundle_that_is_not_running_says_so() {
+  let session = MacosDriverSession { _private: () };
+  let error =
+    session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("ai.moeru.auv.nonexistent-window-test"))).unwrap_err();
+  match error {
+    DriverError::NotFound { target } => assert!(target.contains("(not running)"), "{target}"),
+    other => panic!("expected NotFound, got {other}"),
+  }
+}
+
 // Application targets need no AX window. Background delivery must leave
 // foreground ownership unchanged and must not be rejected as foreground-only.
 #[test]
