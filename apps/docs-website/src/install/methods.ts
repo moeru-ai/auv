@@ -33,7 +33,7 @@ export type OsId = 'linux' | 'macos' | 'windows'
 export type Shell = 'powershell' | 'sh'
 
 const REPO = 'https://github.com/moeru-ai/auv'
-const SCRIPT = 'curl -fsSL https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh'
+const SCRIPT = 'curl -fsSL https://auv.moeru.ai/install.sh | sh'
 const SCRIPT_NOTE = 'Installs to ~/.local/bin. Set AUV_VERSION or AUV_INSTALL_DIR to change the version or the directory.'
 const PROTO = [
   `proto plugin add auv "https://raw.githubusercontent.com/moeru-ai/auv/main/toolchain/proto/auv.toml" --to global`,

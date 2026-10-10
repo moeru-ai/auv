@@ -49,6 +49,17 @@ The `Cloudflare Workers` workflow runs `build:site` and deploys on every push to
 `main`. The preview workflows upload the same build for each pull request.
 Routes are managed in the Cloudflare dashboard.
 
+`public/_redirects` defines the `/install.sh` shortcut. It returns a `302`
+redirect to `https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh`.
+Vite copies this file to `dist/_redirects` for Cloudflare to apply.
+The README and website use this install command:
+
+```sh
+curl -fsSL https://auv.moeru.ai/install.sh | sh
+```
+
+The `-L` flag tells curl to follow the redirect.
+
 ## Export
 
 The film exporter is a package script. Videos are written to `out/`, which is

@@ -8,9 +8,10 @@ preview_urls = true
 # lives in the Cloudflare dashboard rather than this deploy configuration.
 workers_dev = false
 
-# Assets-only Worker. `/playground` redirects to `/playground/` (its
-# index.html); other unknown paths fall back to the docs-website index.html,
-# which routes `/film`, `/render`, and `/export` in the browser.
+# Assets-only Worker. `public/_redirects` defines the `/install.sh` shortcut.
+# `/playground` redirects to `/playground/` (its index.html); other unknown
+# paths fall back to the docs-website index.html, which routes `/film`,
+# `/render`, and `/export` in the browser.
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
