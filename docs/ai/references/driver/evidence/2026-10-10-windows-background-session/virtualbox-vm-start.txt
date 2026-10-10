@@ -1,0 +1,24 @@
+VirtualBox VM start during split-4-click, 2026-10-11, same host clock as the witness.
+
+The user started a VirtualBox VM (restored from a saved state, 8.6 GB) in minute 7 of
+split-4-click. The VM process (VirtualBoxVM.exe) was created at 04:16:43 local time (UTC+8).
+Lines from the VM's own VBox.log; its times count from the process start, and "Log opened" pins
+them to the wall clock. Local times on the right are log time + 04:16:45.141.
+
+00:00:07.765670 VirtualBox VM 7.2.16 r174877 win.amd64 (Aug 13 2026 19:50:41) release log
+00:00:07.765672 Log opened 2026-10-10T20:16:52.907137100Z                         04:16:52.907
+00:00:07.838601 Console: Machine state changed to 'Restoring'                        04:16:52.980
+00:00:07.838764 GUI: HID LEDs sync is enabled                                        04:16:52.980
+00:00:07.936934 GUI: Cannot notify guest about VM window out-of-focus event          04:16:53.078
+00:00:17.826490 Changing the VM state from 'RESUMING' to 'RUNNING'                   04:17:02.968
+00:00:18.063556 GUI: UIMachineLogicNormal::sltCheckForRequestedVisualStateType: Requested-state=1, Machine-state=6
+                                                                                     04:17:03.205
+
+Injected key presses in split-4-click.jsonl (record wall time - round_ms + at_ms):
+
+04:16:52.897  press, release 2 ms later
+04:16:53.054  press, release 1 ms later
+04:17:03.295  press, release 0 ms later
+
+The previous VM session's log ends at 20:14 on 2026-10-10, so no VM ran during the presses at
+02:46:43 (bench-10min) and 03:25:51 (bench-10min-kinds) on 2026-10-11.

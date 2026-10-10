@@ -116,9 +116,12 @@ nothing the user did explains, or any injected input.
   more than 10%: from minute 7 it ran at about 7,700 operations a minute instead of about 8,800,
   while click and observe latency did not change (observe P50 10.9 to 12.6 ms throughout). The
   lost time is in the part of a round the bench does not time: reading each receiver's counters
-  over its pipe and judging the desktop. The same minute brought a shell flyout, three injected
-  key presses and a working-set trim of the harness (52 to 44 MB); the cause is not established.
-  Two `split` runs passed the witness, the only `bench` runs that did.
+  over its pipe and judging the desktop. In that minute the user started a VirtualBox VM on the
+  same machine, restoring 8.6 GB from a saved state (its process was created at 04:16:43); the
+  harness's working set was trimmed from 52 to 44 MB as it did, and the VM's start also injected
+  three key presses ([finding](#injected-key-presses-during-bench)). With the session's own
+  latencies flat, the drop is the machine's load, not the session slowing down. Two `split` runs
+  passed the witness, the only `bench` runs that did.
 
   A single operation costs 0.02 ms to deliver; seeing its
   effect costs 12.3 ms P50 (P95 13.3 ms) in `five`, which is the receiver repainting and the
@@ -204,55 +207,57 @@ The witness saw keys pressed and released through injected input in three of the
 
 | Run | Operations | Minutes | Injected key presses |
 | --- | --- | --- | --- |
-| `bench-10min.jsonl` | click and scroll | 10 | 1 (minute 9) |
+| `bench-10min.jsonl` | click and scroll | 10 | 1 (minute 9), source unknown |
 | `bench-10min-first.jsonl` | click and scroll | 10 | 0 |
-| `bench-10min-kinds.jsonl` | click and scroll | 10 | 1 (minute 6) |
+| `bench-10min-kinds.jsonl` | click and scroll | 10 | 1 (minute 6), source unknown |
 | `split-1-scroll.jsonl`, `split-3-scroll.jsonl` | scroll only | 20 | 0 |
 | `split-2-click.jsonl` | click only | 10 | 0 |
-| `split-4-click.jsonl` | click only | 10 | 3 (minute 7, within 11 s) |
+| `split-4-click.jsonl` | click only | 10 | 3 (minute 7), VirtualBox starting a VM |
 | `faults-10min.jsonl` | click only, paced | 10 | 0 |
 | `quiet.jsonl` | nothing of AUV running | 30 | 0 |
 
 An earlier `bench` run on 2026-10-10, not in the evidence folder, saw one press in minute 7. The
 `split` runs alternated scroll, click, scroll, click while the user worked.
 
-What every press had in common:
-
-- The injector left no tag (`dwExtraInfo` 0) and did not run at a lower integrity level. With UAC
-  off every process here runs at high integrity, so the second fact narrows nothing.
-- Neither the foreground window nor the cursor changed.
-- Where the kind was recorded, the key was `other`. In `bench-10min-kinds.jsonl` that meant
-  anything but a modifier, an input-method key or an unassigned key such as a hotkey tool sends to
-  mask a released Alt or Win key. `split-4-click.jsonl` also ruled out text, editing and
-  navigation, function and media keys, which leaves keys such as Apps, Print Screen, Pause, the
-  lock keys and reserved or vendor codes. The witness does not record which key it was.
-
-What differed:
-
-- In the click-and-scroll runs, press and release were 90 to 120 ms apart, 3.0 to 4.5 s after the
-  user's last physical input, with no window event near them.
-- In `split-4-click.jsonl`, press and release were 0 to 2 ms apart. Two of the three came 3 and
-  31 ms after `EVENT_SYSTEM_FOREGROUND` named a Windows shell flyout
-  (`XamlExplorerHostIslandWindow`, another process) while the cursor was on the taskbar, 2 s
-  after the user's last input; the third came 12 s after it.
+Every press left no tag (`dwExtraInfo` 0) and did not come from a lower integrity level (with UAC
+off every process here runs at high integrity, so this narrows nothing). None changed the
+foreground window or the cursor. Where the kind was recorded it was `other`: in
+`split-4-click.jsonl` that rules out modifiers (Caps Lock among them), input-method, unassigned,
+text, editing and navigation, function and media keys, and leaves keys such as Apps, Print Screen,
+Pause, Num Lock, Scroll Lock and reserved or vendor codes. The witness does not record which key.
 
 Nothing on the session's input path injects input. `BackgroundSession` posts window messages
 through `background_input`, and neither it, the harness nor the receivers call `SendInput`,
 `keybd_event` or `SetCursorPos`. A posted message never reaches the low-level hooks, so the event
-is not one of the session's own messages. What the runs say about the source:
+is not one of the session's own messages.
 
-- Scrolling is not the trigger: the scroll-only runs sent 66,740 scrolls, twice the rate of the
-  click-and-scroll runs, and saw no injected key.
-- Whether the session matters at all is open. All 3 episodes came in the 60 minutes of runs that
-  clicked and none in the 50 minutes that did not (the scroll-only runs and `quiet`). If the
-  presses had nothing to do with the session, that split would happen about one time in six
-  ((60/110)³), so these runs cannot tell a trigger in the session from a rare outside source.
-- The shell flyouts in `split-4-click.jsonl` suggest the Windows shell, or a tool hooked into it,
-  reacting to the user's own use of the taskbar; nothing here shows it.
+**The three in `split-4-click.jsonl` came from VirtualBox.** In minute 7 of that run the user
+started a VirtualBox VM, restored from a saved state. Its process was created at 04:16:43, and the
+VM's own log, on the same clock, has an event within 0.1 to 0.33 s of each press
+(`virtualbox-vm-start.txt`):
 
-Until it is explained, a key press that reaches the user's foreground window while a session
-runs remains an open risk to the redline that the harness must not disturb the user's desktop,
-and the witness keeps failing such a run. Candidate next steps, none done here:
+| Injected press | VirtualBox log |
+| --- | --- |
+| 04:16:52.897 | 04:16:52.907 log opened, 04:16:52.980 `GUI: HID LEDs sync is enabled` |
+| 04:16:53.054 | 04:16:53.078 the VM window's first focus event |
+| 04:17:03.295 | 04:17:02.968 the VM running, 04:17:03.205 the window's state check |
+
+With HID LED sync on, VirtualBox keeps the keyboard's lock-key lights in step with the guest.
+Pressing Num Lock or Scroll Lock would fit both the timing and the kind; which key it pressed is
+not recorded. These presses also differ from the other two: release 0 to 2 ms after the press,
+where the others took 90 to 120 ms. The shell flyouts (`XamlExplorerHostIslandWindow`) that the
+witness saw next to two of them were the user's own taskbar use around starting the VM.
+
+**The two in the click-and-scroll runs are not explained.** No VM was running then: the previous
+VM session's log ends at 20:14 on 2026-10-10, and the same holds for the earlier 2026-10-10 run.
+Each came 3.0 to 4.5 s after the user's last physical input, with no window event near it. Both
+fell in click-and-scroll runs and none in the 90 other minutes, but two events, grouped after
+the fact, cannot tell a cause in `bench` from a rare outside source. Scrolling alone did not
+produce one: the scroll-only runs sent 66,740 scrolls, twice the click-and-scroll rate.
+
+Until those two are explained, a key press that reaches the user's foreground window while a
+session runs remains an open risk to the redline that the harness must not disturb the user's
+desktop, and the witness keeps failing such a run. Candidate next steps, none done here:
 
 - Run on a desktop nobody uses, a virtual machine or a second interactive session. Every press so
   far came while the user was working, and it would also remove the changes below.
@@ -345,12 +350,12 @@ already running is skipped, and Notepad is left out because it can reopen the us
 - The delivery result does not observe a foreground takeover
   (`TODO(background-session-foreground-grant)`).
 - The one-shot WGC capture can return an older frame (`TODO(wgc-capture-latest-frame)`).
-- An unidentified program injected key presses in three of the seven committed `bench` runs
-  ([finding](#injected-key-presses-during-bench)), and the foreground of a desktop the user is
-  working on changes in ways the witness cannot attribute
-  ([finding](#foreground-changes-the-witness-cannot-attribute)); only two `bench` runs passed the
-  witness. One run of seven lost more than 10% of its throughput for a reason not established
-  (R2).
+- Injected key presses failed three of the seven committed `bench` runs: VirtualBox starting a VM
+  in one, a source not identified in two ([finding](#injected-key-presses-during-bench)). The
+  foreground of a desktop the user is working on also changes in ways the witness cannot
+  attribute ([finding](#foreground-changes-the-witness-cannot-attribute)); only two `bench` runs
+  passed the witness. One run of seven lost more than 10% of its throughput while the user
+  started a VM on the same machine (R2).
 - Not evidenced: UIPI (this machine runs with UAC off, every process at high integrity), WPF,
   WinForms, Qt, Electron, Java and game windows, display scaling other than 100%, more than one
   display, virtual desktops, remote or locked sessions.
@@ -385,6 +390,7 @@ Files in [`evidence/2026-10-10-windows-background-session/`](evidence/2026-10-10
 | `bench-10min-first.jsonl` | `bench --minutes 10` | The run before, from a build whose violation record did not yet carry cursor positions. |
 | `bench-10min-kinds.jsonl` | `bench --minutes 10` | The run after, whose violation records give the kind of each injected key. |
 | `split-1-scroll.jsonl` to `split-4-click.jsonl` | `bench --minutes 10 --ops scroll` / `--ops click` | Four runs in a row, alternating scroll only and click only, with the finer key kinds; `split-runs.txt` has their verdicts. |
+| `virtualbox-vm-start.txt` | none | Lines from the VirtualBox VM's own log next to the three injected key presses in `split-4-click.jsonl`, on the same clock. |
 | `faults-10min.jsonl` | `faults --minutes 10` | Ten minutes over five receivers with a close at 5:00, a kill at 6:00, a move at 7:00, a resize at 7:30, a minimize at 8:00 and a restore at 9:00. Every operation is judged and counted in the summary; the records keep the first three answers of each kind per window, then one in a hundred, and every operation or gap between operations that the witness failed. Gaps judged inconclusive are counted by reason (`gap_findings_by_verdict`), not listed. |
 | `apps.jsonl`, `apps-*.png` | `apps` | The application survey; one saved frame per application, cropped to the application's own content. |
 | `probe.txt` | `probe` | Which receivers took the foreground on their first activation, piped and detached. |
