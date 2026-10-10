@@ -9,6 +9,11 @@
 > signed app completed its own configuration-specific installed-host gate on
 > 2026-10-02; see
 > [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md).
+>
+> NOTICE (2026-10-11): `EnrollRequest.credential_kind` and the CLI `--kind`
+> flag were removed. Each unlock host accepts one credential kind and derives
+> it; the macOS host still accepts only the OS login password. The CLI command
+> below is now `auv devices credentials enroll --user neko`.
 
 Status: configuration-specific installed-host and local Unix DeviceService
 proof on macOS 26.3, recorded on 2026-09-29. Two supervised black-display

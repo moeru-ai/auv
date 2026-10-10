@@ -8,8 +8,7 @@
 use std::sync::Arc;
 
 use auv_api_server::device_local::{
-  AuditPage as LocalAuditPage, CredentialKind, DeviceLocalControl, EnrollAccount, Enrollment as LocalEnrollment, LocalControlError,
-  LocalOsPrincipal,
+  AuditPage as LocalAuditPage, DeviceLocalControl, EnrollAccount, Enrollment as LocalEnrollment, LocalControlError, LocalOsPrincipal,
 };
 use auv_device_helper_macos::HostError;
 
@@ -68,10 +67,6 @@ impl DeviceLocalControl for MacosLocalEnrollment {
   }
 
   async fn enroll(&self, principal: &LocalOsPrincipal, request: EnrollAccount) -> Result<LocalEnrollment, LocalControlError> {
-    if request.credential_kind != CredentialKind::OsPassword {
-      return Err(LocalControlError::UnsupportedCredentialKind);
-    }
-
     if request.credential.as_bytes().is_empty() || request.credential.as_bytes().len() > 1024 {
       return Err(LocalControlError::InvalidCredential);
     }

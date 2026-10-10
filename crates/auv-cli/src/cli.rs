@@ -277,9 +277,9 @@ mod tests {
   }
 
   #[test]
-  fn devices_credentials_enroll_derives_the_credential_kind() {
-    // Every platform host accepts exactly one credential kind, so a `--kind`
-    // flag would only offer a choice with one valid answer.
+  fn devices_credentials_enroll_takes_no_credential_kind() {
+    // Every platform host accepts exactly one credential kind and derives it,
+    // so a `--kind` flag would only offer a choice with one valid answer.
     assert!(
       RootArgs::try_parse_from([
         "auv",

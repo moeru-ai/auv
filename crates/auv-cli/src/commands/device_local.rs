@@ -141,23 +141,12 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
 
   match request {
     LocalRequest::Credentials(CredentialsCommand::Enroll { user }) => {
-      // Each platform host accepts exactly one credential kind, so the CLI
-      // derives it instead of asking for a choice that has one valid answer.
-      // TODO(device-entry-windows-password): The installed Windows worker
-      // targets only the PIN provider. When OS-password enrollment passes an
-      // owner-observed locked-session gate there, add an explicit choice here.
-      #[cfg(windows)]
-      let kind = proto::EnrollmentCredentialKind::WindowsPin;
-      #[cfg(not(windows))]
-      let kind = proto::EnrollmentCredentialKind::OsPassword;
-
       let mut credential = read_hidden_credential()?;
       let request = proto::EnrollRequest {
         user,
         // The generated gRPC encoder takes ownership of this buffer. The
         // temporary terminal buffer is wiped on all earlier error paths.
         credential: std::mem::take(&mut *credential),
-        credential_kind: kind as i32,
         // TODO(device-entry-plaintext): No backend offers the plaintext
         // fallback yet; expose a storage choice only when one does.
         storage_kind: proto::EnrollmentStorageKind::Protected as i32,

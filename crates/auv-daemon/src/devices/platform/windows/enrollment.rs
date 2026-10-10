@@ -9,8 +9,7 @@
 use std::sync::Arc;
 
 use auv_api_server::device_local::{
-  AuditPage as LocalAuditPage, CredentialKind, DeviceLocalControl, EnrollAccount, Enrollment as LocalEnrollment, LocalControlError,
-  LocalOsPrincipal,
+  AuditPage as LocalAuditPage, DeviceLocalControl, EnrollAccount, Enrollment as LocalEnrollment, LocalControlError, LocalOsPrincipal,
 };
 use auv_device_helper_windows::HostError;
 
@@ -63,11 +62,10 @@ impl DeviceLocalControl for WindowsLocalEnrollment {
   }
 
   async fn enroll(&self, principal: &LocalOsPrincipal, request: EnrollAccount) -> Result<LocalEnrollment, LocalControlError> {
-    if request.credential_kind != CredentialKind::WindowsPin {
-      // TODO(device-entry-windows-password): OS-password provider delivery
-      // needs its own locked Winlogon gate before it can be enrolled here.
-      return Err(LocalControlError::UnsupportedCredentialKind);
-    }
+    // The Windows host enrolls only the PIN provider.
+    // TODO(device-entry-windows-password): OS-password provider delivery
+    // needs its own locked Winlogon gate before it can be enrolled here; a
+    // second kind would also bring back a kind field on `EnrollRequest`.
 
     let credential = request.credential;
     let text = std::str::from_utf8(credential.as_bytes()).map_err(|_| LocalControlError::InvalidCredential)?;

@@ -26,13 +26,6 @@ pub enum LocalOsPrincipal {
   WindowsAdministratorSid(String),
 }
 
-/// Local credential kind understood by an installed unlock host.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CredentialKind {
-  OsPassword,
-  WindowsPin,
-}
-
 /// Non-secret local enrollment metadata. Every current backend stores the
 /// credential in its protected OS store, so the wire storage kind is fixed.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,7 +70,6 @@ impl SecretBytes {
 pub struct EnrollAccount {
   pub user: String,
   pub credential: SecretBytes,
-  pub credential_kind: CredentialKind,
 }
 
 /// Safe errors exposed by the local enrollment boundary. Implementations
@@ -88,7 +80,6 @@ pub enum LocalControlError {
   InvalidCredential,
   PermissionDenied,
   NotFound,
-  UnsupportedCredentialKind,
   HostUnavailable,
   /// The installed host speaks an unsupported protocol or is a revoked build.
   HostIncompatible,
@@ -149,11 +140,6 @@ impl DeviceLocalService for DeviceLocalGrpc {
       return Err(Status::invalid_argument("credential must be 1..=1024 UTF-8 bytes"));
     }
 
-    let credential_kind = match proto::EnrollmentCredentialKind::try_from(input.credential_kind) {
-      Ok(proto::EnrollmentCredentialKind::OsPassword) => CredentialKind::OsPassword,
-      Ok(proto::EnrollmentCredentialKind::WindowsPin) => CredentialKind::WindowsPin,
-      _ => return Err(Status::invalid_argument("unsupported credential_kind")),
-    };
     match proto::EnrollmentStorageKind::try_from(input.storage_kind) {
       Ok(proto::EnrollmentStorageKind::Protected) => {}
       // TODO(device-entry-plaintext): The wire keeps the administrator-only
@@ -165,18 +151,7 @@ impl DeviceLocalService for DeviceLocalGrpc {
       }
       _ => return Err(Status::invalid_argument("storage_kind must be explicit")),
     }
-    let enrollment = self
-      .control
-      .enroll(
-        &principal,
-        EnrollAccount {
-          user,
-          credential,
-          credential_kind,
-        },
-      )
-      .await
-      .map_err(status)?;
+    let enrollment = self.control.enroll(&principal, EnrollAccount { user, credential }).await.map_err(status)?;
     Ok(Response::new(proto::EnrollResponse {
       enrollment: Some(wire_enrollment(enrollment)),
     }))
@@ -263,7 +238,6 @@ fn status(error: LocalControlError) -> Status {
     LocalControlError::InvalidCredential => Status::invalid_argument("invalid credential input"),
     LocalControlError::PermissionDenied => Status::permission_denied("local OS caller cannot manage this account"),
     LocalControlError::NotFound => Status::not_found("enrollment not found"),
-    LocalControlError::UnsupportedCredentialKind => Status::failed_precondition("credential kind is unavailable on this host"),
     LocalControlError::HostUnavailable => Status::unavailable("installed unlock host cannot retrieve this credential"),
     LocalControlError::HostIncompatible => {
       Status::failed_precondition("installed unlock host is incompatible with this daemon; update AUV on this machine")
@@ -591,7 +565,6 @@ mod tests {
       .enroll(proto::EnrollRequest {
         user: "neko".into(),
         credential: Vec::new(),
-        credential_kind: proto::EnrollmentCredentialKind::OsPassword as i32,
         storage_kind: proto::EnrollmentStorageKind::Protected as i32,
       })
       .await
@@ -605,7 +578,6 @@ mod tests {
       .enroll(proto::EnrollRequest {
         user: "neko".into(),
         credential: b"fixture-only".to_vec(),
-        credential_kind: proto::EnrollmentCredentialKind::OsPassword as i32,
         storage_kind: proto::EnrollmentStorageKind::PlaintextFile as i32,
       })
       .await
@@ -617,7 +589,6 @@ mod tests {
       .enroll(proto::EnrollRequest {
         user: "neko".into(),
         credential: b"fixture-only".to_vec(),
-        credential_kind: proto::EnrollmentCredentialKind::OsPassword as i32,
         storage_kind: proto::EnrollmentStorageKind::Protected as i32,
       })
       .await

@@ -51,12 +51,6 @@ enum EnrollmentStorageKind {
   ENROLLMENT_STORAGE_KIND_PLAINTEXT_FILE = 2;
 }
 
-enum EnrollmentCredentialKind {
-  ENROLLMENT_CREDENTIAL_KIND_UNSPECIFIED = 0;
-  ENROLLMENT_CREDENTIAL_KIND_OS_PASSWORD = 1;
-  ENROLLMENT_CREDENTIAL_KIND_WINDOWS_PIN = 2;
-}
-
 message GetEnrollmentRequest {
   // Resolve this name to a stable OS account identity before authorization.
   string user = 1;
@@ -81,8 +75,12 @@ message EnrollRequest {
   // platform. NOTICE(device-local-secret): generated Debug may print this
   // field, so implementations must never log or format the request.
   bytes credential = 2;
-  // Validate that the kind is supported by the target OS unlock host.
-  EnrollmentCredentialKind credential_kind = 3;
+  // Each OS unlock host accepts exactly one credential kind (the login
+  // password on macOS and Linux, the PIN on Windows), so the host derives it.
+  // TODO(device-entry-windows-password): add a kind field here only when one
+  // host accepts more than one kind.
+  reserved 3;
+  reserved "credential_kind";
   // Must be explicit. Plaintext is administrator-only and never a fallback;
   // READY requires a retrieval test by the actual installed unlock host.
   EnrollmentStorageKind storage_kind = 4;
