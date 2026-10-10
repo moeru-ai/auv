@@ -60,12 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   // daemon-wide message derive. Remove these per-oneof attributes if prost
   // generates the enums with the required serde derives automatically.
   for oneof in [
-    ".auv.api.daemon.v1.ListUserSessionsResponse.result",
-    ".auv.api.daemon.v1.GetUserSessionResponse.result",
     ".auv.api.daemon.v1.EnsureUserSessionUnlockedRequest.target",
-    ".auv.api.daemon.v1.EnsureUserSessionUnlockedResponse.result",
     ".auv.api.daemon.v1.EnsureUserSessionLockedRequest.target",
-    ".auv.api.daemon.v1.EnsureUserSessionLockedResponse.result",
   ] {
     builder = builder.type_attribute(oneof, "#[derive(serde::Serialize, serde::Deserialize)]");
   }

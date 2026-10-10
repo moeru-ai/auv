@@ -383,10 +383,8 @@ impl Devices {
     let response =
       self.client.grpc_client().devices().list_user_sessions().await.map_err(|status| entry_status_error("ListUserSessions", status))?;
 
-    match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
-      proto::list_user_sessions_response::Result::List(list) => list.sessions.into_iter().map(UserSession::try_from).collect(),
-      proto::list_user_sessions_response::Result::Error(error) => Err(legacy_entry_error(error)),
-    }
+    let list = response.list.ok_or(DeviceError::InvalidEntryResponse)?;
+    list.sessions.into_iter().map(UserSession::try_from).collect()
   }
 
   /// Resolves one current OS login instance by its opaque selector.
@@ -399,10 +397,7 @@ impl Devices {
       .await
       .map_err(|status| entry_status_error("GetUserSession", status))?;
 
-    match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
-      proto::get_user_session_response::Result::Session(session) => UserSession::try_from(session),
-      proto::get_user_session_response::Result::Error(error) => Err(legacy_entry_error(error)),
-    }
+    UserSession::try_from(response.session.ok_or(DeviceError::InvalidEntryResponse)?)
   }
 
   /// Asks the target to make one existing OS session usable. The remote request
@@ -422,10 +417,7 @@ impl Devices {
       .await
       .map_err(|status| entry_status_error("EnsureUserSessionUnlocked", status))?;
 
-    match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
-      proto::ensure_user_session_unlocked_response::Result::Effect(effect) => effect.try_into(),
-      proto::ensure_user_session_unlocked_response::Result::Error(error) => Err(legacy_entry_error(error)),
-    }
+    response.effect.ok_or(DeviceError::InvalidEntryResponse)?.try_into()
   }
 
   /// Asks the target to lock one existing usable OS session. The target
@@ -445,10 +437,7 @@ impl Devices {
       .await
       .map_err(|status| entry_status_error("EnsureUserSessionLocked", status))?;
 
-    match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
-      proto::ensure_user_session_locked_response::Result::Effect(effect) => effect.try_into(),
-      proto::ensure_user_session_locked_response::Result::Error(error) => Err(legacy_entry_error(error)),
-    }
+    response.effect.ok_or(DeviceError::InvalidEntryResponse)?.try_into()
   }
 
   /// Observes all configured paired profiles without failing the whole list
@@ -629,17 +618,6 @@ fn entry_status_error(method: &'static str, status: tonic::Status) -> DeviceErro
   }
 }
 
-/// NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return a
-/// failed session request as an OK response whose `result` holds the error.
-/// TODO(device-entry-error-oneof-removal): drop this read path together with
-/// the proto field once no supported daemon sends it.
-fn legacy_entry_error(error: proto::DeviceEntryError) -> DeviceError {
-  match entry_error(error) {
-    Ok(reason) => reason.into(),
-    Err(error) => error,
-  }
-}
-
 fn entry_error(error: proto::DeviceEntryError) -> Result<DeviceEntryErrorReason, DeviceError> {
   Ok(match proto::DeviceEntryErrorReason::try_from(error.reason).map_err(|_| DeviceError::InvalidEntryResponse)? {
     proto::DeviceEntryErrorReason::Unspecified => return Err(DeviceError::InvalidEntryResponse),
@@ -675,18 +653,6 @@ mod tests {
     let status = tonic::Status::invalid_argument("exactly one non-empty user or session_selector is required");
 
     assert!(matches!(entry_status_error("EnsureUserSessionUnlocked", status), DeviceError::Client(_)));
-  }
-
-  #[test]
-  fn an_older_daemons_in_body_error_is_still_read() {
-    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
-    // reason inside an OK response.
-    let error = proto::DeviceEntryError {
-      reason: proto::DeviceEntryErrorReason::StaleSession as i32,
-    };
-
-    assert!(matches!(legacy_entry_error(error), DeviceError::Entry(DeviceEntryErrorReason::StaleSession)));
-    assert!(matches!(legacy_entry_error(proto::DeviceEntryError { reason: 0 }), DeviceError::InvalidEntryResponse));
   }
 
   #[test]

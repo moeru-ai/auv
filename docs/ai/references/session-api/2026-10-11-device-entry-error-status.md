@@ -1,7 +1,8 @@
 # Device entry errors as gRPC status
 
-Status: implemented on 2026-10-11. Owner decisions: switch in one step, and use
-the status-code mapping below.
+Status: implemented on 2026-10-11. Owner decisions: switch in one step, use the
+status-code mapping below, and drop the in-body error instead of keeping a read
+path for older daemons (no client talks to an older daemon).
 
 ## Change
 
@@ -39,6 +40,8 @@ Argument errors that never reach the policy (for example an empty
 
 ## Client surfaces
 
+- The success responses carry their result as a plain field (`list`,
+  `session`, `effect`). Field 2 (`error`) is reserved in each response.
 - Rust `auv::devices`: a status with the detail becomes
   `DeviceError::Entry(reason)`; other statuses stay `DeviceError::Client`.
 - JS `@auv-js/sdk`: the Node gRPC transport keeps `grpc-status-details-bin` on
@@ -52,21 +55,12 @@ Callers of the SDKs see the same typed errors as before.
 
 ## Compatibility
 
-| Client | Daemon | Result |
-| --- | --- | --- |
-| New | New | Typed reason from the status |
-| New | Older than 2026-10-11 | Typed reason from the in-body `oneof` (`NOTICE(device-entry-legacy-error)`) |
-| Older | New | Success is unchanged. A failure is a generic RPC error whose message names the reason; the typed reason is not available |
-
-The owner accepted the third row for the 0.0.x series: the operation still
-fails correctly, and only the type of the error is lost until the client is
-upgraded.
-
-The `oneof … DeviceEntryError error = 2` fields stay in the proto, documented
-as no longer sent, so newer clients can still read older daemons.
-`TODO(device-entry-error-oneof-removal)` marks the proto fields and the Rust
-read path. Remove them, and reserve field 2 in each response, once no supported
-daemon sends the in-body error.
+Clients and daemons are upgraded together, as for other 0.0.x protocol
+changes. The success field keeps field number 1, so a success response is the
+same on the wire. An older client that meets a new daemon's failure sees a
+generic RPC error whose message names the reason. A new client that meets an
+older daemon's in-body failure reports a missing response field instead of
+the typed reason; the owner confirmed that this pairing does not occur.
 
 ## Evidence
 
@@ -78,6 +72,6 @@ daemon sends the in-body error.
 - `auv-daemon` server tests call the real gRPC service over a Unix socket and a
   paired HTTP listener, and assert the status code and the typed reason for all
   four RPCs.
-- Rust SDK tests cover the status path, a plain status, and the legacy in-body
-  error. JS SDK tests cover the status path for all three SDK methods, plain
-  and malformed statuses, and the legacy in-body error.
+- Rust SDK tests cover the status path and a plain status. JS SDK tests cover
+  the status path for all three SDK methods (with the shared byte fixture and
+  with statuses built for other reasons), and plain and malformed statuses.

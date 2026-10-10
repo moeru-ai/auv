@@ -155,32 +155,25 @@ export async function ensureUserSessionUnlocked(
     throw new AuvConfigurationError('exactly one non-empty user or sessionSelector is required')
   }
   const response = await entryCall(connection.unary(ensureUserSessionUnlockedRpc, { target }, options))
-  switch (response.result.case) {
-    case 'effect': {
-      const effect = response.result.value
-      let kind: UserSessionUnlockEffect['kind']
-      switch (effect.kind) {
-        case DeviceEntryEffectKind.ALREADY_USABLE:
-          kind = 'alreadyUsable'
-          break
-        case DeviceEntryEffectKind.UNLOCKED_EXISTING_SESSION:
-          kind = 'unlockedExistingSession'
-          break
-        default:
-          throw new AuvProtocolError(`AUV response returned unsupported Device entry effect ${effect.kind}`)
-      }
-      if (!effect.user) {
-        throw new AuvProtocolError('AUV response omitted EnsureUserSessionUnlockedEffect.user')
-      }
-      return { kind, sessionSelector: effect.sessionSelector || undefined, user: effect.user }
-    }
-    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
-    // reason inside an OK response; newer ones fail the call (see entryCall).
-    case 'error':
-      throw deviceEntryError(response.result.value.reason)
-    default:
-      throw new AuvProtocolError('AUV response omitted EnsureUserSessionUnlockedResponse.result')
+  const effect = response.effect
+  if (effect === undefined) {
+    throw new AuvProtocolError('AUV response omitted EnsureUserSessionUnlockedResponse.effect')
   }
+  let kind: UserSessionUnlockEffect['kind']
+  switch (effect.kind) {
+    case DeviceEntryEffectKind.ALREADY_USABLE:
+      kind = 'alreadyUsable'
+      break
+    case DeviceEntryEffectKind.UNLOCKED_EXISTING_SESSION:
+      kind = 'unlockedExistingSession'
+      break
+    default:
+      throw new AuvProtocolError(`AUV response returned unsupported Device entry effect ${effect.kind}`)
+  }
+  if (!effect.user) {
+    throw new AuvProtocolError('AUV response omitted EnsureUserSessionUnlockedEffect.user')
+  }
+  return { kind, sessionSelector: effect.sessionSelector || undefined, user: effect.user }
 }
 
 /** Gets one Device by canonical identity. */
@@ -198,16 +191,10 @@ export async function getUserSession(connection: AuvConnection, options: GetUser
     throw new AuvConfigurationError('sessionSelector must be non-empty')
   }
   const response = await entryCall(connection.unary(getUserSessionRpc, { sessionSelector: options.sessionSelector }, options))
-  switch (response.result.case) {
-    case 'session':
-      return userSession(response.result.value)
-    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
-    // reason inside an OK response; newer ones fail the call (see entryCall).
-    case 'error':
-      throw deviceEntryError(response.result.value.reason)
-    default:
-      throw new AuvProtocolError('AUV response omitted GetUserSessionResponse.result')
+  if (response.session === undefined) {
+    throw new AuvProtocolError('AUV response omitted GetUserSessionResponse.session')
   }
+  return userSession(response.session)
 }
 
 /** Lists Devices visible to the connected caller. */
@@ -219,16 +206,10 @@ export async function listDevices(connection: AuvConnection, options: OperationO
 /** Lists current OS login instances on the connected Device. */
 export async function listUserSessions(connection: AuvConnection, options: OperationOptions = {}): Promise<readonly UserSession[]> {
   const response = await entryCall(connection.unary(listUserSessionsRpc, {}, options))
-  switch (response.result.case) {
-    case 'list':
-      return response.result.value.sessions.map(userSession)
-    // NOTICE(device-entry-legacy-error): daemons before 2026-10-11 return the
-    // reason inside an OK response; newer ones fail the call (see entryCall).
-    case 'error':
-      throw deviceEntryError(response.result.value.reason)
-    default:
-      throw new AuvProtocolError('AUV response omitted ListUserSessionsResponse.result')
+  if (response.list === undefined) {
+    throw new AuvProtocolError('AUV response omitted ListUserSessionsResponse.list')
   }
+  return response.list.sessions.map(userSession)
 }
 
 function device(value: ProtoDevice): Device {

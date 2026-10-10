@@ -105,15 +105,10 @@ message UserSessionList {
 }
 
 message ListUserSessionsResponse {
-  oneof result {
-    UserSessionList list = 1;
-    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
-    // instead (see `DeviceEntryError`). Clients still read it from older
-    // daemons.
-    // TODO(device-entry-error-oneof-removal): reserve this field once no
-    // supported daemon sends it.
-    DeviceEntryError error = 2;
-  }
+  UserSessionList list = 1;
+  // A failure is a gRPC status carrying `DeviceEntryError`, not a response.
+  reserved 2;
+  reserved "error";
 }
 
 message GetUserSessionRequest {
@@ -122,15 +117,10 @@ message GetUserSessionRequest {
 }
 
 message GetUserSessionResponse {
-  oneof result {
-    UserSession session = 1;
-    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
-    // instead (see `DeviceEntryError`). Clients still read it from older
-    // daemons.
-    // TODO(device-entry-error-oneof-removal): reserve this field once no
-    // supported daemon sends it.
-    DeviceEntryError error = 2;
-  }
+  UserSession session = 1;
+  // A failure is a gRPC status carrying `DeviceEntryError`, not a response.
+  reserved 2;
+  reserved "error";
 }
 
 message EnsureUserSessionUnlockedRequest {
@@ -191,15 +181,10 @@ message DeviceEntryError {
 }
 
 message EnsureUserSessionUnlockedResponse {
-  oneof result {
-    EnsureUserSessionUnlockedEffect effect = 1;
-    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
-    // instead (see `DeviceEntryError`). Clients still read it from older
-    // daemons.
-    // TODO(device-entry-error-oneof-removal): reserve this field once no
-    // supported daemon sends it.
-    DeviceEntryError error = 2;
-  }
+  EnsureUserSessionUnlockedEffect effect = 1;
+  // A failure is a gRPC status carrying `DeviceEntryError`, not a response.
+  reserved 2;
+  reserved "error";
 }
 
 message EnsureUserSessionLockedRequest {
@@ -223,13 +208,8 @@ message EnsureUserSessionLockedEffect {
 }
 
 message EnsureUserSessionLockedResponse {
-  oneof result {
-    EnsureUserSessionLockedEffect effect = 1;
-    // Not sent by daemons since 2026-10-11, which fail with a gRPC status
-    // instead (see `DeviceEntryError`). Clients still read it from older
-    // daemons.
-    // TODO(device-entry-error-oneof-removal): reserve this field once no
-    // supported daemon sends it.
-    DeviceEntryError error = 2;
-  }
+  EnsureUserSessionLockedEffect effect = 1;
+  // A failure is a gRPC status carrying `DeviceEntryError`, not a response.
+  reserved 2;
+  reserved "error";
 }

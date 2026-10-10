@@ -52,12 +52,10 @@ impl DeviceService for DeviceServiceGrpc {
   ) -> Result<Response<proto::ListUserSessionsResponse>, Status> {
     let caller = authentication::device_entry_caller(&request)?;
     let sessions = self.daemon.list_user_sessions(caller).map_err(entry_status)?;
-    let result = proto::list_user_sessions_response::Result::List(proto::UserSessionList {
-      sessions: sessions.into_iter().map(domain::user_session).collect(),
-    });
-
     Ok(Response::new(proto::ListUserSessionsResponse {
-      result: Some(result),
+      list: Some(proto::UserSessionList {
+        sessions: sessions.into_iter().map(domain::user_session).collect(),
+      }),
     }))
   }
 
@@ -73,10 +71,8 @@ impl DeviceService for DeviceServiceGrpc {
     }
 
     let session = self.daemon.get_user_session(caller, session_selector).map_err(entry_status)?;
-    let result = proto::get_user_session_response::Result::Session(domain::user_session(session));
-
     Ok(Response::new(proto::GetUserSessionResponse {
-      result: Some(result),
+      session: Some(domain::user_session(session)),
     }))
   }
 
@@ -95,10 +91,8 @@ impl DeviceService for DeviceServiceGrpc {
       _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
     };
     let effect = self.daemon.ensure_user_session_unlocked(&caller, target).await.map_err(entry_status)?;
-    let result = proto::ensure_user_session_unlocked_response::Result::Effect(domain::ensure_user_session_unlocked_effect(effect));
-
     Ok(Response::new(proto::EnsureUserSessionUnlockedResponse {
-      result: Some(result),
+      effect: Some(domain::ensure_user_session_unlocked_effect(effect)),
     }))
   }
 
@@ -117,10 +111,8 @@ impl DeviceService for DeviceServiceGrpc {
       _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
     };
     let effect = self.daemon.ensure_user_session_locked(&caller, target).await.map_err(entry_status)?;
-    let result = proto::ensure_user_session_locked_response::Result::Effect(domain::ensure_user_session_locked_effect(effect));
-
     Ok(Response::new(proto::EnsureUserSessionLockedResponse {
-      result: Some(result),
+      effect: Some(domain::ensure_user_session_locked_effect(effect)),
     }))
   }
 }
