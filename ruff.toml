@@ -1,5 +1,16 @@
+# Floor for loose first-party scripts that run on a system Python. A Python
+# package that pins another version extends this file from its own directory,
+# for example `extend = "../../ruff.toml"` plus its `target-version`.
 target-version = "py311"
 line-length = 120
+# NOTICE: Ruff 0.17 also formats Python blocks inside Markdown by default.
+# Markdown in this repository is formatted by moeru-lint, so Ruff only owns
+# Python sources.
+include = [
+  "*.py",
+  "*.pyi",
+  "*.ipynb"
+]
 # NOTICE: Ruff already honors .gitignore (docs/notes, .worktrees, node_modules).
 # These paths are tracked but not first-party.
 extend-exclude = [

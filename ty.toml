@@ -1,4 +1,6 @@
 [environment]
+# Matches the ruff.toml floor. Package environments run ty with their own
+# project configuration and interpreter.
 python-version = "3.11"
 
 [src]

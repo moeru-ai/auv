@@ -274,14 +274,19 @@ API predates it: `GetRecentFramesResponse` frames
 - Pixi owns the Python interpreter, Ruff, ty, root Python tasks, and
   `pixi.lock` through the root `pixi.toml`. Do not run bare `pip install` or
   create ad-hoc virtual environments for repository Python code.
-- The `default` environment carries only Ruff and ty. Add a feature and a
-  named environment for heavier package dependency sets.
+- The `default` environment carries only Ruff and ty, with no Python
+  interpreter, so the workspace does not pin one Python version. Each Python
+  package (an eval, a model tool) adds a feature that pins its own `python`
+  and dependencies, composed into a named environment, for example
+  `osworld = ["osworld"]`. Packages can then use different Python versions.
 - Each Python package's `pyproject.toml` owns its runtime dependencies. Edit
   it first, then run `pixi lock`. Use `pixi add` only for environment-only
   tools.
 - `ruff.toml` and `ty.toml` hold lint, format, and type-check policy. Python
   uses Ruff's default four-space indentation, not the Rust `rustfmt.toml`
-  setting.
+  setting. A package that targets another Python version adds its own
+  `ruff.toml` with `extend = "../../ruff.toml"` and a `target-version`, and
+  runs ty in its environment with its own project configuration.
 - `pixi run --locked check` runs the Ruff format check, Ruff lint, and ty.
 
 ## Development Practices

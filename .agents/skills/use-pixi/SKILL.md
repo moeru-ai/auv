@@ -80,5 +80,7 @@ Run `pixi install` before selecting an interpreter. In AUV, `.pixi/envs/default`
 - Pixi is required only for Python or model work. Do not ask Rust, JavaScript, Protobuf, or documentation contributors to install it.
 - The root `pixi.toml` owns Python tooling; Rust, pnpm, and Buf keep their own toolchains. Never add them to `pixi.toml`.
 - Python package metadata owns runtime dependencies. Edit the package `pyproject.toml`, then run `pixi lock`.
-- Keep the `default` environment light (Python, Ruff, ty) and solvable on `linux-64`, `osx-arm64`, and `win-64`. Put heavy or platform-limited package sets in a feature with its own environment.
+- Keep the `default` environment to Ruff and ty with no `python`, solvable on `linux-64`, `osx-arm64`, and `win-64`. Do not add a workspace-wide Python pin.
+- Give each Python package its own feature that pins `python` and its dependencies, and compose it into a named environment. Do not share a `solve-group` between packages that need different Python versions.
+- For a package on another Python version, add a directory `ruff.toml` that extends the root one with its own `target-version`, and run ty in that package's environment.
 - Run `pixi run --locked check` before handoff when Python files or Pixi metadata change.

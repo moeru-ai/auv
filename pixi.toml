@@ -10,11 +10,12 @@ platforms = [
 ]
 requires-pixi = ">=0.71,<1"
 
-# Default environment: lightweight formatter, linter, and type checker for
-# every tracked Python file. Python packages add features and environments.
+# Default environment: Ruff and ty only, with no Python interpreter. Each
+# Python package (an eval, a model tool) adds a feature that pins its own
+# `python` and composes it into a named environment, so packages can require
+# different Python versions without a workspace-wide pin.
 [dependencies]
-python = "3.11.*"
-ruff = ">=0.15.22,<0.16"
+ruff = ">=0.17,<0.18"
 ty = ">=0.0.61,<0.1"
 
 [tasks]
@@ -22,7 +23,11 @@ format = "ruff format ."
 format-check = "ruff format --check ."
 lint = "ruff check ."
 lint-fix = "ruff check --fix ."
-typecheck = "ty check"
+# NOTICE: Pixi exports CONDA_PREFIX for the default environment, which has no
+# Python, and ty then fails to find site-packages. Clearing it makes ty check
+# against bundled stdlib stubs only. Package environments that need
+# third-party imports run ty without this override.
+typecheck = { cmd = "ty check", env = { CONDA_PREFIX = "" } }
 check = { depends-on = [
   "format-check",
   "lint",
