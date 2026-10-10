@@ -337,7 +337,7 @@ impl WindowClickPolicyArg {
   id = "window.clickText",
   target = OptionalApplication,
   group = "window",
-  description = "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",
+  description = "Capture a resolved window, resolve an OCR text anchor, and click the match point in logical screen coordinates.",
   input = ClickWindowTextArgs,
 )]
 async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> InvokeCommandResult {
@@ -376,7 +376,10 @@ pub struct WindowTextClick {
   pub window: auv_driver::Window,
   pub matches: auv_driver::OcrMatches,
   pub selected_index: usize,
-  pub point: auv_driver::geometry::WindowPoint,
+  pub point: auv_driver::geometry::ScreenPoint,
+  /// The same point projected into the window, which is the form the driver
+  /// received for delivery.
+  pub window_point: auv_driver::geometry::WindowPoint,
   pub options: auv_driver::ClickOptions,
   pub action: auv_driver::InputActionResult,
 }
@@ -400,7 +403,10 @@ fn window_text_click_output_base(result: &WindowTextClick) -> InvokeCommandResul
   if let Some(interval) = result.options.click.interval() {
     report.fields.push(InvokeReportField::new("Click interval", format!("{} ms", interval.as_millis())));
   }
-  report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
+  report.fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
+  report
+    .fields
+    .push(InvokeReportField::new("Window point", format!("{:.1},{:.1}", result.window_point.point().x, result.window_point.point().y)));
   Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
@@ -463,15 +469,16 @@ async fn click_recognized_window_text_with_session(
     .find_text_in_capture(&capture, &query, auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
     .map_err(|error| error.to_string())?;
   let matched = selected_window_text_match(&matches, &query, index)?;
-  let point =
-    session.window().to_window_point(&window, auv_driver::ScreenPoint::from(matched.action_point())).map_err(|error| error.to_string())?;
-  let action = session.window().click(&window, point, options.clone()).map_err(|error| error.to_string())?;
+  let point = auv_driver::geometry::ScreenPoint::from(matched.action_point());
+  let window_point = session.window().to_window_point(&window, point).map_err(|error| error.to_string())?;
+  let action = session.window().click(&window, window_point, options.clone()).map_err(|error| error.to_string())?;
   emit_capture("auv.driver.window_ocr_source", &capture);
   Ok(WindowTextClick {
     window,
     matches,
     selected_index: index,
     point,
+    window_point,
     options,
     action,
   })
