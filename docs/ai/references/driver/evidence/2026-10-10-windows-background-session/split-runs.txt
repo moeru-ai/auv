@@ -1,0 +1,5 @@
+split-1-scroll exit=0 started=03:39:56 :: bench: 10 minute(s); throughput last/first 0.953237888353997; PASS "injected_keys_total":0,"injected_mouse_total":0
+split-2-click exit=0 started=03:49:59 :: bench: 10 minute(s); throughput last/first 1.0266280705423407; PASS "injected_keys_total":0,"injected_mouse_total":0
+split-3-scroll exit=1 started=04:00:01 :: bench: 10 minute(s); throughput last/first 1.02902203180644; FAIL "injected_keys_total":0,"injected_mouse_total":0
+split-4-click exit=1 started=04:10:03 :: bench: 10 minute(s); throughput last/first 0.8354661678065936; FAIL "injected_keys_total":6,"injected_mouse_total":0
+SPLIT_DONE

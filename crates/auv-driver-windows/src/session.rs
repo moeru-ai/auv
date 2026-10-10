@@ -134,6 +134,12 @@ impl WindowsDriverSession {
     AccessibilityApi { _session: self }
   }
 
+  /// Opens a background session: up to five target windows to operate and watch without ever
+  /// foregrounding them. See [`crate::BackgroundSession`] for the contract.
+  pub fn background(&self) -> DriverResult<crate::BackgroundSession> {
+    crate::BackgroundSession::open()
+  }
+
   #[cfg(feature = "overlay")]
   pub fn overlay(&self) -> OverlayApi<'_> {
     OverlayApi { _session: self }

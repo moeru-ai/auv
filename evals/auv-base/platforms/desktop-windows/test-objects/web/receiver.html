@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  Web receiver for the Windows background-session evaluations: the browser counterpart of
+  test-objects/win32/receiver.rs. It reports what the page itself processed, in its title (which
+  the browser copies into its window title, so the harness reads it without touching the page)
+  and in large text a capture can show:
+
+  - clicks: click events on either button.
+  - scroll: the page's vertical scroll offset, in CSS pixels.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>AUV page clicks=0 scroll=0</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; background: #1e3a5f; color: #fff; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 84px; display: flex; gap: 16px; align-items: center;
+         padding: 0 16px; background: #102030; z-index: 1; }
+  button { font-size: 20px; padding: 10px 22px; }
+  #count { font-size: 30px; font-weight: bold; }
+  main { padding-top: 84px; }
+  .row { height: 24px; padding: 8px 16px; }
+  .row:nth-child(odd) { background: #24476f; }
+</style>
+</head>
+<body>
+<div id="bar"><button id="a">Press A</button><button id="b">Press B</button><span id="count">clicks 0 scroll 0</span></div>
+<main id="rows"></main>
+<script>
+  let clicks = 0;
+  const rows = document.getElementById("rows");
+  for (let i = 0; i < 300; i++) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.textContent = "row " + i + " the quick brown fox jumps over the lazy dog";
+    rows.appendChild(row);
+  }
+  function show() {
+    const scroll = Math.round(window.scrollY);
+    document.getElementById("count").textContent = "clicks " + clicks + " scroll " + scroll;
+    document.title = "AUV page clicks=" + clicks + " scroll=" + scroll;
+  }
+  for (const id of ["a", "b"]) {
+    document.getElementById(id).addEventListener("click", () => { clicks++; show(); });
+  }
+  window.addEventListener("scroll", show);
+  show();
+</script>
+</body>
+</html>

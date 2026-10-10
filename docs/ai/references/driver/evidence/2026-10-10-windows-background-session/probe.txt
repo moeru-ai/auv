@@ -1,0 +1,14 @@
+variant                    fg before -> fg after  verdict  foreground events (ms, window)             receiver says
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @157324us]
+direct (control)             6097222 -> 6097222   held     150ms:4524902(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @157594us]
+detached                     6097222 -> 6097222   held     150ms:4590438(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @159559us]
+detached                     6097222 -> 6097222   held     150ms:4655974(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @158234us]
+detached                     6097222 -> 6097222   held     150ms:4721510(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @165574us]
+detached                     6097222 -> 6097222   held     150ms:4787046(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+    sampled foreground: 6097222@0us  [click @150000us]  [barrier @158260us]
+detached                     6097222 -> 6097222   held     150ms:4852582(not foreground)              clicks=1 activated=1 focus_set=1 taken=0 yielded=0 user_input_since_launch=true
+receivers that took the foreground: 0

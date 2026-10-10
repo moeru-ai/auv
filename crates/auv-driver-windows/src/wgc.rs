@@ -40,6 +40,33 @@ pub enum FastWindowVerification {
   LightweightLiveness,
 }
 
+/// What a read of a [`FrameStream`] found.
+pub enum FrameUpdate {
+  /// The newest frame, if it is newer than the one the previous read returned.
+  Fresh {
+    image: image::RgbaImage,
+    frame_number: u64,
+  },
+  /// No frame has arrived since the previous read: the window looks as it did then. Nothing was
+  /// copied.
+  Unchanged { frame_number: u64 },
+}
+
+/// Why a [`FrameStream`] cannot deliver frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamError {
+  /// The window was closed.
+  Closed,
+  /// No frame arrived within the wait. A window that never repaints (minimized, or cloaked) does
+  /// this.
+  NoFrame,
+  /// The window's capture region changed size. Frames from this stream would no longer line up
+  /// with the window's frame, so the stream stops delivering and must be reopened.
+  Resized,
+  /// The capture session or the device failed.
+  Failed(String),
+}
+
 /// Cache key identifying a unique window target for WGC health checks.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HealthCacheKey {
@@ -443,6 +470,16 @@ mod native {
     }
 
     let s = session_guard.as_mut().unwrap();
+
+    // TODO(wgc-capture-latest-frame): this reads the pool's oldest queued frame, and waits on a
+    // wake-up token that frames it already consumed may have left behind. After several changes in a
+    // row it returns an older state of the window, and with both buffers full it can miss the newest
+    // one until the window changes again (measured: after three clicks a frame apart the first
+    // capture showed the latest state in 1 of 10 trials). Background sessions read `FrameStream`
+    // instead, which drains the pool on arrival and keeps only the newest frame. Left as is because
+    // this path and the health check beside it are covered by the frozen Windows latency baseline.
+    // Trigger: an owner-approved slice that moves single-shot capture onto the stream, or re-baselines.
+    // Evidence: docs/ai/references/driver/2026-10-10-windows-background-session.md.
 
     // Try to get next frame. If none ready immediately, wait on receiver.
     let mut frame_opt = try_get_next_frame(&s.frame_pool)?;
@@ -1047,6 +1084,14 @@ mod native {
     }
   }
 }
+
+// A continuously drained per-window stream, for sessions that watch several windows at once.
+#[cfg(target_os = "windows")]
+#[path = "wgc_stream.rs"]
+mod stream;
+
+#[cfg(target_os = "windows")]
+pub use stream::FrameStream;
 
 /// Captures a target window using Windows.Graphics.Capture.
 ///

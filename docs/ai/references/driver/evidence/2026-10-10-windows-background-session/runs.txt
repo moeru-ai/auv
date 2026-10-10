@@ -1,0 +1,13 @@
+single exit=0 seconds=3 :: single (detached receiver): 131 ops, 79 held, 52 inconclusive (user input), 0 violated, 10 gap finding(s); PASS
+single-piped exit=0 seconds=1 :: single (piped receiver): 131 ops, 90 held, 41 inconclusive (user input), 0 violated, 3 gap finding(s); PASS
+five exit=0 seconds=15 :: five: 425 ops, 378 held, 47 inconclusive (user input), 0 violated, 6 gap finding(s); PASS
+probe exit=0 seconds=9 :: 
+freshness exit=0 seconds=10 :: 
+geometry exit=0 seconds=4 :: 
+apps exit=0 seconds=76 :: apps: 28 ops, 28 held, 0 inconclusive, 0 violated; PASS
+bench exit=1 seconds=602 :: bench: 10 minute(s); throughput last/first 1.0122308314390827; FAIL
+faults exit=0 seconds=602 :: faults: 1910 round(s), 9550 ops, 0 violated; PASS
+ALL_DONE
+bench-rerun exit=1 :: bench: 10 minute(s); throughput last/first 0.9739441685444027; FAIL
+quiet exit=0 :: quiet: 30 minute(s) with nothing of AUV running: injected keys 0, injected mouse 0, physical keys 1570, physical mouse 45392
+bench-kinds exit=1 :: bench: 10 minute(s); throughput last/first 0.9961065799782685; FAIL

@@ -491,13 +491,16 @@ dependencies = [
  "anyhow",
  "auv-driver-common",
  "auv-driver-macos",
+ "auv-driver-windows",
  "axum",
  "clap",
+ "image",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "url",
+ "windows 0.58.0",
 ]
 
 [[package]]

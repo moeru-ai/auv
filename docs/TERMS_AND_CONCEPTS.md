@@ -1459,6 +1459,43 @@ Across the Runner API, a capture frame stays in the Runner that produced it
 Design and evidence:
 `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.
 
+## Background Session
+
+A background session is an owned set of up to five **target** windows that a driver
+operates and watches while the user keeps working in another window. It exists for
+long-running computer use: an agent acts in several applications without foregrounding
+any of them, moving the user's pointer, or sending global input. Only the Windows driver
+has one today (`WindowsDriverSession::background`); the term claims nothing for other
+platforms.
+
+- A **target** is a window the caller discovered once and attached. The session caches its
+  handle together with the process, thread and class it had, and every operation
+  re-validates it with one handle probe instead of enumerating windows. A target is `live`,
+  `minimized` (Windows stops rendering it, so nothing sent to it could be seen, and the
+  session never restores it) or `lost` (the window or its process is gone; final, because a
+  reused handle must not be mistaken for the target). If a target moved or was resized, the
+  operation resolves its points against the live frame and reports that it followed.
+- A **typed outcome** answers every operation: `done`, `skipped_minimized`, `target_lost`,
+  `unsupported`, or `failed`. `unsupported` means the operation cannot be done safely in the
+  background: nothing was sent, and the session did not try the foreground instead. A session
+  operation takes no [input mode](#input-mode) and has no foreground route to fall back to,
+  so "never silently retry through foreground input" is structural, not a convention.
+- Delivery is not effect. A posted message means the target's queue accepted it
+  (`InputActionResult.verified` stays `false`). Whether the application acted on it depends on
+  its toolkit, and whether it took the foreground when it did is decided by the operating
+  system, not by AUV: a window may become the foreground window only if its process holds the
+  right to, and an application that merely activates itself inside its own input queue does
+  not. See the [background session reference](ai/references/driver/2026-10-10-windows-background-session.md).
+- A **frame stream** is the session's continuously drained capture of one window. It keeps only
+  the newest frame and counts the frames the compositor delivers, so a read is never an older
+  state of the window, a window that has not changed costs no pixel copy
+  (`FrameRead::Unchanged`), and switching between windows never renegotiates a capture
+  session. A read after an action returns the newest frame *delivered so far*; the compositor
+  needs about one to two frames to deliver the effect of an action, which a caller allows for.
+  When the window's captured size changes, the stream stops instead of reshaping itself (its
+  frames would no longer line up with the window's bounds), and the session replaces it on the
+  next read.
+
 ## Input Mode
 
 Input mode is a provisional term for the caller's allowed input disturbance

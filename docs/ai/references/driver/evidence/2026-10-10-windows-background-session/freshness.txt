@@ -1,0 +1,8 @@
+== covered (bottom of the Z-order)
+  round 0: clicks=1 before pw=5eef5b wgc=010b3d | after: 10ms pw=aaca55 wgc=87656e | 60ms pw=aaca55 wgc=82bba8
+  round 1: clicks=2 before pw=aaca55 wgc=82bba8 | after: 10ms pw=2ed717 wgc=bf23bf | 60ms pw=2ed717 wgc=ff8799
+  round 2: clicks=3 before pw=2ed717 wgc=ff8799 | after: 9ms pw=50461b wgc=ff8799 | 59ms pw=50461b wgc=ef33f8
+== uncovered (top of the Z-order)
+  round 0: clicks=1 before pw=5eef5b wgc=010b3d | after: 10ms pw=aaca55 wgc=82bba8
+  round 1: clicks=2 before pw=aaca55 wgc=82bba8 | after: 11ms pw=2ed717 wgc=82bba8 | 113ms pw=2ed717 wgc=ff8799
+  round 2: clicks=3 before pw=2ed717 wgc=ff8799 | after: 9ms pw=50461b wgc=ff8799 | 108ms pw=50461b wgc=ef33f8

@@ -16,7 +16,8 @@ platforms/
     tasks/                Rust keyboard and focus evaluation runners
       native/             Swift focus controllers
     cases/                Rust scenarios, assertions, and AppKit evaluation
-  desktop-windows/        Reserved; no implemented evaluations yet
+  desktop-windows/        Background-session evaluations: native Win32 receiver, desktop watch,
+                          Rust runner (see its README)
   desktop-linux/          Reserved; no implemented evaluations yet
 tasks/                    Shared Rust process IO and HTTP receipt protocol
 justfile                  Build, check, and run recipes exposed as just eval
@@ -119,6 +120,9 @@ just eval focus \
   --mode no_raise_key --restore records --require-success --repetitions 3
 
 just eval appkit
+
+# Windows: the driver operating windows the user is not looking at.
+just eval windows five --output evals/auv-base/results/windows-five
 ```
 
 The `keyboard`, `hold`, and `focus` recipes build their inputs before running.

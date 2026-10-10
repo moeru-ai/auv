@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **66**
+Count: **67**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -44,6 +44,7 @@ Count: **66**
 - [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
 - [`2026-10-09-overlay-windows-direct2d-evidence.md`](2026-10-09-overlay-windows-direct2d-evidence.md): Windows overlay drawing moved from GDI to a Direct2D DC render target (real premultiplied alpha, antialiasing, DirectWrite labels, cursor glow, resvg SVG cursors); pixel tests and before/after screen captures.
 - [`2026-10-10-windows-overlay-motion.md`](2026-10-10-windows-overlay-motion.md): Windows live overlay that follows real driver input (spring-following cursor with tilt and press, click ripples, window marks), with one colored cursor per window and caller-written status pills, its faithfulness rules, report sites, the owner-chosen rounded built-in pointer with a silhouette shadow, and frame-time, latency and per-window color evidence from a scripted harness and from real window-targeted operations.
+- [`2026-10-10-windows-background-session.md`](2026-10-10-windows-background-session.md): Windows background session: up to five covered windows operated by posted click and wheel and observed through per-window frame streams, with typed outcomes (`skipped_minimized`, `target_lost`, `unsupported`), no re-discovery and no foreground route; the launch foreground grant, the one-shot WGC stale-frame and resize-alignment findings, a per-application survey (Character Map, Calculator, Edge with and without native occlusion), and single, five-window, 10-minute benchmark and fault-injection evidence.
 
 - [`2026-09-11-click-modifiers-contract.md`](2026-09-11-click-modifiers-contract.md)
 - [`2026-09-09-background-ax-and-media-gap-review.md`](2026-09-09-background-ax-and-media-gap-review.md): Deeper background input and AX review, plus microphone/system-audio distinctions and three media capability candidates with pinned source evidence.

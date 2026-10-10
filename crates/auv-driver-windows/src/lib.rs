@@ -7,6 +7,7 @@
 pub mod accessibility;
 mod application;
 mod background_input;
+mod background_session;
 pub mod capture;
 pub mod clipboard;
 mod descriptor;
@@ -36,6 +37,10 @@ pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapsho
 pub use application::ApplicationControl;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use auv_driver_common::{ProcessActivationResult, ProcessActivationVerification};
+pub use background_session::{
+  AttachError, BackgroundSession, ClickRequest, Delivery, FrameChange, FrameRead, LostReason, MAX_TARGETS, Outcome, SessionStats, TargetId,
+  TargetInfo, TargetState,
+};
 pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use desktop::ensure_input_desktop;

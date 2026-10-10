@@ -1,0 +1,1 @@
+quiet: 30 minute(s) with nothing of AUV running: injected keys 0, injected mouse 0, physical keys 1570, physical mouse 45392

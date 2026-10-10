@@ -40,3 +40,12 @@ appkit:
 # Compare assertions against existing local receipts, without launching apps.
 replay receipts:
     AUV_EVAL_RECEIPTS="$1" cargo test -p auv-base-evals --lib migrated_assertions_match_recorded_receipts -- --include-ignored
+
+# Build the Windows receiver and runner. Release mode, because the latency figures need it.
+windows-build:
+    cargo build --release -p auv-base-evals --bin win32-receiver --bin background-session-eval
+
+# Run a Windows background-session scenario: single, five, bench, faults, probe, freshness, geometry,
+# apps or quiet.
+windows *args: windows-build
+    target/release/background-session-eval "$@"

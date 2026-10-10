@@ -1,0 +1,6 @@
+step        window rect                session bounds             stream frame (w h left right)      legacy wgc                         printwindow
+start       [2140, 1050, 2520, 1350]   2140,1050 380x300          (380, 300, Some(7), Some(372)) bounds@2140,1050 (380, 300, Some(7), Some(372)) bounds@2140,1050 (380, 300, Some(8), Some(371)) bounds@2140,1050
+move        [1980, 960, 2360, 1260]    1987,960 366x293           (366, 293, Some(0), Some(365)) bounds@1987,960 (366, 293, Some(0), Some(365)) bounds@1987,960 (380, 300, Some(8), Some(371)) bounds@1987,960
+move back   [2140, 1050, 2520, 1350]   2147,1050 366x293          (366, 293, Some(0), Some(365)) bounds@2147,1050 (366, 293, Some(0), Some(365)) bounds@2147,1050 (380, 300, Some(8), Some(371)) bounds@2147,1050
+resize      [2140, 1050, 2600, 1390]   2147,1050 446x333          (446, 333, Some(0), Some(445)) bounds@2147,1050 (446, 333, Some(0), Some(445)) bounds@2147,1050 (460, 340, Some(8), Some(451)) bounds@2147,1050
+move again  [1940, 990, 2400, 1330]    1947,990 446x333           (446, 333, Some(0), Some(445)) bounds@1947,990 (446, 333, Some(0), Some(445)) bounds@1947,990 (460, 340, Some(8), Some(451)) bounds@1947,990

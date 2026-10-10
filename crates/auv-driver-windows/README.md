@@ -19,6 +19,7 @@ UIA, and `Windows.Media.Ocr`.
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process name (`ApplicationControl::activate_process_name`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
+- Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window capture stream that never serves a stale frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
 - Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
 ## Open TODOs
@@ -37,6 +38,11 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |
 | `TODO(overlay-follow-multi-mouse)` | `src/session.rs` | Only the shared default mouse drives the live cursors |
 | `TODO(overlay-live-status-producers)` | `src/overlay_follow.rs` | Only Rust callers can set a cursor status; `auv invoke`, MCP and the Runner do not start a follower |
+| `TODO(windows-targeted-keyboard)` | `src/input.rs`, `src/background_session.rs` | Background keyboard delivery; a session answers keyboard requests as `unsupported` |
+| `TODO(windows-background-cloaked)` | `src/background_session.rs` | A window DWM cloaks (another virtual desktop) is treated as live; it needs its own typed state and live evidence |
+| `TODO(background-session-wait-for-frame)` | `src/background_session.rs` | A blocking wait for the next frame; callers poll `capture`, which answers `Unchanged` without copying |
+| `TODO(background-session-foreground-grant)` | `src/background_session.rs` | A delivery reports no focus disturbance without observing it; a just-launched process can still take the foreground on its first activation |
+| `TODO(wgc-capture-latest-frame)` | `src/wgc.rs` | `capture_window_wgc` reads the frame pool in order and can return an older state; sessions use `FrameStream` instead |
 | `TODO(driver-overlay-windows-window-owner-thread)` | `crates/auv-driver-overlay-windows/src/animator.rs` | A running animator must be the only presenter in its process |
 
 ## Architecture notes
@@ -58,6 +64,22 @@ Chromium/Electron/WinUI/UWP surfaces and most GPU-rendered custom UI read real H
 input instead and silently ignore posted messages. Windows has no second, more
 compatible route today, so `ClickOptions::window_strategy`'s two variants
 (`ChromiumCompatible`/`PidTargeted`) both resolve to this same delivery on Windows.
+
+A background session (`src/background_session.rs`) is the contract a long-running agent uses on top
+of those routes. It takes no input policy, because the only routes it has are posted window messages
+and Windows.Graphics.Capture: nothing in it activates, restores, raises or resizes a window, moves the
+cursor, or sends global input, and a request that has no such route (keyboard input, Alt/Meta clicks)
+is answered `unsupported` instead of being sent to whatever has the foreground. All OS access goes
+through one small `Backend` trait, so routing, follow-on-move, minimized skipping, lost-target isolation
+and the no-fallback behavior are unit tested without a desktop. Observation is a `FrameStream`
+(`src/wgc_stream.rs`): the capture pool is drained the moment a frame arrives and only the newest is
+kept, because `capture_window_wgc` reads a two-buffer pool oldest first and can hand back an older
+state, or miss the newest one entirely, after a burst of changes. Whether a posted click makes the
+target take the *foreground* is decided by the operating system from the target process, not by this
+driver: an independently launched application that handles a posted click activates itself inside its
+own input queue and the foreground stays with the user, but a process that holds the right to take the
+foreground (for example one started by the foreground application) takes it. See the reference note
+for the measurements.
 
 `ClipboardApi::snapshot_rich`/`restore_rich` (`src/clipboard.rs`) enumerate every
 clipboard format present via `EnumClipboardFormats` and capture the raw bytes behind

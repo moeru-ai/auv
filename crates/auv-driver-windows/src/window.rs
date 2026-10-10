@@ -5,14 +5,63 @@
 //! Enumeration uses Win32 `EnumWindows`; frames prefer the DWM extended frame
 //! bounds (the visible window rectangle) and fall back to `GetWindowRect`.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Rect;
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver_common::window::Window;
 
 use crate::error::{invalid_input, not_found};
 
+static ENUMERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// How many times this process has enumerated every top-level window. A diagnostic: a session
+/// that caches its targets leaves it unchanged after it has attached them.
+pub fn window_enumerations() -> u64 {
+  ENUMERATIONS.load(Ordering::Relaxed)
+}
+
+/// What the OS says about one window handle right now, learned without enumerating windows.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowProbe {
+  pub(crate) exists: bool,
+  pub(crate) process_id: u32,
+  pub(crate) thread_id: u32,
+  pub(crate) class_name: String,
+  pub(crate) minimized: bool,
+  /// Hidden by DWM, for example on another virtual desktop.
+  pub(crate) cloaked: bool,
+  /// The visible frame, as `list_windows` reports it.
+  pub(crate) frame: Option<Rect>,
+}
+
+impl WindowProbe {
+  // Off Windows only the background session's tests describe a closed window.
+  #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+  pub(crate) fn gone() -> Self {
+    Self {
+      exists: false,
+      process_id: 0,
+      thread_id: 0,
+      class_name: String::new(),
+      minimized: false,
+      cloaked: false,
+      frame: None,
+    }
+  }
+}
+
+/// Reads the live state of the window behind `hwnd` (a raw handle value). A handle that no longer
+/// names a window comes back with `exists: false`.
+#[cfg(target_os = "windows")]
+pub(crate) fn probe_window(hwnd: isize) -> WindowProbe {
+  native::probe(hwnd)
+}
+
 #[cfg(target_os = "windows")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
+  ENUMERATIONS.fetch_add(1, Ordering::Relaxed);
   native::list_windows()
 }
 
@@ -149,8 +198,8 @@ mod native {
     AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-    IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow,
+    BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow,
   };
   use windows::core::PWSTR;
 
@@ -181,6 +230,29 @@ mod native {
       }
     }
     Ok(windows)
+  }
+
+  pub(super) fn probe(raw: isize) -> super::WindowProbe {
+    let hwnd = HWND(raw as *mut c_void);
+    // SAFETY: read-only queries on a handle that may have been destroyed; each fails harmlessly.
+    unsafe {
+      if !IsWindow(hwnd).as_bool() {
+        return super::WindowProbe::gone();
+      }
+      let mut process_id = 0u32;
+      let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+      let mut name = [0u16; 256];
+      let length = GetClassNameW(hwnd, &mut name).max(0) as usize;
+      super::WindowProbe {
+        exists: true,
+        process_id,
+        thread_id,
+        class_name: String::from_utf16_lossy(&name[..length]),
+        minimized: IsIconic(hwnd).as_bool(),
+        cloaked: is_cloaked(hwnd),
+        frame: window_frame(hwnd).ok(),
+      }
+    }
   }
 
   pub(super) fn activate_window(window: &Window) -> DriverResult<()> {
