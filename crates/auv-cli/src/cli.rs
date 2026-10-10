@@ -236,56 +236,62 @@ mod tests {
     );
   }
 
-  fn devices_command(arguments: &[&str]) -> crate::commands::devices::DevicesCommand {
+  fn access_command(arguments: &[&str]) -> crate::commands::devices::AccessCommand {
     let parsed = RootArgs::try_parse_from(arguments).unwrap();
     let Some(RootCommand::Devices(args)) = parsed.command else {
       panic!("devices command")
+    };
+    let crate::commands::devices::DevicesCommand::Access(args) = args.command else {
+      panic!("devices access command")
     };
     args.command
   }
 
   #[test]
-  fn devices_credentials_enroll_accepts_only_terminal_entered_credential() {
-    let crate::commands::devices::DevicesCommand::Credentials(args) = devices_command(&[
+  fn devices_access_enrollments_add_accepts_only_terminal_entered_credential() {
+    let crate::commands::devices::AccessCommand::Enrollments(args) = access_command(&[
       "auv",
       "devices",
-      "credentials",
+      "access",
+      "enrollments",
       "--store-root",
       "state",
-      "enroll",
+      "add",
       "--user",
       "neko",
     ]) else {
-      panic!("credentials command")
+      panic!("enrollments command")
     };
 
     assert_eq!(args.store.store_root.as_deref(), Some(std::path::Path::new("state")));
-    assert!(matches!(args.command, crate::commands::device_local::CredentialsCommand::Enroll { .. }));
+    assert!(matches!(args.command, crate::commands::device_local::EnrollmentsCommand::Add { .. }));
     assert!(
       RootArgs::try_parse_from([
         "auv",
         "devices",
-        "credentials",
-        "enroll",
+        "access",
+        "enrollments",
+        "add",
         "--user",
         "neko",
         "--credential",
-        "secret",
+        "secret"
       ])
       .is_err()
     );
   }
 
   #[test]
-  fn devices_credentials_enroll_takes_no_credential_kind() {
+  fn devices_access_enrollments_add_takes_no_credential_kind() {
     // Every platform host accepts exactly one credential kind and derives it,
     // so a `--kind` flag would only offer a choice with one valid answer.
     assert!(
       RootArgs::try_parse_from([
         "auv",
         "devices",
-        "credentials",
-        "enroll",
+        "access",
+        "enrollments",
+        "add",
         "--user",
         "neko",
         "--kind",
@@ -296,108 +302,123 @@ mod tests {
   }
 
   #[test]
-  fn devices_local_store_root_is_accepted_after_the_subcommand() {
+  fn devices_access_store_root_is_accepted_after_the_subcommand() {
     // `--store-root` must be discoverable from the leaf command's help, so it
     // is global within each target-local command group.
-    let crate::commands::devices::DevicesCommand::Credentials(args) = devices_command(&[
+    let crate::commands::devices::AccessCommand::Enrollments(args) = access_command(&[
       "auv",
       "devices",
-      "credentials",
+      "access",
+      "enrollments",
       "list",
       "--store-root",
       "/srv/auv/store",
     ]) else {
-      panic!("credentials command")
+      panic!("enrollments command")
     };
 
     assert_eq!(args.store.store_root.as_deref(), Some(std::path::Path::new("/srv/auv/store")));
-    assert!(matches!(args.command, crate::commands::device_local::CredentialsCommand::List));
+    assert!(matches!(args.command, crate::commands::device_local::EnrollmentsCommand::List));
   }
 
   #[test]
-  fn devices_sessions_groups_list_lock_unlock_and_policy() {
-    use crate::commands::devices::{DevicesCommand, SessionsCommand};
+  fn devices_access_groups_sessions_enrollments_policy_and_audit() {
+    use crate::commands::devices::{AccessCommand, SessionsCommand};
 
     let sessions = |arguments: &[&str]| {
-      let DevicesCommand::Sessions(args) = devices_command(arguments) else {
+      let AccessCommand::Sessions(args) = access_command(arguments) else {
         panic!("sessions command")
       };
       args.command
     };
 
-    assert!(matches!(sessions(&["auv", "devices", "sessions", "list", "--json"]), SessionsCommand::List(_)));
-    let SessionsCommand::Lock(lock) = sessions(&["auv", "devices", "sessions", "lock", "--user", "neko"]) else {
+    assert!(matches!(sessions(&["auv", "devices", "access", "sessions", "list", "--json"]), SessionsCommand::List(_)));
+    let SessionsCommand::Lock(lock) = sessions(&[
+      "auv", "devices", "access", "sessions", "lock", "--user", "neko",
+    ]) else {
       panic!("sessions lock")
     };
     assert_eq!(lock.user.as_deref(), Some("neko"));
-    let SessionsCommand::Unlock(unlock) = sessions(&["auv", "devices", "sessions", "unlock", "--session", "s-1"]) else {
+    let SessionsCommand::Unlock(unlock) = sessions(&[
+      "auv",
+      "devices",
+      "access",
+      "sessions",
+      "unlock",
+      "--session",
+      "s-1",
+    ]) else {
       panic!("sessions unlock")
     };
     assert_eq!(unlock.session.as_deref(), Some("s-1"));
-    let SessionsCommand::Policy(policy) = sessions(&[
+
+    let AccessCommand::Policy(policy) = access_command(&[
       "auv",
       "devices",
-      "sessions",
+      "access",
       "policy",
       "disable",
       "--store-root",
       "state",
     ]) else {
-      panic!("sessions policy")
+      panic!("access policy")
     };
     assert!(matches!(policy.command, crate::commands::device_local::PolicyCommand::Disable));
     assert_eq!(policy.store.store_root.as_deref(), Some(std::path::Path::new("state")));
 
-    // The former top-level forms are gone, without aliases.
-    for removed in [
-      &["auv", "devices", "lock", "--user", "neko"][..],
-      &["auv", "devices", "unlock", "--user", "neko"][..],
-      &["auv", "devices", "unlock-policy", "status"][..],
-    ] {
-      assert!(RootArgs::try_parse_from(removed).is_err(), "{removed:?}");
-    }
-  }
-
-  #[test]
-  fn devices_audit_list_keeps_its_page_bounds() {
-    let crate::commands::devices::DevicesCommand::Audit(args) = devices_command(&["auv", "devices", "audit", "list", "--limit", "20"])
-    else {
-      panic!("audit command")
+    let AccessCommand::Audit(audit) = access_command(&["auv", "devices", "access", "audit", "list", "--limit", "20"]) else {
+      panic!("access audit")
     };
-
     assert!(matches!(
-      args.command,
+      audit.command,
       crate::commands::device_local::AuditCommand::List {
         cursor: 0,
         limit: 20
       }
     ));
-    assert!(RootArgs::try_parse_from(["auv", "devices", "audit", "list", "--limit", "101"]).is_err());
+    assert!(
+      RootArgs::try_parse_from([
+        "auv", "devices", "access", "audit", "list", "--limit", "101"
+      ])
+      .is_err()
+    );
+
+    // The former forms are gone, without aliases.
+    for removed in [
+      &["auv", "devices", "sessions", "list"][..],
+      &["auv", "devices", "credentials", "list"][..],
+      &["auv", "devices", "audit", "list"][..],
+      &["auv", "devices", "lock", "--user", "neko"][..],
+      &["auv", "devices", "unlock", "--user", "neko"][..],
+      &[
+        "auv",
+        "devices",
+        "access",
+        "enrollments",
+        "enroll",
+        "--user",
+        "neko",
+      ][..],
+    ] {
+      assert!(RootArgs::try_parse_from(removed).is_err(), "{removed:?}");
+    }
   }
 
   #[tokio::test]
-  async fn devices_local_commands_reject_device_selection_before_connecting() {
+  async fn devices_access_local_commands_reject_device_selection_before_connecting() {
     let selection = auv::selection::RootSelection {
       device_name: None,
       device_id: Some("7f3a".to_string()),
       run_id: None,
     };
-    let crate::commands::devices::DevicesCommand::Credentials(args) = devices_command(&["auv", "devices", "credentials", "list"]) else {
-      panic!("credentials command")
+    let parsed = RootArgs::try_parse_from(["auv", "devices", "access", "enrollments", "list"]).unwrap();
+    let Some(RootCommand::Devices(args)) = parsed.command else {
+      panic!("devices command")
     };
-    let error = crate::commands::devices::run(
-      crate::commands::devices::DevicesArgs {
-        command: crate::commands::devices::DevicesCommand::Credentials(args),
-      },
-      &selection,
-      std::path::Path::new("."),
-    )
-    .await
-    .unwrap_err();
+    let error = crate::commands::devices::run(args, &selection, std::path::Path::new(".")).await.unwrap_err();
 
     assert!(error.contains("runs only on this Device"), "{error}");
   }
-
   #[test]
   fn setup_parses_macos_helper_install() {
     let parsed = RootArgs::try_parse_from(["auv", "setup", "macos-helper", "install", "--json"]).unwrap();

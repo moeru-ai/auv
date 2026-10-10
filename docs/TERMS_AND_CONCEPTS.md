@@ -371,7 +371,7 @@ target-local capability switch, account enrollment boundary, and restricted
 audit. It does not read or transmit the enrolled credential. The target
 revalidates the selected existing login instance and independently reads back
 `LOCKED`; a session already locked returns `ALREADY_LOCKED` without input.
-The CLI and MCP expose this typed operation as `devices sessions lock` and
+The CLI and MCP expose this typed operation as `devices access sessions lock` and
 `device_ensure_user_session_locked`. This is an implementation contract with
 build and narrow native test evidence; installed three-Device lock gates are
 still pending.
@@ -380,11 +380,10 @@ Target-local credential management belongs to `DeviceLocalService`: `Enroll`,
 `GetEnrollment`, `ListEnrollments`, and `RemoveEnrollment`; its local policy and
 audit methods are `GetPolicy`, `SetPolicy`, and `ListAudit`. The local service
 requires a dedicated OS-authenticated IPC endpoint and is not available to
-paired remote callers. The CLI exposes it as `auv devices credentials`,
-`auv devices sessions policy status|enable|disable`, and `auv devices audit`;
-these commands run only on the target Device and reject Device or Run
-selection. The session operations themselves are `auv devices sessions
-list|lock|unlock`. A session's lock state may be locked, usable, or unknown;
+paired remote callers. The CLI groups session access under `auv devices
+access`: `enrollments add|get|list|remove`, `policy status|enable|disable`,
+and `audit list` run only on the target Device and reject Device or Run
+selection; `sessions list|lock|unlock` act on the selected Device. A session's lock state may be locked, usable, or unknown;
 `is_locked` and `is_unlocked` are true only for the corresponding known state.
 The typed Device API returns an explicit unsupported-host result where no
 validated native host is configured. Installed locked-session gates passed on
@@ -463,8 +462,8 @@ Confirmed OS rejection of a stored credential suspends that account's remote
 entry until local re-enrollment; subsequent paired requests do not resubmit
 the rejected credential. Input-delivery failure alone does not confirm rejection.
 
-The accepted CLI action name is `auv devices sessions unlock` (`auv devices
-unlock` before 2026-10-11). Its first native effect
+The accepted CLI action name is `auv devices access sessions unlock` (`auv
+devices unlock` before 2026-10-11). Its first native effect
 unlocks one existing OS login session. If that session is already usable, the
 operation succeeds with an explicit no-op outcome without reading a credential,
 posting input, or changing focus. A user with no current session returns an

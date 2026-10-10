@@ -1,11 +1,11 @@
 # Remote Device unlock through the Devices API (research)
 
-> NOTICE (2026-10-11): The session CLI is now `auv devices sessions
-> list|lock|unlock`, and the remote session switch is `auv devices sessions
-> policy status|enable|disable` (formerly `auv devices sessions`,
-> `devices lock`, `devices unlock`, and `auv device-local policy`).
-> Credential enrollment is `auv devices credentials enroll --user USER`, with no
-> `--kind` or storage choice. Commands below are kept as recorded.
+> NOTICE (2026-10-11): Session access commands now live under `auv devices
+> access`: `sessions list|lock|unlock` (formerly `devices sessions`,
+> `devices lock`, `devices unlock`), `enrollments add|get|list|remove`
+> (formerly `auv device-local enroll|get|list|remove`, now without `--kind`),
+> `policy status|enable|disable` (formerly `auv device-local policy`), and
+> `audit list`. Commands below are kept as recorded.
 
 Date: 2026-09-27. Status: historical policy interview and live native existing-session unlock proofs; signed-out login, installed service, and persistent credential access were unverified at this stage. Later installed-host gates are linked below; this record is not an AUV support claim. The owner narrowed the first implementation release to existing locked sessions on 2026-09-28; [the revised design](https://github.com/moeru-ai/auv/blob/85f638525c669e56aac3ce4792e39292563944c6/docs/ai/references/session-api/2026-09-28-remote-device-entry-implementation-design.md) controls current scope. Earlier signed-out statements below record the previous intended scope, not a current release promise. This reframes the [lock/login-screen source review](../driver/2026-09-27-lock-and-login-screen-deep-research.md): the requested user outcome is a CLI/Devices API operation on a paired remote Device, without a screenshot prerequisite. The owner confirmed a secret provisioned **on the target Device** ahead of the request. The initiating Device sends a request, not the OS password.
 

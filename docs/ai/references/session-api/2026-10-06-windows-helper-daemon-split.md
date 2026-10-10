@@ -1,11 +1,11 @@
 # Windows Helper and daemon split
 
-> NOTICE (2026-10-11): The session CLI is now `auv devices sessions
-> list|lock|unlock`, and the remote session switch is `auv devices sessions
-> policy status|enable|disable` (formerly `auv devices sessions`,
-> `devices lock`, `devices unlock`, and `auv device-local policy`).
-> Credential enrollment is `auv devices credentials enroll --user USER`, with no
-> `--kind` or storage choice. Commands below are kept as recorded.
+> NOTICE (2026-10-11): Session access commands now live under `auv devices
+> access`: `sessions list|lock|unlock` (formerly `devices sessions`,
+> `devices lock`, `devices unlock`), `enrollments add|get|list|remove`
+> (formerly `auv device-local enroll|get|list|remove`, now without `--kind`),
+> `policy status|enable|disable` (formerly `auv device-local policy`), and
+> `audit list`. Commands below are kept as recorded.
 
 Status: implemented on 2026-10-06. Native Windows unit tests and one installed
 gate passed on a single Windows 11 (build 26100) host that had the 0.0.28
@@ -129,8 +129,8 @@ to migrate it. `install` refuses while the 0.0.28 `AuvDevice` service exists.
 directory, but only when its exact recorded command, account, and startup type
 prove that AUV registered it. The 0.0.28 SYSTEM-only `%ProgramData%\AUVDeviceEntry`
 pairing and policy store is left untouched and is no longer read. Clients pair
-again with `auv serve`, and the user runs `auv devices credentials enroll`
-again (named `auv device-local enroll` before 2026-10-10).
+again with `auv serve`, and the user runs `auv devices access enrollments
+add` again (named `auv device-local enroll` before 2026-10-11).
 Replacing an installed `AuvHelper` in place is deferred
 (`TODO(windows-helper-upgrade)`): uninstall it, then install again.
 

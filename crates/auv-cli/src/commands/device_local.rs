@@ -14,15 +14,15 @@ pub struct LocalStore {
 }
 
 #[derive(Clone, Debug, Args)]
-pub struct CredentialsArgs {
+pub struct EnrollmentsArgs {
   #[command(flatten)]
   pub store: LocalStore,
   #[command(subcommand)]
-  pub command: CredentialsCommand,
+  pub command: EnrollmentsCommand,
 }
 
 #[derive(Clone, Debug, Args)]
-pub struct SessionPolicyArgs {
+pub struct AccessPolicyArgs {
   #[command(flatten)]
   pub store: LocalStore,
   #[command(subcommand)]
@@ -40,16 +40,17 @@ pub struct AuditArgs {
 /// One target-local request, whichever `auv devices` subcommand parsed it.
 #[derive(Clone, Debug)]
 pub enum LocalRequest {
-  Credentials(CredentialsCommand),
+  Enrollments(EnrollmentsCommand),
   Policy(PolicyCommand),
   Audit(AuditCommand),
 }
 
 #[derive(Clone, Debug, Subcommand)]
-pub enum CredentialsCommand {
-  /// Store an OS login credential entered only on this Device's terminal:
-  /// the login password on macOS and Linux, the Windows PIN on Windows.
-  Enroll {
+pub enum EnrollmentsCommand {
+  /// Enroll an OS account: store its login credential, entered only on this
+  /// Device's terminal (the login password on macOS and Linux, the Windows
+  /// PIN on Windows).
+  Add {
     /// OS account to enroll. An administrator may enroll another account.
     #[arg(long)]
     user: String,
@@ -79,7 +80,7 @@ pub enum PolicyCommand {
   /// Let paired Devices list, lock and unlock sessions on this Device.
   Enable,
   /// Stop paired Devices from listing, locking or unlocking sessions here.
-  /// Enrolled credentials are kept.
+  /// Enrollments are kept.
   Disable,
 }
 
@@ -142,7 +143,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
   let service = client.service();
 
   match request {
-    LocalRequest::Credentials(CredentialsCommand::Enroll { user }) => {
+    LocalRequest::Enrollments(EnrollmentsCommand::Add { user }) => {
       let mut credential = read_hidden_credential()?;
       let request = proto::EnrollRequest {
         user,
@@ -159,7 +160,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         .enrollment;
       print_enrollment(enrollment)?;
     }
-    LocalRequest::Credentials(CredentialsCommand::Get { user }) => {
+    LocalRequest::Enrollments(EnrollmentsCommand::Get { user }) => {
       let enrollment = service
         .get_enrollment(proto::GetEnrollmentRequest { user })
         .await
@@ -168,7 +169,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         .enrollment;
       print_enrollment(enrollment)?;
     }
-    LocalRequest::Credentials(CredentialsCommand::List) => {
+    LocalRequest::Enrollments(EnrollmentsCommand::List) => {
       let entries = service
         .list_enrollments(proto::ListEnrollmentsRequest {})
         .await
@@ -180,7 +181,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         print_enrollment(Some(enrollment))?;
       }
     }
-    LocalRequest::Credentials(CredentialsCommand::Remove { user }) => {
+    LocalRequest::Enrollments(EnrollmentsCommand::Remove { user }) => {
       service
         .remove_enrollment(proto::RemoveEnrollmentRequest { user })
         .await
@@ -193,7 +194,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
           service
             .get_policy(proto::GetPolicyRequest {})
             .await
-            .map_err(|status| format!("read session policy failed ({})", status.code()))?
+            .map_err(|status| format!("read access policy failed ({})", status.code()))?
             .into_inner()
             .enabled
         }
@@ -203,13 +204,13 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
               enabled: matches!(command, PolicyCommand::Enable),
             })
             .await
-            .map_err(|status| format!("change session policy failed ({})", status.code()))?
+            .map_err(|status| format!("change access policy failed ({})", status.code()))?
             .into_inner()
             .enabled
         }
       };
       let state = if enabled { "enabled" } else { "disabled" };
-      println!("remote session control from paired Devices: {state}");
+      println!("session access from paired Devices: {state}");
     }
 
     LocalRequest::Audit(AuditCommand::List { cursor, limit }) => {
