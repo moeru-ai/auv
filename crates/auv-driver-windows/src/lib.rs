@@ -20,6 +20,8 @@ pub mod latency;
 pub mod media;
 pub mod mutation;
 pub mod ocr;
+#[cfg(feature = "overlay")]
+mod overlay_follow;
 pub mod permission;
 pub mod playback_guard;
 pub mod production_executor;
@@ -43,6 +45,8 @@ pub use media::{
   SmtcMediaManager, SmtcSession,
 };
 pub use ocr::{OcrError, recognize_text_in_rgba};
+#[cfg(feature = "overlay")]
+pub use overlay_follow::OperationFollower;
 pub use permission::{WindowsPermissionProbe, probe as probe_permissions};
 pub use playback_guard::{
   DEFAULT_PLAY_POLL_TIMEOUT, DEFAULT_TARGET_VOLUME, DEFAULT_VOLUME_TOLERANCE, MockPlaybackSink, PlaybackActionSink, RealPlaybackSink,

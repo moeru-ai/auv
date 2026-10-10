@@ -10,6 +10,11 @@ pub struct Cursor {
   label_visible: bool,
   image: CursorImage,
   style: CursorStyle,
+  // NOTICE: only live overlays pose the cursor (`MotionScene`), and the Runner wire format
+  // does not carry a pose (`overlay_to_proto` in `crates/auv/src/client/runner.rs`),
+  // so one-shot overlays always draw the rest pose. See TODO(overlay-motion-event-wire).
+  #[serde(default, skip_serializing_if = "CursorPose::is_rest")]
+  pose: CursorPose,
 }
 
 impl Cursor {
@@ -20,6 +25,7 @@ impl Cursor {
       label_visible: false,
       image: CursorImage::default(),
       style: CursorStyle::default(),
+      pose: CursorPose::REST,
     }
   }
 
@@ -43,6 +49,11 @@ impl Cursor {
     self
   }
 
+  pub fn with_pose(mut self, pose: CursorPose) -> Self {
+    self.pose = pose;
+    self
+  }
+
   pub fn point(&self) -> ScreenPoint {
     self.point
   }
@@ -61,6 +72,46 @@ impl Cursor {
 
   pub fn style(&self) -> CursorStyle {
     self.style
+  }
+
+  pub fn pose(&self) -> CursorPose {
+    self.pose
+  }
+}
+
+/// How cursor art is turned and sized about its hotspot, the point the cursor acts on.
+/// Posing about the hotspot keeps that point exactly where the operation acted.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CursorPose {
+  /// Clockwise rotation on screen, in degrees.
+  pub tilt_degrees: f64,
+  /// Uniform scale; 1 draws the art at its sprite size.
+  pub scale: f64,
+}
+
+impl CursorPose {
+  pub const REST: Self = Self {
+    tilt_degrees: 0.0,
+    scale: 1.0,
+  };
+
+  pub fn is_rest(&self) -> bool {
+    *self == Self::REST
+  }
+
+  /// Rejects poses a renderer cannot draw before they reach native code.
+  pub fn validate(self) -> Result<(), String> {
+    if !self.tilt_degrees.is_finite() || !self.scale.is_finite() || self.scale <= 0.0 {
+      return Err("cursor pose requires a finite tilt and a finite positive scale".to_string());
+    }
+    Ok(())
+  }
+}
+
+impl Default for CursorPose {
+  fn default() -> Self {
+    Self::REST
   }
 }
 

@@ -23,33 +23,29 @@ pub(crate) fn hide_all() -> crate::AuvResult<()> {
 
 #[cfg(target_os = "windows")]
 mod native {
+  use std::borrow::Cow;
   use std::sync::{Mutex, OnceLock};
 
   use auv_driver_common::geometry::Point;
   use auv_driver_overlay_common::Layer;
-  use auv_driver_overlay_common::layers::{BuiltInCursor, Cursor, CursorImage, Outline, Status};
-  use auv_driver_overlay_common::style::{Color, CursorStyle, Insets};
+  use auv_driver_overlay_common::layers::{Cursor, CursorImage, Outline, Status};
+  use auv_driver_overlay_common::style::{Color, Insets, Shadow};
   use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
   use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, GetSystemMetrics, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, ShowWindow, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, GetSystemMetrics, IsWindow, RegisterClassExW, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, ShowWindow, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
   };
 
   use crate::AuvResult;
-  use windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F;
-
   use crate::canvas::{Canvas, LabelPill, point, px, rect};
+  use crate::svg::{BUILT_IN_TIP, SpriteLayout};
 
   /// Label sizes match the macOS renderer (`Overlay.swift`): 11 pt cursor and outline
   /// labels, 12 pt status text, as device pixels at 96 DPI.
   const LABEL_FONT_SIZE: f32 = 11.0;
   const STATUS_FONT_SIZE: f32 = 12.0;
-
-  /// Radius of the disc the glow follows behind SVG art, as a fraction of the sprite
-  /// edge. Cursor art fills most of its box without reaching the corners.
-  const SVG_GLOW_SILHOUETTE: f32 = 0.35;
 
   const WINDOW_CLASS_NAME: &str = "AuvOverlayWindowWindows";
 
@@ -83,7 +79,12 @@ mod native {
   fn ensure_window() -> AuvResult<HWND> {
     let mut slot = window_slot().lock().map_err(|_| "overlay window state lock poisoned".to_string())?;
     if let Some(raw) = *slot {
-      return Ok(HWND(raw as *mut _));
+      let hwnd = HWND(raw as *mut _);
+      // A window dies with the thread that created it, so a presenter thread that
+      // exited (an animator that was stopped) leaves a stale handle behind.
+      if unsafe { IsWindow(hwnd) }.as_bool() {
+        return Ok(hwnd);
+      }
     }
 
     let class_name = wide_null(WINDOW_CLASS_NAME);
@@ -129,22 +130,59 @@ mod native {
     Ok(hwnd)
   }
 
-  /// Draws one cursor: its sprite (with an optional glow behind it) and its label pill.
+  /// Soft drop shadow under the built-in pointer when the style sets none: a dark copy of
+  /// its silhouette, slightly lowered and blurred, so its white rim reads on light
+  /// backgrounds and its body lifts off dark ones.
+  const BUILT_IN_SHADOW: Shadow = Shadow {
+    color: Color::rgba(0.0, 0.0, 0.0, 0.35),
+    blur_radius: 4.0,
+    offset_x: 0.0,
+    offset_y: 1.5,
+  };
+
+  /// NOTICE: custom SVG placement mirrors the macOS adapter (`placeCursor` in
+  /// `Overlay.swift`): the sprite box's top-left sits 4px right of and below the target
+  /// point, so an arrow drawn from the box corner hovers just off the target instead of
+  /// covering it. As a hotspot, the target is 4px up and left of the box.
+  const CUSTOM_SVG_HOTSPOT: (f32, f32) = (-4.0, -4.0);
+
+  /// Draws one cursor: its art, posed about its hotspot with its shadow underneath, then
+  /// its label pill.
+  ///
+  /// Built-in cursors draw the Windows pointer, whose rounded tip is the hotspot, with
+  /// `BUILT_IN_SHADOW` unless the style sets a shadow (a transparent one turns it off).
+  /// Custom SVG cursors cast only the shadow their style sets.
   fn draw_cursor(canvas: &Canvas, cursor: &Cursor) -> AuvResult<()> {
     let style = cursor.style();
     if let Some(shadow) = style.shadow {
       shadow.validate()?;
     }
     let target = canvas.to_local(cursor.point().point());
-    let (sprite_right, sprite_middle) = match cursor.image() {
-      CursorImage::BuiltIn { variant } => draw_disc_sprite(canvas, target, *variant, &style)?,
-      CursorImage::Svg { source } => draw_svg_sprite(canvas, target, source, &style)?,
+    let size = px(style.sprite_size).round().max(1.0) as u32;
+    let edge = size as f32;
+    let (source, hotspot, shadow) = match cursor.image() {
+      CursorImage::BuiltIn { variant } => (
+        Cow::Owned(crate::svg::built_in_source(*variant)),
+        (edge * BUILT_IN_TIP, edge * BUILT_IN_TIP),
+        style.shadow.or(Some(BUILT_IN_SHADOW)),
+      ),
+      CursorImage::Svg { source } => (Cow::Borrowed(source.as_str()), CUSTOM_SVG_HOTSPOT, style.shadow),
     };
+    let layout = SpriteLayout {
+      size,
+      hotspot,
+      pose: cursor.pose(),
+    };
+    let sprite = crate::svg::rasterize(&source, &layout, shadow.as_ref())?;
+    canvas.draw_sprite(point(target.x - sprite.hotspot.0 as f32, target.y - sprite.hotspot.1 as f32), &sprite)?;
 
     if cursor.label_visible()
       && let Some(label) = cursor.label()
     {
-      let anchor = point(sprite_right + px(style.label_gap).round(), sprite_middle);
+      // The label sits beside the unposed sprite box, so a tilting cursor does not drag
+      // its label around.
+      let (box_left, box_top) = (target.x - hotspot.0, target.y - hotspot.1);
+      let anchor = point(box_left + edge + px(style.label_gap).round(), box_top + edge / 2.0);
       canvas.draw_label_pill(
         anchor,
         &LabelPill {
@@ -159,53 +197,6 @@ mod native {
     }
 
     Ok(())
-  }
-
-  /// Draws the Windows built-in sprite, a disc centered on the target point, and returns
-  /// the sprite's right edge and vertical middle for label placement.
-  fn draw_disc_sprite(canvas: &Canvas, center: D2D_POINT_2F, variant: BuiltInCursor, style: &CursorStyle) -> AuvResult<(f32, f32)> {
-    let radius = px(style.sprite_size / 2.0).max(1.0).round();
-    let accent = style.label_background;
-
-    // TODO(driver-overlay-windows-builtin-art): built-in cursors keep the
-    // Windows disc sprite. macOS swaps Auv/AuvClick for their canonical SVG art
-    // and a default `Shadow::auv()` glow (`cursor_for_rendering` in
-    // auv-driver-overlay-macos); here only an explicit shadow glows. Adopt the
-    // macOS defaults when the owner asks for built-in art parity.
-    if let Some(shadow) = &style.shadow {
-      canvas.draw_glow(center, radius, shadow)?;
-    }
-    canvas.fill_circle(center, radius, accent)?;
-    if matches!(variant, BuiltInCursor::AuvClick) {
-      let ring_radius = px(style.sprite_size * 0.8).round();
-      canvas.stroke_circle(center, ring_radius, accent, 2.0)?;
-    }
-    Ok((center.x + radius, center.y))
-  }
-
-  /// Draws custom SVG art and returns the sprite's right edge and vertical middle.
-  ///
-  /// NOTICE: placement mirrors the macOS adapter (`placeCursor` in `Overlay.swift`):
-  /// the sprite box's top-left sits 4px right of and below the target point, so an
-  /// arrow drawn from the box corner hovers just off the target instead of covering it.
-  fn draw_svg_sprite(canvas: &Canvas, target: D2D_POINT_2F, source: &str, style: &CursorStyle) -> AuvResult<(f32, f32)> {
-    const SPRITE_OFFSET: f32 = 4.0;
-    let size = px(style.sprite_size).round().max(1.0) as u32;
-    let sprite = crate::svg::rasterize(source, size)?;
-    let edge = sprite.size as f32;
-    let left = target.x + SPRITE_OFFSET;
-    let top = target.y + SPRITE_OFFSET;
-    let middle = point(left + edge / 2.0, top + edge / 2.0);
-
-    if let Some(shadow) = &style.shadow {
-      // TODO(driver-overlay-windows-silhouette-shadow): the glow is radial around the
-      // sprite box, not a blur of the art's own silhouette as on macOS. A silhouette blur
-      // needs a blur of the rasterized alpha (no D2D effects without a device context);
-      // revisit if the round halo reads wrong for non-round cursor art.
-      canvas.draw_glow(middle, edge * SVG_GLOW_SILHOUETTE, shadow)?;
-    }
-    canvas.draw_sprite(point(left, top), &sprite)?;
-    Ok((left + edge, middle.y))
   }
 
   fn draw_outline(canvas: &Canvas, outline: &Outline) -> AuvResult<()> {

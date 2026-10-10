@@ -5,12 +5,10 @@ use crate::AuvResult;
 /// Renders an ordered overlay through the native Win32 layered-window
 /// adapter.
 ///
-/// TODO(driver-overlay-windows-motion): per-layer position easing is
-/// deferred for this slice; every render draws the requested layers in
-/// their final state immediately instead of animating between renders.
-/// Revisit once a consumer needs animated cursor motion rather than the
-/// current one-shot visual evidence (see `Overlay::with_layer`'s deferral
-/// note in `auv-driver-overlay-common`).
+/// This is the one-shot path: every call draws the requested layers in their
+/// final state at once and does not animate between calls. Animated cursor
+/// motion that follows real operations is [`crate::Animator`], which calls the
+/// same renderer once per frame with the layers a motion scene composes.
 pub fn render(overlay: &Overlay, options: ShowOptions) -> AuvResult<()> {
   // NOTICE: the native renderer currently implements ease-in-out-expo as the
   // sole shared easing contract (there is only one `Easing` variant today).

@@ -1,6 +1,8 @@
 //! Platform-selecting overlay facade.
 //!
-//! Enable `macos` to route [`show`] and [`remove`] through the AppKit adapter.
+//! Enable `macos` to route [`show`] and [`remove`] through the AppKit adapter, or
+//! `windows` for the Win32 layered-window adapter. [`LiveOverlay`] animates a stream of
+//! reported actions and is available with the `windows` adapter.
 //! Renderer-independent types are re-exported from `auv-driver-overlay-common`.
 
 mod error;
@@ -74,5 +76,68 @@ pub fn remove() -> OverlayResult<()> {
     Err(OverlayError::Unavailable {
       reason: "no overlay platform adapter is enabled for this target".to_string(),
     })
+  }
+}
+
+/// A running overlay that animates the actions a driver reports: a cursor that springs
+/// between the points operations acted on, click ripples and marks on targeted windows.
+///
+/// It draws only what [`ActionEvent`]s describe and never delivers input. Dropping it
+/// stops the animation and removes the overlay.
+///
+/// TODO(overlay-live-theme): the host theme (`AUV_OVERLAY_THEME`) applies to one-shot
+/// [`show`] calls only. Live scenes compose their own styles; apply the theme per frame
+/// when a host asks for themed live overlays.
+/// TODO(overlay-live-macos): the macOS adapter already animates cursor moves natively per
+/// `show` call; routing live events through it is a separate slice.
+pub struct LiveOverlay {
+  #[cfg(all(target_os = "windows", feature = "windows"))]
+  animator: auv_driver_overlay_windows::Animator,
+}
+
+#[cfg(all(target_os = "windows", feature = "windows"))]
+impl LiveOverlay {
+  /// Starts animating and returns once the renderer has warmed up, so the first reported
+  /// action is not delayed. `lifecycle` sets whether the overlay removes itself after it
+  /// has been still for a while. The cursor's motion is the live scene's own spring.
+  pub fn start(lifecycle: LifecycleOptions) -> OverlayResult<Self> {
+    auv_driver_overlay_windows::Animator::start(lifecycle).map(|animator| Self { animator }).map_err(OverlayError::backend)
+  }
+
+  /// Reports one real action. Returns immediately.
+  pub fn report(&self, event: ActionEvent) -> OverlayResult<()> {
+    self.animator.report(event).map_err(OverlayError::backend)
+  }
+
+  /// Stops animating, removes the overlay and returns what the run measured.
+  pub fn stop(self) -> OverlayResult<FrameStats> {
+    self.animator.stop().map_err(OverlayError::backend)
+  }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows")))]
+impl LiveOverlay {
+  /// Always fails: no live overlay adapter is enabled for this target.
+  pub fn start(lifecycle: LifecycleOptions) -> OverlayResult<Self> {
+    let _ = lifecycle;
+    Err(unavailable())
+  }
+
+  /// Always fails: no live overlay adapter is enabled for this target.
+  pub fn report(&self, event: ActionEvent) -> OverlayResult<()> {
+    let _ = event;
+    Err(unavailable())
+  }
+
+  /// Stops animating and returns what the run measured.
+  pub fn stop(self) -> OverlayResult<FrameStats> {
+    Ok(FrameStats::default())
+  }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows")))]
+fn unavailable() -> OverlayError {
+  OverlayError::Unavailable {
+    reason: "no live overlay adapter is enabled for this target".to_string(),
   }
 }

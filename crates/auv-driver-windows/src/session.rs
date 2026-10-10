@@ -29,7 +29,7 @@ use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture}
 use crate::window::{activate_window, list_windows, resolve_window};
 
 #[cfg(feature = "overlay")]
-use auv_driver_overlay::{Overlay, ShowOptions};
+use auv_driver_overlay::{LifecycleOptions, Overlay, ShowOptions};
 
 /// Display-targeted capture capabilities.
 ///
@@ -153,6 +153,15 @@ impl OverlayApi<'_> {
       message: error.to_string(),
     })
   }
+
+  /// Starts a live overlay that mirrors the input this process delivers from now on: the
+  /// cursor springs between the points input acted on, clicks ripple and targeted windows
+  /// are marked. The overlay only draws what was delivered and never sends input itself.
+  /// `lifecycle` sets whether it removes itself after a still period. One follower runs at
+  /// a time; stop it with [`OperationFollower::stop`] or by dropping it.
+  pub fn follow_operations(&self, lifecycle: LifecycleOptions) -> DriverResult<crate::OperationFollower> {
+    crate::overlay_follow::follow(lifecycle)
+  }
 }
 
 impl WindowApi<'_> {
@@ -269,10 +278,20 @@ impl WindowApi<'_> {
       let activation_attempt = foreground_window_attempt(window, "pointer delivery");
       let mut result = self.session.input().click_at(screen_point, options.button, options.click, options.modifiers)?;
       result.attempts.insert(0, activation_attempt);
+      #[cfg(feature = "overlay")]
+      crate::overlay_follow::report([crate::overlay_follow::window_targeted(window)]);
       return Ok(result);
     }
     let _ = options.window_strategy;
+    #[cfg(feature = "overlay")]
+    let click = options.click.clone();
     background_input::click_at_window(window, screen_point, options.button, options.click, options.modifiers)?;
+    #[cfg(feature = "overlay")]
+    {
+      let mut events = vec![crate::overlay_follow::window_targeted(window)];
+      events.extend(crate::overlay_follow::clicked(screen_point, options.button, &click));
+      crate::overlay_follow::report(events);
+    }
     Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
   }
 
@@ -451,6 +470,18 @@ impl InputApi<'_> {
     notify: impl FnMut(auv_driver_common::mouse_input::MotionEvent) -> bool,
   ) -> DriverResult<(Point, InputActionResult)> {
     let backend = self.pointer_backend(request.target.as_ref())?;
+    // TODO(overlay-follow-multi-mouse): the overlay draws one cursor, so only the shared
+    // default mouse (zero) reports. Other logical mice need their own cursors first.
+    #[cfg(feature = "overlay")]
+    let (mut notify, mut reporter) =
+      (notify, (request.mouse == 0).then(|| crate::overlay_follow::MotionReporter::new(request.target.as_ref())));
+    #[cfg(feature = "overlay")]
+    let notify = move |event: auv_driver_common::mouse_input::MotionEvent| {
+      if let Some(reporter) = reporter.as_mut() {
+        crate::overlay_follow::report(reporter.event(&event));
+      }
+      notify(event)
+    };
     auv_driver_common::mouse_input::mouse_coordinator().motion(request, None, backend, notify)
   }
 
@@ -493,7 +524,14 @@ impl InputApi<'_> {
   }
 
   pub fn move_mouse_to(&self, mouse: u64, point: Point) -> DriverResult<InputActionResult> {
-    auv_driver_common::mouse_input::mouse_coordinator().move_to(mouse, point, std::sync::Arc::new(crate::input::MouseBackend))
+    let result =
+      auv_driver_common::mouse_input::mouse_coordinator().move_to(mouse, point, std::sync::Arc::new(crate::input::MouseBackend))?;
+    // The overlay draws one cursor, so only the shared default mouse reports (see `move_mouse`).
+    #[cfg(feature = "overlay")]
+    if mouse == 0 {
+      crate::overlay_follow::report([crate::overlay_follow::moved_to(point)]);
+    }
+    Ok(result)
   }
 
   pub fn current_position(&self) -> DriverResult<Point> {
