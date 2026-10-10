@@ -13,12 +13,12 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-api-client = { version = "0.0.31", path = "../auv-api-client" }
-auv-api-proto = { version = "0.0.31", path = "../auv-api-proto" }
-auv-driver = { version = "0.0.31", path = "../auv-driver" }
-auv-scan = { version = "0.0.31", path = "../auv-scan" }
-auv-driver-overlay-common = { version = "0.0.31", path = "../auv-driver-overlay-common" }
-auv-media-macos = { version = "0.0.31", path = "../auv-media-macos" }
+auv-api-client = { version = "0.0.32", path = "../auv-api-client" }
+auv-api-proto = { version = "0.0.32", path = "../auv-api-proto" }
+auv-driver = { version = "0.0.32", path = "../auv-driver" }
+auv-scan = { version = "0.0.32", path = "../auv-scan" }
+auv-driver-overlay-common = { version = "0.0.32", path = "../auv-driver-overlay-common" }
+auv-media-macos = { version = "0.0.32", path = "../auv-media-macos" }
 directories = "6"
 fs2 = "0.4"
 futures-util = "0.3"

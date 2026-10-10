@@ -1,7 +1,7 @@
 {
   "name": "@auv-js/docs-website",
   "type": "module",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "private": true,
   "description": "AUV website: intro film, interactive landing, install guide, and the film's video exporter",
   "scripts": {

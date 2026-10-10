@@ -1,6 +1,6 @@
 {
   "name": "@auv-js/cli-linux-arm64-gnu",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "cpu": [
     "arm64"
   ],
