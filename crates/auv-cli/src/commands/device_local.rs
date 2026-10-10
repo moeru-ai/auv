@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, Subcommand};
 
 /// The control store of the local `auv serve` that these commands administer.
 #[derive(Clone, Debug, Args)]
@@ -47,15 +47,16 @@ pub enum LocalRequest {
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum CredentialsCommand {
-  /// Store an OS login credential entered only on this Device's terminal.
+  /// Store an OS login credential entered only on this Device's terminal:
+  /// the login password on macOS and Linux, the Windows PIN on Windows.
   Enroll {
+    /// OS account to enroll. An administrator may enroll another account.
     #[arg(long)]
     user: String,
-    #[arg(long, value_enum)]
-    kind: CredentialKind,
   },
   /// Inspect one account's enrollment metadata.
   Get {
+    /// OS account whose enrollment to show.
     #[arg(long)]
     user: String,
   },
@@ -63,15 +64,10 @@ pub enum CredentialsCommand {
   List,
   /// Delete one account's enrollment.
   Remove {
+    /// OS account whose enrollment to delete.
     #[arg(long)]
     user: String,
   },
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum CredentialKind {
-  OsPassword,
-  WindowsPin,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -144,14 +140,16 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
   let service = client.service();
 
   match request {
-    LocalRequest::Credentials(CredentialsCommand::Enroll { user, kind }) => {
+    LocalRequest::Credentials(CredentialsCommand::Enroll { user }) => {
+      // Each platform host accepts exactly one credential kind, so the CLI
+      // derives it instead of asking for a choice that has one valid answer.
+      // TODO(device-entry-windows-password): The installed Windows worker
+      // targets only the PIN provider. When OS-password enrollment passes an
+      // owner-observed locked-session gate there, add an explicit choice here.
       #[cfg(windows)]
-      if !matches!(kind, CredentialKind::WindowsPin) {
-        // TODO(device-entry-windows-password): The installed worker currently
-        // targets only the PIN provider. Open OS-password enrollment after
-        // that provider passes an owner-observed locked-session gate.
-        return Err("Windows enrollment currently requires --kind windows-pin".to_string());
-      }
+      let kind = proto::EnrollmentCredentialKind::WindowsPin;
+      #[cfg(not(windows))]
+      let kind = proto::EnrollmentCredentialKind::OsPassword;
 
       let mut credential = read_hidden_credential()?;
       let request = proto::EnrollRequest {
@@ -159,10 +157,7 @@ pub async fn run(store_root: Option<&Path>, request: LocalRequest, project_root:
         // The generated gRPC encoder takes ownership of this buffer. The
         // temporary terminal buffer is wiped on all earlier error paths.
         credential: std::mem::take(&mut *credential),
-        credential_kind: match kind {
-          CredentialKind::OsPassword => proto::EnrollmentCredentialKind::OsPassword as i32,
-          CredentialKind::WindowsPin => proto::EnrollmentCredentialKind::WindowsPin as i32,
-        },
+        credential_kind: kind as i32,
         // TODO(device-entry-plaintext): No backend offers the plaintext
         // fallback yet; expose a storage choice only when one does.
         storage_kind: proto::EnrollmentStorageKind::Protected as i32,
@@ -328,7 +323,7 @@ fn read_hidden_credential() -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
     original,
     restored: false,
   };
-  tty.write_all(b"OS login credential: ").map_err(|_| "failed to write terminal prompt".to_string())?;
+  tty.write_all(b"OS login password (this Device only): ").map_err(|_| "failed to write terminal prompt".to_string())?;
   tty.flush().map_err(|_| "failed to flush terminal prompt".to_string())?;
   let mut credential = Zeroizing::new(Vec::new());
 
@@ -426,7 +421,7 @@ fn read_hidden_credential() -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
   let hidden = CONSOLE_MODE((original.0 | ENABLE_LINE_INPUT.0) & !ENABLE_ECHO_INPUT.0);
   // SAFETY: The input handle remains live and this mode preserves line editing.
   unsafe { SetConsoleMode(input_handle, hidden) }.map_err(|_| "failed to hide console input".to_string())?;
-  let prompt = "Windows PIN (target-local): ".encode_utf16().collect::<Vec<_>>();
+  let prompt = "Windows PIN (this Device only): ".encode_utf16().collect::<Vec<_>>();
   // SAFETY: The output handle is a console screen buffer; prompt contains no secret.
   unsafe { WriteConsoleW(output_handle, &prompt, None, None) }.map_err(|_| "failed to write console prompt".to_string())?;
   let mut buffer = Zeroizing::new(vec![0u16; 256]);

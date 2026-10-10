@@ -6,7 +6,7 @@ use clap::{ArgGroup, Args, Subcommand};
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Lock and unlock an existing OS login session\n  auv --device <NAME> devices lock --user neko\n  auv --device <NAME> devices unlock --user neko\n\n  # On the Device to unlock: enroll its login credential once\n  auv devices credentials enroll --user neko --kind os-password\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
+  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Lock and unlock an existing OS login session\n  auv --device <NAME> devices lock --user neko\n  auv --device <NAME> devices unlock --user neko\n\n  # On the Device to unlock: enroll its login credential once\n  auv devices credentials enroll --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
 )]
 pub struct DevicesArgs {
   #[command(subcommand)]
