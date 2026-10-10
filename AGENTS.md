@@ -263,6 +263,27 @@ API predates it: `GetRecentFramesResponse` frames
   - `nix develop`: enter the repository development shell when using the
     provided flake.
 
+## Python Tooling
+
+- Pixi is required only for Python or model work: changes to Python files,
+  `pixi.toml`, `pixi.lock`, Python package metadata, or model and evaluation
+  environments. Rust, JavaScript, Protobuf, and documentation work does not
+  need Pixi.
+- Load `.agents/skills/use-pixi/SKILL.md` before changing Pixi manifests,
+  dependencies, environments, tasks, or `pixi.lock`.
+- Pixi owns the Python interpreter, Ruff, ty, root Python tasks, and
+  `pixi.lock` through the root `pixi.toml`. Do not run bare `pip install` or
+  create ad-hoc virtual environments for repository Python code.
+- The `default` environment carries only Ruff and ty. Add a feature and a
+  named environment for heavier package dependency sets.
+- Each Python package's `pyproject.toml` owns its runtime dependencies. Edit
+  it first, then run `pixi lock`. Use `pixi add` only for environment-only
+  tools.
+- `ruff.toml` and `ty.toml` hold lint, format, and type-check policy. Python
+  uses Ruff's default four-space indentation, not the Rust `rustfmt.toml`
+  setting.
+- `pixi run --locked check` runs the Ruff format check, Ruff lint, and ty.
+
 ## Development Practices
 
 - Do not treat CLI as the only architecture surface.
@@ -579,3 +600,5 @@ Use this root-cause block format in regression tests when relevant:
 - `cargo test`
 - `git diff --check`
 - `cargo run --quiet -- invoke --help`
+- `pixi run --locked check` (only when Python files, `pixi.toml`,
+  `pixi.lock`, or Python package metadata change)

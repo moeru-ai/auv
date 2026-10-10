@@ -1,0 +1,30 @@
+[workspace]
+name = "auv"
+description = "Python tooling for AUV evaluations and model work"
+authors = [ "Moeru AI" ]
+channels = [ "conda-forge" ]
+platforms = [
+  "linux-64",
+  "osx-arm64",
+  "win-64",
+]
+requires-pixi = ">=0.71,<1"
+
+# Default environment: lightweight formatter, linter, and type checker for
+# every tracked Python file. Python packages add features and environments.
+[dependencies]
+python = "3.11.*"
+ruff = ">=0.15.22,<0.16"
+ty = ">=0.0.61,<0.1"
+
+[tasks]
+format = "ruff format ."
+format-check = "ruff format --check ."
+lint = "ruff check ."
+lint-fix = "ruff check --fix ."
+typecheck = "ty check"
+check = { depends-on = [
+  "format-check",
+  "lint",
+  "typecheck"
+] }

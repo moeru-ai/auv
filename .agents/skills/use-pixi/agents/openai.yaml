@@ -1,0 +1,7 @@
+interface:
+  display_name: "Use Pixi"
+  short_description: "Manage Pixi environments, dependencies, tasks, and locks"
+  default_prompt: "Use $use-pixi to inspect and update this repository Pixi workspace safely."
+
+policy:
+  allow_implicit_invocation: true

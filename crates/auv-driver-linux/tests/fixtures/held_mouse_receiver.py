@@ -1,25 +1,27 @@
 """Independent GTK4 receipt process for the opt-in held-mouse test."""
+
 import sys
+
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk
+from gi.repository import GLib, Gtk  # noqa: E402 - must follow gi.require_version
 
 
-def emit(*parts):
+def emit(*parts: object) -> None:
     print(*parts, flush=True)
 
 
 app = Gtk.Application(application_id="ai.moeru.auv.held-receiver")
 
 
-def activate(app):
+def activate(app: Gtk.Application) -> None:
     window = Gtk.ApplicationWindow(application=app, title="AUV held mouse receiver")
     area = Gtk.DrawingArea()
     window.set_child(area)
     was_active = False
 
-    def active_changed(window, _property):
+    def active_changed(window: Gtk.ApplicationWindow, _property: object) -> None:
         nonlocal was_active
         if window.is_active():
             was_active = True
@@ -36,7 +38,7 @@ def activate(app):
     motion.connect("motion", lambda g, x, y: emit("move", int(g.get_current_event_state()), x, y))
     area.add_controller(motion)
 
-    def command(source, condition):
+    def command(source: object, condition: GLib.IOCondition) -> bool:
         line = sys.stdin.readline()
         if not line:
             app.quit()

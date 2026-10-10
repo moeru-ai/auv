@@ -1,0 +1,19 @@
+target-version = "py311"
+line-length = 120
+# NOTICE: Ruff already honors .gitignore (docs/notes, .worktrees, node_modules).
+# These paths are tracked but not first-party.
+extend-exclude = [
+  ".cursor", # vendored ECC hook runtime
+  "crates/*/vendor", # vendored native dependencies
+]
+
+[lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "ANN",
+  "UP",
+  "B",
+  "RUF"
+]

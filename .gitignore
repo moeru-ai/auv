@@ -123,3 +123,11 @@ codex.md
 gen/
 !proto/sdk/js/src/gen/
 !proto/sdk/js/src/gen/**
+
+# Python (Pixi-managed environments and tool caches)
+.pixi/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

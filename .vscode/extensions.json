@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "charliermarsh.ruff",
+    "astral-sh.ty",
+    "jjjermiah.pixi-vscode",
+    "tamasfe.even-better-toml"
+  ]
+}

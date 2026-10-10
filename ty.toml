@@ -1,0 +1,13 @@
+[environment]
+python-version = "3.11"
+
+[src]
+exclude = [
+  # NOTICE: Vendored, not first-party; mirrors ruff.toml extend-exclude.
+  ".cursor",
+  "crates/*/vendor",
+  # TODO: This fixture needs PyGObject stubs, which no Pixi environment
+  # provides yet. Include it when a Linux fixture environment is approved;
+  # Ruff still covers it.
+  "crates/auv-driver-linux/tests/fixtures/held_mouse_receiver.py",
+]
