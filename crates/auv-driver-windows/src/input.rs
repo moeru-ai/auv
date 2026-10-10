@@ -67,6 +67,8 @@ pub fn click_at(
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let button_desc = format!("{button:?}");
   crate::latency::record_latency_event("click_at", elapsed_ms, None, Some("SendInput"), Some(&button_desc));
+  #[cfg(feature = "overlay")]
+  crate::overlay_follow::report(crate::overlay_follow::clicked(point, button, &click));
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 

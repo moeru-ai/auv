@@ -10,6 +10,7 @@
 //! `<text>` elements and embedded PNG/JPEG/GIF/WebP images do not render. Cursor art is
 //! vector paths. Revisit if a consumer needs text or bitmaps inside cursor SVGs.
 
+use auv_driver_overlay_common::layers::BuiltInCursor;
 use resvg::{tiny_skia, usvg};
 
 use crate::AuvResult;
@@ -30,6 +31,22 @@ const MAX_USE_ELEMENTS: usize = 16;
 /// Largest sprite edge in pixels. Bounds the bitmap allocation for an untrusted
 /// `sprite_size` (1024 x 1024 x 4 bytes = 4 MiB).
 const MAX_SPRITE_PX: u32 = 1024;
+
+/// The Windows built-in cursor art for `variant`: a pixel-art pointer whose tip is the
+/// top-left cell, so it sits exactly on the point an operation acted on.
+///
+/// The colors are the shared AUV palette (`Color::AUV_CYAN` fill, a lighter cyan while
+/// pressed) with a dark edge so the pointer reads on light backgrounds; the glow that
+/// `draw_cursor` adds carries it on dark ones. The user cursor is a white pointer with the
+/// `YOU_SLATE` edge.
+pub(crate) fn built_in_source(variant: BuiltInCursor) -> String {
+  let (edge, fill) = match variant {
+    BuiltInCursor::Auv => ("#0b3a4a", "#49e3e4"),
+    BuiltInCursor::AuvClick => ("#0b3a4a", "#92eeef"),
+    BuiltInCursor::You => ("#2a3a52", "#ffffff"),
+  };
+  include_str!("../assets/cursor-pixel.svg").replace("{EDGE}", edge).replace("{FILL}", fill)
+}
 
 /// Premultiplied BGRA cursor art, top row first, `size` pixels square.
 pub(crate) struct Sprite {

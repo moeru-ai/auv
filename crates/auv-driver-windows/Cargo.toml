@@ -18,6 +18,10 @@ default = []
 overlay = ["dep:auv-driver-overlay"]
 latency-telemetry = []
 
+[[example]]
+name = "overlay_follow"
+required-features = ["overlay"]
+
 [[bin]]
 name = "auv-latency-benchmark"
 path = "src/bin/latency_benchmark.rs"
@@ -65,6 +69,7 @@ windows = { version = "0.58", features = [
   "Win32_System_Com",
   "Win32_System_DataExchange",
   "Win32_System_IO",
+  "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",

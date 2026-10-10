@@ -3,7 +3,7 @@
 use auv_driver_common::{Rect, ScreenPoint};
 use auv_driver_overlay_common::Layer;
 use auv_driver_overlay_common::layers::{BuiltInCursor, Cursor, CursorImage, Outline, Status};
-use auv_driver_overlay_common::style::{CursorStyle, OutlineStyle, Shadow, Stroke};
+use auv_driver_overlay_common::style::{Color, CursorStyle, OutlineStyle, Shadow, Stroke};
 use windows::Win32::Foundation::RECT;
 
 use super::native::draw_layers;
@@ -45,16 +45,15 @@ fn alpha(pixels: &[u8], x: usize, y: usize) -> u8 {
 // other pixel fully transparent, because GDI ignores the alpha channel and the old
 // renderer derived alpha by keying a sentinel color.
 //
-// Before the fix, the cursor disc had a hard, aliased edge with no partial alpha.
-// The fix draws with Direct2D, which writes premultiplied alpha, so edge pixels blend.
+// Before the fix, the cursor's glow had a hard, aliased edge with no partial alpha.
+// The fix draws with Direct2D, which writes premultiplied alpha, so the glow fades out.
 #[test]
-fn cursor_disc_edges_carry_partial_alpha() {
+fn cursor_glow_edges_carry_partial_alpha() {
   let pixels = render(&[Layer::Cursor(Cursor::new(ScreenPoint::new(40.0, 40.0)))]).unwrap();
 
-  assert_eq!(alpha(&pixels, 40, 40), 255, "disc interior is opaque");
   assert_eq!(alpha(&pixels, 0, 0), 0, "untouched pixels stay transparent");
-  let edge = (0..WIDTH).map(|x| alpha(&pixels, x, 40)).filter(|&a| 0 < a && a < 255).count();
-  assert!(edge >= 2, "both disc edges must have 0 < alpha < 255");
+  let soft = (0..WIDTH).map(|x| alpha(&pixels, x, 62)).filter(|&a| 0 < a && a < 255).count();
+  assert!(soft >= 4, "the glow must fade through partial alpha, got {soft} soft pixels on one row");
 }
 
 #[test]
@@ -74,16 +73,67 @@ fn status_background_opacity_reaches_the_alpha_channel() {
   assert_eq!(red, 0);
 }
 
-#[test]
-fn explicit_cursor_shadow_renders_a_glow() {
-  let style = CursorStyle::default().with_shadow(Some(Shadow::auv()));
-  let cursor = Cursor::new(ScreenPoint::new(40.0, 40.0)).with_style(style);
-  let pixels = render(&[Layer::Cursor(cursor)]).unwrap();
+/// Edge and fill of the default AUV cursor as premultiplied BGRA (`#0b3a4a`, `#49e3e4`).
+const AUV_EDGE: [u8; 4] = [0x4a, 0x3a, 0x0b, 255];
+const AUV_FILL: [u8; 4] = [0xe4, 0xe3, 0x49, 255];
 
-  // The disc has radius 12; the glow (offset 2 down) shows beyond it.
-  let below = alpha(&pixels, 40, 40 + 16);
-  assert!(below > 0 && below < 255, "soft glow below the disc, got {below}");
-  assert_eq!(alpha(&pixels, 40, 40), 255, "the sprite is drawn over its glow");
+fn no_glow() -> CursorStyle {
+  CursorStyle::default().with_shadow(Some(Shadow {
+    color: Color::CLEAR,
+    ..Shadow::auv()
+  }))
+}
+
+#[test]
+fn builtin_cursor_tip_sits_exactly_on_the_target_point() {
+  let pixels = render(&[Layer::Cursor(
+    Cursor::new(ScreenPoint::new(40.0, 40.0)).with_style(no_glow()),
+  )])
+  .unwrap();
+
+  // The art is a 12x12 grid of 2px cells; the tip is the top-left cell.
+  assert_eq!([pixel(&pixels, 40, 40), pixel(&pixels, 41, 41)], [AUV_EDGE, AUV_EDGE], "tip cell");
+  assert_eq!(alpha(&pixels, 39, 40), 0, "nothing left of the tip");
+  assert_eq!(alpha(&pixels, 40, 39), 0, "nothing above the tip");
+  assert_eq!(pixel(&pixels, 42, 44), AUV_FILL, "second cell of the third row is fill");
+  assert_eq!(pixel(&pixels, 40, 52), AUV_EDGE, "the left edge runs down the arrow");
+}
+
+#[test]
+fn builtin_cursor_art_edges_are_pixel_crisp() {
+  let pixels = render(&[Layer::Cursor(
+    Cursor::new(ScreenPoint::new(40.0, 40.0)).with_style(no_glow()),
+  )])
+  .unwrap();
+
+  let soft =
+    (40..64).flat_map(|y| (40..64).map(move |x| (x, y))).filter(|&(x, y)| 0 < alpha(&pixels, x, y) && alpha(&pixels, x, y) < 255).count();
+  assert_eq!(soft, 0, "pixel art must not antialias across its cells");
+}
+
+#[test]
+fn builtin_cursor_glows_unless_the_style_turns_it_off() {
+  let glowing = render(&[Layer::Cursor(Cursor::new(ScreenPoint::new(40.0, 40.0)))]).unwrap();
+  let plain = render(&[Layer::Cursor(
+    Cursor::new(ScreenPoint::new(40.0, 40.0)).with_style(no_glow()),
+  )])
+  .unwrap();
+
+  // Right of the arrow, outside its cells but inside the glow's reach.
+  let halo = alpha(&glowing, 60, 62);
+  assert!(halo > 0 && halo < 255, "default built-in glow, got {halo}");
+  assert_eq!(alpha(&plain, 60, 62), 0, "a transparent shadow disables the default glow");
+}
+
+#[test]
+fn builtin_variants_draw_distinct_art() {
+  let fill_of = |variant| {
+    let cursor = Cursor::new(ScreenPoint::new(40.0, 40.0)).with_image(CursorImage::built_in(variant)).with_style(no_glow());
+    pixel(&render(&[Layer::Cursor(cursor)]).unwrap(), 42, 44)
+  };
+  assert_eq!(fill_of(BuiltInCursor::Auv), AUV_FILL);
+  assert_ne!(fill_of(BuiltInCursor::AuvClick), AUV_FILL, "the pressed pointer is lighter");
+  assert_eq!(fill_of(BuiltInCursor::You), [255, 255, 255, 255], "the user cursor is white");
 }
 
 #[test]
@@ -115,12 +165,12 @@ fn outline_straight_edges_stay_crisp_and_corners_antialias() {
 
 #[test]
 fn cursor_label_pill_sits_right_of_the_sprite() {
-  let cursor = Cursor::new(ScreenPoint::new(30.0, 40.0)).with_label("auv").with_label_visible();
+  let cursor = Cursor::new(ScreenPoint::new(30.0, 40.0)).with_style(no_glow()).with_label("auv").with_label_visible();
   let pixels = render(&[Layer::Cursor(cursor)]).unwrap();
 
-  // Disc radius 12 plus the 6px label gap puts the pill's left edge at x = 48.
-  assert_eq!(alpha(&pixels, 46, 40), 0, "gap between sprite and pill");
-  assert!(alpha(&pixels, 52, 40) > 0, "pill starts after the gap");
+  // The 24px sprite box ends at x = 54; the 6px label gap puts the pill's left edge at 60.
+  assert_eq!(alpha(&pixels, 57, 52), 0, "gap between sprite and pill");
+  assert!(alpha(&pixels, 64, 52) > 0, "pill starts after the gap");
 }
 
 /// A 24x24 opaque red square, so placement can be checked pixel by pixel.

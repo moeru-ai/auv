@@ -1008,7 +1008,7 @@ These three words name three different positions. Do not use one for another.
 | --- | --- | --- | --- |
 | Pointer | The OS pointer position, in logical screen space | The platform | `InputService/GetPointerPosition`, `auv invoke input.pointerPosition` |
 | Logical mouse | AUV's own position and held-button state for one mouse identity | `input` (`MouseCoordinator`) | Not readable yet (`TODO(logical-mouse-state)`) |
-| Cursor | A visual layer that an overlay draws, such as the AUV cursor | `overlay` | Overlay requests only |
+| Cursor | A visual layer that an overlay draws, such as the AUV cursor; a [live overlay](#live-overlay) moves it between points drivers reported | `overlay` | Overlay requests only |
 
 - The pointer moves with human input and other processes. A logical mouse
   keeps its last delivered position, so the two can differ. Mouse zero is a
@@ -1205,6 +1205,31 @@ removes their native layers. The adapter owns private layer identity, native
 windows, animation timing, inherited starting positions, and rendering details.
 Runtime and command frontends provide target state and display policy; they do
 not drive animation frames across the platform seam.
+
+## Live Overlay
+
+A live overlay is an overlay that stays up while an operation runs and animates what
+drivers report, instead of showing one finished frame. It exists so a person can watch AUV
+work beside them without AUV taking their mouse. It is the same trust and debugging
+surface as an overlay display: it delivers no input and proves no semantic success.
+
+- An **action event** is a driver's report that it delivered something: a pointer warp or
+  movement sample, a click, or an action on a window. Drivers send it after delivery
+  succeeded, so a failed delivery is never drawn. The name and shape are provisional; it is
+  not a tracing event and not a second action-result schema (`InputActionResult` stays the
+  delivery record).
+- A **jump** is a reported position the cursor eases to with the shared `MotionOptions`. A
+  **sampled** position belongs to a trajectory the driver already timed; the cursor is drawn
+  at it with no added delay. Easing changes how the cursor reaches a real point; it never
+  moves toward a point nobody reported.
+- A **ripple** marks a delivered click at its true point and time. A **window mark** is an
+  outline and label on a window an action was delivered to, and fades after a few seconds.
+- The platform adapter owns the frame loop. Callers report events and never drive frames,
+  consistent with the animation-timing ownership in [Overlay](#overlay).
+
+See the [Windows overlay motion reference](ai/references/driver/2026-10-10-windows-overlay-motion.md)
+for the contract, evidence and limits. Design discussions also call the live cursor the
+"ghost cursor"; the term is the Cursor row above, not a separate concept.
 
 ## Position and Positional
 

@@ -295,17 +295,6 @@ impl Canvas {
     Ok(())
   }
 
-  pub(crate) fn stroke_circle(&self, center: D2D_POINT_2F, radius: f32, color: Color, width: f32) -> AuvResult<()> {
-    let brush = self.brush(color)?;
-    let ellipse = D2D1_ELLIPSE {
-      point: center,
-      radiusX: radius.max(1.0),
-      radiusY: radius.max(1.0),
-    };
-    unsafe { self.target.DrawEllipse(&ellipse, &brush, width.max(1.0), None::<&ID2D1StrokeStyle>) };
-    Ok(())
-  }
-
   pub(crate) fn fill_rounded_rect(&self, bounds: D2D_RECT_F, radius: f32, color: Color) -> AuvResult<()> {
     let brush = self.brush(color)?;
     let radius = clamp_radius(bounds, radius);

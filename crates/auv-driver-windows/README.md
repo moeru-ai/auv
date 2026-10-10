@@ -19,6 +19,7 @@ UIA, and `Windows.Media.Ocr`.
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process name (`ApplicationControl::activate_process_name`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor glow)
+- Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): an eased cursor, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
 ## Open TODOs
 
@@ -31,10 +32,12 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
 | `TODO(app-activate-windows-cli)` | `crates/auv-cli-invoke/src/commands/app.rs` | Wire `activate_process_name` into the `app.activate` CLI command (needs an owner decision on the shared output contract) |
-| `TODO(driver-overlay-windows-motion)` | `crates/auv-driver-overlay-windows/src/overlay.rs` | Per-layer position easing / animation |
-| `TODO(driver-overlay-windows-builtin-art)` | `crates/auv-driver-overlay-windows/src/window.rs` | Built-in cursors use the disc sprite, not the canonical SVG art and default glow macOS uses |
 | `TODO(driver-overlay-windows-silhouette-shadow)` | `crates/auv-driver-overlay-windows/src/window.rs` | Cursor glow is radial, not a blur of the art's silhouette |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
+| `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
+| `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |
+| `TODO(overlay-follow-multi-mouse)` | `src/session.rs` | Only the shared default mouse drives the live cursor |
+| `TODO(driver-overlay-windows-window-owner-thread)` | `crates/auv-driver-overlay-windows/src/animator.rs` | A running animator must be the only presenter in its process |
 
 ## Architecture notes
 
@@ -68,9 +71,11 @@ an unbounded copy. `snapshot`/`restore`/`set_text` stay text-only, mirroring the
 macOS driver's clipboard contract.
 
 The overlay renders via a full-virtual-screen layered Win32 window. Each `present`
-call draws all layers onto an off-screen 32-bpp DIB section with GDI, converts a
-sentinel BGRA value to full transparency, and presents the composited frame via
-`UpdateLayeredWindow`.
+call draws all layers onto an off-screen 32-bpp DIB section through a Direct2D DC
+render target (premultiplied alpha, antialiasing, DirectWrite labels) and presents the
+frame via `UpdateLayeredWindow`. The live overlay (`Animator`) calls `present` once per
+frame, at most 60 times a second, with the layers `MotionScene` composes for that instant;
+the drawing code is the same one-shot path.
 
 Readiness assessment (`assess_readiness`) treats `interactive_session = Missing` as
 the only hard blocker. Elevation and UIAccess are diagnostic only — a
