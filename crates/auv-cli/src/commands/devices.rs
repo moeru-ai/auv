@@ -6,7 +6,7 @@ use clap::{ArgGroup, Args, Subcommand};
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Lock and unlock an existing OS login session\n  auv --device <NAME> devices lock --user neko\n  auv --device <NAME> devices unlock --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
+  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Lock and unlock an existing OS login session\n  auv --device <NAME> devices lock --user neko\n  auv --device <NAME> devices unlock --user neko\n\n  # On the Device to unlock: enroll its login credential once\n  auv devices credentials enroll --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
 )]
 pub struct DevicesArgs {
   #[command(subcommand)]
@@ -37,6 +37,12 @@ pub enum DevicesCommand {
   Enable(DeviceTrustArgs),
   /// Disable a paired Device trust relationship without deleting its history.
   Disable(DeviceTrustArgs),
+  /// Manage this Device's login credentials for remote unlock (this Device only).
+  Credentials(crate::commands::device_local::CredentialsArgs),
+  /// Read or change whether paired Devices may unlock this Device (this Device only).
+  UnlockPolicy(crate::commands::device_local::UnlockPolicyArgs),
+  /// Read this Device's lock and unlock audit records (this Device only).
+  Audit(crate::commands::device_local::AuditArgs),
   /// Manage configured paired Device profiles (provisional).
   Profiles(DeviceProfilesArgs),
 }
@@ -186,7 +192,9 @@ struct UserSessionTableRow {
   seat: Option<String>,
 }
 
-pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
+pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection, project_root: &std::path::Path) -> Result<i32, String> {
+  use crate::commands::device_local::LocalRequest;
+
   match args.command {
     DevicesCommand::List(args) => list(args, selection).await,
     DevicesCommand::Get(args) => get(args, selection).await,
@@ -198,7 +206,27 @@ pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection) -
     DevicesCommand::Enable(args) => trust(args, selection, TrustAction::Enable).await,
     DevicesCommand::Disable(args) => trust(args, selection, TrustAction::Disable).await,
     DevicesCommand::Profiles(args) => profiles(args),
+    DevicesCommand::Credentials(args) => {
+      local(selection, args.store.store_root, LocalRequest::Credentials(args.command), project_root).await
+    }
+    DevicesCommand::UnlockPolicy(args) => local(selection, args.store.store_root, LocalRequest::Policy(args.command), project_root).await,
+    DevicesCommand::Audit(args) => local(selection, args.store.store_root, LocalRequest::Audit(args.command), project_root).await,
   }
+}
+
+/// Credentials, the unlock switch and audit stay with the Device they protect:
+/// a credential is typed on that Device's terminal and never crosses the
+/// network, so these commands do not follow Device or Run selection.
+async fn local(
+  selection: &auv::selection::RootSelection,
+  store_root: Option<std::path::PathBuf>,
+  request: crate::commands::device_local::LocalRequest,
+  project_root: &std::path::Path,
+) -> Result<i32, String> {
+  if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
+    return Err("this command runs only on this Device; it cannot use --device, --device-id, or --run".to_string());
+  }
+  crate::commands::device_local::run(store_root.as_deref(), request, project_root).await
 }
 
 async fn list(args: DeviceListArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {

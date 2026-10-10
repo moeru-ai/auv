@@ -122,7 +122,8 @@ to migrate it. `install` refuses while the 0.0.28 `AuvDevice` service exists.
 directory, but only when its exact recorded command, account, and startup type
 prove that AUV registered it. The 0.0.28 SYSTEM-only `%ProgramData%\AUVDeviceEntry`
 pairing and policy store is left untouched and is no longer read. Clients pair
-again with `auv serve`, and the user runs `auv device-local enroll` again.
+again with `auv serve`, and the user runs `auv devices credentials enroll`
+again (named `auv device-local enroll` before 2026-10-10).
 Replacing an installed `AuvHelper` in place is deferred
 (`TODO(windows-helper-upgrade)`): uninstall it, then install again.
 
