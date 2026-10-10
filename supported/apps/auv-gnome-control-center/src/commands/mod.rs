@@ -47,7 +47,7 @@ pub fn run_open(inputs: &OpenInputs) -> Result<OpenResult, String> {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn select_visible_labeled_node(
-  session: &auv_driver_linux::LinuxDriverSession,
+  session: &auv_driver::LocalDriverSession,
   window: &auv_driver::Window,
   labels: crate::app::LabelSet,
   action: NodeAction,
@@ -71,7 +71,7 @@ pub(crate) fn select_visible_labeled_node(
 
 #[cfg(target_os = "linux")]
 pub(crate) fn click_visible_labeled_node_with_delivery(
-  session: &auv_driver_linux::LinuxDriverSession,
+  session: &auv_driver::LocalDriverSession,
   window: &auv_driver::Window,
   labels: crate::app::LabelSet,
   action: NodeAction,
@@ -104,17 +104,14 @@ pub(crate) fn click_visible_labeled_node_with_delivery(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn snapshot_nodes(
-  session: &auv_driver_linux::LinuxDriverSession,
-  window: &auv_driver::Window,
-) -> Result<Vec<SettingsNode>, String> {
+pub(crate) fn snapshot_nodes(session: &auv_driver::LocalDriverSession, window: &auv_driver::Window) -> Result<Vec<SettingsNode>, String> {
   let snapshot = session.accessibility().snapshot_window(window).map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
   Ok(snapshot.nodes.iter().map(SettingsNode::from).collect())
 }
 
 #[cfg(target_os = "linux")]
 fn select_node_or_click(
-  session: &auv_driver_linux::LinuxDriverSession,
+  session: &auv_driver::LocalDriverSession,
   window: &auv_driver::Window,
   matched: &MatchedNode,
 ) -> Result<auv_driver::InputActionResult, String> {
@@ -146,11 +143,7 @@ fn node_is_visible(window: &auv_driver::Window, node: &MatchedNode) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn scroll_toward_node(
-  session: &auv_driver_linux::LinuxDriverSession,
-  window: &auv_driver::Window,
-  node: &MatchedNode,
-) -> Result<(), String> {
+fn scroll_toward_node(session: &auv_driver::LocalDriverSession, window: &auv_driver::Window, node: &MatchedNode) -> Result<(), String> {
   let center = node.bounds.center();
   let window_center_y = window.frame.size.height / 2.0;
   let delta_y = if center.y > window_center_y {

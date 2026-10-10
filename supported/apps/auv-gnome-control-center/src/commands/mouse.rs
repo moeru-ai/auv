@@ -98,15 +98,13 @@ pub fn run_natural_scrolling_toggle(inputs: &NaturalScrollingToggleInputs) -> Re
 mod platform {
   use std::process::Command;
 
-  use auv_driver::{Click, ClickOptions};
-  use auv_driver_linux::LinuxDriverSession;
-
   use super::*;
   use crate::app::{MOUSE_PAGE, NATURAL_SCROLLING, POINTER_SPEED, TRADITIONAL_SCROLLING};
   use crate::commands::{click_visible_labeled_node_with_delivery, select_visible_labeled_node};
   use crate::tracing::NodeAction;
   use crate::views::{SettingsNode, find_slider_near_label, visible_labels};
   use crate::windows::{ResolveOptions, open_or_resolve};
+  use auv_driver::{Click, ClickOptions};
 
   pub fn run_set(inputs: &PointerSpeedSetInputs) -> Result<PointerSpeedSetResult, String> {
     validate_position(inputs.position)?;
@@ -145,7 +143,7 @@ mod platform {
   }
 
   fn set_pointer_speed(
-    session: &LinuxDriverSession,
+    session: &auv_driver::LocalDriverSession,
     window: &auv_driver::Window,
     open_report: OpenWindowReport,
     position: f64,
@@ -185,7 +183,7 @@ mod platform {
   }
 
   fn toggle_natural_scrolling(
-    session: &LinuxDriverSession,
+    session: &auv_driver::LocalDriverSession,
     window: &auv_driver::Window,
     open_report: OpenWindowReport,
   ) -> Result<NaturalScrollingToggleResult, String> {
@@ -215,11 +213,11 @@ mod platform {
     })
   }
 
-  fn select_mouse_page(session: &LinuxDriverSession, window: &auv_driver::Window) -> Result<MatchedNode, String> {
+  fn select_mouse_page(session: &auv_driver::LocalDriverSession, window: &auv_driver::Window) -> Result<MatchedNode, String> {
     select_visible_labeled_node(session, window, MOUSE_PAGE, NodeAction::SelectMouse)
   }
 
-  fn snapshot_nodes(session: &LinuxDriverSession, window: &auv_driver::Window) -> Result<Vec<SettingsNode>, String> {
+  fn snapshot_nodes(session: &auv_driver::LocalDriverSession, window: &auv_driver::Window) -> Result<Vec<SettingsNode>, String> {
     let snapshot = session.accessibility().snapshot_window(window).map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
     Ok(snapshot.nodes.iter().map(SettingsNode::from).collect())
   }

@@ -37,6 +37,7 @@ trustPolicyExclude:
 packages:
   - 'apps/repl-playground'
   - 'evals/auv-base/platforms/desktop-universal/test-objects'
+  - 'evals/osworld'
   - 'crates/auv-inspect-server/viewer'
   - 'apps/docs-website'
   - 'js/packages/*'

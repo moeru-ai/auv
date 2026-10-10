@@ -3,7 +3,13 @@ pub use auv_driver_common::*;
 #[cfg(feature = "overlay")]
 pub use auv_driver_overlay as overlay;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::ops::{Deref, DerefMut};
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 use auv_driver_common::{DriverError, PlatformKind};
@@ -54,6 +60,8 @@ impl LocalDriver {
 pub enum LocalDriverSession {
   #[cfg(target_os = "linux")]
   Linux(auv_driver_linux::LinuxDriverSession),
+  #[cfg(target_os = "linux")]
+  LinuxX11(auv_driver_linux_x11::X11DriverSession),
   #[cfg(target_os = "macos")]
   Macos(auv_driver_macos::MacosDriverSession),
   #[cfg(target_os = "windows")]
@@ -62,17 +70,6 @@ pub enum LocalDriverSession {
 
 pub fn open_local() -> DriverResult<LocalDriverSession> {
   LocalDriver::new().open_local()
-}
-
-#[cfg(target_os = "linux")]
-impl Deref for LocalDriverSession {
-  type Target = auv_driver_linux::LinuxDriverSession;
-
-  fn deref(&self) -> &Self::Target {
-    match self {
-      Self::Linux(session) => session,
-    }
-  }
 }
 
 #[cfg(target_os = "macos")]
@@ -93,15 +90,6 @@ impl Deref for LocalDriverSession {
   fn deref(&self) -> &Self::Target {
     match self {
       Self::Windows(session) => session,
-    }
-  }
-}
-
-#[cfg(target_os = "linux")]
-impl DerefMut for LocalDriverSession {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    match self {
-      Self::Linux(session) => session,
     }
   }
 }
@@ -128,9 +116,17 @@ impl Driver for LocalDriver {
   type Session = LocalDriverSession;
 
   fn descriptor(&self) -> DriverDescriptor {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
-      return self.inner.descriptor();
+      match linux::selected_backend_from_process() {
+        linux::Backend::Wayland => self.inner.descriptor(),
+        linux::Backend::X11 => auv_driver_linux_x11::X11Driver.descriptor(),
+      }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+      self.inner.descriptor()
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -142,17 +138,20 @@ impl Driver for LocalDriver {
   fn open_local(&self) -> DriverResult<Self::Session> {
     #[cfg(target_os = "linux")]
     {
-      return self.inner.open_local().map(LocalDriverSession::Linux);
+      match linux::selected_backend_from_process() {
+        linux::Backend::Wayland => self.inner.open_local().map(LocalDriverSession::Linux),
+        linux::Backend::X11 => auv_driver_linux_x11::X11Driver.open_local().map(LocalDriverSession::LinuxX11),
+      }
     }
 
     #[cfg(target_os = "macos")]
     {
-      return self.inner.open_local().map(LocalDriverSession::Macos);
+      self.inner.open_local().map(LocalDriverSession::Macos)
     }
 
     #[cfg(target_os = "windows")]
     {
-      return self.inner.open_local().map(LocalDriverSession::Windows);
+      self.inner.open_local().map(LocalDriverSession::Windows)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -167,6 +166,8 @@ impl DriverSession for LocalDriverSession {
     match self {
       #[cfg(target_os = "linux")]
       Self::Linux(session) => session.descriptor(),
+      #[cfg(target_os = "linux")]
+      Self::LinuxX11(session) => session.descriptor(),
       #[cfg(target_os = "macos")]
       Self::Macos(session) => session.descriptor(),
       #[cfg(target_os = "windows")]

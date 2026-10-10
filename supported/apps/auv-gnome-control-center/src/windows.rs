@@ -46,11 +46,9 @@ mod platform {
   use std::process::Stdio;
   use std::time::Instant;
 
+  use super::*;
   use auv_driver::DriverError;
   use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
-  use auv_driver_linux::LinuxDriverSession;
-
-  use super::*;
   pub fn open_or_resolve(options: &ResolveOptions) -> Result<(Window, OpenWindowReport), String> {
     let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     let mut report = report();
@@ -97,7 +95,7 @@ mod platform {
     }
   }
 
-  pub fn resolve_window(session: &LinuxDriverSession) -> Result<Window, DriverError> {
+  pub fn resolve_window(session: &auv_driver::LocalDriverSession) -> Result<Window, DriverError> {
     let selectors = [
       WindowSelector::default().owned_by(AppSelector {
         bundle: Some(TextMatcher::Contains(APP_ID.to_string())),
