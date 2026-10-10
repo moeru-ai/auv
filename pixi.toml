@@ -1,0 +1,35 @@
+[workspace]
+name = "auv"
+description = "Python tooling for AUV evaluations and model work"
+authors = [ "Moeru AI" ]
+channels = [ "conda-forge" ]
+platforms = [
+  "linux-64",
+  "osx-arm64",
+  "win-64",
+]
+requires-pixi = ">=0.71,<1"
+
+# Default environment: Ruff and ty only, with no Python interpreter. Each
+# Python package (an eval, a model tool) adds a feature that pins its own
+# `python` and composes it into a named environment, so packages can require
+# different Python versions without a workspace-wide pin.
+[dependencies]
+ruff = ">=0.17,<0.18"
+ty = ">=0.0.61,<0.1"
+
+[tasks]
+format = "ruff format ."
+format-check = "ruff format --check ."
+lint = "ruff check ."
+lint-fix = "ruff check --fix ."
+# NOTICE: Pixi exports CONDA_PREFIX for the default environment, which has no
+# Python, and ty then fails to find site-packages. Clearing it makes ty check
+# against bundled stdlib stubs only. Package environments that need
+# third-party imports run ty without this override.
+typecheck = { cmd = "ty check", env = { CONDA_PREFIX = "" } }
+check = { depends-on = [
+  "format-check",
+  "lint",
+  "typecheck"
+] }
