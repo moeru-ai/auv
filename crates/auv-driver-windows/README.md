@@ -19,7 +19,7 @@ UIA, and `Windows.Media.Ocr`.
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process name (`ApplicationControl::activate_process_name`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
-- Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): a cursor that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
+- Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
 ## Open TODOs
 
@@ -35,7 +35,8 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |
-| `TODO(overlay-follow-multi-mouse)` | `src/session.rs` | Only the shared default mouse drives the live cursor |
+| `TODO(overlay-follow-multi-mouse)` | `src/session.rs` | Only the shared default mouse drives the live cursors |
+| `TODO(overlay-live-status-producers)` | `src/overlay_follow.rs` | Only Rust callers can set a cursor status; `auv invoke`, MCP and the Runner do not start a follower |
 | `TODO(driver-overlay-windows-window-owner-thread)` | `crates/auv-driver-overlay-windows/src/animator.rs` | A running animator must be the only presenter in its process |
 
 ## Architecture notes

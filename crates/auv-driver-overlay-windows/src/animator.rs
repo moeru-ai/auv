@@ -30,6 +30,11 @@ enum Message {
     reported: Instant,
     event: ActionEvent,
   },
+  Status {
+    set: Instant,
+    window: Option<String>,
+    text: Option<String>,
+  },
   Stop,
 }
 
@@ -82,6 +87,20 @@ impl Animator {
       .send(Message::Event {
         reported: Instant::now(),
         event,
+      })
+      .map_err(|_| "the overlay animator has stopped".to_string())
+  }
+
+  /// Shows the caller's `text` beside the cursor of `window` (None: of actions aimed at
+  /// the screen), or removes it with `None`. Returns immediately; see
+  /// [`MotionScene::set_status`](auv_driver_overlay_common::MotionScene::set_status).
+  pub fn set_status(&self, window: Option<&str>, text: Option<&str>) -> AuvResult<()> {
+    self
+      .sender
+      .send(Message::Status {
+        set: Instant::now(),
+        window: window.map(str::to_owned),
+        text: text.map(str::to_owned),
       })
       .map_err(|_| "the overlay animator has stopped".to_string())
   }
@@ -258,6 +277,13 @@ mod native {
       match message {
         Message::Event { reported, event } => {
           self.apply(reported, event);
+          true
+        }
+        Message::Status { set, window, text } => {
+          // A status is the caller's words, not a delivered action, so it is drawn on the
+          // next frame but kept out of the event latency samples.
+          self.scene.set_status(window.as_deref(), text.as_deref(), set.saturating_duration_since(self.epoch));
+          self.pacer.event();
           true
         }
         Message::Stop => false,

@@ -174,6 +174,24 @@ pub fn capture_region(left: i32, top: i32, width: i32, height: i32) -> Result<Ve
   }
 }
 
+/// Counts the pixels of a top-down BGRX capture `width` pixels wide, inside `x0..x1` by
+/// `y0..y1`, whose color is within `tolerance` of `rgb` (straight RGB distance).
+pub fn count_near(pixels: &[u8], width: i32, (x0, x1): (i32, i32), (y0, y1): (i32, i32), rgb: [u8; 3], tolerance: f64) -> usize {
+  let height = (pixels.len() / 4) as i32 / width;
+  let mut count = 0;
+  for y in y0.max(0)..y1.min(height) {
+    for x in x0.max(0)..x1.min(width) {
+      let index = ((y * width + x) * 4) as usize;
+      let (blue, green, red) = (pixels[index], pixels[index + 1], pixels[index + 2]);
+      let channel = |a: u8, b: u8| f64::from(a) - f64::from(b);
+      if channel(red, rgb[0]).hypot(channel(green, rgb[1])).hypot(channel(blue, rgb[2])) <= tolerance {
+        count += 1;
+      }
+    }
+  }
+  count
+}
+
 /// Writes top-down 32-bit BGRX pixels as a BMP file.
 pub fn write_bmp(path: &Path, width: i32, height: i32, pixels: &[u8]) -> Result<(), String> {
   let mut file = Vec::with_capacity(54 + pixels.len());

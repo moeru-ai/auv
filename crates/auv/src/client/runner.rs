@@ -647,6 +647,8 @@ fn outline_style_to_proto(value: auv_driver_overlay_common::style::OutlineStyle)
 }
 
 fn cursor_style_to_proto(value: auv_driver_overlay_common::style::CursorStyle) -> proto::CursorStyle {
+  // NOTICE: `value.accent` is not sent. Only in-process live overlays tint cursors today;
+  // see TODO(overlay-motion-event-wire).
   proto::CursorStyle {
     label_foreground: Some(color_to_proto(value.label_foreground)),
     label_background: Some(color_to_proto(value.label_background)),

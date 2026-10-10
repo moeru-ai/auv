@@ -162,7 +162,7 @@ mod native {
     let edge = size as f32;
     let (source, hotspot, shadow) = match cursor.image() {
       CursorImage::BuiltIn { variant } => (
-        Cow::Owned(crate::svg::built_in_source(*variant)),
+        Cow::Owned(crate::svg::built_in_source(*variant, style.accent)?),
         (edge * BUILT_IN_TIP, edge * BUILT_IN_TIP),
         style.shadow.or(Some(BUILT_IN_SHADOW)),
       ),

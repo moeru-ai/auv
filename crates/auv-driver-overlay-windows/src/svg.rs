@@ -47,13 +47,53 @@ pub(crate) const BUILT_IN_TIP: f32 = 1.0 / 24.0;
 ///
 /// Each variant fills the pointer with a light-to-deep gradient: AUV cyan for the AUV
 /// cursor, a lighter cyan while pressed, and the `YOU_SLATE` family for the user cursor.
-pub(crate) fn built_in_source(variant: BuiltInCursor) -> String {
-  let (top, bottom) = match variant {
-    BuiltInCursor::Auv => ("#2fd3df", "#0896a6"),
-    BuiltInCursor::AuvClick => ("#8cecf2", "#25bccb"),
-    BuiltInCursor::You => ("#51647f", "#2a3a52"),
+/// An `accent` replaces the variant's colors with a gradient shaded from it the same way
+/// (see `shade`), so any color reads like the AUV cyan pointer.
+pub(crate) fn built_in_source(variant: BuiltInCursor, accent: Option<Color>) -> AuvResult<String> {
+  let (top, bottom) = match accent {
+    None => {
+      let (top, bottom) = match variant {
+        BuiltInCursor::Auv => ("#2fd3df", "#0896a6"),
+        BuiltInCursor::AuvClick => ("#8cecf2", "#25bccb"),
+        BuiltInCursor::You => ("#51647f", "#2a3a52"),
+      };
+      (top.to_string(), bottom.to_string())
+    }
+    Some(accent) => {
+      let (top, bottom) = shade(accent, variant == BuiltInCursor::AuvClick)?;
+      (hex(top), hex(bottom))
+    }
   };
-  include_str!("../assets/cursor-pointer.svg").replace("{TOP}", top).replace("{BOTTOM}", bottom)
+  Ok(include_str!("../assets/cursor-pointer.svg").replace("{TOP}", &top).replace("{BOTTOM}", &bottom))
+}
+
+/// The pointer gradient for `accent`: from the accent to a deeper, more saturated tone
+/// (each channel squared, then darkened by 15%). Pressed art runs from 45% toward white
+/// to 30% toward that deep tone, a lighter flash of the same color.
+///
+/// NOTICE: these factors are fitted to the hand-picked AUV cyan art. From `#2fd3df` they
+/// give `#0794a6` (art: `#0896a6`) and, pressed, `#8de7ed` to `#23c0ce` (art: `#8cecf2`
+/// to `#25bccb`), so a tinted cyan cursor matches the default one.
+fn shade(accent: Color, pressed: bool) -> AuvResult<(Color, Color)> {
+  if ![accent.red, accent.green, accent.blue].into_iter().all(|value| value.is_finite() && (0.0..=1.0).contains(&value)) {
+    return Err("cursor accent color channels must be finite and between 0 and 1".to_string());
+  }
+  let deep = Color::rgb(accent.red.powi(2) * 0.85, accent.green.powi(2) * 0.85, accent.blue.powi(2) * 0.85);
+  Ok(if pressed {
+    (mix(accent, Color::WHITE, 0.45), mix(accent, deep, 0.3))
+  } else {
+    (accent, deep)
+  })
+}
+
+fn mix(from: Color, to: Color, amount: f64) -> Color {
+  let channel = |from: f64, to: f64| from + (to - from) * amount;
+  Color::rgb(channel(from.red, to.red), channel(from.green, to.green), channel(from.blue, to.blue))
+}
+
+fn hex(color: Color) -> String {
+  let channel = |value: f64| (value * 255.0).round() as u8;
+  format!("#{:02x}{:02x}{:02x}", channel(color.red), channel(color.green), channel(color.blue))
 }
 
 /// How one cursor's art is laid out for a frame.

@@ -86,13 +86,48 @@ fn the_windows_pointer_rim_ends_on_its_hotspot() {
     hotspot: (24.0 * BUILT_IN_TIP, 24.0 * BUILT_IN_TIP),
     pose: CursorPose::REST,
   };
-  let sprite = rasterize(&built_in_source(BuiltInCursor::Auv), &layout, None).unwrap();
+  let sprite = rasterize(&built_in_source(BuiltInCursor::Auv, None).unwrap(), &layout, None).unwrap();
 
   assert!(pixel(&sprite, 0, 0)[3] >= 200, "the pixel at the hotspot is the rim's tip, got {:?}", pixel(&sprite, 0, 0));
   assert_eq!(pixel(&sprite, -2, 0)[3], 0, "nothing left of the tip");
   assert_eq!(pixel(&sprite, 0, -2)[3], 0, "nothing above the tip");
   let edges = sprite.bgra.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] > 0 && pixel[3] < 255).count();
   assert!(edges > 0, "the rounded outline is antialiased");
+}
+
+// `shade` is fitted so that the live overlay's cyan cursor matches the hand-picked art.
+#[test]
+fn a_cyan_accent_shades_like_the_default_pointer() {
+  let cyan = "#2fd3df".parse::<Color>().unwrap();
+  let rest = built_in_source(BuiltInCursor::Auv, Some(cyan)).unwrap();
+  assert!(rest.contains(r##"stop-color="#2fd3df""##) && rest.contains(r##"stop-color="#0794a6""##), "{rest}");
+  let pressed = built_in_source(BuiltInCursor::AuvClick, Some(cyan)).unwrap();
+  assert!(pressed.contains(r##"stop-color="#8de7ed""##) && pressed.contains(r##"stop-color="#23c0ce""##), "{pressed}");
+}
+
+#[test]
+fn an_accent_tints_the_pointer_body() {
+  let layout = SpriteLayout {
+    size: 24,
+    hotspot: (24.0 * BUILT_IN_TIP, 24.0 * BUILT_IN_TIP),
+    pose: CursorPose::REST,
+  };
+  let pink = "#ff74b1".parse::<Color>().unwrap();
+  let sprite = rasterize(&built_in_source(BuiltInCursor::Auv, Some(pink)).unwrap(), &layout, None).unwrap();
+
+  let [blue, green, red, alpha] = pixel(&sprite, 4, 9);
+  assert_eq!(alpha, 255, "inside the body");
+  assert!(red > 200 && green < 120 && blue > 90, "a pink body, got rgb({red}, {green}, {blue})");
+  // The rim stays white; the tip pixel only picks up a trace of the body's color.
+  let [blue, green, red, _] = pixel(&sprite, 0, 0);
+  assert!(red >= 200 && green >= 200 && blue >= 200, "the rim at the tip stays white, got rgb({red}, {green}, {blue})");
+}
+
+#[test]
+fn an_accent_must_be_a_real_color() {
+  let error = built_in_source(BuiltInCursor::Auv, Some(Color::rgb(f64::NAN, 0.0, 0.0))).unwrap_err();
+  assert!(error.contains("accent"), "{error}");
+  assert!(built_in_source(BuiltInCursor::Auv, Some(Color::rgb(1.5, 0.0, 0.0))).is_err());
 }
 
 #[test]

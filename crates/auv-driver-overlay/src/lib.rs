@@ -79,11 +79,13 @@ pub fn remove() -> OverlayResult<()> {
   }
 }
 
-/// A running overlay that animates the actions a driver reports: a cursor that springs
-/// between the points operations acted on, click ripples and marks on targeted windows.
+/// A running overlay that animates the actions a driver reports: one cursor per window
+/// operations acted in, each in its own color and springing between the points it acted
+/// on, click ripples and marks on targeted windows. Callers can add a status beside a
+/// window's cursor with [`LiveOverlay::set_status`].
 ///
-/// It draws only what [`ActionEvent`]s describe and never delivers input. Dropping it
-/// stops the animation and removes the overlay.
+/// It draws only what [`ActionEvent`]s describe, plus the caller's own status text, and
+/// never delivers input. Dropping it stops the animation and removes the overlay.
 ///
 /// TODO(overlay-live-theme): the host theme (`AUV_OVERLAY_THEME`) applies to one-shot
 /// [`show`] calls only. Live scenes compose their own styles; apply the theme per frame
@@ -109,6 +111,14 @@ impl LiveOverlay {
     self.animator.report(event).map_err(OverlayError::backend)
   }
 
+  /// Shows `text`, the caller's description of its work such as "Recording the run",
+  /// beside the cursor of `window` (the id that window's actions report; None for actions
+  /// aimed at the screen), or removes it with `None`. Returns immediately. See
+  /// [`MotionScene::set_status`] for how long it stays.
+  pub fn set_status(&self, window: Option<&str>, text: Option<&str>) -> OverlayResult<()> {
+    self.animator.set_status(window, text).map_err(OverlayError::backend)
+  }
+
   /// Stops animating, removes the overlay and returns what the run measured.
   pub fn stop(self) -> OverlayResult<FrameStats> {
     self.animator.stop().map_err(OverlayError::backend)
@@ -126,6 +136,12 @@ impl LiveOverlay {
   /// Always fails: no live overlay adapter is enabled for this target.
   pub fn report(&self, event: ActionEvent) -> OverlayResult<()> {
     let _ = event;
+    Err(unavailable())
+  }
+
+  /// Always fails: no live overlay adapter is enabled for this target.
+  pub fn set_status(&self, window: Option<&str>, text: Option<&str>) -> OverlayResult<()> {
+    let _ = (window, text);
     Err(unavailable())
   }
 

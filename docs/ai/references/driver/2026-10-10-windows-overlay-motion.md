@@ -13,9 +13,17 @@ right. The owner compared rendered side-by-side previews and chose a spring-driv
 24 px, asking for a more modern look. [Motion](#motion) and
 [Built-in cursor art](#built-in-cursor-art) record the result.
 
-Status: implemented on branch `feat/overlay-windows-motion`. Evidence level for the
-Windows live overlay is `live-validated` on one machine (see [Evidence](#evidence)); it is
-not `supported`.
+A second request the same day, with a screenshot of the website hero: show a status beside
+the cursor, and give the pointer a different color for each window when AUV works in several
+windows in turn. The owner chose one cursor per window, status text written by the caller,
+and keeping the "Vector modern" pointer, recolored.
+[One cursor per window](#one-cursor-per-window) records it.
+
+Status: the live cursor and its art are on branch `feat/overlay-windows-motion`
+([#328](https://github.com/moeru-ai/auv/pull/328)); per-window cursors and statuses are on
+`feat/overlay-windows-cursor-status`, stacked on it. Evidence level for the Windows live
+overlay is `live-validated` on one machine (see [Evidence](#evidence)); it is not
+`supported`.
 
 ## Contract
 
@@ -40,10 +48,18 @@ and not a second action-result schema; `InputActionResult` stays the delivery re
 
 | Event | Reported when | Visual |
 | --- | --- | --- |
-| `Moved { point, travel: Jump }` | A pointer warp or the first delivered sample of a movement | The cursor springs there from wherever it is drawn |
-| `Moved { point, travel: Sampled }` | A later sample of a timed trajectory the driver is already playing | The cursor follows with a short spring, about 25 ms behind |
-| `Clicked { point, button }` | A click was delivered, once per press | A ripple at the true point and time; the cursor shows its pressed art and dips in size for 180 ms |
-| `WindowTargeted { id, frame, label }` | An action was delivered to that window | An outline and label on the window's frame; refreshed by later actions, faded and removed 3 s after the last one |
+| `Moved { point, travel: Jump, window }` | A pointer warp or the first delivered sample of a movement | The cursor springs there from wherever it is drawn |
+| `Moved { point, travel: Sampled, window }` | A later sample of a timed trajectory the driver is already playing | The cursor follows with a short spring, about 25 ms behind |
+| `Clicked { point, button, window }` | A click was delivered, once per press | A ripple at the true point and time; the cursor shows its pressed art and dips in size for 180 ms |
+| `WindowTargeted { id, frame, label }` | An action was delivered to that window | An outline and label on the window's frame in the window's cursor color; refreshed by later actions, faded and removed 3 s after the last one |
+
+`window` is the `id` of the window the action was aimed at, the same id its
+`WindowTargeted` report uses, or `None` for an action aimed at the screen. It picks which
+cursor moves (see [One cursor per window](#one-cursor-per-window)).
+
+A caller's status is not an event: it is not something a driver delivered. It goes through
+its own call, `set_status(window, text)`, on `MotionScene`, `Animator`, `LiveOverlay` and
+`OperationFollower`.
 
 ### Faithfulness (visual-trust rules)
 
@@ -62,8 +78,12 @@ and not a second action-result schema; `InputActionResult` stays the delivery re
    reported point.
 5. The overlay sends no input. There is no `SetCursorPos`, `SendInput` or focus call in the
    overlay crates, and `follow_operations` only listens.
-6. Only the shared default mouse (zero) drives the cursor. One cursor cannot honestly stand
-   for several logical mice.
+6. Only the shared default mouse (zero) drives cursors. A cursor stands for a window, and
+   cannot honestly stand for several logical mice.
+7. A cursor fades out 4 s after its window's last action or status, shrinking into its tip,
+   so a cursor left behind never suggests work that stopped.
+8. A status is the caller's own words. The overlay shows it as given, on one line and cut to
+   48 characters, and never writes one; the driver sets none.
 
 ## Motion
 
@@ -113,23 +133,93 @@ serialized only when it is not at rest. Only the live scene sets it. The Runner 
 does not carry it (NOTICE at the field), and the macOS adapter ignores it
 (`TODO(overlay-live-macos)` at its cursor mapping).
 
+## One cursor per window
+
+The owner's choices (2026-10-10), from three options each: one cursor per window rather than
+one cursor recolored as it moves, status text written by the caller rather than generated
+from actions, and the "Vector modern" pointer recolored rather than the website's ghost
+shape.
+
+![three windows, each with its own cursor color and status, after the second window's cursor set off from the first](assets/overlay-windows-cursors-per-window.png)
+
+**Cursors.** `MotionScene` keeps one cursor per window id, plus one for actions aimed at the
+screen. Each moves with its own spring, tilt and press exactly as in [Motion](#motion).
+
+- **Colors.** Windows take colors in the order the scene first sees them: AUV cyan
+  `#2fd3df`, pink `#ff74b1`, violet `#9b7dff`, lime `#86d94a` and amber `#ffb238`, then the
+  colors repeat. They are the website hero's ghost colors (`GHOSTS` in
+  `apps/docs-website/src/theme.ts`), except that the cyan is the pointer's own AUV cyan, so a
+  run in one window looks as before. A window keeps its color for the life of the scene, and
+  its mark outline and title pill use it too.
+- **Hand-off.** A window's first cursor sets off from wherever the cursor that acted last is
+  drawn, keeping that cursor's speed, as if AUV carried its pointer over. The first cursor of
+  the scene has nothing to travel from and appears on its point. Either way a new cursor grows
+  in over 260 ms with a slight overshoot (ease-out-back).
+- **Order.** The cursor that acted last is drawn on top.
+- **Leaving.** A cursor stays where it last acted. 3.4 s after its window's last action or
+  status it starts to shrink into its tip, and it is gone 600 ms later. Its window keeps its
+  color, so a cursor that comes back has the same one.
+- **Bounds.** At most 16 cursors (the one that acted longest ago is dropped first) and 64
+  remembered window colors (NOTICE at both).
+
+**Statuses.** `set_status(window, text)` shows the caller's text in a pill beside that
+window's cursor, filled with the cursor's color, with dark text on cyan, lime and amber and
+white text on pink and violet, as on the website. The text types out at 28 ms per character, as
+the website's ghost labels do, and a new pill fades in over 150 ms. A status that replaces
+a showing one keeps the pill up and only retypes. A status counts as activity, so it keeps
+its cursor from fading. A status set before any action in its window waits and appears with
+the cursor. `None` or blank text removes the pill. Text is shown on one line (control
+characters become spaces) and cut to 48 characters with an ellipsis.
+
+![the three cursors and their status pills at 4x](assets/overlay-windows-cursor-status-zoom.png)
+
+**Color on the art.** `CursorStyle` gains an optional `accent`, the color built-in art is
+drawn in. The Windows renderer shades the pointer gradient from it: from the accent to a
+deeper, more saturated tone (each channel squared, then darkened by 15%), and while pressed
+from 45% toward white to 30% toward that deep tone. These factors are fitted to the
+hand-picked art: from AUV cyan they give `#0794a6` against the art's `#0896a6`. The white rim
+and the shadow do not change. The Runner wire does not carry `accent` and the macOS adapter
+ignores it, like the pose.
+
+**Attribution.** The driver now names the window on `Clicked` and `Moved`:
+
+- A window-targeted click names its window on both delivery routes. The foreground route
+  used to report the click through the global `click_at`, which reports a screen click, before
+  marking the window. It now delivers through `input::deliver_click`, which does not report,
+  and reports the mark and the window's click together.
+- A movement aimed at a window names it on every sample.
+- Global clicks and pointer warps aim at the screen.
+
+**Deliberate differences from the website hero:**
+
+- The pill sits beside the pointer, vertically centered, where the Windows renderer already
+  draws cursor labels, not below-right as on the website.
+- The pill text uses the overlay's label font, a monospaced semibold face matching macOS
+  (`NSFont.monospacedSystemFont` in `Overlay.swift`), not the website's sans.
+- Ripples keep their button colors (lime left, cyan right, white middle), not the cursor's
+  color.
+
+Nothing outside this API sets a status yet: `auv invoke` and MCP do not start a follower. See
+`TODO(overlay-live-status-producers)`.
+
 ## What changed
 
 | Crate | Change |
 | --- | --- |
-| `auv-driver-overlay-common` | `motion` module: `ActionEvent`, `Travel`, `MotionScene` (spring, tilt, press, ripples, marks), `MotionFrame`, `Wake`; `FrameStats` / `Percentiles`; `CursorPose` on the `Cursor` layer. Pure and cross-platform. The easing contract in `overlay.rs` is untouched |
-| `auv-driver-overlay-windows` | `Animator` (thread, 1 ms timer resolution, message pump, warm-up), `pacing` (render/wait/remove decisions, pure), bounded sample buffer. `window.rs`: an `IsWindow` check so a window destroyed with its owner thread is recreated. Built-in cursor art, cursor pose and silhouette shadows, below |
-| `auv-driver-overlay` | `LiveOverlay` facade (Windows adapter; `Unavailable` elsewhere) |
-| `auv-driver-windows` | `OverlayApi::follow_operations` and the report sites below; `overlay_follow` example |
+| `auv-driver-overlay-common` | `motion` module: `ActionEvent`, `Travel`, `MotionScene` (one cursor per window with spring, tilt, press and status; ripples; marks), `MotionFrame`, `Wake`; `FrameStats` / `Percentiles`; `CursorPose` on the `Cursor` layer; `CursorStyle::accent`. Pure and cross-platform. The easing contract in `overlay.rs` is untouched |
+| `auv-driver-overlay-windows` | `Animator` (thread, 1 ms timer resolution, message pump, warm-up; `set_status`), `pacing` (render/wait/remove decisions, pure), bounded sample buffer. `window.rs`: an `IsWindow` check so a window destroyed with its owner thread is recreated. Built-in cursor art shaded from an accent, cursor pose and silhouette shadows, below |
+| `auv-driver-overlay` | `LiveOverlay` facade with `set_status` (Windows adapter; `Unavailable` elsewhere) |
+| `auv-driver-windows` | `OverlayApi::follow_operations`, `OperationFollower::set_status` and the report sites below; `overlay_follow` example |
+| `auv-core`, `auv-cli` | A NOTICE that the Runner wire does not carry `CursorStyle::accent` |
 
 Report sites (`auv-driver-windows`, behind the `overlay` feature, after successful delivery):
 
 | Site | Reports |
 | --- | --- |
-| `input::click_at` (foreground `SendInput`) | `Clicked` per press |
-| `WindowApi::click` | `WindowTargeted`; background clicks also `Clicked` |
-| `InputApi::move_mouse` (mouse zero) | The target window if any, then `Moved` per delivered sample |
-| `InputApi::move_mouse_to` (mouse zero) | `Moved { Jump }` |
+| `input::click_at` (global `SendInput`) | `Clicked` per press, aimed at the screen |
+| `WindowApi::click` | `WindowTargeted`, then `Clicked` per press aimed at that window, on the background and the foreground route |
+| `InputApi::move_mouse` (mouse zero) | The target window if any, then `Moved` per delivered sample, aimed at that window |
+| `InputApi::move_mouse_to` (mouse zero) | `Moved { Jump }`, aimed at the screen |
 
 ## Built-in cursor art
 
@@ -143,7 +233,8 @@ The owner picked the pointer from four rendered candidates: the 12 x 12 brand sp
 - A white rim 3.12 units wide with round joins, then the fill and a 1.2 unit stroke of one
   gradient over its inner part, leaving about one unit of white outside the colored shape.
 - Gradients per variant: AUV `#2fd3df` to `#0896a6`, pressed `#8cecf2` to `#25bccb`, the user
-  cursor `#51647f` to `#2a3a52`.
+  cursor `#51647f` to `#2a3a52`. A style `accent` replaces them with a gradient shaded from it
+  (see [One cursor per window](#one-cursor-per-window)).
 - The hotspot is (1, 1) of the 24-unit box, the outermost point of the rounded tip, so the rim
   ends exactly on the point the operation acted on.
 - Built-ins cast a soft drop shadow by default (black at 35%, blur 4, 1.5 px down); a
@@ -171,28 +262,38 @@ The old pixel arrow (`assets/cursor-pixel.svg`) is removed. Two deliberate gaps:
 
 Machine: Windows 11 Pro Insider Preview 10.0.29648, NVIDIA GeForce RTX 4070 Ti (not used:
 the renderer is a software target), one 2560 x 1440 display at 100% scaling, 180 Hz.
-Branch head before commit: `5a567ab0` plus this change. Runs on 2026-10-10 in release mode.
+Runs on 2026-10-10 in release mode on `feat/overlay-windows-cursor-status` (`ed586c08` plus
+the per-window change). Numbers from the first round, on `5a567ab0`, are marked as such.
 
 ### Unit tests (cross-platform unless noted)
 
-- `auv-driver-overlay-common` (23 motion tests): a jump follows the straight line, covers
+- `auv-driver-overlay-common` (37 motion tests): a jump follows the straight line, covers
   1 - 3/e^2 of the way at one time constant, never moves more than 2.1 px per millisecond over
-  300 px and settles exactly; the scene goes idle and upright after a jump; a retarget keeps
+  300 px and settles exactly; the scene stops drawing, upright, after a jump; a retarget keeps
   the cursor's speed (regression for the stop-and-restart); a retarget never passes its new
   target; a sideways turn swings at most 25% of the distance; the cursor never leaves the span
   of reported points; a 1 px/ms sampled stream is followed 15 to 35 px behind; tilt direction,
   limit and rest; no tilt on vertical moves; the press dips to 0.84 about the click point; the
   left-click ripple matches the macOS ripple; ripple growth, fade, bounds and colors; window
-  marks.
+  marks. Per window: the first cursor grows in on its point; each window gets its own cursor
+  and color, and screen actions their own; a window's first cursor sets off from the cursor
+  that acted last while that one stays; the cursor that acted last is on top; a quiet cursor
+  shrinks into its tip and leaves; a window keeps its color when its cursor comes back; marks
+  take the cursor's color; cursors are bounded. Statuses: typing beside the cursor in its
+  color, retyping in a pill that stays up, keeping the cursor alive, waiting for the first
+  action, clearing (including blank text), one line and 48 characters.
 - `auv-driver-overlay-windows` (Windows): `pacing` and `stats`; rasterizer tests for a
   clockwise tilt and a scale about the hotspot, an unblurred shadow exactly under the
   silhouette, a blurred shadow fading monotonically inside the bitmap, a transparent shadow,
-  and rejected poses; window pixel tests for the tip on the target pixel, the white rim and
-  cyan body, the pose about the tip, the default shadow on and off, distinct variants, and a
-  custom SVG's silhouette glow.
-- `auv-driver-windows` (10, `--features overlay`): one click event per press; window and label
-  mapping; a movement reports nothing until it delivered a sample, jumps first and follows
-  after; a window-targeted movement marks the window once; one follower per process.
+  rejected poses, the cyan accent reproducing the hand-picked gradient, an accent tinting the
+  body while the rim stays white, and rejected accents; window pixel tests for the tip on the
+  target pixel, the white rim and cyan body, the pose about the tip, the default shadow on and
+  off, distinct variants, a pink accent, and a custom SVG's silhouette glow.
+- `auv-driver-windows` (11, `--features overlay`): one click event per press; a click aimed at
+  a window names that window; window and label mapping; a movement reports nothing until it
+  delivered a sample, jumps first and follows after; a window-targeted movement marks the
+  window once and names it on every sample; one follower per process.
+- `cargo test --workspace`: 1286 passed, 0 failed, 12 ignored.
 
 ### Timeline harness (Windows)
 
@@ -200,22 +301,32 @@ Branch head before commit: `5a567ab0` plus this change. Runs on 2026-10-10 in re
 cargo run --release -p auv-driver-overlay-windows --example overlay_motion_timeline -- <out-dir>
 ```
 
-A scripted timeline (two window marks, two clicks 617 px apart, a 125 Hz sampled drag, a right
-click) played through the real animator over an owned backdrop, with the screen captured
-continuously. The harness finds the pointer in each capture by its body color, which no other
-layer uses (the first run with the new art matched a window mark's antialiased corner; the
-color test now also requires the pointer's saturation). The harness is for developing and
-testing the animation; it is not the product.
+Passes 1 and 2 play a scripted timeline (two window marks, two clicks 617 px apart, a 125 Hz
+sampled drag, a right click) through the real animator over an owned backdrop, with the
+screen captured continuously. These actions aim at the screen, so one cyan cursor moves, and
+the marked windows take pink and violet. The harness finds the pointer in each capture by its
+body color, which no other layer uses (the first run with the new art matched a window
+mark's antialiased corner; the color test now also requires the pointer's saturation).
+
+Pass 3 acts in three windows in turn (Notes, Browser, REPL), each click aimed at its window,
+with a status for each and a second status for two of them. On the last capture it checks,
+for each window, that the pixels around its last point are its own color and no other
+window's, and that a pill of its color sits beside the cursor. The harness is for developing
+and testing the animation; it is not the product.
 
 ![eight frames of the scripted timeline](assets/overlay-windows-motion-timeline.png)
 
-| Measurement (final build) | Result |
+| Measurement | Result |
 | --- | --- |
-| Frame time (compose + present) | P50 11.0 ms, P95 12.3 ms, max 14.3 ms, 157 frames |
+| Frame time (compose + present) | P50 8.5 ms, P95 9.2 ms, max 10.6 ms, 170 frames (first round: P50 11.0 ms, P95 12.3 ms) |
 | Late frames | 0 |
-| Event latency (report to `present` returned) | P50 19.8 ms, P95 27.8 ms, max 29.6 ms |
-| Click-to-click jump, 617 px | 56 captures strictly between the endpoints (23 with the old ease); largest step between captures 71 px, 12% of the distance (183 px before); at most 0.9 px off the straight path; the last capture in the window is 3 px from the point (the spring's last pixel or two of settling, plus the body color starting a pixel inside the white tip) |
-| Sampled drag | The pointer was at most 57 ms (77 px at 1.33 px/ms) behind the driver's sample, including the 25 ms the stream's spring trails by. The check allows 75 ms: the pipeline's own delay (about 50 ms) plus that spring |
+| Event latency (report to `present` returned) | P50 16.9 ms, P95 25.5 ms, max 26.2 ms |
+| Click-to-click jump, 617 px | 44 captures strictly between the endpoints (first round 56, and 23 with the old ease; how many captures fit depends on how fast the screen can be read); largest step between captures 72 px, 12% of the distance (183 px with the old ease); at most 0.9 px off the straight path; the last capture in the window is 3 px from the point (the spring's last pixel or two of settling, plus the body color starting a pixel inside the white tip) |
+| Sampled drag | The pointer was at most 56 ms (74 px at 1.33 px/ms) behind the driver's sample, including the 25 ms the stream's spring trails by. The check allows 75 ms: the pipeline's own delay (about 50 ms) plus that spring |
+| Per-window cursors (pass 3) | Notes, Browser and REPL: 90, 84 and 82 pixels of their own color around their last points, 0 of another window's; 1187, 1208 and 1325 pixels of their pill's color beside them |
+
+Frame time fell from the first round with no renderer change; the machine's load differs
+between runs, so treat it as run-to-run variation.
 
 ### Real operations through the driver (Windows)
 
@@ -226,19 +337,21 @@ cargo run --release -p auv-driver-windows --features overlay --example overlay_f
 The example opens an opaque backdrop and two top-level windows of its own, finds them through
 `list_windows`, and performs real operations through `WindowsDriverSession` while
 `follow_operations` runs: a 500 ms logical-mouse movement posted to window A, a click in A,
-then a left and a right click in B. It never calls `SendInput`, `SetCursorPos` or any focus
-API. Captures contain only the backdrop and the example's windows.
+then a left and a right click in B. Before each step it sets a status for that window through
+`OperationFollower::set_status`. It never calls `SendInput`, `SetCursorPos` or any focus API.
+Captures contain only the backdrop and the example's windows.
 
-![the overlay following four real driver operations across two windows](assets/overlay-windows-motion-real-operations.png)
+![the overlay following four real driver operations across two windows, each with its own cursor color and status](assets/overlay-windows-motion-real-operations.png)
 
 | Check | Result |
 | --- | --- |
 | The driver delivered what it reported | A received 1 click and 31 move messages; B received 2 clicks |
 | No mouse or focus disturbance | All four `InputActionResult`s: `selected_path` `window_targeted_mouse`, `mouse_disturbance` and `focus_disturbance` `none` |
-| Two real windows annotated at once | Both windows outlined and labelled with their titles in the captures |
+| Two real windows annotated at once | Both windows outlined and labelled with their titles in the captures, A in cyan and B in pink |
+| Each window's cursor and status in its color | A: 90 cyan pixels around its last click and 1370 in its status pill; B: 84 pink and 1320; 0 of the other window's color around either cursor |
 | Ripple at the real click points | Visible at the clicked point in A and B |
-| Frame time | P50 11.0 ms, P95 12.4 ms, 91 frames, 0 late frames, 0 present failures |
-| Event latency | P50 16.0 ms, P95 27.5 ms |
+| Frame time | P50 8.5 ms, P95 9.8 ms, 90 frames, 0 late frames, 0 present failures (first round: P50 11.0 ms, P95 12.4 ms) |
+| Event latency | P50 15.8 ms, P95 27.1 ms |
 
 The OS pointer and the foreground window are printed before and after as information only: a
 person using the machine can move either while this runs (a first version of this check failed
@@ -247,9 +360,9 @@ the assertion. In the recorded run neither changed.
 
 ## Known limits
 
-- **Cost.** A frame is a full virtual-screen software render, about 11 ms of every 16.7 ms
-  while animating (about two thirds of one core, derived from frame time, not separately
-  measured). The CPU silhouette shadow adds about half a millisecond over the radial glow. It is
+- **Cost.** A frame is a full virtual-screen software render, 8.5 to 11 ms of every 16.7 ms
+  while animating across runs (half to two thirds of one core, derived from frame time, not
+  separately measured). Each visible cursor is rasterized every frame. The CPU silhouette shadow adds about half a millisecond over the radial glow. It is
   idle when nothing moves. Multi-monitor virtual screens, which make the bitmap larger, were
   not measured. Reusing the bitmap between frames or presenting only a dirty rectangle is a
   `canvas.rs` change and was left out on purpose.
@@ -268,6 +381,10 @@ the assertion. In the recorded run neither changed.
   validated at scaling other than 100%.
 - **Real applications.** The evidence drives windows the example owns. It does not click into
   third-party applications on a person's desktop.
+- **Screen actions.** A global click or pointer warp moves the screen's cursor, even when the
+  point lies inside a window that has its own cursor: the driver does not hit-test which
+  window was under the point.
+- **Colors repeat** after five windows, so the sixth window shares the first one's cyan.
 - **CI.** Not run from this machine; Windows CI is the gate.
 
 ## Deferred (markers in code)
@@ -276,13 +393,16 @@ the assertion. In the recorded run neither changed.
   nothing. A click-shaped ripple for a scroll would imply an action that did not happen.
 - `TODO(overlay-follow-remote-runner)`: events are reported inside the process that delivers
   input. A Runner serving remote callers needs the same hook at its own seam.
-- `TODO(overlay-follow-multi-mouse)`: only mouse zero drives the single cursor.
+- `TODO(overlay-follow-multi-mouse)`: only mouse zero drives cursors.
+- `TODO(overlay-live-status-producers)`: nothing outside the Rust API sets a status, because
+  `auv invoke`, MCP and the Runner do not start a follower. Wiring a producer belongs with
+  starting the follower from the CLI.
 - `TODO(overlay-motion-event-wire)`: `ActionEvent` is in-process; no serialization or tracing
-  event until an out-of-process consumer needs it. The cursor pose is not on the Runner wire
-  for the same reason.
+  event until an out-of-process consumer needs it. The cursor pose and `CursorStyle::accent`
+  are not on the Runner wire for the same reason.
 - `TODO(overlay-live-theme)`: the host theme applies to one-shot `show` only.
 - `TODO(overlay-live-macos)`: macOS already animates natively per `show`; routing live events
-  there, and drawing the cursor pose, is a separate slice.
+  there, and drawing the cursor pose and accent, is a separate slice.
 - `TODO(driver-overlay-windows-window-owner-thread)`: see Known limits.
 - Still open from #306: `TODO(driver-overlay-windows-outline-label)`.
 
@@ -296,3 +416,9 @@ the assertion. In the recorded run neither changed.
 3. Should macOS adopt the rounded pointer, and the spring for its own cursor moves, or keep
    the brand pixel sprite?
 4. The press "burst" ticks from the preview were left out (see above). Add them back?
+5. Status pills use the overlay's monospaced label font (macOS parity). The website hero uses
+   a sans font. Switch the pill font, on Windows only or on both platforms?
+6. The pill sits beside the pointer, not below-right as on the website. Keep it?
+7. Ripples keep their button colors. Should they take the cursor's color instead, as on the
+   website?
+8. A cursor stays 4 s after its window's last action or status. Is that the right length?

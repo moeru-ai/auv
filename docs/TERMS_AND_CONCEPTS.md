@@ -1227,6 +1227,13 @@ surface as an overlay display: it delivers no input and proves no semantic succe
 - A **cursor pose** turns and scales the cursor art about its hotspot, so the tip stays on
   the reported point: a live cursor tilts with its horizontal speed and dips briefly when a
   click lands.
+- A live overlay draws **one cursor per window** an action was aimed at, each in its own
+  color, plus one for actions aimed at the screen. A window's cursor stays where it last
+  acted and fades out a few seconds after its window's last action or status.
+- A **cursor status** (provisional name) is a short text the caller writes about its work in
+  a window, such as "Recording the run", shown in a pill beside that window's cursor. The
+  overlay shows it as given and never writes one; it is the caller's words, not a driver
+  report.
 - A **ripple** marks a delivered click at its true point and time. A **window mark** is an
   outline and label on a window an action was delivered to, and fades after a few seconds.
 - The platform adapter owns the frame loop. Callers report events and never drive frames,

@@ -15,6 +15,7 @@
 //! same scene can be run against an older renderer.
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 #[path = "support/backdrop.rs"]
 mod backdrop;
 

@@ -260,6 +260,9 @@ fn cursor_style_from_proto(value: proto::CursorStyle) -> Result<auv_driver::over
         Ok::<_, Status>(shadow)
       })
       .transpose()?,
+    // NOTICE: the wire has no accent yet; only in-process live overlays tint cursors.
+    // See TODO(overlay-motion-event-wire).
+    accent: None,
   })
 }
 

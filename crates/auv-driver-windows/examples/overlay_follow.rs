@@ -9,10 +9,12 @@
 //! capture never contains anything else on the user's desktop), finds the windows through the driver's
 //! window discovery, and performs real window-targeted input on them through
 //! `WindowsDriverSession`: a logical-mouse movement and clicks posted straight to each
-//! window. The live overlay (`OverlayApi::follow_operations`) draws the cursor, ripples and
-//! window marks from what the driver reports. It never calls `SendInput`, `SetCursorPos` or
-//! any focus API, and it checks that the OS pointer and the foreground window are the same
-//! before and after. The screen is captured around both windows after each step.
+//! window. The live overlay (`OverlayApi::follow_operations`) draws each window's cursor,
+//! ripples and window marks from what the driver reports, with a status the example sets
+//! beside each cursor. It never calls `SendInput`, `SetCursorPos` or any focus API, and it
+//! checks that the OS pointer and the foreground window are the same before and after. The
+//! screen is captured around both windows after each step, and the last capture is checked
+//! for each window's cursor and status in that window's own color.
 //!
 //! Needs an interactive desktop. Exits non-zero when a check fails.
 
@@ -58,7 +60,7 @@ mod live {
   };
   use windows::core::w;
 
-  use super::backdrop::{Backdrop, capture_region, pump, write_bmp};
+  use super::backdrop::{Backdrop, capture_region, count_near, pump, write_bmp};
 
   const LEFT: i32 = 200;
   const TOP: i32 = 200;
@@ -66,6 +68,13 @@ mod live {
   const HEIGHT: i32 = 420;
 
   const TITLES: [&str; 2] = ["AUV overlay follow A", "AUV overlay follow B"];
+  /// Where the driver acts last in each window: A's left click and B's right click.
+  const LAST_POINTS: [WindowPoint; 2] = [
+    WindowPoint::new(220.0, 190.0),
+    WindowPoint::new(300.0, 200.0),
+  ];
+  /// The colors the live overlay gives the first two windows it sees: AUV cyan, then pink.
+  const CURSOR_FILLS: [[u8; 3]; 2] = [[0x2f, 0xd3, 0xdf], [0xff, 0x74, 0xb1]];
   static CLICKS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
   static MOVES: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 
@@ -220,14 +229,18 @@ mod live {
 
     let follower = session.overlay().follow_operations(LifecycleOptions::manual()).map_err(|error| error.to_string())?;
 
-    let snapshot = |name: &str| -> Result<(), String> {
+    let snapshot = |name: &str| -> Result<Vec<u8>, String> {
       pump(Duration::from_millis(140));
-      write_bmp(&out_dir.join(format!("{name}.bmp")), WIDTH, HEIGHT, &capture_region(LEFT, TOP, WIDTH, HEIGHT)?)
+      let pixels = capture_region(LEFT, TOP, WIDTH, HEIGHT)?;
+      write_bmp(&out_dir.join(format!("{name}.bmp")), WIDTH, HEIGHT, &pixels)?;
+      Ok(pixels)
     };
+    let status = |window: &Window, text: &str| follower.set_status(Some(window), Some(text)).map_err(|error| error.to_string());
 
     println!("operations");
     let mut delivered = Vec::new();
     // 1. The logical mouse glides over window A: sampled input, posted to the window.
+    status(&window_a, "Finding the list")?;
     let a_origin = window_a.frame.origin;
     let (_, moved) = session
       .input()
@@ -239,17 +252,21 @@ mod live {
     delivered.push(moved);
     snapshot("1-after-move-in-a")?;
 
-    // 2. A click in window A, then a click in window B across the screen.
-    delivered.push(session.window().click(&window_a, WindowPoint::new(220.0, 190.0), background()).map_err(|error| error.to_string())?);
+    // 2. A click in window A, then a click in window B across the screen. B's cursor sets off
+    // from A's and takes the next color; A's stays where it clicked.
+    status(&window_a, "Selecting a row")?;
+    delivered.push(session.window().click(&window_a, LAST_POINTS[0], background()).map_err(|error| error.to_string())?);
     snapshot("2-after-click-in-a")?;
+    status(&window_b, "Opening details")?;
     delivered.push(session.window().click(&window_b, WindowPoint::new(180.0, 120.0), background()).map_err(|error| error.to_string())?);
     snapshot("3-after-click-in-b")?;
+    status(&window_b, "Showing the menu")?;
     delivered.push(
       session
         .window()
         .click(
           &window_b,
-          WindowPoint::new(300.0, 200.0),
+          LAST_POINTS[1],
           ClickOptions {
             button: MouseButton::Right,
             ..background()
@@ -258,7 +275,22 @@ mod live {
         .map_err(|error| error.to_string())?,
     );
     pump(Duration::from_millis(500));
-    snapshot("4-settled")?;
+    let settled = snapshot("4-settled")?;
+
+    // Each window's cursor rests where the driver last acted in it, drawn in that window's
+    // color (A acted first, so it is AUV cyan; B pink), with its status pill beside it.
+    for (index, (window, fill)) in [(&window_a, CURSOR_FILLS[0]), (&window_b, CURSOR_FILLS[1])].into_iter().enumerate() {
+      let point = session.window().to_screen_point(window, LAST_POINTS[index]).map_err(|error| error.to_string())?.point();
+      let (x, y) = (point.x as i32 - LEFT, point.y as i32 - TOP);
+      let sprite = ((x - 1, x + 19), (y - 1, y + 23));
+      let body = count_near(&settled, WIDTH, sprite.0, sprite.1, fill, 60.0);
+      let pill = count_near(&settled, WIDTH, (x + 28, x + 118), (y - 6, y + 30), fill, 24.0);
+      let foreign = count_near(&settled, WIDTH, sprite.0, sprite.1, CURSOR_FILLS[1 - index], 60.0);
+      let name = TITLES[index];
+      println!("  {name}: {body} cursor pixels and {pill} status pixels in its color, {foreign} in the other window's");
+      checks.check(body >= 12 && foreign < 5, format!("{name}: its cursor rests on its last click in its own color"));
+      checks.check(pill >= 400, format!("{name}: its status is drawn beside its cursor in its color"));
+    }
 
     let stats = follower.stop().map_err(|error| error.to_string())?;
     pump(Duration::from_millis(200));
