@@ -182,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   println!("cargo:rerun-if-changed={}", package_proto.join("auv/api").display());
   println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/api").display());
+  println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/rpc").display());
   Ok(())
 }
 
