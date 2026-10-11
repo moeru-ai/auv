@@ -984,14 +984,14 @@ impl InputService for LocalInputService {
   async fn paste_text(&self, request: Request<proto::PasteTextRequest>) -> Result<Response<proto::PasteTextResponse>, Status> {
     let request = request.into_inner();
     let options = paste_text_options_from_proto(request.text, request.options)?;
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       let action = self.session.input().paste_text(options).map_err(driver_status)?;
       Ok(Response::new(proto::PasteTextResponse {
         action: Some(input_action_to_proto(action)?),
       }))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
       let _ = options;
       Err(Status::unimplemented("PasteText is unavailable on this local Driver platform"))

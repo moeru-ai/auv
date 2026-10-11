@@ -5,8 +5,8 @@ use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{Point, Rect, RelativeRect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
-  Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
-  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
+  Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions,
+  Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
 };
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
@@ -22,7 +22,7 @@ use crate::clipboard::{
 };
 use crate::driver::WindowsDriverSession;
 use crate::error::{invalid_input, not_found};
-use crate::input::{click_at, copy, current_position, paste, press_key, scroll_at, type_text};
+use crate::input::{click_at, copy, current_position, paste, paste_text, press_key, scroll_at, type_text};
 use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
@@ -607,6 +607,12 @@ impl InputApi<'_> {
     duration: std::time::Duration,
   ) -> DriverResult<InputActionResult> {
     crate::input::hold_keys(target, keys, policy, duration)
+  }
+
+  /// Pastes text into the foreground control through the clipboard, then restores the clipboard
+  /// once the foreground application has read the text.
+  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<InputActionResult> {
+    paste_text(options)
   }
 
   /// Issues the system copy shortcut (Ctrl+C) against the foreground target.

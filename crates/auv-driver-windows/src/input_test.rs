@@ -239,3 +239,62 @@ fn wheel_units_reject_values_outside_posted_wheel_word() {
   assert!(wheel_units(Scroll::new(0.0, 27_305.0)).is_ok());
   assert!(matches!(wheel_units(Scroll::new(0.0, 27_400.0)), Err(DriverError::InvalidInput { .. })));
 }
+
+#[test]
+fn a_paste_read_by_the_foreground_application_gives_the_clipboard_back_at_once() {
+  let sent = Instant::now();
+  let read = ClipboardRead {
+    reader: ClipboardReader::Process(42),
+    at: sent + Duration::from_millis(12),
+  };
+  assert_eq!(
+    paste_read(Some(read), sent, Some(42)),
+    PasteRead::Foreground {
+      after: Duration::from_millis(12)
+    }
+  );
+}
+
+#[test]
+fn a_paste_read_first_by_anyone_else_is_held_before_the_clipboard_comes_back() {
+  // Once anyone has read lent text, Windows hands it out without asking again, so the
+  // foreground application's own read can no longer be seen.
+  let sent = Instant::now();
+  let at = sent + Duration::from_millis(5);
+  let other = ClipboardRead {
+    reader: ClipboardReader::Process(7),
+    at,
+  };
+  let unnamed = ClipboardRead {
+    reader: ClipboardReader::Unknown,
+    at,
+  };
+  let after = Duration::from_millis(5);
+  assert_eq!(
+    paste_read(Some(other), sent, Some(42)),
+    PasteRead::Other {
+      reader: ClipboardReader::Process(7),
+      after
+    }
+  );
+  assert_eq!(
+    paste_read(Some(unnamed), sent, Some(42)),
+    PasteRead::Other {
+      reader: ClipboardReader::Unknown,
+      after
+    }
+  );
+  // With no foreground window, no reader can be the foreground application.
+  assert_eq!(
+    paste_read(Some(other), sent, None),
+    PasteRead::Other {
+      reader: ClipboardReader::Process(7),
+      after
+    }
+  );
+}
+
+#[test]
+fn a_paste_nobody_read_is_unread() {
+  assert_eq!(paste_read(None, Instant::now(), Some(42)), PasteRead::Unread);
+}

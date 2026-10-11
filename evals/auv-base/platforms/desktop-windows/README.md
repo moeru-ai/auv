@@ -32,9 +32,9 @@ tasks/window_commands.rs         `window`: the `window.*` invoke commands, as th
 tasks/screen_commands.rs         `screen`: `screen.findText` and `screen.waitForText`, as the real `auv` binary, against an
                                  uncovered receiver, placed against the controls that draw the text.
 tasks/foreground_commands.rs     `foreground`: `display.*`, `screen.captureRegion`, `input.moveMouse`,
-                                 `input.clickPoint`, `input.drag` and the keyboard commands, as the
-                                 real `auv` binary, judged by the receiver's text box, key log and
-                                 drag pad (`--foreground-input`).
+                                 `input.clickPoint`, `input.drag`, the keyboard commands and
+                                 `input.pasteText`, as the real `auv` binary, judged by the
+                                 receiver's text box, key log and drag pad (`--foreground-input`).
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
                                  background.
 tasks/background_session.rs      The runner binary, `background-session-eval`.
@@ -75,6 +75,10 @@ while its own text box has the focus, and puts the pointer and the foreground ba
 text box has no input method by default, because an active IME composes key presses instead of
 typing them; `--keep-ime` leaves the desktop's input method on to reproduce that, and records the
 text instead of judging it.
+`foreground` also pastes, so it borrows the clipboard. It takes a snapshot of the clipboard (every
+format the driver can copy) before it starts and gives it back however it ends. Before the paste
+steps it puts its own text on the clipboard, then checks after each paste that the clipboard holds
+that text again. Its records hold only whether the clipboard came back, never what was on it.
 
 ## How to read a result
 

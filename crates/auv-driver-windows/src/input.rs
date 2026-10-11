@@ -11,20 +11,22 @@
 // into the current foreground target. Target-aware, window-prepared input is
 // deferred until an owner-approved slice connects it to focus leasing.
 
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
-  Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
-  TextSubmit, TypeTextOptions,
+  Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions,
+  PasteTextOptions, Scroll, TextSubmit, TypeTextOptions,
 };
 use auv_driver_common::{
   DriverError, InputTarget, KeyboardBackend, KeyboardHold, KeyboardHoldId, KeyboardInput, KeyboardInputError, KeyboardInputProgress,
   PressKeysOptions,
 };
 
-use crate::error::invalid_input;
+use crate::clipboard::{ClipboardRead, ClipboardReader};
+use crate::error::{backend, invalid_input};
 use crate::session::InputApi;
 
 /// Virtual-key code for a modifier, kept as a bare `u16` so shortcut parsing
@@ -231,10 +233,7 @@ impl InputApi<'_> {
         let plan = match input {
           KeyboardInput::PressKeys { options, .. } => combination(options).map(Some),
           KeyboardInput::TypeText { options, .. } => text_submit_virtual_key(options.submit).map(|_| None),
-          // TODO(windows-paste-batch): an atomic clipboard snapshot, paste, and
-          // restore needs a verified consumption boundary before this action
-          // can join the ordered batch. Reopen for a tested clipboard slice.
-          KeyboardInput::PasteText { .. } => Err(DriverError::unsupported("Windows keyboard paste action")),
+          KeyboardInput::PasteText { options, .. } => text_submit_virtual_key(options.submit).map(|_| None),
         };
 
         plan.map_err(|cause| keyboard_failure(cause, index, vec![], 0))
@@ -276,7 +275,9 @@ impl InputApi<'_> {
         KeyboardInput::TypeText { text, options } => {
           type_text(&text, options).map_err(|cause| keyboard_failure(cause, index, completed.clone(), 0))?
         }
-        KeyboardInput::PasteText { .. } => unreachable!("paste rejected during validation"),
+        KeyboardInput::PasteText { options, .. } => {
+          paste_text(options).map_err(|cause| keyboard_failure(cause, index, completed.clone(), 0))?
+        }
       };
 
       completed.push(action);
@@ -322,6 +323,128 @@ pub fn hold_keys(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, d
   // Give this call time to release before the controller's fallback deadline.
   let mut hold = key_down(target, keys, policy, duration.saturating_add(Duration::from_secs(1)))?;
   hold.wait_and_release(duration)
+}
+
+/// How long the foreground application has to ask for pasted text before the paste fails and the
+/// user's clipboard comes back.
+// NOTICE: classic edit controls ask within milliseconds of Ctrl+V; the bound only has to cover a
+// busy UI thread. An application that asks later than this gets the user's restored clipboard
+// instead. That is the trade against holding the user's clipboard indefinitely.
+const PASTE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long pasted text stays on the clipboard after a process other than the foreground one
+/// asked for it first. After that first request Windows serves the text without asking again, so
+/// the foreground application's own read is no longer seen and a fixed hold stands in for it.
+const PASTE_UNATTRIBUTED_HOLD: Duration = Duration::from_millis(500);
+
+/// One paste at a time: each takes the clipboard from the user and gives it back.
+static PASTE: Mutex<()> = Mutex::new(());
+
+/// Who asked for pasted text first, which decides when the user's clipboard may come back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteRead {
+  /// The foreground application asked: the paste was taken, and the clipboard can come back now.
+  Foreground { after: Duration },
+  /// Another process, or one Windows does not name, asked first. The foreground application may
+  /// still be about to read, so the text is held for [`PASTE_UNATTRIBUTED_HOLD`].
+  Other {
+    reader: ClipboardReader,
+    after: Duration,
+  },
+  /// Nobody asked within [`PASTE_READ_TIMEOUT`]: nothing was pasted.
+  Unread,
+}
+
+fn paste_read(read: Option<ClipboardRead>, sent: Instant, foreground: Option<u32>) -> PasteRead {
+  let Some(read) = read else {
+    return PasteRead::Unread;
+  };
+  let after = read.at.saturating_duration_since(sent);
+  match (read.reader, foreground) {
+    (ClipboardReader::Process(reader), Some(foreground)) if reader == foreground => PasteRead::Foreground { after },
+    (reader, _) => PasteRead::Other { reader, after },
+  }
+}
+
+/// Pastes `options.text` into the foreground control through the clipboard and gives the user's
+/// clipboard back, every format of it, once the foreground application has asked for the text.
+///
+/// The text is lent by delayed rendering ([`crate::clipboard::lend_text`]), so the application's
+/// request for it is observed. That request is consumption of the clipboard, not proof that the
+/// text landed, so the result stays unverified.
+pub fn paste_text(options: PasteTextOptions) -> DriverResult<InputActionResult> {
+  let submit_key = text_submit_virtual_key(options.submit)?;
+  let _paste = PASTE.lock().unwrap_or_else(PoisonError::into_inner);
+  let snapshot = crate::clipboard::snapshot_rich()?;
+  let foreground = native::foreground_process();
+  let pasted = (|| {
+    let loan = crate::clipboard::lend_text(&options.text)?;
+    if options.replace_existing {
+      // Ctrl+A then Backspace clears the focused field, as `type_text` does.
+      native::press_chord(&KeyChord {
+        modifiers: vec![vk::CONTROL],
+        key: u16::from(b'A'),
+      })?;
+      native::press_chord(&KeyChord {
+        modifiers: Vec::new(),
+        key: vk::BACK,
+      })?;
+    }
+    let sent = Instant::now();
+    paste()?;
+    let read = paste_read(loan.wait_for_read(PASTE_READ_TIMEOUT), sent, foreground);
+    if matches!(read, PasteRead::Other { .. }) {
+      std::thread::sleep(PASTE_UNATTRIBUTED_HOLD);
+    }
+    Ok((loan, read))
+  })();
+  // Restore before the loan closes its window, so the window no longer owns the clipboard and
+  // is not asked to leave the text behind.
+  let restored = crate::clipboard::restore_rich(&snapshot);
+  let read = match (pasted, restored) {
+    (Ok((_loan, read)), Ok(())) => read,
+    (Err(error), Ok(())) => return Err(error),
+    (Ok(_), Err(restore)) => return Err(backend(format!("pasted text but failed to restore the clipboard: {restore}"))),
+    (Err(error), Err(restore)) => return Err(backend(format!("{error}; additionally failed to restore the clipboard: {restore}"))),
+  };
+  let message = match read {
+    PasteRead::Foreground { after } => format!("the foreground application read the pasted text {} ms after Ctrl+V", after.as_millis()),
+    PasteRead::Other { reader, after } => {
+      let reader = match reader {
+        ClipboardReader::Process(process) => format!("process {process}, not the foreground application,"),
+        ClipboardReader::Unknown => "a reader that opened the clipboard without a window".to_string(),
+      };
+      format!(
+        "{reader} read the pasted text first, {} ms after Ctrl+V; the clipboard was restored {} ms later",
+        after.as_millis(),
+        PASTE_UNATTRIBUTED_HOLD.as_millis()
+      )
+    }
+    PasteRead::Unread => {
+      return Err(backend(format!(
+        "the foreground application did not read the pasted text within {} ms; the clipboard was restored",
+        PASTE_READ_TIMEOUT.as_millis()
+      )));
+    }
+  };
+  if let Some(key) = submit_key {
+    native::press_chord(&KeyChord {
+      modifiers: Vec::new(),
+      key,
+    })?;
+  }
+  sleep_if_nonzero(options.settle);
+  Ok(InputActionResult {
+    selected_path: InputDeliveryPath::ClipboardPaste,
+    attempts: vec![InputAttempt {
+      path: InputDeliveryPath::ClipboardPaste,
+      succeeded: true,
+      message: Some(message),
+    }],
+    verified: false,
+    mouse_disturbance: DisturbanceLevel::None,
+    focus_disturbance: DisturbanceLevel::Unknown,
+    clipboard_disturbance: DisturbanceLevel::Temporary,
+  })
 }
 
 /// Issues the system copy shortcut (Ctrl+C) against the foreground target.
@@ -771,6 +894,18 @@ mod native {
       },
     )])
   }
+
+  /// The process of the foreground window, the one keyboard input reaches.
+  pub(super) fn foreground_process() -> Option<u32> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    let window = unsafe { GetForegroundWindow() };
+    if window.0.is_null() {
+      return None;
+    }
+    let mut process = 0u32;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
+    (process != 0).then_some(process)
+  }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -813,6 +948,10 @@ mod native {
 
   pub(super) fn key_transition(_key: u16, _down: bool) -> DriverResult<()> {
     Err(DriverError::unsupported("input.key_down"))
+  }
+
+  pub(super) fn foreground_process() -> Option<u32> {
+    None
   }
 }
 

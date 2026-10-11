@@ -379,7 +379,7 @@ struct PasteTextArgs {
 
 #[invoke_command(
   id = "input.pasteText",
-  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Unsupported("the Windows driver has clipboard and paste-key calls but no paste_text capability") },
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   target = OptionalKeyboard,
   group = "input",
   description = "Paste text into the active control through the clipboard, then restore the prior clipboard snapshot.",
@@ -390,7 +390,7 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTex
 }
 
 pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session
@@ -403,10 +403,10 @@ pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = text;
-    Err("input.pasteText is available only on macOS and Linux".to_string())
+    Err("input.pasteText is available only on macOS, Linux and Windows".to_string())
   }
 }
 
@@ -597,7 +597,7 @@ enum KeyboardActionArg {
   group = "input",
   description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.",
   input = InputKeyboardArgs,
-  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground press and type_text actions only; paste_text and targeted delivery are unsupported") },
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
 )]
 async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;

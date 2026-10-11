@@ -2,7 +2,7 @@
 //! `auv` binary against a window this harness owns: `display.list`, `display.capture`,
 //! `screen.captureRegion`, `input.moveMouse`, `input.clickPoint` and `input.drag` (screen, display
 //! and window bases), and the foreground keyboard commands `input.typeText`, `input.key`,
-//! `input.keys`, `input.holdKeys` and `input.keyboard`.
+//! `input.keys`, `input.holdKeys`, `input.keyboard` and `input.pasteText`.
 //!
 //! Unlike the other scenarios this one moves the real pointer and sends real keys, because that is
 //! what these commands do. It keeps them on its own window:
@@ -16,6 +16,10 @@
 //!   the focus; otherwise the remaining keyboard commands are skipped and the run fails.
 //! - At the end the pointer goes back where it was and the foreground goes back to the window that
 //!   had it, however the run ends.
+//! - The paste steps replace the clipboard. Every format of the user's clipboard is kept at the
+//!   start and given back at the end, however the run ends; its contents are never written down.
+//!   Before pasting, the harness puts its own text on the clipboard, so each paste can be checked
+//!   for giving the clipboard back without reading the user's.
 //!
 //! What each command did is judged against what the receiver saw, never against what the driver
 //! reports about itself: the pointer position Windows reports, the button's `BN_CLICKED` count, the
@@ -33,7 +37,7 @@ use anyhow::{Context, Result, bail};
 use auv_driver_common::Driver;
 use auv_driver_common::capture::Capture;
 use auv_driver_common::geometry::Rect;
-use auv_driver_windows::{ClickRequest, WindowsDriver};
+use auv_driver_windows::{ClickRequest, ClipboardSnapshot, WindowsDriver, clipboard};
 use serde_json::{Value, json};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, PostMessageW, SetCursorPos, WM_APP, WindowFromPoint};
@@ -66,13 +70,25 @@ pub struct ForegroundCommandsOptions {
   pub keep_ime: bool,
 }
 
-/// Puts the pointer and the foreground back however the run ends. Declared after the receiver, so
-/// it runs while the receiver still holds the foreground it can hand back.
+/// Puts the pointer, the foreground and the user's clipboard back however the run ends. Declared
+/// after the receiver, so it runs while the receiver still holds the foreground it can hand back.
 struct Restore {
   cursor: (i32, i32),
   foreground: isize,
   receiver: isize,
   store: PathBuf,
+  /// Every format of the user's clipboard at the start; the paste steps replace it.
+  clipboard: Option<ClipboardSnapshot>,
+}
+
+impl Restore {
+  /// Gives the user's clipboard back now, and says whether its text is what it was.
+  fn give_clipboard_back(&mut self, text_at_start: &str) -> bool {
+    let Some(snapshot) = self.clipboard.take() else {
+      return false;
+    };
+    clipboard::restore_rich(&snapshot).is_ok() && clipboard::snapshot().is_ok_and(|text| text == text_at_start)
+  }
 }
 
 impl Drop for Restore {
@@ -82,6 +98,9 @@ impl Drop for Restore {
     unsafe {
       let _ = PostMessageW(HWND(self.receiver as *mut c_void), WM_YIELD_FOREGROUND, WPARAM(self.foreground as usize), LPARAM(0));
       let _ = SetCursorPos(self.cursor.0, self.cursor.1);
+    }
+    if let Some(snapshot) = self.clipboard.take() {
+      let _ = clipboard::restore_rich(&snapshot);
     }
     std::thread::sleep(Duration::from_millis(200));
     // The store holds a screenshot of the user's desktop; none of it is evidence.
@@ -271,13 +290,18 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   } else {
     &["--foreground-input"]
   };
+  // The paste steps put the harness's own text on the clipboard. Keep the user's to give back; its
+  // contents are never written down.
+  let clipboard_text_at_start = clipboard::snapshot().map_err(|error| anyhow::anyhow!("read the clipboard: {error}"))?;
+  let clipboard_at_start = clipboard::snapshot_rich().map_err(|error| anyhow::anyhow!("keep the user's clipboard: {error}"))?;
   let mut target = spawn_topmost_receiver(&spec, extra)?;
   let hwnd = target.hwnd();
-  let _restore = Restore {
+  let mut restore = Restore {
     cursor: start.cursor,
     foreground: start.foreground,
     receiver: hwnd,
     store: store.clone(),
+    clipboard: Some(clipboard_at_start),
   };
   let (window, _) = discover_by_hwnd(&driver, hwnd)?;
   let covered = occlusion(&driver, &window);
@@ -593,30 +617,52 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     )?;
   }
 
-  // Paste has no Windows path yet: the commands must refuse and leave the text box alone.
-  if keyboard_ok && scenario.keys_may_go(&mut target).is_ok() {
-    for (command, args) in [
-      ("input.pasteText", vec![arg("ij")]),
+  // Paste: each command must add its text to the box and leave the clipboard as it found it. The
+  // harness puts its own text there first, so what comes back can be compared without reading the
+  // user's clipboard.
+  if keyboard_ok {
+    let sentinel = format!("auv eval clipboard {run}");
+    clipboard::set_text(&sentinel).map_err(|error| anyhow::anyhow!("put the harness's text on the clipboard: {error}"))?;
+    let pastes: [(&str, Vec<String>, &str); 2] = [
+      ("input.pasteText", vec![arg("ij")], "ij"),
       (
         "input.keyboard",
         vec![
           arg("--actions"),
-          arg(r#"[{"kind":"paste_text","text":"ij"}]"#),
+          arg(r#"[{"kind":"paste_text","text":"kl"}]"#),
         ],
+        "kl",
       ),
-    ] {
-      let (refused, facts) = scenario.acting(command, &args)?;
+    ];
+    for (command, args, adds) in pastes {
+      if let Err(error) = scenario.keys_may_go(&mut target) {
+        scenario.tally.expect(false, format!("{command} {args:?} skipped: {error:#}"));
+        scenario.records.write("skipped", json!({"command": command, "args": args, "reason": format!("{error:#}")}))?;
+        break;
+      }
+      let (pasted, facts) = scenario.acting(command, &args)?;
       std::thread::sleep(Duration::from_millis(150));
       let text = target.request(json!({"cmd": "state"}))?["typing"]["text"].as_str().unwrap_or_default().to_string();
-      scenario.tally.expect(refused.exit == Some(1), format!("{command} paste ended {:?} on Windows: {}", refused.exit, refused.failure()));
-      scenario.tally.expect(text == expected, format!("{command} paste changed the text box to {text:?}"));
-      scenario.tally.expect(facts["injected_keys"] == 0, format!("{command} paste injected keys"));
+      let clipboard_restored = clipboard::snapshot().is_ok_and(|text| text == sentinel);
+      expected.push_str(adds);
+      if options.keep_ime {
+        // An IME holding a composition from the key steps may keep Ctrl+V from pasting. That is
+        // recorded; the clipboard must come back either way.
+        expected = text.clone();
+      } else {
+        scenario.tally.expect(pasted.completed(), format!("{command} {args:?} failed: {}", pasted.failure()));
+      }
+      scenario.tally.expect(text == expected, format!("after {command} {args:?} the text box reads {text:?}, not {expected:?}"));
+      scenario.tally.expect(clipboard_restored, format!("{command} did not give the clipboard back"));
       scenario.records.write(
-        "paste.refused",
-        json!({"command": command, "exit": refused.exit, "failure": refused.failure(), "text_after": text, "watch": facts}),
+        command,
+        json!({"args": args, "exit": pasted.exit, "ms": pasted.ms, "text_after": text, "expected": expected,
+          "clipboard_restored": clipboard_restored, "result": pasted.json.as_ref().map(|json| json["result"].clone()),
+          "failure": (!pasted.completed()).then(|| pasted.failure()), "watch": facts}),
       )?;
     }
   }
+  let clipboard_given_back = restore.give_clipboard_back(&clipboard_text_at_start);
 
   // Hand the foreground back and put the pointer where it was, then check both.
   let handed = target.yield_foreground(start.foreground).unwrap_or(false);
@@ -635,13 +681,15 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   } = scenario;
   tally.expect(handed && finish.foreground == start.foreground, "the foreground did not go back to the window that had it");
   tally.expect(finish.cursor == start.cursor, format!("the pointer is at {:?}, not back at {:?}", finish.cursor, start.cursor));
+  tally.expect(clipboard_given_back, "the user's clipboard text is not what it was at the start");
   tally.expect(tally.violated == 0, format!("{} command(s) that should not touch the desktop did", tally.violated));
   let passed = tally.failures.is_empty();
   records.write(
     "summary",
     json!({"passed": passed, "quiet_ops": tally.ops, "held": tally.held, "inconclusive": tally.inconclusive, "violated": tally.violated,
       "failures": tally.failures, "gap_findings": desk.gaps, "foreground_restored": finish.foreground == start.foreground,
-      "pointer_restored": finish.cursor == start.cursor, "injected_mouse_total": finish.injected_mouse,
+      "pointer_restored": finish.cursor == start.cursor, "clipboard_given_back": clipboard_given_back,
+      "injected_mouse_total": finish.injected_mouse,
       "injected_keys_total": finish.injected_keys, "physical_mouse_total": finish.physical_mouse, "physical_keys_total": finish.physical_keys,
       "final_text": final_state["typing"]["text"], "final_clicks": final_state["clicks"]}),
   )?;

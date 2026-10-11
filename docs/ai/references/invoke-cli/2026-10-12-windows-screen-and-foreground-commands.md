@@ -23,7 +23,9 @@ Not in this slice:
 - Code changes to these commands. The runs found no defect in them.
 - `input.pasteText` and the `paste_text` action of `input.keyboard`. On Windows both are refused,
   and the runs record the refusal: exit 1, the text unchanged, no key sent. The driver has no
-  `paste_text` capability (`TODO(windows-paste-batch)`).
+  `paste_text` capability (`TODO(windows-paste-batch)`). Update: the
+  [Windows paste note](../driver/2026-10-12-windows-paste-text.md) adds the capability, and the
+  `foreground` scenario now asserts the paste instead of the refusal.
 - The selected Runner path. No Runner claim is made.
 
 ## How the runs stay on the harness's window
@@ -134,7 +136,8 @@ What the passing runs showed:
   - `input.holdKeys shift e --duration-ms 400`: the text box saw shift held for 402 to 403 ms;
   - `input.keyboard` with a `press f` action and a `type_text "gh"` action.
 - **`input.pasteText ij` and the `paste_text` action of `input.keyboard`** both exited 1. Neither
-  changed the text, and the text box received no key.
+  changed the text, and the text box received no key. (These records predate the paste capability;
+  see the [Windows paste note](../driver/2026-10-12-windows-paste-text.md) for the paste runs.)
 - **The run restored the desktop**: the pointer went back to where it started and the foreground
   went back to the window that had it.
 - Each foreground run injected 29 mouse and 44 key events, all from the commands that act.
@@ -220,8 +223,8 @@ just eval windows foreground --keep-ime --output ... --auv target/debug/auv.exe
 
 ## Candidate next slices
 
-- `input.pasteText` on Windows: a `paste_text` capability in the driver, then the command. The
-  foreground scenario already records the refusal and can assert the paste instead.
+- ~~`input.pasteText` on Windows: a `paste_text` capability in the driver, then the command.~~
+  Done in the [Windows paste note](../driver/2026-10-12-windows-paste-text.md).
 - Report an active input method in the result of a key command, so callers can tell
   "keys delivered" apart from "text typed". This is a typed metadata gap that the IME finding
   exposed.

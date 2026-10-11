@@ -121,6 +121,13 @@ The runs found no defect in the commands. They found two limits:
 
 Candidate slice 3 above is done.
 
+Later the same day candidate slice 2 was done. The Windows driver gained `paste_text`, so
+`input.pasteText` and the `paste_text` action of `input.keyboard` run on Windows, foreground only
+and `partial`, with live receiver evidence:
+[Windows paste text](../driver/2026-10-12-windows-paste-text.md). The Windows counts become 10
+`supported`, 12 `partial` and 16 `unsupported`: 22 of the 38 desktop commands, and 25 of all 42
+IDs. The two tables above are left as they stood on 2026-10-11.
+
 ## Changes made to #211
 
 On 2026-10-11 the issue body was edited to match the table above. The body before the edit is the
