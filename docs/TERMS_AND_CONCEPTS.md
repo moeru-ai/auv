@@ -998,6 +998,24 @@ capability and retain its `InputActionResult`, input policy, attempts, fallback
 reason, and disturbance metadata. The driver capabilities remain distinct;
 the unified operation is a frontend and typed-command contract.
 
+## Command Support
+
+Provisional. Each invoke command declares, for macOS, Linux and Windows, how much of its
+contract the direct local path covers in the current source: `supported`, `partial` (with a
+note naming the limit), `unsupported`, or `not_evidenced` (not audited, so no claim either way). The
+declaration sits beside the command (`support = { ... }` in `invoke_command`), omitting a platform does
+not compile, and CLI help and MCP metadata (`x-auv-commands[].support`) render that same declaration.
+
+It is a statement about source, not behavior. `supported` means a path exists, not that anyone ran it;
+evidence levels stay in the [support matrix](SUPPORT_MATRIX.md). A `--dry-run` that succeeds does
+not make a cell supported, and a selected Runner's support is a separate route that this
+declaration does not cover.
+
+A command also has a role. A desktop command drives the desktop through a platform driver. An alias
+is another name for a canonical command; it shares that command's cells and counts once. A fixture command
+processes data the caller supplies and never touches a desktop. See the
+[command support reference](ai/references/invoke-cli/2026-10-11-invoke-command-support.md).
+
 ## Mouse Movement Request
 
 `MoveMouseRequest` is the caller's movement request: logical mouse identity,

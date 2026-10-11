@@ -19,6 +19,7 @@ pub fn group() -> CommandGroup {
 
 #[invoke_command(
   id = "mediaControl.nowPlaying",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Read structured now-playing media state from the desktop backend.",
   input = NowPlayingArgs,
@@ -47,6 +48,7 @@ struct PlayArgs {}
 
 #[invoke_command(
   id = "mediaControl.play",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Send a generic system media play command and read now-playing state for verification.",
   input = PlayArgs,
@@ -62,6 +64,7 @@ struct PauseArgs {}
 
 #[invoke_command(
   id = "mediaControl.pause",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Send a generic system media pause command and read now-playing state for verification.",
   input = PauseArgs,
@@ -77,6 +80,7 @@ struct TogglePlayPauseArgs {}
 
 #[invoke_command(
   id = "mediaControl.togglePlayPause",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   input = TogglePlayPauseArgs,
@@ -92,6 +96,7 @@ struct NextArgs {}
 
 #[invoke_command(
   id = "mediaControl.next",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Send a generic system media next-track command and compare now-playing identity before and after.",
   input = NextArgs,
@@ -107,6 +112,7 @@ struct PreviousArgs {}
 
 #[invoke_command(
   id = "mediaControl.previous",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
   group = "mediaControl",
   description = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   input = PreviousArgs,

@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde::de::{DeserializeOwned, IntoDeserializer, Visitor, value::MapDeserializer};
 
 use crate::InvokeReport;
+use crate::support::{CommandRole, CommandSupport};
 
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = InvokeExecutionResult> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
@@ -321,6 +322,9 @@ pub struct InvokeCommand {
   pub namespace: InvokeNamespace,
   pub description: &'static str,
   pub target: TargetPolicy,
+  /// Where the direct local path exists, declared by the command and shown by help and MCP metadata.
+  pub support: CommandSupport,
+  pub role: CommandRole,
   typed_command: fn(&'static str, &'static str) -> Command,
   typed_parse: InvokeCommandParser,
   handler: InvokeCommandHandler,
@@ -417,6 +421,11 @@ impl InvokeCommand {
     self
   }
 
+  pub fn with_role(mut self, role: CommandRole) -> Self {
+    self.role = role;
+    self
+  }
+
   pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
     if let Err(error) = input.cancellation.check() {
       return Box::pin(async move { Err(error.to_string().into()) });
@@ -471,7 +480,13 @@ pub enum CommandNode {
 
 /// Build one handler-first invoke command from command-local clap arguments.
 #[doc(hidden)]
-pub fn typed_spec<T>(id: &'static str, namespace: InvokeNamespace, description: &'static str, handler: InvokeCommandHandler) -> InvokeCommand
+pub fn typed_spec<T>(
+  id: &'static str,
+  namespace: InvokeNamespace,
+  description: &'static str,
+  support: CommandSupport,
+  handler: InvokeCommandHandler,
+) -> InvokeCommand
 where
   T: clap::Args + FromArgMatches + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
@@ -480,6 +495,8 @@ where
     namespace,
     description,
     target: TargetPolicy::default(),
+    support,
+    role: CommandRole::Desktop,
     typed_command: typed_command::<T>,
     typed_parse: parse_cli_args::<T>,
     handler,

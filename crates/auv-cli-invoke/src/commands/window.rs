@@ -35,8 +35,9 @@ struct ListWindowsArgs {}
 
 #[invoke_command(
   id = "window.list",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   group = "window",
-  description = "List visible window candidates using the normalized AUV window selector model (macOS, Linux and Windows).",
+  description = "List visible window candidates using the normalized AUV window selector model.",
   input = ListWindowsArgs,
 )]
 async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> InvokeCommandResult {
@@ -88,9 +89,10 @@ struct CaptureWindowArgs {
 
 #[invoke_command(
   id = "window.capture",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   target = OptionalApplication,
   group = "window",
-  description = "Capture one single-display window without activating it and emit a coordinate contract (macOS, Linux and Windows). Linux uses an AT-SPI display crop; Windows uses PrintWindow.",
+  description = "Capture one single-display window without activating it and emit a coordinate contract. Linux uses an AT-SPI display crop; Windows uses PrintWindow.",
   input = CaptureWindowArgs,
 )]
 async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> InvokeCommandResult {
@@ -219,6 +221,7 @@ struct FindWindowTextArgs {
 
 #[invoke_command(
   id = "window.findText",
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window and locate OCR text anchors in logical screen coordinates.",
@@ -259,6 +262,7 @@ struct WaitForWindowTextArgs {
 
 #[invoke_command(
   id = "window.waitForText",
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   target = OptionalApplication,
   group = "window",
   description = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
@@ -339,6 +343,7 @@ impl WindowClickPolicyArg {
 
 #[invoke_command(
   id = "window.clickText",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",

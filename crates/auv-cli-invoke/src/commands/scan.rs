@@ -32,6 +32,8 @@ struct ScanFrameArgs {
 
 #[invoke_command(
   id = "scan.frame",
+  support = { macos: Supported, linux: Supported, windows: Supported },
+  role = Fixture,
   group = "scan",
   description = "Produce a single scan-frame-v0 artifact bundle from a hermetic fixture directory and stage it into the run.",
   input = ScanFrameArgs,
@@ -125,6 +127,8 @@ struct ScanCoverageArgs {
 
 #[invoke_command(
   id = "scan.coverage",
+  support = { macos: Supported, linux: Supported, windows: Supported },
+  role = Fixture,
   group = "scan",
   description = "Evaluate typed scan coverage from a fixture and record it in the active run.",
   input = ScanCoverageArgs,

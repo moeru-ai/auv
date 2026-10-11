@@ -25,6 +25,7 @@ struct CaptureDisplayArgs {}
 
 #[invoke_command(
   id = "display.capture",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   group = "display",
   description = "Capture the primary display with its screenshot-to-logical coordinate contract.",
   input = CaptureDisplayArgs,
@@ -119,6 +120,7 @@ struct ListDisplaysArgs {}
 
 #[invoke_command(
   id = "display.list",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   group = "display",
   description = "List connected displays using the normalized AUV coordinate contract.",
   input = ListDisplaysArgs,

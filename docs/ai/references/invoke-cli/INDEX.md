@@ -2,8 +2,10 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **24**
+Count: **26**
 
+- [`2026-10-11-invoke-command-support.md`](2026-10-11-invoke-command-support.md) — typed per-platform support declared by every invoke command, shown in help and MCP metadata; what the states mean and what the first table found
+- [`2026-10-11-invoke-platform-coverage-audit.md`](2026-10-11-invoke-platform-coverage-audit.md) — dated snapshot of #211 against the source: what landed after the issue, per-platform counts, every Windows gap and what blocks it
 - [`2026-10-11-windows-window-commands.md`](2026-10-11-windows-window-commands.md) — direct Windows `window.list`, `window.capture`, `window.findText` and `window.waitForText`; executable-name target, capture crop and minimized fixes, live evidence
 - [`2026-10-01-linux-observation-invoke-handoff.md`](2026-10-01-linux-observation-invoke-handoff.md) — direct Linux window, region capture, and screen OCR commands; contracts and shared wait policy
 - [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/combination/sequence hierarchy, failure progress, and macOS evidence

@@ -626,6 +626,8 @@ mod frontend {
       "target_policy": command.target,
       "target_help": command.target.help(),
       "target": { "required": command.target.required(), "accepted_types": command.target.accepted_types() },
+      "support": command.support,
+      "role": command.role,
       "arguments": clap_command
         .get_arguments()
         .filter(|argument| argument.get_id() != "help")

@@ -12,6 +12,7 @@ pub fn group() -> CommandGroup {
 
 #[invoke_command(
   id = "app.probePermissions",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has a permission probe that this command does not use") },
   group = "app",
   description = "Probe macOS screen recording, accessibility, and automation permissions.",
   input = ProbePermissionsArgs,
@@ -49,6 +50,7 @@ struct ActivateAppArgs {}
 
 #[invoke_command(
   id = "app.activate",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver can activate a process by name, which this command does not use") },
   target = RequiredApplication,
   group = "app",
   description = "Bring a target macOS app to the foreground before a foreground-dependent step.",

@@ -39,6 +39,7 @@ struct PointerPositionArgs {}
 
 #[invoke_command(
   id = "input.pointerPosition",
+  support = { macos: Supported, linux: Unsupported("the portal cannot report the pointer position"), windows: Supported },
   group = "input",
   description = "Read the OS pointer position in logical screen coordinates without delivering input.",
   input = PointerPositionArgs,
@@ -84,6 +85,7 @@ struct MoveMouseArgs {
 
 #[invoke_command(
   id = "input.moveMouse",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   group = "input",
   description = "Move the pointer to a logical screen coordinate without activating it.",
   input = MoveMouseArgs,
@@ -186,6 +188,7 @@ pub struct ScrollPointResult {
 
 #[invoke_command(
   id = "input.scrollPoint",
+  support = { macos: Unsupported("the driver exposes only window-owned scrolling"), linux: Supported, windows: Supported },
   group = "input",
   description = "Scroll foreground logical pixels at a screen coordinate.",
   input = ScreenScrollArgs,
@@ -249,6 +252,7 @@ struct FocusTextArgs {
 
 #[invoke_command(
   id = "input.focusText",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an accessibility tree and focus_node that this command does not use") },
   target = RequiredApplication,
   group = "input",
   description = "Focus a target macOS text input through AX using its visible text.",
@@ -304,6 +308,8 @@ struct AxFocusTextArgs {
 // Remove the alias only after an owner-approved CLI compatibility boundary.
 #[invoke_command(
   id = "input.axFocusText",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an accessibility tree and focus_node that this command does not use") },
+  role = Alias("input.focusText"),
   target = RequiredApplication,
   group = "input",
   description = "Compatibility alias for input.focusText; focuses a text input through the same macOS AX focus operation.",
@@ -334,6 +340,7 @@ struct TypeTextArgs {
 
 #[invoke_command(
   id = "input.typeText",
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   target = OptionalKeyboard,
   group = "input",
   description = "Type text into the active control through the platform input driver.",
@@ -372,6 +379,7 @@ struct PasteTextArgs {
 
 #[invoke_command(
   id = "input.pasteText",
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Unsupported("the Windows driver has clipboard and paste-key calls but no paste_text capability") },
   target = OptionalKeyboard,
   group = "input",
   description = "Paste text into the active control through the clipboard, then restore the prior clipboard snapshot.",
@@ -440,16 +448,29 @@ struct PressKeysArgs {
   interval_ms: Option<u64>,
 }
 
-#[invoke_command(id = "input.keys", target = OptionalKeyboard, group = "input",
-  description = "Press and release a key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
+#[invoke_command(
+  id = "input.keys",
+  target = OptionalKeyboard,
+  group = "input",
+  description = "Press and release a key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.",
+  input = PressKeysArgs,
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+)]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
   execute_keyboard(&input, vec![args.into()])
 }
 
 // NOTICE: input.keys is the existing complete-press spelling. Keep both
 // commands on the same typed path while callers adopt the explicit verb.
-#[invoke_command(id = "input.pressKeys", target = OptionalKeyboard, group = "input",
-  description = "Press and release a key combination, optionally repeated. Equivalent to input.keys.", input = PressKeysArgs)]
+#[invoke_command(
+  id = "input.pressKeys",
+  target = OptionalKeyboard,
+  group = "input",
+  description = "Press and release a key combination, optionally repeated. Equivalent to input.keys.",
+  input = PressKeysArgs,
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  role = Alias("input.keys"),
+)]
 async fn press_keys_named(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
   press_keys(input, args).await
 }
@@ -491,8 +512,14 @@ impl HoldKeysArgs {
   }
 }
 
-#[invoke_command(id = "input.holdKeys", target = OptionalKeyboard, group = "input",
-  description = "Hold one key combination for a bounded duration, then release it. Delivery does not verify application effects.", input = HoldKeysArgs)]
+#[invoke_command(
+  id = "input.holdKeys",
+  target = OptionalKeyboard,
+  group = "input",
+  description = "Hold one key combination for a bounded duration, then release it. Delivery does not verify application effects.",
+  input = HoldKeysArgs,
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+)]
 async fn hold_keys(input: InvokeCommandInput, args: HoldKeysArgs) -> crate::InvokeExecutionResult {
   let (keys, policy, duration) = args.validated(input.target.is_some())?;
   execute_hold_keys(&input, keys, policy, duration).await
@@ -564,8 +591,14 @@ enum KeyboardActionArg {
   },
 }
 
-#[invoke_command(id = "input.keyboard", target = OptionalKeyboard, group = "input",
-  description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.", input = InputKeyboardArgs)]
+#[invoke_command(
+  id = "input.keyboard",
+  target = OptionalKeyboard,
+  group = "input",
+  description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.",
+  input = InputKeyboardArgs,
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground press and type_text actions only; paste_text and targeted delivery are unsupported") },
+)]
 async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
   execute_keyboard(&input, actions)
@@ -573,6 +606,7 @@ async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> c
 
 #[invoke_command(
   id = "input.key",
+  support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   target = OptionalKeyboard,
   group = "input",
   description = "Press a keyboard key or shortcut through the platform input driver.",
@@ -785,6 +819,7 @@ pub struct ClickPointResult {
 
 #[invoke_command(
   id = "input.clickPoint",
+  support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   target = OptionalPoint,
   group = "input",
   description = "Click a point relative to the screen, a target window, or a target display.",
@@ -1108,6 +1143,7 @@ impl DragResult {
 
 #[invoke_command(
   id = "input.drag",
+  support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   target = OptionalPoint,
   group = "input",
   description = "Press a mouse button, move in a straight line, and release it at the end point.",
@@ -1453,6 +1489,7 @@ pub struct ScrollResult {
 
 #[invoke_command(
   id = "input.scroll",
+  support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   target = RequiredWindow,
   group = "input",
   description = "Scroll at a point in a target window by logical-pixel deltas (positive dy scrolls down).",
@@ -1723,6 +1760,7 @@ pub struct ScrollUntilOutput {
 
 #[invoke_command(
   id = "input.scrollUntil",
+  support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   target = RequiredWindow,
   group = "input",
   description = "Scroll a target window in steps until no visual motion remains, target text appears, or a step budget runs out.",

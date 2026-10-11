@@ -1,6 +1,6 @@
 # Windows window commands through invoke
 
-Status: implemented on a branch, not merged. This is a feature slice of
+Status: implemented and merged in #336. This is a feature slice of
 [#211](https://github.com/moeru-ai/auv/issues/211): the Windows rows of the `window.*` group. The
 slice was named in the session that built it.
 

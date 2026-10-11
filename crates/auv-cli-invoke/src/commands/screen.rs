@@ -36,8 +36,9 @@ struct CaptureRegionArgs {
 
 #[invoke_command(
   id = "screen.captureRegion",
+  support = { macos: Supported, linux: Supported, windows: Supported },
   group = "screen",
-  description = "Capture one display-contained region and emit its coordinate contract (macOS, Linux, and Windows).",
+  description = "Capture one display-contained region and emit its coordinate contract.",
   input = CaptureRegionArgs,
 )]
 async fn capture_region(input: InvokeCommandInput, args: CaptureRegionArgs) -> InvokeCommandResult {
@@ -144,8 +145,9 @@ struct WaitForScreenTextArgs {
 
 #[invoke_command(
   id = "screen.findText",
+  support = { macos: Supported, linux: Supported, windows: Partial("primary display only") },
   group = "screen",
-  description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates (macOS, Linux and Windows). Target activation is not yet available for this command.",
+  description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates. Target activation is not yet available for this command.",
   input = FindScreenTextArgs,
 )]
 async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> InvokeCommandResult {
@@ -168,8 +170,9 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
 
 #[invoke_command(
   id = "screen.waitForText",
+  support = { macos: Supported, linux: Supported, windows: Partial("primary display only") },
   group = "screen",
-  description = "Poll live-desktop OCR until a text anchor appears or the timeout expires (macOS, Linux and Windows). Target activation is not yet available for this command.",
+  description = "Poll live-desktop OCR until a text anchor appears or the timeout expires. Target activation is not yet available for this command.",
   input = WaitForScreenTextArgs,
 )]
 async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> InvokeCommandResult {
@@ -267,6 +270,7 @@ struct ClickScreenTextArgs {
 
 #[invoke_command(
   id = "screen.clickText",
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported },
   group = "screen",
   description = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. Target activation is not yet available for this command.",
   input = ClickScreenTextArgs,

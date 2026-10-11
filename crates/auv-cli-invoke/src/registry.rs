@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{CommandGroup, CommandNode, InvokeCommand, commands};
+use crate::{CommandGroup, CommandNode, CommandRole, InvokeCommand, commands};
 
 pub struct InvokeRegistry {
   groups: Vec<CommandGroup>,
@@ -14,6 +14,7 @@ impl InvokeRegistry {
       flatten_group(group, &mut commands);
     }
     assert_unique_command_ids(&commands);
+    assert_aliases_name_a_canonical_command(&commands);
     Self { groups, commands }
   }
 
@@ -34,6 +35,26 @@ fn assert_unique_command_ids(commands: &[InvokeCommand]) {
   let mut ids = HashSet::new();
   for command in commands {
     assert!(ids.insert(command.id), "duplicate invoke command id registered: {}", command.id);
+  }
+}
+
+/// An alias counts once and shares its canonical command's cells, so it must name a registered
+/// command that is not itself an alias, and declare the same support.
+fn assert_aliases_name_a_canonical_command(commands: &[InvokeCommand]) {
+  for command in commands {
+    let CommandRole::Alias { canonical } = command.role else {
+      continue;
+    };
+    let target = commands
+      .iter()
+      .find(|candidate| candidate.id == canonical)
+      .unwrap_or_else(|| panic!("invoke command {} is an alias of unregistered command {canonical}", command.id));
+    assert!(
+      !matches!(target.role, CommandRole::Alias { .. }),
+      "invoke command {} aliases {canonical}, which is itself an alias",
+      command.id
+    );
+    assert_eq!(command.support, target.support, "invoke alias {} must declare the same support as {canonical}", command.id);
   }
 }
 
@@ -58,3 +79,7 @@ fn flatten_group(group: &CommandGroup, commands: &mut Vec<InvokeCommand>) {
     }
   }
 }
+
+#[cfg(test)]
+#[path = "registry_test.rs"]
+mod tests;

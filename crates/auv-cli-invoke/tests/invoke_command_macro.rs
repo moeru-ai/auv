@@ -1,4 +1,4 @@
-use auv_cli_invoke::{InvokeNamespace, invoke_command};
+use auv_cli_invoke::{CommandRole, InvokeNamespace, Platform, SupportState, invoke_command};
 use clap::Args;
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -13,6 +13,7 @@ struct ExternalArgs {
   group = "fixture",
   description = "External generated test command.",
   input = ExternalArgs,
+  support = { macos: Supported, linux: Partial("a limit the test names"), windows: Unsupported("a reason the test names") },
 )]
 async fn external_generated_command_handler(
   _input: auv_cli_invoke::InvokeCommandInput,
@@ -29,6 +30,10 @@ fn invoke_command_macro_expands_for_downstream_crates() {
   assert_eq!(command.id, "external.generated");
   assert_eq!(command.namespace, InvokeNamespace::Fixture);
   assert_eq!(command.description, "External generated test command.");
+  assert_eq!(command.role, CommandRole::Desktop);
+  assert_eq!(command.support.on(Platform::Macos).state, SupportState::Supported);
+  assert_eq!(command.support.on(Platform::Linux).note, Some("a limit the test names"));
+  assert_eq!(command.support.on(Platform::Windows).state, SupportState::Unsupported);
   assert!(command.clap_command().render_long_help().to_string().contains("<VALUE>"));
   let inputs = match command.parse_cli_args(&["42".to_string()]).expect("typed args should parse") {
     auv_cli_invoke::InvokeCommandCliParse::Invoke { inputs, .. } => inputs,

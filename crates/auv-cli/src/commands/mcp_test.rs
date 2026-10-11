@@ -186,6 +186,29 @@ fn mcp_target_metadata_comes_from_the_executable_definition() {
 }
 
 #[test]
+fn mcp_support_metadata_comes_from_the_executable_definition() {
+  let registry = auv_cli_invoke::default_registry();
+  for command in registry.all() {
+    let metadata = super::invoke_command_metadata(command);
+    assert_eq!(metadata["support"], serde_json::to_value(command.support).unwrap(), "support of {}", command.id);
+    assert_eq!(metadata["role"], serde_json::to_value(command.role).unwrap(), "role of {}", command.id);
+  }
+
+  let click_text = super::invoke_command_metadata(registry.resolve("screen.clickText").unwrap());
+  assert_eq!(click_text["support"]["windows"], serde_json::json!({ "state": "unsupported" }));
+  assert_eq!(click_text["support"]["macos"], serde_json::json!({ "state": "supported" }));
+
+  let type_text = super::invoke_command_metadata(registry.resolve("input.typeText").unwrap());
+  assert_eq!(
+    type_text["support"]["linux"],
+    serde_json::json!({ "state": "partial", "note": "foreground delivery only; targeted delivery is unsupported" })
+  );
+
+  let press_keys = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
+  assert_eq!(press_keys["role"], serde_json::json!({ "kind": "alias", "canonical": "input.keys" }));
+}
+
+#[test]
 fn keyboard_sequence_metadata_exposes_repeat_arguments_and_target_contract() {
   let registry = auv_cli_invoke::default_registry();
   let keys = super::invoke_command_metadata(registry.resolve("input.keys").unwrap());
