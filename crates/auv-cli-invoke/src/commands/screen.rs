@@ -133,7 +133,9 @@ struct FindScreenTextArgs {
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke screen.waitForText \"Ready\"\n\nWindows reads the primary display only. Text on another display is not found.")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke screen.waitForText \"Ready\"\n\nWindows reads the primary display only. Text on another display is not found."
+)]
 struct WaitForScreenTextArgs {
   /// Text to wait for in the captured image.
   #[arg(value_name = "TEXT")]

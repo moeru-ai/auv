@@ -139,7 +139,8 @@ fn screen_text_commands_are_not_gated_out_on_windows() {
 fn screen_click_text_stays_unavailable_on_windows() {
   let input = dry_run_text_input("screen.clickText", None);
 
-  let error = futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no Windows path");
+  let error =
+    futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no Windows path");
 
   assert!(error.message.contains("only available on macOS"), "unexpected message: {}", error.message);
 }
