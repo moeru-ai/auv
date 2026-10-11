@@ -4,6 +4,13 @@ Date: 2026-06-11
 
 Status: v0 design spec, pending review
 
+> Status notice (2026-10-12): this design was not built as written. No `auv-media-windows` crate
+> exists. The SMTC backend lives in `auv-driver-windows::media`, and the `now-playing-v0` contract
+> is shared through `auv-driver-common::media`, which `auv-media-macos` re-exports. That answers
+> open question 1 (share, not duplicate) and open question 3 (keep `source_bundle_id`). See
+> [Windows media control](../driver/2026-10-12-windows-media-control.md). Open question 2, NetEase
+> on Windows, is unchanged.
+
 A new leaf crate `auv-media-windows` reads the Windows system now-playing state
 via the **public** `Windows.Media.Control` WinRT API
 (`GlobalSystemMediaTransportControlsSessionManager`, "GSMTC"), the same data the

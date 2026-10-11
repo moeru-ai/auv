@@ -1,4 +1,4 @@
-use auv_media_macos::output::{MediaControlOutcome, NowPlayingOutput};
+use auv_driver::media::{MediaCommand, MediaControlOutcome, NowPlayingOutput, NowPlayingState, build_now_playing_output};
 
 use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, invoke_command};
 use clap::Args;
@@ -19,27 +19,32 @@ pub fn group() -> CommandGroup {
 
 #[invoke_command(
   id = "mediaControl.nowPlaying",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("no duration, elapsed time or playback rate") },
   group = "mediaControl",
   description = "Read structured now-playing media state from the desktop backend.",
   input = NowPlayingArgs,
 )]
 async fn media_control_now_playing(input: InvokeCommandInput, _args: NowPlayingArgs) -> InvokeCommandResult {
   if input.target.is_some() {
-    return Err("mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide".to_string());
+    return Err("mediaControl.nowPlaying cannot use --target; the now-playing state is system-wide".to_string());
   }
   let result = read_now_playing().await?;
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(now_playing_report(&result)))
 }
 
-pub fn now_playing_state_output(state: &auv_media_macos::NowPlayingState) -> InvokeCommandResult {
-  let result = auv_media_macos::output::build_now_playing_output(state);
+pub fn now_playing_state_output(state: &NowPlayingState) -> InvokeCommandResult {
+  let result = build_now_playing_output(state);
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(now_playing_report(&result)))
 }
 
-pub async fn read_now_playing() -> Result<auv_media_macos::output::NowPlayingOutput, String> {
+/// Reads the system now-playing state from this platform's media provider: MediaRemote on macOS,
+/// the current SMTC session on Windows. Linux has none and reports unsupported.
+pub async fn read_now_playing() -> Result<NowPlayingOutput, String> {
+  #[cfg(target_os = "windows")]
+  let state = auv_driver_windows::media::now_playing().map_err(|error| error.to_string())?;
+  #[cfg(not(target_os = "windows"))]
   let state = auv_media_macos::now_playing().map_err(|error| error.to_string())?;
-  Ok(auv_media_macos::output::build_now_playing_output(&state))
+  Ok(build_now_playing_output(&state))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -48,14 +53,14 @@ struct PlayArgs {}
 
 #[invoke_command(
   id = "mediaControl.play",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   group = "mediaControl",
   description = "Send a generic system media play command and read now-playing state for verification.",
   input = PlayArgs,
 )]
 async fn media_control_play(input: InvokeCommandInput, _args: PlayArgs) -> InvokeCommandResult {
   reject_media_target(&input, "mediaControl.play")?;
-  media_control_output(&control_media(auv_media_macos::MediaCommand::Play).await?)
+  media_control_output(&control_media(MediaCommand::Play).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -64,14 +69,14 @@ struct PauseArgs {}
 
 #[invoke_command(
   id = "mediaControl.pause",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   group = "mediaControl",
   description = "Send a generic system media pause command and read now-playing state for verification.",
   input = PauseArgs,
 )]
 async fn media_control_pause(input: InvokeCommandInput, _args: PauseArgs) -> InvokeCommandResult {
   reject_media_target(&input, "mediaControl.pause")?;
-  media_control_output(&control_media(auv_media_macos::MediaCommand::Pause).await?)
+  media_control_output(&control_media(MediaCommand::Pause).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -80,14 +85,14 @@ struct TogglePlayPauseArgs {}
 
 #[invoke_command(
   id = "mediaControl.togglePlayPause",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   group = "mediaControl",
   description = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   input = TogglePlayPauseArgs,
 )]
 async fn media_control_toggle_play_pause(input: InvokeCommandInput, _args: TogglePlayPauseArgs) -> InvokeCommandResult {
   reject_media_target(&input, "mediaControl.togglePlayPause")?;
-  media_control_output(&control_media(auv_media_macos::MediaCommand::TogglePlayPause).await?)
+  media_control_output(&control_media(MediaCommand::TogglePlayPause).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -96,14 +101,14 @@ struct NextArgs {}
 
 #[invoke_command(
   id = "mediaControl.next",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   group = "mediaControl",
   description = "Send a generic system media next-track command and compare now-playing identity before and after.",
   input = NextArgs,
 )]
 async fn media_control_next(input: InvokeCommandInput, _args: NextArgs) -> InvokeCommandResult {
   reject_media_target(&input, "mediaControl.next")?;
-  media_control_output(&control_media(auv_media_macos::MediaCommand::NextTrack).await?)
+  media_control_output(&control_media(MediaCommand::NextTrack).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -112,18 +117,23 @@ struct PreviousArgs {}
 
 #[invoke_command(
   id = "mediaControl.previous",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an SMTC backend that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Supported },
   group = "mediaControl",
   description = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   input = PreviousArgs,
 )]
 async fn media_control_previous(input: InvokeCommandInput, _args: PreviousArgs) -> InvokeCommandResult {
   reject_media_target(&input, "mediaControl.previous")?;
-  media_control_output(&control_media(auv_media_macos::MediaCommand::PreviousTrack).await?)
+  media_control_output(&control_media(MediaCommand::PreviousTrack).await?)
 }
 
-pub async fn control_media(command: auv_media_macos::MediaCommand) -> Result<auv_media_macos::output::MediaControlOutcome, String> {
-  auv_media_macos::control(command).map_err(|error| error.to_string())
+/// Sends `command` through this platform's media provider and reports the state before and after.
+pub async fn control_media(command: MediaCommand) -> Result<MediaControlOutcome, String> {
+  #[cfg(target_os = "windows")]
+  let outcome = auv_driver_windows::media::control(command);
+  #[cfg(not(target_os = "windows"))]
+  let outcome = auv_media_macos::control(command);
+  outcome.map_err(|error| error.to_string())
 }
 
 pub fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult {
@@ -140,7 +150,7 @@ pub fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult
 
 fn reject_media_target(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
   if input.target.is_some() {
-    return Err(format!("{command_id} cannot use --target; macOS media controls are system-wide"));
+    return Err(format!("{command_id} cannot use --target; media controls are system-wide"));
   }
   Ok(())
 }

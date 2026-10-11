@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **69**
+Count: **70**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -87,6 +87,7 @@ Count: **69**
 - [`2026-10-07-verified-fast-path-spike.md`](2026-10-07-verified-fast-path-spike.md): QQ 音乐 Step 3 验证快慢路径触发条件单变量实测（间隔/生命周期/播放位置/事件时序 4 维度 96 样本实测分布）、交替极限环机理与 NO-GO 裁决依据。
 - [`2026-10-09-pointer-position.md`](2026-10-09-pointer-position.md): Pointer, logical mouse and cursor kept apart; `GetPointerPosition`, `ScrollPoint` (scroll without a target window) and typed `key_down`/`key_up`; deferred logical-mouse reads and `WatchPointer`/`WatchMice` streams; macOS evidence.
 - [`2026-10-12-windows-paste-text.md`](2026-10-12-windows-paste-text.md): Windows `paste_text` for `input.pasteText` and `input.keyboard`: delayed clipboard rendering as the consumption boundary (the text is handed over only when a program asks for it, and the user's clipboard comes back right after the foreground application reads it), exclusion from clipboard history, cloud and monitors, a fail-and-restore result when nothing reads it in 2 s, the VirtualBox shared-clipboard and IME-composition findings, and live receiver evidence.
+- [`2026-10-12-windows-media-control.md`](2026-10-12-windows-media-control.md): `mediaControl.*` on Windows: the platform-neutral now-playing contract (`now-playing-v0`, the command verification rule) moved to `auv-driver-common::media` with `auv-media-macos` re-exporting it, the SMTC current-session mapping onto it, controls that poll the same session until the effect shows or 3 s pass, and live `nowPlaying` evidence against QQ Music.
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 

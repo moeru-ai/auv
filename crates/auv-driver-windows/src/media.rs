@@ -8,7 +8,13 @@
 //! CoreAudio COM interfaces without stealing foreground window focus or injecting
 //! simulated input.
 
+use std::time::{Duration, Instant};
+
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::media::{self as shared, MediaCommand, MediaControlOutcome};
 use serde::{Deserialize, Serialize};
+
+use crate::error::{backend, not_found};
 
 /// Current playback state of an SMTC session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -538,7 +544,7 @@ mod native {
 pub use native::{AudioVolumeController, ProcessAudioVolume, SmtcMediaManager, SmtcSession};
 
 #[cfg(not(target_os = "windows"))]
-use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::error::DriverError;
 
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
@@ -697,6 +703,83 @@ impl AudioVolumeController {
 
   pub fn set_process_mute(_target_pid: u32, _muted: bool) -> DriverResult<()> {
     Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+}
+
+// NOTICE: SMTC reports a command's effect asynchronously. `Try*Async` resolves once the app has
+// accepted the command, and the playback info and media properties follow. QQ Music's track change
+// took about 75 ms on its fast path, 0.8 to 2.8 s on its slow path, and up to 3.2 s for the first
+// skip after a cold start (`docs/ai/references/driver/2026-10-07-verified-fast-path-spike.md`).
+// The wait ends as soon as the effect shows, so the bound only costs time when it never does.
+const CONTROL_VERIFY_TIMEOUT: Duration = Duration::from_secs(3);
+const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Reads the system now-playing state in the shared media contract from the current SMTC session,
+/// the session Windows' own media controls act on. No session is the idle state.
+///
+/// Unlike [`SmtcMediaManager::now_playing`], this does not fall back to another session when
+/// there is no current one: [`control`] acts on the current session, so the read reports that one.
+pub fn now_playing() -> DriverResult<shared::NowPlayingState> {
+  let session = SmtcMediaManager::new()?.current_session()?;
+  let snapshot = session.as_ref().map(SmtcSession::snapshot).transpose()?;
+  Ok(shared_now_playing(snapshot.as_ref()))
+}
+
+/// Sends `command` to the current SMTC session and reports the state before and after it.
+///
+/// The after-state is read from the same session until it shows the command's effect or
+/// [`CONTROL_VERIFY_TIMEOUT`] passes, and `verified` says which. Fails when no session is active
+/// or when the session refuses the command.
+pub fn control(command: MediaCommand) -> DriverResult<MediaControlOutcome> {
+  let session = SmtcMediaManager::new()?.current_session()?.ok_or_else(|| not_found("an active media session"))?;
+  let before = shared_now_playing(Some(&session.snapshot()?));
+  let accepted = match command {
+    MediaCommand::Play => session.play()?,
+    MediaCommand::Pause => session.pause()?,
+    MediaCommand::TogglePlayPause => session.toggle_play_pause()?,
+    MediaCommand::NextTrack => session.skip_next()?,
+    MediaCommand::PreviousTrack => session.skip_previous()?,
+  };
+  if !accepted {
+    return Err(backend(format!("the media session {:?} refused the {} command", session.app_id(), command.label())));
+  }
+
+  let deadline = Instant::now() + CONTROL_VERIFY_TIMEOUT;
+  loop {
+    let after = session
+      .snapshot()
+      .map_err(|error| backend(format!("the {} command was sent, but the state after it could not be read: {error}", command.label())))?;
+    let outcome = MediaControlOutcome::new(command, &before, &shared_now_playing(Some(&after)));
+    if outcome.verified || Instant::now() >= deadline {
+      return Ok(outcome);
+    }
+    std::thread::sleep(CONTROL_POLL_INTERVAL);
+  }
+}
+
+/// Maps one SMTC session reading onto the shared now-playing state. No session, or a closed one,
+/// is the idle state; empty SMTC strings are absent values.
+///
+/// SMTC has no content identifier and no like state, so `content_item_id`, `supports_like` and
+/// `is_liked` stay `None` on Windows.
+// TODO(windows-media-timeline): `duration_seconds`, `elapsed_seconds` and `playback_rate` stay
+// `None`. SMTC has `GetTimelineProperties` and a playback rate, but its position is a snapshot that
+// must be extrapolated from `LastUpdatedTime`, and no app's values were checked. Add them when a
+// caller needs the timeline on Windows.
+fn shared_now_playing(session: Option<&NowPlayingState>) -> shared::NowPlayingState {
+  let Some(session) = session.filter(|session| session.status != MediaPlaybackStatus::Closed) else {
+    return shared::NowPlayingState::default();
+  };
+  let text = |value: &str| Some(value).filter(|text| !text.trim().is_empty()).map(str::to_string);
+  let track = session.track.as_ref();
+  shared::NowPlayingState {
+    present: true,
+    source_bundle_id: text(&session.app_id),
+    title: track.and_then(|track| text(&track.title)),
+    artist: track.and_then(|track| text(&track.artist)),
+    album: track.and_then(|track| text(&track.album_title)),
+    is_playing: session.status == MediaPlaybackStatus::Playing,
+    ..shared::NowPlayingState::default()
   }
 }
 

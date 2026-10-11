@@ -391,6 +391,11 @@ fn application_activation_to_proto(result: auv_driver::ApplicationActivationResu
   }
 }
 
+// TODO(windows-media-runner): this service reads MediaRemote only, so the Runner answers
+// unsupported on Windows although the direct invoke path uses SMTC
+// (`auv_driver_windows::media`). The service is the macOS-namespaced `MediaControlService`;
+// route it to the Windows provider when the Runner route gets its own support cells
+// (`TODO(invoke-support-runner-route)`).
 #[derive(Default)]
 struct LocalMediaControlService;
 

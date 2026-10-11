@@ -8,6 +8,7 @@ pub mod input;
 pub mod input_cancellation;
 pub mod keyboard;
 pub mod keyboard_input;
+pub mod media;
 pub mod mouse;
 pub mod mouse_input;
 pub mod permission;

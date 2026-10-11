@@ -2,6 +2,13 @@
 
 Date: 2026-06-04
 
+> Migration notice (2026-10-12): `NowPlayingState`, `MediaCommand` and the `now-playing-v0`
+> output contract (`NowPlayingOutput`, `MediaControlOutcome`, `build_now_playing_output`) moved to
+> `auv-driver-common::media` so Windows can report the same shape. This crate re-exports them at
+> the paths below, and the wire shape is unchanged. See
+> [Windows media control](2026-10-12-windows-media-control.md). The layout below is the
+> 2026-06-04 design.
+
 Status: v0 design spec, updated to the as-built architecture. A new leaf crate
 `auv-media-macos` reads the macOS system now-playing state via the vendored
 `mediaremote-adapter` (built from source), driven through Apple's

@@ -140,3 +140,70 @@ fn test_audio_lookup_stats_serialization() {
   let deser: AudioLookupStats = serde_json::from_str(&json).expect("Deserialize failed");
   assert_eq!(stats, deser);
 }
+
+fn session(status: MediaPlaybackStatus, track: Option<MediaTrackMetadata>) -> NowPlayingState {
+  NowPlayingState {
+    app_id: "QQMusic.exe".to_string(),
+    status,
+    track,
+  }
+}
+
+fn track(title: &str, artist: &str, album_title: &str) -> MediaTrackMetadata {
+  MediaTrackMetadata {
+    title: title.to_string(),
+    artist: artist.to_string(),
+    album_title: album_title.to_string(),
+    ..MediaTrackMetadata::default()
+  }
+}
+
+#[test]
+fn no_session_or_a_closed_session_is_the_idle_now_playing_state() {
+  assert_eq!(shared_now_playing(None), shared::NowPlayingState::default());
+  let closed = session(MediaPlaybackStatus::Closed, Some(track("a", "b", "c")));
+  assert_eq!(shared_now_playing(Some(&closed)), shared::NowPlayingState::default());
+}
+
+#[test]
+fn a_playing_session_maps_onto_the_shared_now_playing_state() {
+  let state = shared_now_playing(Some(&session(MediaPlaybackStatus::Playing, Some(track("Title", "Artist", "Album")))));
+  assert_eq!(
+    state,
+    shared::NowPlayingState {
+      present: true,
+      is_playing: true,
+      source_bundle_id: Some("QQMusic.exe".to_string()),
+      title: Some("Title".to_string()),
+      artist: Some("Artist".to_string()),
+      album: Some("Album".to_string()),
+      // SMTC has no timeline here, no content identifier and no like state.
+      ..shared::NowPlayingState::default()
+    }
+  );
+}
+
+#[test]
+fn a_session_that_is_not_playing_is_present_and_paused() {
+  for status in [
+    MediaPlaybackStatus::Paused,
+    MediaPlaybackStatus::Stopped,
+    MediaPlaybackStatus::Opened,
+    MediaPlaybackStatus::Changing,
+  ] {
+    let state = shared_now_playing(Some(&session(status, None)));
+    assert!(state.present, "{status:?}");
+    assert!(!state.is_playing, "{status:?}");
+  }
+}
+
+#[test]
+fn empty_smtc_strings_are_absent_values() {
+  let mut blank = session(MediaPlaybackStatus::Playing, Some(track("Title", "", "  ")));
+  blank.app_id.clear();
+  let state = shared_now_playing(Some(&blank));
+  assert_eq!(state.title.as_deref(), Some("Title"));
+  assert_eq!(state.artist, None);
+  assert_eq!(state.album, None);
+  assert_eq!(state.source_bundle_id, None);
+}
