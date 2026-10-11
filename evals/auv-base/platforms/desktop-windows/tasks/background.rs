@@ -351,7 +351,15 @@ pub(super) fn spawn_receiver_with(_output: &std::path::Path, index: usize, sink:
   Receiver::spawn_detached(&receiver_binary()?, &receiver_spec(index, sink)?)
 }
 
-fn receiver_spec(index: usize, sink: bool) -> Result<ReceiverSpec> {
+/// A detached receiver above ordinary windows, so what it draws is on the screen whatever the user
+/// has open. A window that opens without activating goes under the foreground window, which is
+/// often maximized.
+pub(super) fn spawn_topmost_receiver(spec: &ReceiverSpec, extra: &[&str]) -> Result<Receiver> {
+  let arguments: Vec<&str> = ["--topmost"].into_iter().chain(extra.iter().copied()).collect();
+  Receiver::spawn_detached_with(&receiver_binary()?, spec, &arguments)
+}
+
+pub(super) fn receiver_spec(index: usize, sink: bool) -> Result<ReceiverSpec> {
   let (width, height) = (380, 300);
   let (left, top) = placement(index, width, height);
   Ok(ReceiverSpec {

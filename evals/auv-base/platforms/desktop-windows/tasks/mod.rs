@@ -8,6 +8,7 @@
 
 pub mod apps;
 pub mod background;
+pub mod foreground_commands;
 pub mod probe;
 pub mod receiver_process;
 pub mod records;

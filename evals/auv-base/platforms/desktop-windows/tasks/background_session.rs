@@ -113,6 +113,20 @@ fn main() -> std::process::ExitCode {
       #[arg(long, default_value = "target/debug/auv.exe")]
       auv: PathBuf,
     },
+    /// The commands that act on the desktop rather than one window, run as the real `auv` binary
+    /// against a receiver above ordinary windows. Moves the real pointer and sends real keys, to
+    /// the receiver only.
+    Foreground {
+      #[arg(long)]
+      output: PathBuf,
+      /// The `auv` executable to run (build it with `cargo build -p auv-cli`).
+      #[arg(long, default_value = "target/debug/auv.exe")]
+      auv: PathBuf,
+      /// Leave the receiver's text box with the desktop's input method, to see what an active IME
+      /// makes of key presses. The text after each key command is then recorded, not judged.
+      #[arg(long)]
+      keep_ime: bool,
+    },
     /// Phase 1: one background window.
     Single {
       /// Fresh output directory for the JSONL records and receiver logs.
@@ -194,6 +208,17 @@ fn main() -> std::process::ExitCode {
     ),
     Scenario::Screen { output, auv } => auv_base_evals::desktop_windows::screen_commands::screen_commands(
       &auv_base_evals::desktop_windows::screen_commands::ScreenCommandsOptions { output, auv },
+    ),
+    Scenario::Foreground {
+      output,
+      auv,
+      keep_ime,
+    } => auv_base_evals::desktop_windows::foreground_commands::foreground_commands(
+      &auv_base_evals::desktop_windows::foreground_commands::ForegroundCommandsOptions {
+        output,
+        auv,
+        keep_ime,
+      },
     ),
     Scenario::Single {
       output,

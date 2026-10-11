@@ -19,7 +19,9 @@ use auv_driver_common::window::Window;
 use auv_driver_windows::{ClickRequest, WindowsDriver};
 use serde_json::{Value, json};
 
-use super::background::{Desk, Tally, discover_by_hwnd, invariants, occlusion, point_in_window, run_id, spawn_receiver_with, system_facts};
+use super::background::{
+  Desk, Tally, discover_by_hwnd, invariants, occlusion, point_in_window, receiver_spec, run_id, spawn_topmost_receiver, system_facts,
+};
 use super::records::Records;
 use super::watch::DesktopWatch;
 use super::window_commands::{Invocation, Placement, TEXT_SLACK, inside, invoke, near_corner, rect_of};
@@ -133,8 +135,13 @@ pub fn screen_commands(options: &ScreenCommandsOptions) -> Result<bool> {
   let watch = DesktopWatch::start()?;
   let driver = WindowsDriver::new().open_local().map_err(|error| anyhow::anyhow!("open driver session: {error}"))?;
 
-  // Text can only be read off the screen where nothing covers it, so the receiver is not sunk.
-  let mut target = spawn_receiver_with(&options.output, 0, false)?;
+  // Text can only be read off the screen where nothing covers it, so the receiver goes above
+  // ordinary windows: a fresh window that does not activate opens under the user's foreground
+  // window, which is often maximized.
+  let mut target = spawn_topmost_receiver(&receiver_spec(0, false)?, &[])?;
+  // NOTICE: a window that has just been shown fades in. One run read the screen during that and
+  // found none of the label's text (results 2026-10-12, run `j`), so let the animation end first.
+  std::thread::sleep(Duration::from_millis(600));
   let hwnd: isize = target.layout.hwnd.parse().context("receiver window handle")?;
   let (window, _) = discover_by_hwnd(&driver, hwnd)?;
   let covered = occlusion(&driver, &window);

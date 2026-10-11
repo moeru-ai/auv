@@ -102,6 +102,25 @@ Candidates only; none has an owner's approval.
 3. Live evidence for `screen.findText` and `screen.waitForText` on Windows, when a desktop is free.
 4. The Runner route, a second set of cells (`TODO(invoke-support-runner-route)`).
 
+## Follow-up on 2026-10-12
+
+The 13 Windows desktop commands that had a path and no run now have live evidence:
+[screen and foreground commands](2026-10-12-windows-screen-and-foreground-commands.md). They are
+`display.capture`, `display.list`, `screen.captureRegion`, `screen.findText`,
+`screen.waitForText`, `input.moveMouse`, `input.clickPoint`, `input.drag`, `input.typeText`,
+`input.key`, `input.keys`, `input.holdKeys` and `input.keyboard`.
+
+All 21 Windows desktop commands with a path now have a live record. Every one ran against a window
+the harness owns, on one machine at 100% scaling. The Evidence column above is left as it stood
+on 2026-10-11; the support matrix holds the current claim.
+
+The runs found no defect in the commands. They found two limits:
+
+- With an active IME, key presses go into the composition.
+- One OCR pass made right after a window was shown missed its text.
+
+Candidate slice 3 above is done.
+
 ## Changes made to #211
 
 On 2026-10-11 the issue body was edited to match the table above. The body before the edit is the

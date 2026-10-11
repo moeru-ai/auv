@@ -2,8 +2,9 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **26**
+Count: **27**
 
+- [`2026-10-12-windows-screen-and-foreground-commands.md`](2026-10-12-windows-screen-and-foreground-commands.md) — live evidence for the 13 Windows `display.*`, `screen.*` and foreground `input.*` commands that had only a source path; topmost receiver, IME and fade-in findings
 - [`2026-10-11-invoke-command-support.md`](2026-10-11-invoke-command-support.md) — typed per-platform support declared by every invoke command, shown in help and MCP metadata; what the states mean and what the first table found
 - [`2026-10-11-invoke-platform-coverage-audit.md`](2026-10-11-invoke-platform-coverage-audit.md) — dated snapshot of #211 against the source: what landed after the issue, per-platform counts, every Windows gap and what blocks it
 - [`2026-10-11-windows-window-commands.md`](2026-10-11-windows-window-commands.md) — direct Windows `window.list`, `window.capture`, `window.findText` and `window.waitForText`; executable-name target, capture crop and minimized fixes, live evidence

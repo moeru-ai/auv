@@ -302,11 +302,18 @@ impl Receiver {
   /// Starts the receiver with the shell as its parent, as an independently launched application
   /// would run, and connects to it over a loopback socket it dials.
   pub fn spawn_detached(binary: &Path, spec: &ReceiverSpec) -> Result<Self> {
+    Self::spawn_detached_with(binary, spec, &[])
+  }
+
+  /// [`Self::spawn_detached`] with receiver options the spec does not carry, such as `--topmost`
+  /// and `--foreground-input`.
+  pub fn spawn_detached_with(binary: &Path, spec: &ReceiverSpec, extra: &[&str]) -> Result<Self> {
     let listener = TcpListener::bind("127.0.0.1:0").context("listen on loopback")?;
     listener.set_nonblocking(true)?;
     let address = listener.local_addr()?;
     let mut command_line = quote(&binary.display().to_string());
-    for argument in spec.arguments().into_iter().chain(["--connect".into(), address.to_string()]) {
+    let extra = extra.iter().map(|argument| (*argument).to_string());
+    for argument in spec.arguments().into_iter().chain(extra).chain(["--connect".into(), address.to_string()]) {
       command_line.push(' ');
       command_line.push_str(&quote(&argument));
     }

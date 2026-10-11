@@ -36,6 +36,13 @@
 //! Windows' decision, made from how and when the process was started, and was seen both with and
 //! without user input since the start. The hand-back keeps that from leaving the user's desktop
 //! changed, and the counters keep it visible.
+//!
+//! For the evaluations of foreground commands, which act on the screen and not on a window,
+//! `--foreground-input` adds a writable text box that logs the key messages it receives (`typing`), and a pad on the
+//! frame that records where a drag went down and up (`pad`). In that mode, after a `keep_foreground`
+//! request, a window that real input made the foreground window keeps the foreground: the
+//! evaluation hands it back itself when it is done. `--topmost` creates the window above ordinary
+//! windows, so its text can be read off the screen and real input aimed at it lands on it.
 
 #[cfg(not(windows))]
 fn main() {
@@ -62,15 +69,18 @@ mod native {
   };
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
   use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
+  use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
+  use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture};
   use windows::Win32::UI::WindowsAndMessaging::{
-    BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOVSCROLL,
-    ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect, HMENU, HWND_BOTTOM,
-    IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS,
-    WM_SIZE, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-    WS_VSCROLL,
+    BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
+    ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP,
+    WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
   };
   use windows::core::{HSTRING, PCWSTR, w};
 
@@ -82,6 +92,14 @@ mod native {
   const ID_BUTTON: usize = 1001;
   const ID_LABEL: usize = 1002;
   const ID_EDIT: usize = 1003;
+  const ID_TYPING: usize = 1004;
+  const KEY_LOG_LIMIT: usize = 256;
+  /// In foreground-input mode the scrolling edit is this tall, and the pad takes the client area
+  /// from `PAD_TOP` down to just above the strip.
+  const SHORT_EDIT_HEIGHT: i32 = 100;
+  const PAD_TOP: i32 = 206;
+  /// `MK_LBUTTON` in a mouse message's `wparam`: the left button is down.
+  const MK_LBUTTON: usize = 0x0001;
   /// `EM_GETFIRSTVISIBLELINE` lives in the Controls module, which this crate does not enable.
   const EM_GETFIRSTVISIBLELINE: u32 = 0x00CE;
   const LINE_COUNT: usize = 400;
@@ -125,6 +143,22 @@ mod native {
     /// hide an activation a real application would suffer.
     #[arg(long)]
     no_activate_style: bool,
+    /// Create the window topmost, above ordinary windows, so that text drawn on it can be read off
+    /// the screen and real input aimed at it lands on it. It is created so: Windows ignores a later
+    /// `HWND_TOPMOST` for a window whose process holds no foreground right, from this process or
+    /// from the harness (seen on 2026-10-12).
+    #[arg(long)]
+    topmost: bool,
+    /// Foreground-input mode: adds a writable text box that logs the keys it receives and a pad
+    /// that records a drag, and keeps the foreground when real input gives it to the window
+    /// instead of handing it back.
+    #[arg(long)]
+    foreground_input: bool,
+    /// Leave the text box with the thread's input method. By default it has none, so a key press
+    /// reaches it as that key: an IME such as Microsoft Pinyin turns key presses into
+    /// `VK_PROCESSKEY` and composes them, and no character arrives until it commits.
+    #[arg(long)]
+    keep_ime: bool,
   }
 
   struct Counters {
@@ -143,6 +177,8 @@ mod native {
     focus_set: AtomicU64,
     foreground_taken: AtomicU64,
     foreground_yielded: AtomicU64,
+    typing_chars: AtomicU64,
+    typing_down: AtomicU64,
   }
 
   static COUNTERS: Counters = Counters {
@@ -161,6 +197,8 @@ mod native {
     focus_set: AtomicU64::new(0),
     foreground_taken: AtomicU64::new(0),
     foreground_yielded: AtomicU64::new(0),
+    typing_chars: AtomicU64::new(0),
+    typing_down: AtomicU64::new(0),
   };
 
   // The window thread is the only writer of these handles, set during `WM_CREATE`.
@@ -176,6 +214,21 @@ mod native {
   static HOME_FOREGROUND: AtomicIsize = AtomicIsize::new(0);
   /// Started with `--sink`: the window belongs under ordinary windows.
   static SINK: AtomicBool = AtomicBool::new(false);
+  /// Started with `--foreground-input`: the text box and the pad exist.
+  static FOREGROUND_INPUT: AtomicBool = AtomicBool::new(false);
+  /// Set by the `keep_foreground` request in foreground-input mode: the foreground is no longer
+  /// handed back, because the evaluation is about to give it to this window with a real click.
+  static KEEP_FOREGROUND: AtomicBool = AtomicBool::new(false);
+  /// Started with `--keep-ime`: the text box keeps the thread's input method.
+  static KEEP_IME: AtomicBool = AtomicBool::new(false);
+  static TYPING: AtomicIsize = AtomicIsize::new(0);
+  static TYPING_PROC: AtomicIsize = AtomicIsize::new(0);
+  /// Key messages the text box received, oldest first, at most `KEY_LOG_LIMIT`. They can only be
+  /// keys that reached this window, so nothing typed elsewhere on the desktop is kept.
+  static KEY_LOG: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
+  /// What the pad saw of the last drag over it, in screen coordinates.
+  static PAD: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+  static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   /// Where replies go: stdout, or the socket to the parent. Written from the window thread only.
   static OUT: std::sync::Mutex<Option<Box<dyn std::io::Write + Send>>> = std::sync::Mutex::new(None);
@@ -214,6 +267,9 @@ mod native {
     // SAFETY: a read-only query.
     HOME_FOREGROUND.store(unsafe { GetForegroundWindow() }.0 as isize, Relaxed);
     SINK.store(options.sink, Relaxed);
+    FOREGROUND_INPUT.store(options.foreground_input, Relaxed);
+    KEEP_IME.store(options.keep_ime, Relaxed);
+    let _ = STARTED.set(std::time::Instant::now());
     let _ = BASE_TITLE.set(options.title.clone());
     let reader: Box<dyn BufRead + Send> = match &options.connect {
       Some(address) => {
@@ -242,11 +298,14 @@ mod native {
     // SAFETY: static class name and procedure outlive the window.
     assert_ne!(unsafe { RegisterClassExW(&class) }, 0, "register class");
 
-    let extended = if options.no_activate_style {
+    let mut extended = if options.no_activate_style {
       WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
     } else {
       WINDOW_EX_STYLE(0)
     };
+    if options.topmost {
+      extended |= WS_EX_TOPMOST;
+    }
     let title = HSTRING::from(options.title.as_str());
     // SAFETY: valid class and live strings; the window is created on this thread, which
     // then runs its message loop.
@@ -368,6 +427,18 @@ mod native {
     BUTTON.store(button.0 as isize, Relaxed);
     LABEL.store(label.0 as isize, Relaxed);
     EDIT.store(edit.0 as isize, Relaxed);
+    if FOREGROUND_INPUT.load(Relaxed) {
+      let typing = child(w!("EDIT"), w!(""), WS_BORDER | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32), ID_TYPING);
+      // SAFETY: live control; its original procedure is kept for `call_original`. Associating no
+      // input context turns the IME off for this control only.
+      unsafe {
+        TYPING_PROC.store(SetWindowLongPtrW(typing, GWLP_WNDPROC, typing_proc as *const () as usize as isize), Relaxed);
+        if !KEEP_IME.load(Relaxed) {
+          let _ = ImmAssociateContext(typing, HIMC::default());
+        }
+      }
+      TYPING.store(typing.0 as isize, Relaxed);
+    }
   }
 
   fn arrange_children(frame: HWND) {
@@ -378,7 +449,111 @@ mod native {
       let (width, height) = (client.right - client.left, client.bottom - client.top);
       let _ = MoveWindow(handle(&BUTTON), 16, 16, 110, 32, true);
       let _ = MoveWindow(handle(&LABEL), 140, 22, (width - 156).max(40), 24, true);
-      let _ = MoveWindow(handle(&EDIT), 16, 64, (width - 32).max(40), (height - 80 - STRIP_BOTTOM - STRIP_CELL_HEIGHT + 16).max(40), true);
+      if FOREGROUND_INPUT.load(Relaxed) {
+        // Text box, a shorter scrolling edit, then the pad down to the strip.
+        let _ = MoveWindow(handle(&TYPING), 16, 60, (width - 32).max(40), 26, true);
+        let _ = MoveWindow(handle(&EDIT), 16, 96, (width - 32).max(40), SHORT_EDIT_HEIGHT, true);
+      } else {
+        let _ = MoveWindow(handle(&EDIT), 16, 64, (width - 32).max(40), (height - 80 - STRIP_BOTTOM - STRIP_CELL_HEIGHT + 16).max(40), true);
+      }
+    }
+  }
+
+  /// The pad, in client coordinates: where a drag over the frame itself is recorded.
+  fn pad_rect(frame: HWND) -> RECT {
+    let mut client = RECT::default();
+    // SAFETY: live window and writable rectangle.
+    unsafe {
+      let _ = GetClientRect(frame, &mut client);
+    }
+    RECT {
+      left: 16,
+      top: PAD_TOP,
+      right: client.right - 16,
+      bottom: client.bottom - STRIP_BOTTOM - 6,
+    }
+  }
+
+  /// A point from a mouse message's `lparam`, in `window`'s client coordinates, as a screen point.
+  fn screen_point(window: HWND, lparam: LPARAM) -> POINT {
+    let mut point = POINT {
+      x: i32::from(lparam.0 as u16 as i16),
+      y: i32::from((lparam.0 >> 16) as u16 as i16),
+    };
+    // SAFETY: live window and a writable point.
+    unsafe {
+      let _ = ClientToScreen(window, &mut point);
+    }
+    point
+  }
+
+  fn since_start_ms() -> u64 {
+    STARTED.get().map(|started| started.elapsed().as_millis() as u64).unwrap_or(0)
+  }
+
+  fn log_key(vk: usize, up: bool, system: bool) {
+    if let Ok(mut log) = KEY_LOG.lock()
+      && log.len() < KEY_LOG_LIMIT
+    {
+      log.push(json!({"vk": vk, "up": up, "system": system, "ms": since_start_ms()}));
+    }
+  }
+
+  extern "system" fn typing_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match message {
+      WM_KEYDOWN | WM_SYSKEYDOWN => log_key(wparam.0, false, message == WM_SYSKEYDOWN),
+      WM_KEYUP | WM_SYSKEYUP => log_key(wparam.0, true, message == WM_SYSKEYUP),
+      WM_CHAR => count(&COUNTERS.typing_chars),
+      WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => count(&COUNTERS.typing_down),
+      WM_SETFOCUS => {
+        count(&COUNTERS.focus_set);
+        publish_title(unsafe { GetParent(hwnd) }.unwrap_or_default());
+      }
+      _ => {}
+    }
+    call_original(&TYPING_PROC, hwnd, message, wparam, lparam)
+  }
+
+  /// Records a drag over the pad: where the button went down and up on the screen, and how many
+  /// moves arrived with it held. The window captures the mouse while the button is down, so a
+  /// real drag that leaves the pad is still followed.
+  fn pad_message(frame: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) {
+    let point = screen_point(frame, lparam);
+    let client = POINT {
+      x: i32::from(lparam.0 as u16 as i16),
+      y: i32::from((lparam.0 >> 16) as u16 as i16),
+    };
+    let pad = pad_rect(frame);
+    let Ok(mut state) = PAD.lock() else { return };
+    match message {
+      WM_LBUTTONDOWN if client.x >= pad.left && client.x < pad.right && client.y >= pad.top && client.y < pad.bottom => {
+        *state = Some(json!({"down": [point.x, point.y], "down_ms": since_start_ms(), "moves": 0, "up": null, "up_ms": null}));
+        // SAFETY: capturing for this thread's own window while its button is down.
+        unsafe {
+          let _ = SetCapture(frame);
+        }
+      }
+      WM_MOUSEMOVE if wparam.0 & MK_LBUTTON != 0 => {
+        if let Some(drag) = state.as_mut()
+          && drag["up"].is_null()
+        {
+          drag["moves"] = json!(drag["moves"].as_u64().unwrap_or(0) + 1);
+          drag["last"] = json!([point.x, point.y]);
+        }
+      }
+      WM_LBUTTONUP => {
+        if let Some(drag) = state.as_mut()
+          && drag["up"].is_null()
+        {
+          drag["up"] = json!([point.x, point.y]);
+          drag["up_ms"] = json!(since_start_ms());
+          // SAFETY: releasing a capture this thread took.
+          unsafe {
+            let _ = ReleaseCapture();
+          }
+        }
+      }
+      _ => {}
     }
   }
 
@@ -530,7 +705,10 @@ mod native {
           publish_title(hwnd);
           // SAFETY: a read-only query, and a message posted to this thread's own window.
           unsafe {
-            if GetForegroundWindow() == hwnd {
+            if GetForegroundWindow() == hwnd && KEEP_FOREGROUND.load(Relaxed) {
+              // Real input gave it the foreground on purpose; the evaluation hands it back itself.
+              count(&COUNTERS.foreground_taken);
+            } else if GetForegroundWindow() == hwnd {
               count(&COUNTERS.foreground_taken);
               // `lparam` is the window being deactivated, when Windows says.
               let to = if lparam.0 != 0 {
@@ -563,6 +741,13 @@ mod native {
       }
       WM_LBUTTONDOWN => {
         count(&COUNTERS.frame_down);
+        if FOREGROUND_INPUT.load(Relaxed) {
+          pad_message(hwnd, message, wparam, lparam);
+        }
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+      }
+      WM_MOUSEMOVE | WM_LBUTTONUP if FOREGROUND_INPUT.load(Relaxed) => {
+        pad_message(hwnd, message, wparam, lparam);
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
       WM_REQUEST => {
@@ -622,7 +807,7 @@ mod native {
     unsafe {
       let _ = GetWindowRect(hwnd, &mut rect);
     }
-    json!({
+    let mut layout = json!({
       "hwnd": (hwnd.0 as isize).to_string(),
       "pid": std::process::id(),
       "window_rect": [rect.left, rect.top, rect.right, rect.bottom],
@@ -639,7 +824,40 @@ mod native {
       "button_rect": screen_rect(handle(&BUTTON)),
       "label_rect": screen_rect(handle(&LABEL)),
       "edit_rect": screen_rect(handle(&EDIT)),
-    })
+    });
+    if FOREGROUND_INPUT.load(Relaxed) {
+      let pad = pad_rect(hwnd);
+      let mut corners = [
+        POINT {
+          x: pad.left,
+          y: pad.top,
+        },
+        POINT {
+          x: pad.right,
+          y: pad.bottom,
+        },
+      ];
+      // SAFETY: live window and writable points.
+      unsafe {
+        for corner in &mut corners {
+          let _ = ClientToScreen(hwnd, corner);
+        }
+      }
+      layout["typing_rect"] = screen_rect(handle(&TYPING));
+      layout["typing_center"] = center(handle(&TYPING));
+      layout["pad_rect"] = json!([corners[0].x, corners[0].y, corners[1].x, corners[1].y]);
+    }
+    layout
+  }
+
+  fn window_text(window: HWND) -> String {
+    // SAFETY: live window; the buffer is sized from the reported length plus the terminator.
+    unsafe {
+      let length = GetWindowTextLengthW(window).max(0) as usize;
+      let mut buffer = vec![0u16; length + 1];
+      let copied = GetWindowTextW(window, &mut buffer).max(0) as usize;
+      String::from_utf16_lossy(&buffer[..copied])
+    }
   }
 
   /// A control's rectangle on the screen as `[left, top, right, bottom]`: the truth a text
@@ -659,7 +877,7 @@ mod native {
       (SendMessageW(handle(&EDIT), EM_GETFIRSTVISIBLELINE, WPARAM(0), LPARAM(0)).0, IsIconic(hwnd).as_bool(), GetForegroundWindow() == hwnd)
     };
     let c = &COUNTERS;
-    json!({
+    let mut state = json!({
       "clicks": c.clicks.load(Relaxed),
       "first_line": first_line,
       "raw": {
@@ -680,7 +898,20 @@ mod native {
       "foreground_yielded": c.foreground_yielded.load(Relaxed),
       "minimized": minimized,
       "foreground": foreground,
-    })
+    });
+    if FOREGROUND_INPUT.load(Relaxed) {
+      let typing = handle(&TYPING);
+      state["typing"] = json!({
+        "text": window_text(typing),
+        // The request runs on the window's own thread, so this is the control focused in it.
+        "focused": unsafe { GetFocus() } == typing,
+        "chars": c.typing_chars.load(Relaxed),
+        "button_down": c.typing_down.load(Relaxed),
+        "keys": KEY_LOG.lock().map(|log| log.clone()).unwrap_or_default(),
+      });
+      state["pad"] = PAD.lock().ok().and_then(|pad| pad.clone()).unwrap_or(Value::Null);
+    }
+    state
   }
 
   fn handle_request(hwnd: HWND, line: &str) -> Value {
@@ -731,6 +962,20 @@ mod native {
         } else {
           json!({"ok": false, "error": "resize needs width and height"})
         }
+      }
+      Some("keep_foreground") if FOREGROUND_INPUT.load(Relaxed) => {
+        KEEP_FOREGROUND.store(true, Relaxed);
+        json!({})
+      }
+      // Forgets the logged keys and the last drag, so the next step is read on its own.
+      Some("reset_log") => {
+        if let Ok(mut log) = KEY_LOG.lock() {
+          log.clear();
+        }
+        if let Ok(mut pad) = PAD.lock() {
+          *pad = None;
+        }
+        json!({})
       }
       // Hands the foreground back to `to`: harness cleanup after a deliberately diagnosed steal.
       Some("yield_foreground") => {

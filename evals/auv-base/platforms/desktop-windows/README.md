@@ -3,7 +3,8 @@
 Opt-in evaluations of the Windows driver acting on windows the user is not looking at.
 They need an interactive desktop and open small windows of their own; they never take the
 foreground, move the pointer or send input outside the windows they own, and they check that
-independently of what the driver reports.
+independently of what the driver reports. `foreground` is the exception: it runs the commands
+whose job is to move the real pointer and send real keys, and keeps them on its own window (below).
 
 ```text
 test-objects/win32/receiver.rs   A native Win32 window in a process of its own: a push button, a
@@ -30,6 +31,10 @@ tasks/window_commands.rs         `window`: the `window.*` invoke commands, as th
                                  covered receiver and judged against what the receiver knows.
 tasks/screen_commands.rs         `screen`: `screen.findText` and `screen.waitForText`, as the real `auv` binary, against an
                                  uncovered receiver, placed against the controls that draw the text.
+tasks/foreground_commands.rs     `foreground`: `display.*`, `screen.captureRegion`, `input.moveMouse`,
+                                 `input.clickPoint`, `input.drag` and the keyboard commands, as the
+                                 real `auv` binary, judged by the receiver's text box, key log and
+                                 drag pad (`--foreground-input`).
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
                                  background.
 tasks/background_session.rs      The runner binary, `background-session-eval`.
@@ -49,6 +54,7 @@ just eval windows apps     --output evals/auv-base/results/windows-apps
 just eval windows quiet    --output evals/auv-base/results/windows-quiet --minutes 30
 just eval windows window   --output evals/auv-base/results/windows-window --auv target/debug/auv.exe
 just eval windows screen   --output evals/auv-base/results/windows-screen --auv target/debug/auv.exe
+just eval windows foreground --output evals/auv-base/results/windows-foreground --auv target/debug/auv.exe
 ```
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
@@ -59,6 +65,16 @@ invoke store it records into, because `window.list` records every window on the 
 `screen` reads the whole primary display, so each command keeps a screenshot of the desktop as its OCR
 source. The runner removes that store however it ends and never opens it. It stops before running
 any command when another window covers the receiver, because text under a window cannot be read.
+`screen` and `foreground` start their receiver topmost (`--topmost`). A detached receiver holds no
+foreground right, so it opens under the foreground window, and Windows ignores a later
+`HWND_TOPMOST` for it; only `WS_EX_TOPMOST` at creation works.
+`foreground` moves the real pointer and sends real keys, so run it only on a desktop you can leave
+alone for a minute. It checks that every point it aims at belongs to its receiver, waits until the
+mouse and keyboard have been idle for two seconds before each command that acts, sends keys only
+while its own text box has the focus, and puts the pointer and the foreground back at the end. Its
+text box has no input method by default, because an active IME composes key presses instead of
+typing them; `--keep-ime` leaves the desktop's input method on to reproduce that, and records the
+text instead of judging it.
 
 ## How to read a result
 
