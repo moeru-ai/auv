@@ -135,6 +135,15 @@ text of the issue on 2026-10-01.
 - Left the "Support information" section as it was. It describes the typed cells, which this change
   set introduces, and is ticked when that lands.
 
+On 2026-10-12, after #339 landed, the body was cut back to the open gaps. The full per-command tree
+is the table above, and `auv invoke --help` shows the current cells.
+
+- Replaced the command tree with open gaps by platform, each with what blocks it.
+- Ticked five of the six "Support information" items. The selected Runner route stays open
+  (`TODO(invoke-support-runner-route)`).
+- Ticked the `input.pressKeys` duplicate-count item: the registry marks the command as an alias.
+- Left the Windows matrix evidence task open until the live runs land.
+
 ## Limits
 
 - The cells were read from `cfg` gates in the command modules and from the drivers' explicit
