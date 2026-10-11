@@ -154,7 +154,7 @@ impl auv_tracing::EventPayload for InvokeFrontendLifecycle {
   const VERSION: u32 = 1;
 }
 
-fn tracing_run_id(selected: Option<&crate::commands::plugin::ResolvedExecutionContext>) -> Result<auv_tracing::RunId, String> {
+pub(crate) fn tracing_run_id(selected: Option<&crate::commands::plugin::ResolvedExecutionContext>) -> Result<auv_tracing::RunId, String> {
   let Some(control_run_id) = selected.and_then(|selected| selected.context.run_id.as_deref()) else {
     return Ok(auv_tracing::RunId::new());
   };

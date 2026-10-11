@@ -13,9 +13,9 @@ pub enum McpCommand {
   Serve,
 }
 
-pub async fn run(args: McpArgs, project_root: &std::path::Path) -> Result<i32, String> {
+pub async fn run(args: McpArgs, selection: &auv::selection::RootSelection, project_root: &std::path::Path) -> Result<i32, String> {
   match args.command {
-    McpCommand::Serve => frontend::serve_stdio(project_root.to_path_buf()).await?,
+    McpCommand::Serve => frontend::serve_stdio(project_root.to_path_buf(), selection.clone()).await?,
   }
   Ok(0)
 }
@@ -104,11 +104,23 @@ mod frontend {
   #[derive(Clone, Debug)]
   pub struct McpInvokeSuccess {
     result: Value,
+    /// Evidence recorded by the command, presented as references, never pixels.
+    artifacts: Vec<auv_tracing::ArtifactMetadata>,
   }
 
   impl McpInvokeSuccess {
     fn from_value(result: Value) -> Self {
-      Self { result }
+      Self {
+        result,
+        artifacts: Vec::new(),
+      }
+    }
+
+    fn from_output(output: &auv_cli_invoke::InvokeCommandOutput) -> Self {
+      Self {
+        result: output.result().cloned().unwrap_or(Value::Null),
+        artifacts: output.artifacts().to_vec(),
+      }
     }
 
     pub fn empty() -> Self {
@@ -132,6 +144,8 @@ mod frontend {
     invoke_dispatch: InvokeDispatch,
     /// Executor behind the `op_run` tool. The same platform default as `auv op run`.
     op_executor: Arc<dyn OperationExecutor>,
+    /// Root `--device`, `--device-id`, and `--run` for `invoke` calls that select no Device.
+    default_selection: auv::selection::RootSelection,
   }
 
   impl McpServer {
@@ -167,7 +181,24 @@ mod frontend {
         invoke_adapters: Arc::new(invoke_adapters),
         invoke_dispatch,
         op_executor: default_executor(),
+        default_selection: auv::selection::RootSelection::default(),
       })
+    }
+
+    /// Routes `invoke` calls without their own Device fields through `selection`.
+    pub fn with_default_selection(mut self, selection: auv::selection::RootSelection) -> Self {
+      self.default_selection = selection;
+      self
+    }
+
+    /// Per-call Device fields replace the root Device selection; the root Run is kept.
+    fn invoke_selection(&self, device_name: Option<String>, device_id: Option<String>) -> Result<auv::selection::RootSelection, McpError> {
+      if device_name.is_none() && device_id.is_none() {
+        return Ok(self.default_selection.clone());
+      }
+      let mut selection = device_selection(device_name, device_id)?;
+      selection.run_id = self.default_selection.run_id.clone();
+      Ok(selection)
     }
 
     // TODO(mcp-op-executor-injection): executor injection is test-only for now. Windows defaults to the
@@ -190,6 +221,8 @@ mod frontend {
     Completed {
       run_id: auv_tracing::RunId,
       result: Value,
+      #[serde(skip_serializing_if = "Vec::is_empty")]
+      artifacts: Vec<auv_cli_invoke::InvokeArtifactResult>,
       #[serde(skip_serializing_if = "Option::is_none")]
       recording_failure: Option<String>,
     },
@@ -231,16 +264,17 @@ mod frontend {
   #[derive(Clone)]
   struct McpFrontendAuthority {
     dispatch: auv_tracing::Dispatch,
+    store: Arc<auv_tracing::FileTracingStore>,
   }
 
   fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
     let explicit_store_root = store_root.map(PathBuf::from);
     let root = explicit_store_root.unwrap_or_else(|| project_root.join(".auv").join("store"));
     let store = auv_tracing::FileTracingStore::open(&root)
-      .map(|store| Arc::new(store) as Arc<dyn auv_tracing::TracingStore>)
+      .map(Arc::new)
       .map_err(|error| format!("failed to open MCP tracing store {}: {error}", root.display()))?;
-    let dispatch = auv_tracing::configure().tracing_store(store).build().map_err(|error| error.to_string())?;
-    Ok(McpFrontendAuthority { dispatch })
+    let dispatch = auv_tracing::configure().tracing_store(store.clone()).build().map_err(|error| error.to_string())?;
+    Ok(McpFrontendAuthority { dispatch, store })
   }
 
   #[derive(Serialize)]
@@ -280,8 +314,75 @@ mod frontend {
             cancellation: input.cancellation,
           })
           .await?;
-        Ok(McpInvokeSuccess::from_value(output.result().cloned().unwrap_or(Value::Null)))
+        Ok(McpInvokeSuccess::from_output(&output))
       }
+    })
+  }
+
+  /// Runs one core command on a selected Device through the CLI's typed remote adapter.
+  fn remote_invoke(command_id: String, command: Option<InvokeCommand>, input: McpInvokeInput, context: auv::AuvContext) -> McpInvokeFuture {
+    Box::pin(async move {
+      let inputs = match &command {
+        Some(command) => mcp_command_inputs(command.namespace, input.inputs),
+        None => input.inputs,
+      };
+      let output = auv_cli_invoke::runner::invoke(
+        InvokeCommandInput {
+          command_id,
+          target: input.target,
+          inputs,
+          typed_args: None,
+          dry_run: input.dry_run,
+          cancellation: input.cancellation,
+        },
+        context,
+      )
+      .await?;
+      Ok(McpInvokeSuccess::from_output(&output))
+    })
+  }
+
+  /// Presents one invoke outcome; artifacts carry store paths so clients can read evidence themselves.
+  fn invoke_tool_result(
+    run_id: auv_tracing::RunId,
+    command_id: String,
+    direct_result: Result<McpInvokeSuccess, auv_cli_invoke::InvokeFailure>,
+    recording_failure: Option<String>,
+    authority: &McpFrontendAuthority,
+  ) -> Result<CallToolResult, McpError> {
+    let (failed, presentation) = match direct_result {
+      Ok(success) => (
+        false,
+        McpInvokePresentation::Completed {
+          run_id,
+          result: success.result,
+          artifacts: success
+            .artifacts
+            .into_iter()
+            .map(|metadata| {
+              let path = authority.store.artifact_path(&metadata);
+              auv_cli_invoke::InvokeArtifactResult::new(metadata).with_file_path(path)
+            })
+            .collect(),
+          recording_failure,
+        },
+      ),
+      Err(failure) => (
+        true,
+        McpInvokePresentation::Failed {
+          run_id,
+          command_id,
+          failure: failure.to_string(),
+          failure_details: failure,
+          recording_failure,
+        },
+      ),
+    };
+    let value = serde_json::to_value(presentation).map_err(invalid_params)?;
+    Ok(if failed {
+      CallToolResult::structured_error(value)
+    } else {
+      CallToolResult::structured(value)
     })
   }
 
@@ -316,19 +417,39 @@ mod frontend {
         .get(req.command_id.as_str())
         .cloned()
         .ok_or_else(|| invalid_params(format!("unknown invoke command: {}", req.command_id)))?;
+      let selection = self.invoke_selection(req.device_name, req.device_id)?;
       let authority = (self.invoke_dispatch)(req.store_root).map_err(invalid_params)?;
       let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
+      let command = self.invoke_registry.resolve(&req.command_id).cloned();
       let input = McpInvokeInput {
         target: req.target.into_execution_target().map_err(invalid_params)?,
         inputs: req.inputs,
         dry_run: req.dry_run,
         cancellation: cancellation.clone(),
       };
-      let run_id = auv_tracing::RunId::new();
+      // Same selection rule as `auv invoke`: a selected Device always runs the
+      // command remotely; only dry runs that need no Device stay local.
+      let wants_device = !selection.is_empty()
+        && (!input.dry_run
+          || command.as_ref().is_some_and(|command| command.target == auv_cli_invoke::command::TargetPolicy::OptionalKeyboard));
+      let selected = if wants_device {
+        match crate::commands::plugin::resolve_invoke_context(&selection).await {
+          Ok(selected) => Some(selected),
+          Err(error) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(error.into()), None, &authority),
+        }
+      } else {
+        None
+      };
+      let run_id = crate::commands::invoke::tracing_run_id(selected.as_ref()).map_err(invalid_params)?;
+      let remote_context = selected.as_ref().map(|selected| selected.context.clone());
+      let command_id = req.command_id.clone();
       let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
       let command_future = root.in_scope(|| {
         auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-        adapter.invoke(input)
+        match remote_context {
+          Some(context) => remote_invoke(command_id, command, input, context),
+          None => adapter.invoke(input),
+        }
       });
       let cancellable_future = async move {
         tokio::pin!(command_future);
@@ -348,34 +469,15 @@ mod frontend {
           result = &mut command_future => result,
         }
       };
-      let direct_result = root.instrument(cancellable_future).await;
+      let mut direct_result = root.instrument(cancellable_future).await;
+      if let Some(selected) = selected
+        && let Err(error) = selected.finish(direct_result.is_ok()).await
+        && direct_result.is_ok()
+      {
+        direct_result = Err(error.into());
+      }
       let recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-      let (failed, presentation) = match direct_result {
-        Ok(success) => (
-          false,
-          McpInvokePresentation::Completed {
-            run_id,
-            result: success.result,
-            recording_failure,
-          },
-        ),
-        Err(failure) => (
-          true,
-          McpInvokePresentation::Failed {
-            run_id,
-            command_id: req.command_id,
-            failure: failure.to_string(),
-            failure_details: failure,
-            recording_failure,
-          },
-        ),
-      };
-      let value = serde_json::to_value(presentation).map_err(invalid_params)?;
-      Ok(if failed {
-        CallToolResult::structured_error(value)
-      } else {
-        CallToolResult::structured(value)
-      })
+      invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
     }
 
     /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this
@@ -679,6 +781,12 @@ mod frontend {
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]
   struct InvokeToolRequest {
     command_id: String,
+    /// Exact configured Device name; omit to use the server's root selection or run locally.
+    #[serde(default)]
+    device_name: Option<String>,
+    /// Canonical Device ID or unambiguous prefix; omit to use the server's root selection or run locally.
+    #[serde(default)]
+    device_id: Option<String>,
     #[serde(default)]
     target: McpInvokeTarget,
     #[serde(default)]
@@ -789,8 +897,8 @@ mod frontend {
     McpError::invalid_params(message.to_string(), None::<Value>)
   }
 
-  pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
-    serve_stdio_with_registry(project_root, Arc::new(default_registry()), core_invoke_adapters()).await
+  pub async fn serve_stdio(project_root: PathBuf, selection: auv::selection::RootSelection) -> Result<(), String> {
+    serve_server(McpServer::new(project_root)?.with_default_selection(selection)).await
   }
 
   /// Serve MCP stdio with explicit invoke metadata and shared typed commands.
@@ -799,10 +907,14 @@ mod frontend {
     invoke_registry: Arc<InvokeRegistry>,
     invoke_adapters: Vec<McpInvokeAdapter>,
   ) -> Result<(), String> {
-    let service = McpServer::with_registry(project_root, invoke_registry, invoke_adapters)?
-      .serve(stdio())
-      .await
-      .map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;
+    // TODO(mcp-plugin-device-selection): embedders serve without a root
+    // Device selection; per-call `device_id` still routes core commands. Add a
+    // selection parameter when a plugin frontend needs root `--device-id`.
+    serve_server(McpServer::with_registry(project_root, invoke_registry, invoke_adapters)?).await
+  }
+
+  async fn serve_server(server: McpServer) -> Result<(), String> {
+    let service = server.serve(stdio()).await.map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;
     service.waiting().await.map(|_| ()).map_err(|error| format!("mcp stdio server exited with error: {error}"))
   }
 

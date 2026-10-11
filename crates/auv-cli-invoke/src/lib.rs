@@ -27,8 +27,8 @@ pub use command::{
 pub use commands::input::emit_input_action_result;
 pub use help::{render_command_help, render_help_index};
 pub use models::{
-  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
-  InvokeRequest, InvokeResult, InvokeStatus,
+  ExecutionTarget, InvokeArtifactResult, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable,
+  InvokeReportTableRow, InvokeRequest, InvokeResult, InvokeStatus,
 };
 pub(crate) use models::{InvokeReportValue, OptionalReportText};
 pub use registry::{InvokeRegistry, default_registry};

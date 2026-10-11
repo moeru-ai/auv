@@ -179,8 +179,9 @@ impl InvokeResult {
   }
 }
 
+/// One recorded artifact as frontends present it: metadata plus the store file, when file-backed.
 #[derive(Clone, Debug, Serialize)]
-struct InvokeArtifactResult {
+pub struct InvokeArtifactResult {
   #[serde(flatten)]
   metadata: ArtifactMetadata,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,11 +189,16 @@ struct InvokeArtifactResult {
 }
 
 impl InvokeArtifactResult {
-  fn new(metadata: ArtifactMetadata) -> Self {
+  pub fn new(metadata: ArtifactMetadata) -> Self {
     Self {
       metadata,
       file_path: None,
     }
+  }
+
+  pub fn with_file_path(mut self, file_path: PathBuf) -> Self {
+    self.file_path = Some(file_path);
+    self
   }
 }
 

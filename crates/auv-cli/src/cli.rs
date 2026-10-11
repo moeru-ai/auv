@@ -141,7 +141,7 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Devices(args)) => crate::commands::devices::run(args, &selection, &project_root).await,
     Some(RootCommand::Runner(args)) => crate::commands::runner::run(args, &selection).await,
     Some(RootCommand::Run(args)) => crate::commands::run::run(args, &selection).await,
-    Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &project_root).await,
+    Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &selection, &project_root).await,
     Some(RootCommand::Op(args)) => crate::commands::op::run(args).await,
     Some(RootCommand::Plugin(args)) => crate::commands::plugin::run(args).await,
     Some(RootCommand::External(mut arguments)) => {

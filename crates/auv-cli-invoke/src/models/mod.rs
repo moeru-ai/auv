@@ -5,7 +5,7 @@ mod invoke_result;
 
 pub use invoke_report::{InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow};
 pub(crate) use invoke_report::{InvokeReportValue, OptionalReportText};
-pub use invoke_result::{InvokeResult, InvokeStatus};
+pub use invoke_result::{InvokeArtifactResult, InvokeResult, InvokeStatus};
 
 /// Explicit resource selected by the shared invoke frontend.
 #[derive(Clone, Debug, PartialEq, Eq)]

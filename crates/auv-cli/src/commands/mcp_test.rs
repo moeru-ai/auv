@@ -390,3 +390,86 @@ async fn op_run_over_mcp_rejects_a_missing_or_invalid_mode_before_scheduling() {
   client.cancel().await.unwrap();
   server_handle.await.unwrap().unwrap();
 }
+
+/// Core adapters with `display.list` replaced by one that counts local executions.
+fn counting_display_list_server(selection: auv::selection::RootSelection) -> (McpServer, Arc<std::sync::atomic::AtomicUsize>) {
+  let local_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  let counter = Arc::clone(&local_calls);
+  let mut adapters = core_invoke_adapters().into_iter().filter(|adapter| adapter.command_id != "display.list").collect::<Vec<_>>();
+  adapters.push(super::McpInvokeAdapter::new("display.list", move |_input| {
+    let counter = Arc::clone(&counter);
+    async move {
+      counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+      Ok(super::McpInvokeSuccess::empty())
+    }
+  }));
+  let store_root = tempfile::tempdir().unwrap().keep();
+  let server = McpServer::with_registry(store_root, Arc::new(auv_cli_invoke::default_registry()), adapters)
+    .unwrap()
+    .with_default_selection(selection);
+  (server, local_calls)
+}
+
+async fn call_invoke(server: McpServer, arguments: serde_json::Value) -> rmcp::model::CallToolResult {
+  let (server_transport, client_transport) = tokio::io::duplex(65_536);
+  tokio::spawn(async move {
+    let service = server.serve(server_transport).await?;
+    service.waiting().await?;
+    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+  client
+    .call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: arguments.as_object().cloned(),
+    })
+    .await
+    .expect("invoke reports Device failures as tool errors, not protocol errors")
+}
+
+// ROOT CAUSE:
+//
+// If `auv --device-id <guest> mcp serve` received an invoke call, the root
+// selection was never passed to the MCP frontend, so the command ran on the
+// local host instead (an OSWorld eval captured the operator's Mac screen).
+//
+// Before the fix, MCP invoke always executed the local adapter.
+// The fix routes a selected invoke through the same remote context as the CLI.
+#[tokio::test]
+async fn mcp_invoke_with_a_root_device_selection_never_runs_locally() {
+  let selection = auv::selection::RootSelection {
+    device_name: None,
+    device_id: Some("0000000000000000000000000000000000000000000000000000000000000000".into()),
+    run_id: None,
+  };
+  let (server, local_calls) = counting_display_list_server(selection);
+
+  let result = call_invoke(server, serde_json::json!({ "command_id": "display.list" })).await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 0, "a selected Device must not fall back to local execution");
+  assert_eq!(result.is_error, Some(true), "an unreachable selected Device is a tool error: {result:?}");
+}
+
+#[tokio::test]
+async fn mcp_invoke_device_fields_select_a_device_per_call() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+
+  let result = call_invoke(
+    server,
+    serde_json::json!({ "command_id": "display.list", "device_id": "0000000000000000000000000000000000000000000000000000000000000000" }),
+  )
+  .await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+  assert_eq!(result.is_error, Some(true), "{result:?}");
+}
+
+#[tokio::test]
+async fn mcp_invoke_without_a_selection_still_runs_the_local_adapter() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+
+  let result = call_invoke(server, serde_json::json!({ "command_id": "display.list" })).await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+  assert_ne!(result.is_error, Some(true), "{result:?}");
+}
