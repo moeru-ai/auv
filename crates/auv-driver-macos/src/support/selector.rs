@@ -72,6 +72,60 @@ pub fn resolve_app_ref(snapshot: &ObservedWindowSnapshot, selector: &AppSelector
   Err(format!("could not resolve a visible app reference for selector {:?}", selector.raw))
 }
 
+/// Whether the application behind an app selector is running, as observed
+/// separately from the window snapshot.
+///
+/// App resolution reads only the window snapshot, so "the application is not
+/// running" and "the application is running without a visible window" leave it
+/// with exactly the same evidence: nothing to resolve. This carries the
+/// observation that tells them apart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AppLiveness {
+  NotRunning,
+  Running,
+  MultipleInstances,
+  /// No bundle id to probe with, or the probe could not answer.
+  Unknown,
+}
+
+impl AppLiveness {
+  /// Map the `running_application_pid` contract onto a verdict: `0` is not
+  /// running, `-1` is more than one running instance, a positive value is the
+  /// process id. Anything else, including a failed probe, is `Unknown`.
+  pub(crate) fn from_probe(probe: AuvResult<i64>) -> Self {
+    match probe {
+      Ok(0) => Self::NotRunning,
+      Ok(-1) => Self::MultipleInstances,
+      Ok(pid) if pid > 0 => Self::Running,
+      _ => Self::Unknown,
+    }
+  }
+}
+
+/// Say why an application-scoped window target did not resolve.
+///
+/// These are reported through `DriverError::NotFound`, whose `Display` is
+/// `"{target} was not found"`, so the reason has to be a qualifier on a noun
+/// phrase rather than a sentence — phrased as a sentence it renders as
+/// `application "X" is not running was not found`.
+///
+/// `Running` deliberately does not claim the application has no window: a
+/// window whose observed owner bundle id is empty also fails app resolution
+/// while existing. Only the observation the probe actually made is reported,
+/// which is enough for a caller to choose between launching the application
+/// and bringing one of its windows back.
+///
+/// `Unknown` keeps the pre-existing wording, which is all that can be said for
+/// a selector that carries no bundle id.
+pub(crate) fn app_resolution_message(selector_raw: &str, liveness: AppLiveness) -> String {
+  match liveness {
+    AppLiveness::NotRunning => format!("application {selector_raw:?} (not running)"),
+    AppLiveness::Running => format!("application {selector_raw:?} (running, but resolved no visible window)"),
+    AppLiveness::MultipleInstances => format!("application {selector_raw:?} (multiple running instances; select a window)"),
+    AppLiveness::Unknown => format!("visible application {selector_raw:?}"),
+  }
+}
+
 pub fn build_window_candidates(
   snapshot: &ObservedWindowSnapshot,
   resolved_app: &ResolvedAppRef,

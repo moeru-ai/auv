@@ -51,17 +51,11 @@ impl DeviceService for DeviceServiceGrpc {
     request: Request<proto::ListUserSessionsRequest>,
   ) -> Result<Response<proto::ListUserSessionsResponse>, Status> {
     let caller = authentication::device_entry_caller(&request)?;
-    let result = match self.daemon.list_user_sessions(caller) {
-      Ok(sessions) => proto::list_user_sessions_response::Result::List(proto::UserSessionList {
+    let sessions = self.daemon.list_user_sessions(caller).map_err(entry_status)?;
+    Ok(Response::new(proto::ListUserSessionsResponse {
+      list: Some(proto::UserSessionList {
         sessions: sessions.into_iter().map(domain::user_session).collect(),
       }),
-      Err(reason) => proto::list_user_sessions_response::Result::Error(proto::DeviceEntryError {
-        reason: domain::device_entry_error_reason(reason) as i32,
-      }),
-    };
-
-    Ok(Response::new(proto::ListUserSessionsResponse {
-      result: Some(result),
     }))
   }
 
@@ -76,15 +70,9 @@ impl DeviceService for DeviceServiceGrpc {
       return Err(Status::invalid_argument("session_selector is required"));
     }
 
-    let result = match self.daemon.get_user_session(caller, session_selector) {
-      Ok(session) => proto::get_user_session_response::Result::Session(domain::user_session(session)),
-      Err(reason) => proto::get_user_session_response::Result::Error(proto::DeviceEntryError {
-        reason: domain::device_entry_error_reason(reason) as i32,
-      }),
-    };
-
+    let session = self.daemon.get_user_session(caller, session_selector).map_err(entry_status)?;
     Ok(Response::new(proto::GetUserSessionResponse {
-      result: Some(result),
+      session: Some(domain::user_session(session)),
     }))
   }
 
@@ -102,15 +90,9 @@ impl DeviceService for DeviceServiceGrpc {
       }
       _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
     };
-    let result = match self.daemon.ensure_user_session_unlocked(&caller, target).await {
-      Ok(effect) => proto::ensure_user_session_unlocked_response::Result::Effect(domain::ensure_user_session_unlocked_effect(effect)),
-      Err(reason) => proto::ensure_user_session_unlocked_response::Result::Error(proto::DeviceEntryError {
-        reason: domain::device_entry_error_reason(reason) as i32,
-      }),
-    };
-
+    let effect = self.daemon.ensure_user_session_unlocked(&caller, target).await.map_err(entry_status)?;
     Ok(Response::new(proto::EnsureUserSessionUnlockedResponse {
-      result: Some(result),
+      effect: Some(domain::ensure_user_session_unlocked_effect(effect)),
     }))
   }
 
@@ -128,15 +110,15 @@ impl DeviceService for DeviceServiceGrpc {
       }
       _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
     };
-    let result = match self.daemon.ensure_user_session_locked(&caller, target).await {
-      Ok(effect) => proto::ensure_user_session_locked_response::Result::Effect(domain::ensure_user_session_locked_effect(effect)),
-      Err(reason) => proto::ensure_user_session_locked_response::Result::Error(proto::DeviceEntryError {
-        reason: domain::device_entry_error_reason(reason) as i32,
-      }),
-    };
-
+    let effect = self.daemon.ensure_user_session_locked(&caller, target).await.map_err(entry_status)?;
     Ok(Response::new(proto::EnsureUserSessionLockedResponse {
-      result: Some(result),
+      effect: Some(domain::ensure_user_session_locked_effect(effect)),
     }))
   }
+}
+
+/// Session failures leave as a gRPC status that carries the typed reason, so
+/// interceptors, tracing and retry see a failure rather than an OK response.
+fn entry_status(reason: auv::devices::DeviceEntryErrorReason) -> Status {
+  auv_api_proto::device_entry::status(domain::device_entry_error_reason(reason))
 }

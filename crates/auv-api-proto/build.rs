@@ -25,6 +25,8 @@ const SCHEMA_PATHS: &[&str] = &[
   "auv/api/driver/macos/v1/media_control.proto",
   "auv/api/image/v1/image.proto",
   "auv/api/image/v1/region.proto",
+  // Device entry failures carry a typed detail inside `google.rpc.Status`.
+  "vendor/google/rpc/status.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,12 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   // daemon-wide message derive. Remove these per-oneof attributes if prost
   // generates the enums with the required serde derives automatically.
   for oneof in [
-    ".auv.api.daemon.v1.ListUserSessionsResponse.result",
-    ".auv.api.daemon.v1.GetUserSessionResponse.result",
     ".auv.api.daemon.v1.EnsureUserSessionUnlockedRequest.target",
-    ".auv.api.daemon.v1.EnsureUserSessionUnlockedResponse.result",
     ".auv.api.daemon.v1.EnsureUserSessionLockedRequest.target",
-    ".auv.api.daemon.v1.EnsureUserSessionLockedResponse.result",
   ] {
     builder = builder.type_attribute(oneof, "#[derive(serde::Serialize, serde::Deserialize)]");
   }
@@ -184,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   println!("cargo:rerun-if-changed={}", package_proto.join("auv/api").display());
   println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/api").display());
+  println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/rpc").display());
   Ok(())
 }
 

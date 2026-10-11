@@ -375,9 +375,10 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         let matches = recognized.matches;
         let capture = recognized.capture;
         let matched = crate::commands::window::selected_window_text_match(&matches, &query, selected_index)?;
-        let point = matched_window_point(&resolved_window, matched)?;
+        let window_point = matched_window_point(&resolved_window, matched)?;
         let options = selected_click_options(&input)?;
-        let response = resolved.click(point, options.clone()).await.map_err(|status| format!("InputService/ClickPoint failed: {status}"))?;
+        let response =
+          resolved.click(window_point, options.clone()).await.map_err(|status| format!("InputService/ClickPoint failed: {status}"))?;
         let clicked_window = response.window;
         if clicked_window.reference != resolved_window.reference {
           return Err("ClickPoint response changed the resolved WindowRef".to_string());
@@ -386,7 +387,10 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
           window: clicked_window,
           matches,
           selected_index,
-          point: response.point,
+          // The Runner echoes the delivered pair, so report both spaces from
+          // the response rather than re-deriving the screen point locally.
+          point: response.screen_point,
+          window_point: response.point,
           options,
           action: response.action,
         };

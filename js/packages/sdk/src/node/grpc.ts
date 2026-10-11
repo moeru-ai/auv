@@ -122,7 +122,10 @@ function grpcEndpoint(endpoint: string | URL): { credentials: ChannelCredentials
 }
 
 function grpcError(error: ServiceError): AuvRpcError {
-  return new AuvRpcError(error.code, error.details, error)
+  // Typed failure details, such as a Device entry reason, travel in this
+  // binary trailer; keep it so API modules can decode them.
+  const [details] = error.metadata?.get('grpc-status-details-bin') ?? []
+  return new AuvRpcError(error.code, error.details, error, Buffer.isBuffer(details) ? new Uint8Array(details) : undefined)
 }
 
 function grpcTransport(target: string, credentials: ChannelCredentials): Transport {

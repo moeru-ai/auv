@@ -173,6 +173,15 @@ pub mod auv {
   }
 }
 
+/// Standard gRPC error envelope (`grpc-status-details-bin`).
+pub mod google {
+  pub mod rpc {
+    tonic::include_proto!("google.rpc");
+  }
+}
+
+pub mod device_entry;
+
 /// Short compatibility imports used by the existing Rust frontends.
 pub mod v1 {
   pub use crate::auv::api::driver::v1 as driver;

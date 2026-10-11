@@ -160,7 +160,10 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
       ],
     },
     selected_index: 1,
-    point: auv_driver::geometry::WindowPoint::new(75.0, 60.0),
+    // The fixture window sits at screen (10, 20), so the screen point below is
+    // exactly the window point offset by the frame origin.
+    point: auv_driver::geometry::ScreenPoint::new(85.0, 80.0),
+    window_point: auv_driver::geometry::WindowPoint::new(75.0, 60.0),
     options: auv_driver::ClickOptions {
       policy: auv_driver::InputPolicy::ForegroundPreferred,
       click: auv_driver::Click::Repeated {
@@ -186,7 +189,19 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(result["window"]["reference"]["id"], "window_click");
   assert_eq!(result["matches"]["matches"][0]["text"], "Pause");
   assert_eq!(result["selected_index"], 1);
-  assert_eq!(result["point"]["x"], 75.0);
+  // ROOT CAUSE:
+  //
+  // The result exposed a single unlabelled point in window-local space, while
+  // window.findText reports match bounds in screen space and the command's own
+  // overlay draws the match rectangle in screen space. A caller comparing the
+  // returned point against the match it came from was off by the window frame
+  // origin.
+  //
+  // Both spaces are now reported under names that say which is which.
+  assert_eq!(result["point"]["x"], 85.0);
+  assert_eq!(result["point"]["y"], 80.0);
+  assert_eq!(result["window_point"]["x"], 75.0);
+  assert_eq!(result["window_point"]["y"], 60.0);
   assert_eq!(result["options"]["policy"], "foreground_preferred");
   assert_eq!(result["options"]["click"]["repeated"]["count"], 3);
   assert_eq!(result["action"]["selected_path"], "window_targeted_mouse");
@@ -197,6 +212,8 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Input policy"), "foreground_preferred");
   assert_eq!(report_field(report, "Click count"), "3");
   assert_eq!(report_field(report, "Click interval"), "60 ms");
+  assert_eq!(report_field(report, "Screen point"), "85.0,80.0");
+  assert_eq!(report_field(report, "Window point"), "75.0,60.0");
   assert_eq!(report.tables[0].rows[0].cells[0], "");
   assert_eq!(report.tables[0].rows[1].cells[0], "*");
 }

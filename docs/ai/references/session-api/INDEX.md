@@ -18,8 +18,9 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **42**
+Count: **43**
 
+- [`2026-10-11-device-entry-error-status.md`](2026-10-11-device-entry-error-status.md) — `DeviceService` session RPCs fail with a gRPC status (code per reason, `DeviceEntryError` in `google.rpc.Status` details) instead of an OK response with an in-body error; plain success fields with the old `error` field reserved, Rust and JS SDK decoding, and the upgrade-together compatibility rule.
 - [`2026-10-09-sdk-ergonomics-design.md`](2026-10-09-sdk-ergonomics-design.md) — shared ergonomic SDK API in Rust and JS (rectangle builders and `region()` with percentages, `windows.resolve` short form, `pressKeys('cmd+a')`, Rust `WindowClient` keyboard methods), then playground lineage by IDs and the `auv` global becoming the SDK client.
 - [`2026-10-09-method-presentation-and-docs.md`](2026-10-09-method-presentation-and-docs.md) — `presentation` method option (API name, title, plain-text description), per-method Markdown docs with examples served by `MethodDocsService`, SDK `describeMethod().docs()`, and playground hover docs.
 - [`2026-10-08-mock-runner-design.md`](2026-10-08-mock-runner-design.md) — the playground mock desktop is a JS mock Runner: `createMockTransport` (Connect-style typed service registration, reflection included) and `serveMockDaemon` in `@auv-js/sdk`; synthetic benchmark tasks and episode export are the long-term direction, not current work.

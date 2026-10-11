@@ -18,6 +18,7 @@ include = [
   "proto/auv/api/**/docs/*.md",
   "proto/vendor/google/api/annotations.proto",
   "proto/vendor/google/api/http.proto",
+  "proto/vendor/google/rpc/status.proto",
 ]
 
 [dependencies]
