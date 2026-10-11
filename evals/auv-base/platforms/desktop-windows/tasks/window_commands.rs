@@ -48,25 +48,25 @@ pub struct WindowCommandsOptions {
 
 /// What the OCR box of a caption may differ from its control by, in pixels: the caption sits a
 /// few pixels inside the control, and the recognizer's box is not tight.
-const TEXT_SLACK: f64 = 4.0;
+pub(super) const TEXT_SLACK: f64 = 4.0;
 
-struct Invocation {
-  exit: Option<i32>,
-  ms: f64,
-  json: Option<Value>,
+pub(super) struct Invocation {
+  pub(super) exit: Option<i32>,
+  pub(super) ms: f64,
+  pub(super) json: Option<Value>,
 }
 
 impl Invocation {
-  fn completed(&self) -> bool {
+  pub(super) fn completed(&self) -> bool {
     self.exit == Some(0) && self.json.as_ref().is_some_and(|json| json["status"] == "completed")
   }
 
-  fn failure(&self) -> String {
+  pub(super) fn failure(&self) -> String {
     self.json.as_ref().and_then(|json| json["failure"].as_str()).unwrap_or("").to_string()
   }
 }
 
-fn invoke(auv: &Path, store: &Path, command: &str, args: &[&str]) -> Result<Invocation> {
+pub(super) fn invoke(auv: &Path, store: &Path, command: &str, args: &[&str]) -> Result<Invocation> {
   let started = Instant::now();
   let output = Command::new(auv)
     .arg("invoke")
@@ -86,7 +86,7 @@ fn invoke(auv: &Path, store: &Path, command: &str, args: &[&str]) -> Result<Invo
 }
 
 /// `[x, y, width, height]` of a serialized `Rect`.
-fn rect_of(value: &Value) -> Option<[f64; 4]> {
+pub(super) fn rect_of(value: &Value) -> Option<[f64; 4]> {
   Some([
     value["origin"]["x"].as_f64()?,
     value["origin"]["y"].as_f64()?,
@@ -123,16 +123,22 @@ fn same_rect(left: [f64; 4], right: [f64; 4], tolerance: f64) -> bool {
 
 /// Whether `inner` (`[x, y, w, h]`) lies inside `outer` (`[left, top, right, bottom]`) grown by
 /// `slack` on every side.
-fn inside(inner: [f64; 4], outer: [i32; 4], slack: f64) -> bool {
+pub(super) fn inside(inner: [f64; 4], outer: [i32; 4], slack: f64) -> bool {
   inner[0] >= f64::from(outer[0]) - slack
     && inner[1] >= f64::from(outer[1]) - slack
     && inner[0] + inner[2] <= f64::from(outer[2]) + slack
     && inner[1] + inner[3] <= f64::from(outer[3]) + slack
 }
 
+/// Whether left-aligned text sits where a caption does inside its control: a few pixels from the
+/// top-left corner. `offset` is the text box's origin minus the control's.
+pub(super) fn near_corner([x, y]: [f64; 2]) -> bool {
+  (-2.0..=5.0).contains(&x) && (-1.0..=7.0).contains(&y)
+}
+
 /// How recognized text is judged against the control that draws it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Placement {
+pub(super) enum Placement {
   /// Near the control's top-left corner, as left-aligned text is.
   Corner,
   /// Anywhere inside the control.
@@ -331,7 +337,7 @@ pub fn window_commands(options: &WindowCommandsOptions) -> Result<bool> {
     }
     match placement {
       Placement::Corner => tally.expect(
-        from_corner.is_some_and(|[x, y]| (-2.0..=5.0).contains(&x) && (-1.0..=7.0).contains(&y)),
+        from_corner.is_some_and(near_corner),
         format!("the {name} text {query:?} is {from_corner:?} px from its control's corner, not within the few pixels its caption sits"),
       ),
       Placement::Inside => tally.expect(

@@ -109,6 +109,53 @@ fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Path"), "foreground_system_events");
 }
 
+// ROOT CAUSE:
+//
+// If `screen.findText` or `screen.waitForText` ran on Windows, each answered "only available on
+// macOS and Linux" before reaching the driver, although the Windows driver already captures the
+// primary display and reads its text with the system OCR.
+//
+// Before the fix, both handlers were compiled out on Windows. The fix keeps them compiled in, so a
+// dry run reaches the same validation every other platform reaches. A dry run proves the gate
+// only; what the commands do on a desktop is recorded in the Windows window commands reference.
+#[cfg(target_os = "windows")]
+#[test]
+fn screen_text_commands_are_not_gated_out_on_windows() {
+  let commands = [
+    (find_screen_text_invoke_command(), dry_run_text_input("screen.findText", None)),
+    (wait_for_screen_text_invoke_command(), dry_run_text_input("screen.waitForText", None)),
+  ];
+
+  for (command, input) in commands {
+    let id = input.command_id.clone();
+    futures_executor::block_on(command.invoke(input)).unwrap_or_else(|error| panic!("{id} was refused on Windows: {}", error.message));
+  }
+}
+
+// `screen.clickText` stays macOS-only (`TODO(invoke-screen-click-text-windows)`): it would move the
+// real cursor. It must say so, not click.
+#[cfg(target_os = "windows")]
+#[test]
+fn screen_click_text_stays_unavailable_on_windows() {
+  let input = dry_run_text_input("screen.clickText", None);
+
+  let error = futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no Windows path");
+
+  assert!(error.message.contains("only available on macOS"), "unexpected message: {}", error.message);
+}
+
+#[cfg(target_os = "windows")]
+fn dry_run_text_input(command_id: &str, target: Option<&str>) -> InvokeCommandInput {
+  InvokeCommandInput {
+    command_id: command_id.to_string(),
+    target: target.map(|id| crate::ExecutionTarget::Application { id: id.to_string() }),
+    inputs: [("query".to_string(), "Settings".to_string())].into_iter().collect(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: InvokeCancellation::new(),
+  }
+}
+
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

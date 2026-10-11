@@ -105,6 +105,14 @@ fn main() -> std::process::ExitCode {
       #[arg(long, default_value = "target/debug/auv.exe")]
       auv: PathBuf,
     },
+    /// `screen.findText` and `screen.waitForText`, run as the real `auv` binary against an uncovered receiver.
+    Screen {
+      #[arg(long)]
+      output: PathBuf,
+      /// The `auv` executable to run (build it with `cargo build -p auv-cli`).
+      #[arg(long, default_value = "target/debug/auv.exe")]
+      auv: PathBuf,
+    },
     /// Phase 1: one background window.
     Single {
       /// Fresh output directory for the JSONL records and receiver logs.
@@ -183,6 +191,9 @@ fn main() -> std::process::ExitCode {
     }),
     Scenario::Window { output, auv } => auv_base_evals::desktop_windows::window_commands::window_commands(
       &auv_base_evals::desktop_windows::window_commands::WindowCommandsOptions { output, auv },
+    ),
+    Scenario::Screen { output, auv } => auv_base_evals::desktop_windows::screen_commands::screen_commands(
+      &auv_base_evals::desktop_windows::screen_commands::ScreenCommandsOptions { output, auv },
     ),
     Scenario::Single {
       output,

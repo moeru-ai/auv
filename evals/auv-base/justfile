@@ -46,6 +46,6 @@ windows-build:
     cargo build --release -p auv-base-evals --bin win32-receiver --bin background-session-eval
 
 # Run a Windows background-session scenario: single, five, bench, faults, probe, freshness, geometry,
-# apps, quiet or window (`window` needs `cargo build -p auv-cli` first).
+# apps, quiet, window or screen (`window` and `screen` need `cargo build -p auv-cli` first).
 windows *args: windows-build
     target/release/background-session-eval "$@"

@@ -124,7 +124,7 @@ pub async fn recorded_region_capture_output(
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  # Find text on the current screen\n  auv invoke screen.findText \"Settings\"\n\n  # Emit OCR matches as JSON\n  auv invoke screen.findText \"Settings\" --json"
+  after_long_help = "Examples:\n  # Find text on the current screen\n  auv invoke screen.findText \"Settings\"\n\n  # Emit OCR matches as JSON\n  auv invoke screen.findText \"Settings\" --json\n\nWindows reads the primary display only. Text on another display is not found."
 )]
 struct FindScreenTextArgs {
   /// Text to locate in the captured image.
@@ -133,7 +133,7 @@ struct FindScreenTextArgs {
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke screen.waitForText \"Ready\"")]
+#[command(after_long_help = "Examples:\n  auv invoke screen.waitForText \"Ready\"\n\nWindows reads the primary display only. Text on another display is not found.")]
 struct WaitForScreenTextArgs {
   /// Text to wait for in the captured image.
   #[arg(value_name = "TEXT")]
@@ -143,11 +143,11 @@ struct WaitForScreenTextArgs {
 #[invoke_command(
   id = "screen.findText",
   group = "screen",
-  description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates (macOS and Linux). Target activation is not yet available for this command.",
+  description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates (macOS, Linux and Windows). Target activation is not yet available for this command.",
   input = FindScreenTextArgs,
 )]
 async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.findText")?;
     if input.dry_run {
@@ -157,23 +157,21 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
     let matches = recognize_screen_text_with_cancellation(args.query, false, &input.cancellation).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    // TODO(invoke-screen-windows-ocr): Windows OCR wiring requires its own
-    // owner-approved native-host slice; this change validates Linux only.
-    Err("screen text OCR is only available on macOS and Linux".to_string())
+    Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
   }
 }
 
 #[invoke_command(
   id = "screen.waitForText",
   group = "screen",
-  description = "Poll live-desktop OCR until a text anchor appears or the timeout expires (macOS and Linux). Target activation is not yet available for this command.",
+  description = "Poll live-desktop OCR until a text anchor appears or the timeout expires (macOS, Linux and Windows). Target activation is not yet available for this command.",
   input = WaitForScreenTextArgs,
 )]
 async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.waitForText")?;
     if input.dry_run {
@@ -183,19 +181,19 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
     let matches = recognize_screen_text_with_cancellation(args.query, true, &input.cancellation).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS and Linux".to_string())
+    Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
   }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
   recognize_screen_text_with_cancellation(query, wait, &Default::default()).await
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 async fn recognize_screen_text_with_cancellation(
   query: String,
   wait: bool,
@@ -234,9 +232,9 @@ async fn recognize_screen_text_with_cancellation(
   Ok(matches)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  Err("screen text OCR is only available on macOS and Linux".to_string())
+  Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
 }
 
 fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommandResult {
@@ -286,6 +284,9 @@ async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs)
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
+    // TODO(invoke-screen-click-text-windows): the Windows driver can click a screen point in the
+    // foreground, but this command would move the real cursor, and no check of that has run on a
+    // desktop nobody is using. Re-open it when that evidence can be taken without disturbing one.
     Err("screen.clickText is only available on macOS".to_string())
   }
 }

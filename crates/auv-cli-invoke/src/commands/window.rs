@@ -325,6 +325,8 @@ enum WindowClickPolicyArg {
   ForegroundPreferred,
 }
 
+// Only `window.clickText` reads it, and that command is macOS-only.
+#[cfg(target_os = "macos")]
 impl WindowClickPolicyArg {
   fn driver_policy(self) -> auv_driver::InputPolicy {
     match self {

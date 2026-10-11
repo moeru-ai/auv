@@ -28,6 +28,8 @@ tasks/probe.rs                   `probe`, `freshness` and `geometry`: diagnostic
                                  other programs.
 tasks/window_commands.rs         `window`: the `window.*` invoke commands, as the real `auv` binary, against a
                                  covered receiver and judged against what the receiver knows.
+tasks/screen_commands.rs         `screen`: `screen.findText` and `screen.waitForText`, as the real `auv` binary, against an
+                                 uncovered receiver, placed against the controls that draw the text.
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
                                  background.
 tasks/background_session.rs      The runner binary, `background-session-eval`.
@@ -46,6 +48,7 @@ just eval windows geometry --output evals/auv-base/results/windows-geometry
 just eval windows apps     --output evals/auv-base/results/windows-apps
 just eval windows quiet    --output evals/auv-base/results/windows-quiet --minutes 30
 just eval windows window   --output evals/auv-base/results/windows-window --auv target/debug/auv.exe
+just eval windows screen   --output evals/auv-base/results/windows-screen --auv target/debug/auv.exe
 ```
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
@@ -53,6 +56,9 @@ output directory every time. Records stay in the ignored `results/`. `bench --op
 `--ops scroll` sends only one of the two operations per window.
 `window` runs a built `auv` (`cargo build -p auv-cli`; a debug build is enough) and removes the
 invoke store it records into, because `window.list` records every window on the desktop.
+`screen` reads the whole primary display, so each command keeps a screenshot of the desktop as its OCR
+source. The runner removes that store however it ends and never opens it. It stops before running
+any command when another window covers the receiver, because text under a window cannot be read.
 
 ## How to read a result
 
