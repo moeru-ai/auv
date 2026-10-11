@@ -965,6 +965,11 @@ targets instead of carrying an untyped string. The CLI spells these as
 `app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
 `--target` value retains its historical meaning as an application id.
 
+What an application id names depends on the platform. The `window.*` commands match a bundle id
+on macOS, the AT-SPI `AccessibleId` on Linux, and the executable file name on Windows (for
+example `notepad.exe`, matched ignoring ASCII case), each as `window.list` shows it. See the
+[Windows window commands reference](ai/references/invoke-cli/2026-10-11-windows-window-commands.md).
+
 Each command definition declares whether a target is forbidden, optional, or
 required and which resource types it accepts. CLI help and MCP metadata derive
 from that same declaration. `input.key`, `input.keys`, `input.keyboard`,

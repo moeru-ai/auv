@@ -78,7 +78,7 @@ fn window_list_report_preserves_full_cell_values_for_human_rendering() {
   assert_eq!(report.wide_tables[0].rows[0].cells[4], long_bundle_id);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[test]
 fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
   let recognition = WindowTextRecognition {
@@ -235,4 +235,70 @@ fn window_text_click_selects_the_requested_candidate_and_rejects_out_of_range_in
 
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
+}
+
+#[cfg(target_os = "windows")]
+fn dry_run_input(command_id: &str, target: Option<&str>, query: Option<&str>) -> crate::InvokeCommandInput {
+  crate::InvokeCommandInput {
+    command_id: command_id.to_string(),
+    target: target.map(|id| crate::ExecutionTarget::Application { id: id.to_string() }),
+    inputs: query.map(|query| ("query".to_string(), query.to_string())).into_iter().collect(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: crate::InvokeCancellation::new(),
+  }
+}
+
+// ROOT CAUSE:
+//
+// If `window.list`, `window.capture`, `window.findText` or `window.waitForText` ran on Windows,
+// each answered "only available on macOS and Linux" before reaching the driver, although the
+// Windows driver already lists windows, captures them with PrintWindow and reads their text with
+// the system OCR.
+//
+// Before the fix, the handlers were compiled out on Windows. The fix keeps them compiled in, so a
+// dry run reaches the same validation that every other platform reaches. A dry run proves the
+// gate only; what the commands do on a desktop is recorded in the Windows window commands
+// reference.
+#[cfg(target_os = "windows")]
+#[test]
+fn window_observation_commands_are_not_gated_out_on_windows() {
+  let commands = [
+    (list_windows_invoke_command(), dry_run_input("window.list", None, None)),
+    (capture_window_invoke_command(), dry_run_input("window.capture", Some("notepad.exe"), None)),
+    (find_window_text_invoke_command(), dry_run_input("window.findText", Some("notepad.exe"), Some("Save"))),
+    (wait_for_window_text_invoke_command(), dry_run_input("window.waitForText", Some("notepad.exe"), Some("Saved"))),
+  ];
+
+  for (command, input) in commands {
+    let id = input.command_id.clone();
+    futures_executor::block_on(command.invoke(input)).unwrap_or_else(|error| panic!("{id} was refused on Windows: {}", error.message));
+  }
+}
+
+// `window.clickText` stays macOS-only: the Windows driver has no window-targeted click that an
+// invoke command reaches (`TODO(invoke-window-click-text-windows)`). It must say so, not click
+// through foreground input.
+#[cfg(target_os = "windows")]
+#[test]
+fn window_click_text_stays_unavailable_on_windows() {
+  let input = dry_run_input("window.clickText", Some("notepad.exe"), Some("Save"));
+
+  let outcome = futures_executor::block_on(click_window_text_invoke_command().invoke(input));
+
+  // A dry run returns before platform access on macOS; on Windows the handler is not compiled in.
+  let error = outcome.expect_err("window.clickText has no Windows path");
+  assert!(error.message.contains("only available on macOS"), "unexpected message: {}", error.message);
+}
+
+// On Windows an application is its executable file name: `app_bundle_id` is always `None`, so a
+// bundle selector could never match.
+#[cfg(target_os = "windows")]
+#[test]
+fn window_selector_names_the_executable_on_windows() {
+  let selector = window_selector(&dry_run_input("window.capture", Some("Notepad.exe"), None), Some("Untitled")).expect("selector");
+
+  assert_eq!(selector.app, Some(auv_driver::App::name("Notepad.exe")));
+  assert_eq!(selector.title, Some(auv_driver::TextMatcher::Contains("Untitled".to_string())));
+  assert!(selector.main_visible);
 }

@@ -194,7 +194,7 @@ fn warm_up(fleet: &mut Fleet, watch: &DesktopWatch, launched: &Snapshot) -> Resu
 }
 
 /// The receiver's click count and scroll line (low eight bits each), read back from a capture of it.
-fn decode_strip(capture: &Capture, strip: &Strip) -> (u8, u8) {
+pub(super) fn decode_strip(capture: &Capture, strip: &Strip) -> (u8, u8) {
   let scale = capture.scale_factor;
   let mut value = 0u16;
   for cell in 0..strip.cells {

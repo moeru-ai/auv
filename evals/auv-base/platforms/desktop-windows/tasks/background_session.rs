@@ -97,6 +97,14 @@ fn main() -> std::process::ExitCode {
       #[arg(long, default_value_t = 4)]
       trials: u32,
     },
+    /// The `window.*` invoke commands, run as the real `auv` binary against a covered receiver.
+    Window {
+      #[arg(long)]
+      output: PathBuf,
+      /// The `auv` executable to run (build it with `cargo build -p auv-cli`).
+      #[arg(long, default_value = "target/debug/auv.exe")]
+      auv: PathBuf,
+    },
     /// Phase 1: one background window.
     Single {
       /// Fresh output directory for the JSONL records and receiver logs.
@@ -173,6 +181,9 @@ fn main() -> std::process::ExitCode {
       only,
       trials,
     }),
+    Scenario::Window { output, auv } => auv_base_evals::desktop_windows::window_commands::window_commands(
+      &auv_base_evals::desktop_windows::window_commands::WindowCommandsOptions { output, auv },
+    ),
     Scenario::Single {
       output,
       repetitions,

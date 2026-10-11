@@ -140,33 +140,91 @@ fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect) -> f64 {
   f64::from(image.width()) / bounds.size.width
 }
 
+/// Pixels of a window bitmap that belong to the window's visible frame.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PixelCrop {
+  x: u32,
+  y: u32,
+  width: u32,
+  height: u32,
+}
+
+/// The part of a `PrintWindow` bitmap that lies inside `frame`, clipped to the bitmap.
+///
+/// `PrintWindow` renders the whole `GetWindowRect` rectangle. On Windows 10 and 11 that includes
+/// an invisible resize border which the DWM extended frame, and so `Window.frame`, leaves out.
+/// Keeping the whole bitmap under the frame's bounds would shift every pixel by the border and
+/// stretch the scale; cropping makes the image and the bounds the same rectangle. `None` when the
+/// frame has no area inside the bitmap.
+#[cfg(any(target_os = "windows", test))]
+fn visible_crop(window_rect: Rect, bitmap: (u32, u32), frame: Rect) -> Option<PixelCrop> {
+  let left = (frame.origin.x - window_rect.origin.x).round().max(0.0);
+  let top = (frame.origin.y - window_rect.origin.y).round().max(0.0);
+  let right = (frame.origin.x + frame.size.width - window_rect.origin.x).round().min(f64::from(bitmap.0));
+  let bottom = (frame.origin.y + frame.size.height - window_rect.origin.y).round().min(f64::from(bitmap.1));
+  if right <= left || bottom <= top {
+    return None;
+  }
+  Some(PixelCrop {
+    x: left as u32,
+    y: top as u32,
+    width: (right - left) as u32,
+    height: (bottom - top) as u32,
+  })
+}
+
 #[cfg(target_os = "windows")]
 pub fn capture_window(window: &Window) -> DriverResult<Capture> {
   let start_time = std::time::Instant::now();
+  // A minimized window has no surface to render: `PrintWindow` answers with its 146x28 title-bar
+  // stub at (-32000, -32000), which is not a picture of the window. It is reported, never
+  // restored to be read.
+  let probe = crate::window::probe_window(crate::window::window_handle(window)?.0 as isize);
+  if !probe.exists {
+    return Err(not_found(format!("window:{}", window.reference.id)));
+  }
+  if probe.minimized {
+    return Err(invalid_input("window is minimized and cannot be captured; AUV does not restore windows"));
+  }
   let pixels = window_native::capture_window_rgba(window)?;
-  let (width, height) = (pixels.width, pixels.height);
-  // NOTICE: scale_factor is derived against the DWM frame width like the macOS
-  // driver, and `bounds` reports the DWM frame. PrintWindow renders the full
-  // window rect (including any non-client border), so the captured pixel extent
-  // can differ from the DWM frame by the border inset. This is acceptable for a
-  // uniform-scale mapping; a per-monitor DPI / border-accurate mapping is a
-  // follow-up if window-OCR coordinate precision requires it.
-  // TODO(windows-window-capture-dpi): tighten bounds/border/DPI mapping when an
-  // owner-approved window-OCR precision requirement lands.
-  let scale_factor = if window.frame.size.width > 0.0 {
-    f64::from(pixels.width) / window.frame.size.width
-  } else {
-    1.0
-  };
+  let bitmap = (pixels.width, pixels.height);
   let image = image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.rgba)
     .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
+  // NOTICE: `bounds` describes the pixels, read when they were captured, not the `window`
+  // snapshot, which may be older. The frame is the visible window; without it the whole bitmap
+  // is kept under the window rect.
+  let (image, bounds) = match pixels.frame.and_then(|frame| visible_crop(pixels.window_rect, bitmap, frame)) {
+    Some(crop) => {
+      let bounds = Rect::new(
+        pixels.window_rect.origin.x + f64::from(crop.x),
+        pixels.window_rect.origin.y + f64::from(crop.y),
+        f64::from(crop.width),
+        f64::from(crop.height),
+      );
+      (image::imageops::crop_imm(&image, crop.x, crop.y, crop.width, crop.height).to_image(), bounds)
+    }
+    None => (image, pixels.window_rect),
+  };
+  // NOTICE: the scale is image pixels per desktop coordinate, as for display captures. It is 1.0
+  // for a process whose coordinates are physical pixels.
+  // TODO(windows-window-capture-dpi): a process that is not per-monitor DPI aware is handed
+  // virtualized coordinates on a scaled display, and this mapping is not evidenced there. Only
+  // 100% scaling has been measured; see the Windows window commands reference.
+  let scale_factor = capture_scale_factor(&image, bounds);
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let target_name = window.app_name.as_deref().or(window.title.as_deref());
-  crate::latency::record_latency_event("capture_window", elapsed_ms, Some((width, height)), Some(WINDOW_CAPTURE_BACKEND), target_name);
+  crate::latency::record_latency_event(
+    "capture_window",
+    elapsed_ms,
+    Some((image.width(), image.height())),
+    Some(WINDOW_CAPTURE_BACKEND),
+    target_name,
+  );
   Ok(Capture {
     origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
-    bounds: window.frame,
+    bounds,
     scale_factor,
     backend: WINDOW_CAPTURE_BACKEND.to_string(),
     fallback_reason: None,
@@ -268,6 +326,7 @@ mod window_native {
   use std::mem::size_of;
 
   use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::Rect;
   use auv_driver_common::window::Window;
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Gdi::{
@@ -280,33 +339,41 @@ mod window_native {
   use crate::error::{backend, invalid_input};
   use crate::window::window_handle;
 
-  /// Top-down RGBA pixels captured from a single window.
+  /// Top-down RGBA pixels captured from a single window, with the rectangles they were taken
+  /// against.
   pub(super) struct WindowPixels {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// `GetWindowRect` when the bitmap was sized: the screen rectangle the bitmap covers.
+    pub window_rect: Rect,
+    /// The visible frame, read right after it, when DWM reports one.
+    pub frame: Option<Rect>,
   }
 
   pub(super) fn capture_window_rgba(window: &Window) -> DriverResult<WindowPixels> {
     let hwnd = window_handle(window)?;
-    let (width, height) = window_pixel_size(hwnd)?;
+    let rect = window_rect(hwnd)?;
+    let frame = crate::window::probe_window(hwnd.0 as isize).frame;
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
     let bgra = print_window_bgra(hwnd, width, height)?;
     Ok(WindowPixels {
       width: width as u32,
       height: height as u32,
       rgba: bgra_to_rgba(bgra),
+      window_rect: Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(width), f64::from(height)),
+      frame,
     })
   }
 
-  fn window_pixel_size(hwnd: HWND) -> DriverResult<(i32, i32)> {
+  fn window_rect(hwnd: HWND) -> DriverResult<RECT> {
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect) }.map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
-    let width = rect.right - rect.left;
-    let height = rect.bottom - rect.top;
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
     if width <= 0 || height <= 0 {
       return Err(invalid_input(format!("window has non-capturable size {width}x{height}")));
     }
-    Ok((width, height))
+    Ok(rect)
   }
 
   /// Renders the window into an off-screen DIB and reads back the raw BGRA

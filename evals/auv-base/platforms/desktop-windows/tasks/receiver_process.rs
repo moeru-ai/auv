@@ -121,6 +121,14 @@ pub struct Layout {
   pub window_rect: [i32; 4],
   pub button_center: [i32; 2],
   pub edit_center: [i32; 2],
+  /// Screen rectangles `[left, top, right, bottom]` of the push button and the label, whose
+  /// captions are text a capture can be searched for.
+  #[serde(default)]
+  pub button_rect: [i32; 4],
+  #[serde(default)]
+  pub label_rect: [i32; 4],
+  #[serde(default)]
+  pub edit_rect: [i32; 4],
 }
 
 /// A process the harness started detached and holds by handle.

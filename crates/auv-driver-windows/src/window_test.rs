@@ -96,6 +96,31 @@ fn app_selector_matches_by_name_and_pid() {
   assert_eq!(resolve_from_windows(&windows, &by_pid).unwrap().reference.id, "1");
 }
 
+// An executable file name is case-insensitive on Windows: `Notepad.exe` is the same program as
+// `notepad.exe`. Titles stay case-sensitive, as in the macOS resolver.
+#[test]
+fn app_name_matches_an_executable_name_ignoring_case() {
+  let windows = vec![
+    window("1", Some("A"), Some("Notepad.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0)),
+    window("2", Some("B"), Some("msedge.exe"), 20, Rect::new(0.0, 0.0, 100.0, 100.0)),
+  ];
+
+  let lower = WindowSelector::default().owned_by(App::name("notepad.exe"));
+  assert_eq!(resolve_from_windows(&windows, &lower).unwrap().reference.id, "1");
+
+  let upper = WindowSelector::default().owned_by(App::name("MSEDGE.EXE"));
+  assert_eq!(resolve_from_windows(&windows, &upper).unwrap().reference.id, "2");
+
+  let partial = WindowSelector::default().owned_by(AppSelector {
+    name: Some(TextMatcher::Contains("PAD".to_string())),
+    ..AppSelector::default()
+  });
+  assert_eq!(resolve_from_windows(&windows, &partial).unwrap().reference.id, "1");
+
+  let title = WindowSelector::default().title_exact("a");
+  assert!(resolve_from_windows(&windows, &title).is_err());
+}
+
 #[test]
 fn invisible_windows_are_never_matched() {
   let mut hidden = window("1", Some("Doc"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0));

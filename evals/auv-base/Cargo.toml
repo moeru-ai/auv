@@ -64,7 +64,7 @@ auv-driver-macos = { path = "../../crates/auv-driver-macos" }
 [target.'cfg(target_os = "windows")'.dependencies]
 auv-driver-common = { path = "../../crates/auv-driver-common" }
 auv-driver-windows = { path = "../../crates/auv-driver-windows" }
-image = { version = "0.25", default-features = false, features = [ "png" ] }
+image = { version = "0.25", default-features = false, features = [ "png", "webp" ] }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",

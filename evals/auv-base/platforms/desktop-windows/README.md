@@ -26,6 +26,8 @@ tasks/sustained.rs               `five`, `bench` and `faults`: five windows thro
 tasks/probe.rs                   `probe`, `freshness` and `geometry`: diagnostics behind the
                                  findings; `quiet`: the witness alone, for injected input from
                                  other programs.
+tasks/window_commands.rs         `window`: the `window.*` invoke commands, as the real `auv` binary, against a
+                                 covered receiver and judged against what the receiver knows.
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
                                  background.
 tasks/background_session.rs      The runner binary, `background-session-eval`.
@@ -43,11 +45,14 @@ just eval windows freshness --output evals/auv-base/results/windows-freshness
 just eval windows geometry --output evals/auv-base/results/windows-geometry
 just eval windows apps     --output evals/auv-base/results/windows-apps
 just eval windows quiet    --output evals/auv-base/results/windows-quiet --minutes 30
+just eval windows window   --output evals/auv-base/results/windows-window --auv target/debug/auv.exe
 ```
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
 output directory every time. Records stay in the ignored `results/`. `bench --ops click` or
 `--ops scroll` sends only one of the two operations per window.
+`window` runs a built `auv` (`cargo build -p auv-cli`; a debug build is enough) and removes the
+invoke store it records into, because `window.list` records every window on the desktop.
 
 ## How to read a result
 

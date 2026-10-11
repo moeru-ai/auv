@@ -636,7 +636,21 @@ mod native {
       "button_center": center(handle(&BUTTON)),
       "edit_center": center(handle(&EDIT)),
       "label_center": center(handle(&LABEL)),
+      "button_rect": screen_rect(handle(&BUTTON)),
+      "label_rect": screen_rect(handle(&LABEL)),
+      "edit_rect": screen_rect(handle(&EDIT)),
     })
+  }
+
+  /// A control's rectangle on the screen as `[left, top, right, bottom]`: the truth a text
+  /// recognized in a capture of the window can be placed against.
+  fn screen_rect(control: HWND) -> Value {
+    let mut rect = RECT::default();
+    // SAFETY: live control and writable rectangle.
+    unsafe {
+      let _ = GetWindowRect(control, &mut rect);
+    }
+    json!([rect.left, rect.top, rect.right, rect.bottom])
   }
 
   fn state(hwnd: HWND) -> Value {

@@ -2,8 +2,9 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **23**
+Count: **24**
 
+- [`2026-10-11-windows-window-commands.md`](2026-10-11-windows-window-commands.md) — direct Windows `window.list`, `window.capture`, `window.findText` and `window.waitForText`; executable-name target, capture crop and minimized fixes, live evidence
 - [`2026-10-01-linux-observation-invoke-handoff.md`](2026-10-01-linux-observation-invoke-handoff.md) — direct Linux window, region capture, and screen OCR commands; contracts and shared wait policy
 - [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/combination/sequence hierarchy, failure progress, and macOS evidence
 - [`2026-09-03-click-point-target-contract-handoff.md`](2026-09-03-click-point-target-contract-handoff.md)

@@ -36,11 +36,11 @@ struct ListWindowsArgs {}
 #[invoke_command(
   id = "window.list",
   group = "window",
-  description = "List visible window candidates using the normalized AUV window selector model (macOS and Linux).",
+  description = "List visible window candidates using the normalized AUV window selector model (macOS, Linux and Windows).",
   input = ListWindowsArgs,
 )]
 async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> InvokeCommandResult {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -49,10 +49,10 @@ async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> Invo
     let windows = observe_windows().await?;
     list_windows_output(&windows)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = input;
-    Err("window.list is only available on macOS and Linux".to_string())
+    Err("window.list is only available on macOS, Linux and Windows".to_string())
   }
 }
 
@@ -65,20 +65,20 @@ pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResul
 }
 
 pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     session.window().list().map_err(|error| error.to_string())
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
-    Err("window.list is only available on macOS and Linux".to_string())
+    Err("window.list is only available on macOS, Linux and Windows".to_string())
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke window.capture --title Untitled\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n\nOn Linux, app targets match the AT-SPI AccessibleId in window.list (BUNDLE in --wide output). Use --title when that field is absent. Linux captures a display crop and does not activate or unocclude the window."
+  after_long_help = "Examples:\n  auv invoke window.capture --title Untitled\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n  auv invoke window.capture --target notepad.exe\n\nOn Linux, app targets match the AT-SPI AccessibleId in window.list (BUNDLE in --wide output). Use --title when that field is absent. Linux captures a display crop and does not activate or unocclude the window.\n\nOn Windows, an app target is the executable file name shown as APP in window.list, matched exactly and ignoring case (for example notepad.exe). Windows renders the window itself with PrintWindow, without activating, raising or restoring it, and keeps the visible frame."
 )]
 struct CaptureWindowArgs {
   /// Window title text used to select the capture target.
@@ -90,11 +90,11 @@ struct CaptureWindowArgs {
   id = "window.capture",
   target = OptionalApplication,
   group = "window",
-  description = "Capture one single-display window without activating it and emit a coordinate contract (macOS and Linux). Linux uses an AT-SPI display crop.",
+  description = "Capture one single-display window without activating it and emit a coordinate contract (macOS, Linux and Windows). Linux uses an AT-SPI display crop; Windows uses PrintWindow.",
   input = CaptureWindowArgs,
 )]
 async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> InvokeCommandResult {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let selector = window_selector(&input, args.title.as_deref())?;
     input.overlay_enabled()?;
@@ -117,12 +117,10 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
     // before treating window.* evidence as reliably available.
     Ok(output)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    // TODO(invoke-window-windows): direct Windows observation stays deferred
-    // until an owner-approved slice validates its selector and capture path.
-    Err("window.capture is only available on macOS and Linux".to_string())
+    Err("window.capture is only available on macOS, Linux and Windows".to_string())
   }
 }
 
@@ -179,19 +177,19 @@ pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Re
 async fn capture_selected_window_recorded(
   selector: auv_driver::WindowSelector,
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     capture_selected_window_recorded_with_session(&session, selector).await
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = selector;
-    Err("window.capture is only available on macOS and Linux".to_string())
+    Err("window.capture is only available on macOS, Linux and Windows".to_string())
   }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 async fn capture_selected_window_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
@@ -207,7 +205,9 @@ async fn capture_selected_window_recorded_with_session(
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke window.findText \"Settings\" --title Preferences")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.findText \"Settings\" --title Preferences\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe). Text comes from the system OCR of a PrintWindow capture of the window itself."
+)]
 struct FindWindowTextArgs {
   /// Text to locate in the selected window.
   #[arg(value_name = "TEXT")]
@@ -225,7 +225,7 @@ struct FindWindowTextArgs {
   input = FindWindowTextArgs,
 )]
 async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -237,15 +237,17 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS".to_string())
+    Err("window text OCR is only available on macOS and Windows".to_string())
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke window.waitForText \"Ready\" --title Import")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.waitForText \"Ready\" --title Import\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe)."
+)]
 struct WaitForWindowTextArgs {
   /// Text to wait for in the selected window.
   #[arg(value_name = "TEXT")]
@@ -263,7 +265,7 @@ struct WaitForWindowTextArgs {
   input = WaitForWindowTextArgs,
 )]
 async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -275,10 +277,10 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS".to_string())
+    Err("window text OCR is only available on macOS and Windows".to_string())
   }
 }
 
@@ -341,6 +343,11 @@ impl WindowClickPolicyArg {
   input = ClickWindowTextArgs,
 )]
 async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> InvokeCommandResult {
+  // TODO(invoke-window-click-text-windows): `window.findText` is wired on Windows, but a click
+  // is not. The Windows `WindowApi` has no window-targeted click, and `input().click_at` is
+  // foreground input. The only window-targeted click is `BackgroundSession`, a Rust API that
+  // `invoke` does not reach (Windows window commands reference). Wire this after an
+  // owner-approved decision on how an invoke command reaches it.
   #[cfg(target_os = "macos")]
   {
     let options =
@@ -483,7 +490,7 @@ pub struct WindowTextRecognition {
   pub matches: auv_driver::OcrMatches,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub async fn recognize_window_text(
   selector: auv_driver::WindowSelector,
   query: String,
@@ -493,7 +500,7 @@ pub async fn recognize_window_text(
   recognize_window_text_with_session(&session, selector, query, wait).await
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn recognize_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
@@ -526,13 +533,13 @@ async fn recognize_window_text_with_session(
   }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub async fn recognize_window_text(
   _selector: auv_driver::WindowSelector,
   _query: String,
   _wait: bool,
 ) -> Result<WindowTextRecognition, String> {
-  Err("window text OCR is only available on macOS".to_string())
+  Err("window text OCR is only available on macOS and Windows".to_string())
 }
 
 fn window_text_matches_output(
@@ -587,7 +594,7 @@ fn show_options(motion_ms: u64, auto_removal_ms: u64) -> auv_driver::overlay::Sh
     .with_auto_removal_after(Duration::from_millis(auto_removal_ms))
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<auv_driver::WindowSelector, String> {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
@@ -596,11 +603,21 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<au
     ..WindowSelector::default()
   };
   if let Some(target) = input.application_target()? {
+    // NOTICE: Windows has no bundle id (`app_bundle_id` is always `None`), so a bundle selector
+    // can never match there. Its application identifier is the executable file name, the
+    // `app_name` of `window.list`, which the driver matches ignoring case.
+    #[cfg(target_os = "windows")]
+    {
+      selector.app = Some(App::name(target));
+    }
     // Linux reuses AccessibleId in app_bundle_id. Do not guess application
     // names when that identifier is absent; callers can select by title.
     // TODO(cross-platform-application-selector): application-name targets
     // require an owner-approved target contract, as in runner.rs.
-    selector.app = Some(App::bundle_id(target));
+    #[cfg(not(target_os = "windows"))]
+    {
+      selector.app = Some(App::bundle_id(target));
+    }
   }
   if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
     selector.title = Some(TextMatcher::Contains(title.to_string()));

@@ -169,7 +169,13 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
     let Some(app_name) = &window.app_name else {
       return false;
     };
-    if !matches_text(app_name, name) {
+    // NOTICE: `app_name` is an executable file name, and Windows file names are case-insensitive:
+    // the same program is `Notepad.exe` on disk and `notepad.exe` to the person typing it.
+    let matched = match name {
+      TextMatcher::Exact(expected) => app_name.eq_ignore_ascii_case(expected),
+      TextMatcher::Contains(needle) => app_name.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()),
+    };
+    if !matched {
       return false;
     }
   }
@@ -298,6 +304,11 @@ mod native {
   }
 
   fn observe_window(hwnd: HWND, foreground: HWND) -> DriverResult<Option<Window>> {
+    // TODO(windows-window-list-minimized): a minimized window passes `IsWindowVisible` and is
+    // listed with its off-screen frame (-32000, -32000) and `is_visible: true`. It is not
+    // dropped or flagged here because the background session discovers a target through this
+    // list and must still be able to answer `skipped_minimized` for it. Decide how a list
+    // reports a minimized window before changing it; `capture` already refuses one.
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
       return Ok(None);
     }
