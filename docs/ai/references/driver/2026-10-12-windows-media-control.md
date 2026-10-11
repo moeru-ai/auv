@@ -139,13 +139,47 @@ Host: Windows 11 Pro 10.0.29648, on 2026-10-12, with QQ Music playing.
 - Each run took 88 to 100 ms through the whole `auv` process.
 - The record keeps only whether each text field was reported. The titles are the user's own music.
 
-**The five control commands have not been run live.** They act on the music the user is playing,
-so a run waits for the owner's go-ahead.
+The owner then approved one live run of each control command. They ran in sequence, with QQ Music
+playing (record:
+[`evidence/2026-10-12-windows-media-control/controls.jsonl`](evidence/2026-10-12-windows-media-control/controls.jsonl)).
+The order gave every command a real effect:
+
+- `pause`, then `play`: one flip each;
+- `next`, then `previous` straight after it, so QQ Music went back a track instead of restarting
+  the current one;
+- `togglePlayPause`, last.
+
+| Command | Before → after | Track changed | `verified` | Whole `auv` process |
+| --- | --- | --- | --- | --- |
+| `pause` | playing → paused | no | yes | 250 ms |
+| `play` | paused → playing | no | yes | 157 ms |
+| `next` | playing → not playing (see below) | yes | yes | 222 ms |
+| `previous` | not playing → not playing | yes | yes | 1294 ms |
+| `togglePlayPause` | playing → paused | no | yes | 144 ms |
+
+- **All five exited 0, and every one was `verified`.** The source was `QQMusic.exe` throughout.
+- **`previous` landed on the track that was playing before `next`.** `pause`, `play` and the toggle
+  kept the original track. The record holds only these yes/no facts.
+- **`previous` took 1.3 s.** Most of that was the wait for the track change to show, which fits
+  the measured slow path.
+- **Playback was left paused on the original track.** Three play/pause flips starting from
+  playing end paused, and no extra command was sent to resume it.
+
+### Finding: right after a skip, the after-state can read "not playing"
+
+`next` returned as soon as the track changed, as the skip rule asks. At that moment QQ Music
+reported a status other than `Playing` while it switched tracks, so the outcome says
+`after.is_playing: false`. `previous` started from that same state. By the time
+`togglePlayPause` ran, playback had resumed by itself.
+
+A caller should not read `is_playing` from a skip's outcome as "playback stopped". The shared
+state does not keep the raw SMTC status, so it is not known whether the status was `Changing` or
+`Paused`.
 
 ## Not evidenced
 
-- Any control command, live.
 - Apps other than QQ Music, including browsers, Spotify and the Media Player app.
+- More than one run of each control command.
 - A machine with no media session (expected: `present: false`).
 - A session that refuses a command.
 - The Runner path, which is not wired.
@@ -160,4 +194,12 @@ cargo test --workspace --locked --no-fail-fast
 cargo run --quiet -- invoke --help
 git diff --check
 auv invoke mediaControl.nowPlaying --json
+auv invoke mediaControl.<pause|play|next|previous|togglePlayPause> --json   # owner-approved, once each
 ```
+
+## Candidate next slices
+
+- After a skip, keep reading until the status leaves `Changing`, so `after.is_playing` is not a
+  transient value. First record the raw SMTC status during a skip, to learn whether QQ Music
+  reports `Changing` or `Paused`.
+- The Runner's media service on Windows (`TODO(windows-media-runner)`).

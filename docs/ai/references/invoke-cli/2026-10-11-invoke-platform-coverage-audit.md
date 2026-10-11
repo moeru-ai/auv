@@ -131,7 +131,8 @@ IDs. The two tables above are left as they stood on 2026-10-11.
 Candidate slice 1 followed. The media result is now one shared contract in
 `auv-driver-common::media`, which `auv-media-macos` re-exports. The Windows SMTC backend maps
 onto it, so `mediaControl.nowPlaying` is `partial` on Windows (no timeline) and the five controls
-are `supported`. Only `nowPlaying` has a live run so far:
+are `supported`. All six have a live run against QQ Music, the controls once each with the owner's
+approval:
 [Windows media control](../driver/2026-10-12-windows-media-control.md). The Windows counts become
 15 `supported`, 13 `partial` and 10 `unsupported`: 28 of the 38 desktop commands, and 31 of all 42
 IDs.
