@@ -391,11 +391,6 @@ fn application_activation_to_proto(result: auv_driver::ApplicationActivationResu
   }
 }
 
-// TODO(windows-media-runner): this service reads MediaRemote only, so the Runner answers
-// unsupported on Windows although the direct invoke path uses SMTC
-// (`auv_driver_windows::media`). The service is the macOS-namespaced `MediaControlService`;
-// route it to the Windows provider when the Runner route gets its own support cells
-// (`TODO(invoke-support-runner-route)`).
 #[derive(Default)]
 struct LocalMediaControlService;
 
@@ -405,7 +400,7 @@ impl MediaControlService for LocalMediaControlService {
     &self,
     _request: Request<macos_proto::GetNowPlayingRequest>,
   ) -> Result<Response<macos_proto::GetNowPlayingResponse>, Status> {
-    let state = auv_media_macos::now_playing().map_err(media_status)?;
+    let state = read_now_playing()?;
     Ok(Response::new(macos_proto::GetNowPlayingResponse {
       state: Some(now_playing_to_proto(state)?),
     }))
@@ -413,13 +408,13 @@ impl MediaControlService for LocalMediaControlService {
 
   async fn play(&self, _request: Request<macos_proto::PlayRequest>) -> Result<Response<macos_proto::PlayResponse>, Status> {
     Ok(Response::new(macos_proto::PlayResponse {
-      outcome: Some(media_control_outcome_to_proto(control_media(auv_media_macos::MediaCommand::Play)?)?),
+      outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::Play)?)?),
     }))
   }
 
   async fn pause(&self, _request: Request<macos_proto::PauseRequest>) -> Result<Response<macos_proto::PauseResponse>, Status> {
     Ok(Response::new(macos_proto::PauseResponse {
-      outcome: Some(media_control_outcome_to_proto(control_media(auv_media_macos::MediaCommand::Pause)?)?),
+      outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::Pause)?)?),
     }))
   }
 
@@ -428,13 +423,13 @@ impl MediaControlService for LocalMediaControlService {
     _request: Request<macos_proto::TogglePlayPauseRequest>,
   ) -> Result<Response<macos_proto::TogglePlayPauseResponse>, Status> {
     Ok(Response::new(macos_proto::TogglePlayPauseResponse {
-      outcome: Some(media_control_outcome_to_proto(control_media(auv_media_macos::MediaCommand::TogglePlayPause)?)?),
+      outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::TogglePlayPause)?)?),
     }))
   }
 
   async fn next_track(&self, _request: Request<macos_proto::NextTrackRequest>) -> Result<Response<macos_proto::NextTrackResponse>, Status> {
     Ok(Response::new(macos_proto::NextTrackResponse {
-      outcome: Some(media_control_outcome_to_proto(control_media(auv_media_macos::MediaCommand::NextTrack)?)?),
+      outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::NextTrack)?)?),
     }))
   }
 
@@ -443,15 +438,43 @@ impl MediaControlService for LocalMediaControlService {
     _request: Request<macos_proto::PreviousTrackRequest>,
   ) -> Result<Response<macos_proto::PreviousTrackResponse>, Status> {
     Ok(Response::new(macos_proto::PreviousTrackResponse {
-      outcome: Some(media_control_outcome_to_proto(control_media(auv_media_macos::MediaCommand::PreviousTrack)?)?),
+      outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::PreviousTrack)?)?),
     }))
   }
 }
 
-fn control_media(command: auv_media_macos::MediaCommand) -> Result<auv_media_macos::output::MediaControlOutcome, Status> {
-  auv_media_macos::control(command).map_err(media_control_status)
+fn read_now_playing() -> Result<auv_driver::media::NowPlayingState, Status> {
+  #[cfg(target_os = "macos")]
+  {
+    auv_media_macos::now_playing().map_err(media_status)
+  }
+  #[cfg(target_os = "windows")]
+  {
+    auv_driver_windows::media::now_playing().map_err(windows_media_status)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    Err(Status::unimplemented("MediaControlService is unsupported on this platform"))
+  }
 }
 
+fn control_media(command: auv_driver::media::MediaCommand) -> Result<auv_driver::media::MediaControlOutcome, Status> {
+  #[cfg(target_os = "macos")]
+  {
+    auv_media_macos::control(command).map_err(media_control_status)
+  }
+  #[cfg(target_os = "windows")]
+  {
+    auv_driver_windows::media::control(command).map_err(windows_media_control_status)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    let _ = command;
+    Err(Status::unimplemented("MediaControlService is unsupported on this platform"))
+  }
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn media_status(error: auv_media_macos::MediaError) -> Status {
   match error {
     auv_media_macos::MediaError::Unsupported => Status::unimplemented(error.to_string()),
@@ -459,6 +482,7 @@ fn media_status(error: auv_media_macos::MediaError) -> Status {
   }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn media_control_status(error: auv_media_macos::MediaError) -> Status {
   match error {
     auv_media_macos::MediaError::Unsupported => Status::unimplemented(error.to_string()),
@@ -468,9 +492,21 @@ fn media_control_status(error: auv_media_macos::MediaError) -> Status {
   }
 }
 
-fn media_control_outcome_to_proto(
-  outcome: auv_media_macos::output::MediaControlOutcome,
-) -> Result<macos_proto::MediaControlOutcome, Status> {
+#[cfg(target_os = "windows")]
+fn windows_media_status(error: auv_driver::DriverError) -> Status {
+  driver_status(error)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_media_control_status(error: auv_driver::DriverError) -> Status {
+  match error {
+    auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(error.to_string()),
+    auv_driver::DriverError::NotFound { .. } => Status::not_found(error.to_string()),
+    _ => Status::unknown(format!("media command outcome is uncertain; do not retry automatically: {error}")),
+  }
+}
+
+fn media_control_outcome_to_proto(outcome: auv_driver::media::MediaControlOutcome) -> Result<macos_proto::MediaControlOutcome, Status> {
   Ok(macos_proto::MediaControlOutcome {
     before: Some(now_playing_output_to_proto(outcome.before)?),
     after: Some(now_playing_output_to_proto(outcome.after)?),
@@ -478,8 +514,8 @@ fn media_control_outcome_to_proto(
   })
 }
 
-fn now_playing_output_to_proto(state: auv_media_macos::output::NowPlayingOutput) -> Result<macos_proto::NowPlayingState, Status> {
-  now_playing_to_proto(auv_media_macos::NowPlayingState {
+fn now_playing_output_to_proto(state: auv_driver::media::NowPlayingOutput) -> Result<macos_proto::NowPlayingState, Status> {
+  now_playing_to_proto(auv_driver::media::NowPlayingState {
     present: state.present,
     is_playing: state.is_playing,
     source_bundle_id: state.source_bundle_id,
@@ -495,14 +531,14 @@ fn now_playing_output_to_proto(state: auv_media_macos::output::NowPlayingOutput)
   })
 }
 
-fn now_playing_to_proto(state: auv_media_macos::NowPlayingState) -> Result<macos_proto::NowPlayingState, Status> {
+fn now_playing_to_proto(state: auv_driver::media::NowPlayingState) -> Result<macos_proto::NowPlayingState, Status> {
   for (field, value) in [
     ("duration_seconds", state.duration_seconds),
     ("elapsed_seconds", state.elapsed_seconds),
     ("playback_rate", state.playback_rate),
   ] {
     if value.is_some_and(|value| !value.is_finite()) {
-      return Err(Status::internal(format!("macOS now-playing backend returned non-finite {field}")));
+      return Err(Status::internal(format!("now-playing backend returned non-finite {field}")));
     }
   }
   Ok(macos_proto::NowPlayingState {
@@ -2729,7 +2765,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<ApplicationServiceServer<LocalApplicationService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<AccessibilityServiceServer<LocalAccessibilityService>>().await;
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   health_reporter.set_serving::<MediaControlServiceServer<LocalMediaControlService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<OverlayServiceServer<LocalOverlayService>>().await;
@@ -2747,7 +2783,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   served_services.push("auv.api.driver.macos.v1.ApplicationService");
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.AccessibilityService");
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   served_services.push("auv.api.driver.macos.v1.MediaControlService");
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.v1.OverlayService");

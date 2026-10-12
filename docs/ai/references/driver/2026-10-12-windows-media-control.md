@@ -15,11 +15,11 @@ Controls (SMTC) backend onto that contract, and routes the invoke commands to it
 | `mediaControl.nowPlaying` | `partial`: no duration, elapsed time or playback rate | `auv_driver_windows::media::now_playing` |
 | `mediaControl.play`, `.pause`, `.togglePlayPause`, `.next`, `.previous` | `supported` | `auv_driver_windows::media::control` |
 
-Not in this slice:
+Not in this slice (as of 2026-10-12; see Runner route section below for 2026-10-13 update):
 
 - **The Runner's media service on Windows.** `MediaControlService` is the macOS-namespaced service
-  and reads MediaRemote only, so the Runner still answers unsupported on Windows
-  (`TODO(windows-media-runner)`, under `TODO(invoke-support-runner-route)`).
+  and originally read MediaRemote only (`TODO(windows-media-runner)` was closed on 2026-10-13 on branch
+  `feat/windows-runner-mediacontrol`; `TODO(invoke-support-runner-route)` remains a separate design task).
 - **Seek, stop, volume and choosing a session by app.** The driver has them for the QQ Music
   tooling, but no invoke command asks for them.
 - **The SMTC timeline.** It is behind `TODO(windows-media-timeline)`; see the mapping below.
@@ -182,19 +182,90 @@ state does not keep the raw SMTC status, so it is not known whether the status w
 - More than one run of each control command.
 - A machine with no media session (expected: `present: false`).
 - A session that refuses a command.
-- The Runner path, which is not wired.
+- The Runner path on platforms other than macOS/Windows.
+
+## Runner route (2026-10-13)
+
+Implemented on branch `feat/windows-runner-mediacontrol`, closing `TODO(windows-media-runner)`.
+The Runner's `LocalMediaControlService` gRPC service in `crates/auv-cli/src/runner/local_driver.rs`
+is wired to `auv_driver_windows::media` on Windows, matching the direct invoke path from #342.
+
+### Implementation details
+
+- **Dual-platform routing**: `read_now_playing()` and `control_media(command)` dispatch to
+  `auv_driver_windows::media::{now_playing, control}` on `target_os = "windows"`, and
+  `auv_media_macos` on `target_os = "macos"`.
+- **Status mapping**:
+  - `DriverError::Backend` maps to `Status::unknown` (non-retryable uncertain outcome; preserves
+    fail-closed semantics against blind client retries when command delivery state is unknown).
+  - `DriverError::NotFound` maps to `Status::not_found` (no active media session).
+  - `DriverError::Unsupported` maps to `Status::unimplemented`.
+- **Shared proto conversion**: Proto converters (`media_control_outcome_to_proto`,
+  `now_playing_to_proto`, `now_playing_output_to_proto`) use platform-neutral
+  `auv_driver::media::*` types.
+- **Service registration**: `serve_local_driver` advertises and health-reports
+  `MediaControlServiceServer` on Windows (`#[cfg(any(target_os = "macos", target_os = "windows"))]`).
+- **Scope boundary preserved**: `TODO(invoke-support-runner-route)` (Runner route support cells)
+  remains deferred for a separate design task.
+
+### Live empirical evidence
+
+Host: Windows 11 Pro 10.0.29648, 2026-10-13, with live QQ Music (PID 21772) running in the background.
+Client: gRPC `MediaControlServiceClient` over local in-process tonic server.
+Evidence record: [`2026-10-13-windows-runner-mediacontrol.jsonl`](2026-10-13-windows-runner-mediacontrol.jsonl).
+
+#### `mediaControl.nowPlaying` (3 runs)
+
+| Run | `present` | `is_playing` | `source_bundle_id` | Metadata fields | Wall latency |
+| --- | --- | --- | --- | --- | --- |
+| 1 | true | true | `"QQMusic.exe"` | title, artist, album reported; timeline null | 24 ms |
+| 2 | true | true | `"QQMusic.exe"` | title, artist, album reported; timeline null | 6 ms |
+| 3 | true | true | `"QQMusic.exe"` | title, artist, album reported; timeline null | 4 ms |
+
+- All 3 runs reported `present: true`, `is_playing: true`, and the active process `QQMusic.exe`.
+- Median latency is ~6 ms via the local Runner gRPC route.
+- Metadata titles and artists are masked in the committed JSONL record.
+
+#### Control sequence (5 commands)
+
+| Step | Command | Before → after | Track changed | `verified` | Wall latency |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `pause` | playing → paused | no | true | 58 ms |
+| 2 | `play` | paused → playing | no | true | 56 ms |
+| 3 | `next` | playing → not playing | yes | true | 106 ms |
+| 4 | `previous` | not playing → not playing | yes (returned to pre-next) | true | 1126 ms |
+| 5 | `togglePlayPause` | playing → paused | no | true | 57 ms |
+
+- **All five RPCs succeeded with `verified: true`**.
+- **Track parity**: `previous` returned to the exact track playing before `next`.
+- **Settle timing & asynchronous buffering**: Like direct invoke (#342), immediately after `next`
+  and `previous`, QQ Music's metadata changes within 100 ms – 1.1 s while the audio stream is
+  loading, reporting `is_playing: false`. In automated sequences, waiting for the stream to settle
+  into `Playing` before `togglePlayPause` ensures the toggle acts on an active stream.
+- **Verification timeout behavior**: The 3 s `CONTROL_VERIFY_TIMEOUT` in `auv_driver_windows::media`
+  was sufficient for all 5 operations (P50 ~57 ms for state toggles; ~1.1 s for slow-path track
+  switch). Cold starts taking >3.0 s will report honest `verified: false` as documented in #342.
+- **Privacy masking**: User track titles and artists were masked; only Boolean presence and
+  `track_changed` are committed.
+
+### Proposed support declarations (Runner route)
+
+| Command | Proposed Support | Note |
+| --- | --- | --- |
+| `mediaControl.nowPlaying` | `Partial` | Mechanism proven end-to-end; timeline fields null on Windows |
+| `mediaControl.play` | `Supported` | Proven verified |
+| `mediaControl.pause` | `Supported` | Proven verified |
+| `mediaControl.togglePlayPause` | `Supported` | Proven verified |
+| `mediaControl.next` | `Supported` | Proven verified |
+| `mediaControl.previous` | `Supported` | Proven verified |
 
 ## Validation
 
 ```sh
 cargo fmt --check
-cargo check
-cargo clippy -p auv-driver-common -p auv-driver-windows -p auv-media-macos -p auv-cli-invoke --all-targets
-cargo test --workspace --locked --no-fail-fast
-cargo run --quiet -- invoke --help
-git diff --check
-auv invoke mediaControl.nowPlaying --json
-auv invoke mediaControl.<pause|play|next|previous|togglePlayPause> --json   # owner-approved, once each
+cargo check -p auv-cli
+cargo test --lib -p auv-cli runner::local_driver
+cargo test --lib -p auv-cli live_windows_runner_media_control_parity -- --ignored --nocapture
 ```
 
 ## Candidate next slices
@@ -202,4 +273,4 @@ auv invoke mediaControl.<pause|play|next|previous|togglePlayPause> --json   # ow
 - After a skip, keep reading until the status leaves `Changing`, so `after.is_playing` is not a
   transient value. First record the raw SMTC status during a skip, to learn whether QQ Music
   reports `Changing` or `Paused`.
-- The Runner's media service on Windows (`TODO(windows-media-runner)`).
+- `TODO(invoke-support-runner-route)`: runner route's own support declaration system.

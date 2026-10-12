@@ -259,6 +259,355 @@ fn uncertain_media_control_failure_is_not_exposed_as_retryable_unavailable() {
   assert!(status.message().contains("do not retry automatically"));
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_uncertain_media_control_failure_is_not_exposed_as_retryable_unavailable() {
+  let status = windows_media_control_status(auv_driver::DriverError::Backend {
+    message: "the media session refused the play command".to_string(),
+  });
+  assert_eq!(status.code(), tonic::Code::Unknown);
+  assert!(status.message().contains("do not retry automatically"));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_not_found_media_session_maps_to_not_found() {
+  let status = windows_media_control_status(auv_driver::DriverError::NotFound {
+    target: "an active media session".to_string(),
+  });
+  assert_eq!(status.code(), tonic::Code::NotFound);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_unsupported_media_backend_maps_to_unimplemented() {
+  let status = windows_media_control_status(auv_driver::DriverError::Unsupported {
+    operation: "media controls",
+  });
+  assert_eq!(status.code(), tonic::Code::Unimplemented);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+#[ignore = "live SMTC media control trial through the Runner route against an active media session"]
+async fn live_windows_runner_media_control_parity() {
+  use auv_api_proto::auv::api::driver::macos::v1::media_control_service_client::MediaControlServiceClient;
+  use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::MediaControlServiceServer;
+  use std::io::Write;
+  use std::time::Instant;
+
+  let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind listener");
+  let local_addr = listener.local_addr().expect("local addr");
+  drop(listener);
+
+  let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+  let server_handle = tokio::spawn(async move {
+    let _ = tonic::transport::Server::builder()
+      .add_service(MediaControlServiceServer::new(LocalMediaControlService))
+      .serve_with_shutdown(local_addr, async {
+        let _ = shutdown_rx.await;
+      })
+      .await;
+  });
+
+  tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+  let channel = tonic::transport::Channel::from_shared(format!("http://{local_addr}"))
+    .expect("valid URI")
+    .connect()
+    .await
+    .expect("connect to local runner media service");
+  let mut client = MediaControlServiceClient::new(channel);
+
+  let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let repo_root = manifest_dir.ancestors().nth(2).unwrap_or(&manifest_dir);
+  let jsonl_path = repo_root.join("docs/ai/references/driver/2026-10-13-windows-runner-mediacontrol.jsonl");
+  let mut jsonl_file =
+    std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&jsonl_path).expect("open jsonl output file");
+
+  // 1. nowPlaying x 3
+  println!("\n=== Running mediaControl.nowPlaying via Runner Route (3 runs) ===");
+  for run in 1..=3 {
+    let start = Instant::now();
+    let res = client.get_now_playing(macos_proto::GetNowPlayingRequest {}).await.expect("get_now_playing RPC failed").into_inner();
+    let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+    let state = res.state.expect("state present");
+
+    println!(
+      "Run {run}: present={}, playing={}, source={:?}, wall_ms={}ms",
+      state.present, state.is_playing, state.source_bundle_id, wall_ms
+    );
+
+    let record = serde_json::json!({
+      "command_id": "mediaControl.nowPlaying",
+      "route": "runner",
+      "run": run,
+      "redacted": "title, artist and album are the user's own music; only whether each was reported is kept",
+      "result": {
+        "schema_version": "now-playing-v0",
+        "present": state.present,
+        "is_playing": state.is_playing,
+        "source_bundle_id": state.source_bundle_id,
+        "title_reported": state.title.as_ref().map_or(false, |t| !t.trim().is_empty()),
+        "artist_reported": state.artist.as_ref().map_or(false, |a| !a.trim().is_empty()),
+        "album_reported": state.album.as_ref().map_or(false, |al| !al.trim().is_empty()),
+        "duration_seconds": state.duration_seconds,
+        "elapsed_seconds": state.elapsed_seconds,
+        "playback_rate": state.playback_rate,
+        "content_item_id": state.content_item_id,
+        "supports_like": state.supports_like,
+        "is_liked": state.is_liked,
+      },
+      "status": "completed",
+      "wall_ms": wall_ms,
+    });
+    writeln!(jsonl_file, "{}", serde_json::to_string(&record).unwrap()).unwrap();
+  }
+
+  // Read pre-test state
+  let pre_state = client
+    .get_now_playing(macos_proto::GetNowPlayingRequest {})
+    .await
+    .expect("get initial state")
+    .into_inner()
+    .state
+    .expect("initial state");
+
+  // 2. Control sequence: pause, play, next, previous, togglePlayPause
+  println!("\n=== Running media controls via Runner Route ===");
+  let mut step = 0;
+
+  if !pre_state.is_playing {
+    println!("Pre-test state was paused; starting playback first to match #342 initial conditions...");
+    let _ = client.play(macos_proto::PlayRequest {}).await.expect("initial play");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  }
+
+  // Step 1: pause
+  step += 1;
+  let start = Instant::now();
+  let outcome = client.pause(macos_proto::PauseRequest {}).await.expect("pause RPC").into_inner().outcome.expect("outcome");
+  let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+  let before = outcome.before.expect("before");
+  let after = outcome.after.expect("after");
+  let track_changed = before.title != after.title || before.artist != after.artist;
+  println!(
+    "Step {step} (pause): verified={}, playing before={} -> after={}, wall_ms={}ms",
+    outcome.verified, before.is_playing, after.is_playing, wall_ms
+  );
+  assert!(outcome.verified, "pause must be verified");
+  assert!(!after.is_playing, "after pause must not be playing");
+  let rec_pause = serde_json::json!({
+    "command": "pause",
+    "command_id": "mediaControl.pause",
+    "route": "runner",
+    "step": step,
+    "before": {
+      "present": before.present,
+      "is_playing": before.is_playing,
+      "source_bundle_id": before.source_bundle_id,
+    },
+    "after": {
+      "present": after.present,
+      "is_playing": after.is_playing,
+      "source_bundle_id": after.source_bundle_id,
+    },
+    "track_changed": track_changed,
+    "verified": outcome.verified,
+    "exit": 0,
+    "schema_version": "now-playing-v0",
+    "status": "completed",
+    "wall_ms": wall_ms,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&rec_pause).unwrap()).unwrap();
+
+  // Step 2: play
+  step += 1;
+  let start = Instant::now();
+  let outcome = client.play(macos_proto::PlayRequest {}).await.expect("play RPC").into_inner().outcome.expect("outcome");
+  let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+  let before = outcome.before.expect("before");
+  let after = outcome.after.expect("after");
+  let track_changed = before.title != after.title || before.artist != after.artist;
+  println!(
+    "Step {step} (play): verified={}, playing before={} -> after={}, wall_ms={}ms",
+    outcome.verified, before.is_playing, after.is_playing, wall_ms
+  );
+  assert!(outcome.verified, "play must be verified");
+  assert!(after.is_playing, "after play must be playing");
+  let rec_play = serde_json::json!({
+    "command": "play",
+    "command_id": "mediaControl.play",
+    "route": "runner",
+    "step": step,
+    "before": {
+      "present": before.present,
+      "is_playing": before.is_playing,
+      "source_bundle_id": before.source_bundle_id,
+    },
+    "after": {
+      "present": after.present,
+      "is_playing": after.is_playing,
+      "source_bundle_id": after.source_bundle_id,
+    },
+    "track_changed": track_changed,
+    "verified": outcome.verified,
+    "exit": 0,
+    "schema_version": "now-playing-v0",
+    "status": "completed",
+    "wall_ms": wall_ms,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&rec_play).unwrap()).unwrap();
+
+  // Record track identity before next
+  let track_before_next = after.title.clone();
+  let artist_before_next = after.artist.clone();
+
+  // Step 3: next
+  step += 1;
+  let start = Instant::now();
+  let outcome = client.next_track(macos_proto::NextTrackRequest {}).await.expect("next RPC").into_inner().outcome.expect("outcome");
+  let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+  let before = outcome.before.expect("before");
+  let after = outcome.after.expect("after");
+  let track_changed = before.title != after.title || before.artist != after.artist;
+  println!("Step {step} (next): verified={}, track_changed={}, wall_ms={}ms", outcome.verified, track_changed, wall_ms);
+  assert!(outcome.verified, "next must be verified");
+  assert!(track_changed, "track must change on next");
+  let rec_next = serde_json::json!({
+    "command": "next",
+    "command_id": "mediaControl.next",
+    "route": "runner",
+    "step": step,
+    "before": {
+      "present": before.present,
+      "is_playing": before.is_playing,
+      "source_bundle_id": before.source_bundle_id,
+    },
+    "after": {
+      "present": after.present,
+      "is_playing": after.is_playing,
+      "source_bundle_id": after.source_bundle_id,
+    },
+    "track_changed": track_changed,
+    "verified": outcome.verified,
+    "exit": 0,
+    "schema_version": "now-playing-v0",
+    "status": "completed",
+    "wall_ms": wall_ms,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&rec_next).unwrap()).unwrap();
+
+  // Step 4: previous
+  step += 1;
+  let start = Instant::now();
+  let outcome =
+    client.previous_track(macos_proto::PreviousTrackRequest {}).await.expect("previous RPC").into_inner().outcome.expect("outcome");
+  let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+  let before = outcome.before.expect("before");
+  let after = outcome.after.expect("after");
+  let track_changed = before.title != after.title || before.artist != after.artist;
+  let returned_to_pre_next = after.title == track_before_next && after.artist == artist_before_next;
+  println!(
+    "Step {step} (previous): verified={}, track_changed={}, returned_to_pre_next={}, wall_ms={}ms",
+    outcome.verified, track_changed, returned_to_pre_next, wall_ms
+  );
+  assert!(outcome.verified, "previous must be verified");
+  let rec_prev = serde_json::json!({
+    "command": "previous",
+    "command_id": "mediaControl.previous",
+    "route": "runner",
+    "step": step,
+    "before": {
+      "present": before.present,
+      "is_playing": before.is_playing,
+      "source_bundle_id": before.source_bundle_id,
+    },
+    "after": {
+      "present": after.present,
+      "is_playing": after.is_playing,
+      "source_bundle_id": after.source_bundle_id,
+    },
+    "track_changed": track_changed,
+    "verified": outcome.verified,
+    "exit": 0,
+    "schema_version": "now-playing-v0",
+    "status": "completed",
+    "wall_ms": wall_ms,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&rec_prev).unwrap()).unwrap();
+
+  // NOTICE: As documented in #342 ("Finding: right after a skip, the after-state can read
+  // 'not playing'... By the time togglePlayPause ran, playback had resumed by itself"),
+  // right after a skip QQ Music is asynchronously buffering the audio. Wait for playback
+  // to resume so togglePlayPause acts on the active stream (flipping playing -> paused).
+  let settle_start = Instant::now();
+  while settle_start.elapsed() < std::time::Duration::from_secs(3) {
+    let now =
+      client.get_now_playing(macos_proto::GetNowPlayingRequest {}).await.expect("get_now_playing").into_inner().state.expect("state");
+    if now.is_playing {
+      break;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+  }
+
+  // Step 5: togglePlayPause
+  step += 1;
+  let start = Instant::now();
+  let outcome =
+    client.toggle_play_pause(macos_proto::TogglePlayPauseRequest {}).await.expect("toggle RPC").into_inner().outcome.expect("outcome");
+  let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
+  let before = outcome.before.expect("before");
+  let after = outcome.after.expect("after");
+  let track_changed = before.title != after.title || before.artist != after.artist;
+  println!(
+    "Step {step} (toggle): verified={}, playing before={} -> after={}, wall_ms={}ms",
+    outcome.verified, before.is_playing, after.is_playing, wall_ms
+  );
+  assert!(outcome.verified, "toggle must be verified");
+  assert_ne!(before.is_playing, after.is_playing, "playing state must flip");
+  let rec_toggle = serde_json::json!({
+    "command": "toggle",
+    "command_id": "mediaControl.togglePlayPause",
+    "route": "runner",
+    "step": step,
+    "before": {
+      "present": before.present,
+      "is_playing": before.is_playing,
+      "source_bundle_id": before.source_bundle_id,
+    },
+    "after": {
+      "present": after.present,
+      "is_playing": after.is_playing,
+      "source_bundle_id": after.source_bundle_id,
+    },
+    "track_changed": track_changed,
+    "verified": outcome.verified,
+    "exit": 0,
+    "schema_version": "now-playing-v0",
+    "status": "completed",
+    "wall_ms": wall_ms,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&rec_toggle).unwrap()).unwrap();
+
+  // Summary record
+  let summary = serde_json::json!({
+    "kind": "summary",
+    "route": "runner",
+    "redacted": "title, artist and album are the user's own music; only whether the track changed is kept",
+    "final_state": format!("{} on track (three play/pause flips from initial)", if after.is_playing { "playing" } else { "paused" }),
+    "previous_returned_to_the_track_before_next": returned_to_pre_next,
+    "all_controls_verified": true,
+  });
+  writeln!(jsonl_file, "{}", serde_json::to_string(&summary).unwrap()).unwrap();
+  jsonl_file.flush().unwrap();
+
+  let _ = shutdown_tx.send(());
+  let _ = server_handle.await;
+  println!("\n=== Live Runner Route Media Control Parity Evaluation Complete ===");
+}
+
 #[test]
 fn media_control_outcome_mapper_preserves_before_after_and_verification() {
   let before = auv_media_macos::NowPlayingState {
