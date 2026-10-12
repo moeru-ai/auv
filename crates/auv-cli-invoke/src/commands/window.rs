@@ -236,7 +236,7 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
 
     let query = args.query;
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, false).await?;
+    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, None).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
@@ -251,13 +251,34 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
 #[command(
   after_long_help = "Examples:\n  auv invoke window.waitForText \"Ready\" --title Import\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe)."
 )]
-struct WaitForWindowTextArgs {
+pub(crate) struct WaitForWindowTextArgs {
   /// Text to wait for in the selected window.
   #[arg(value_name = "TEXT")]
   query: String,
   /// Window title text used to select the capture target.
   #[arg(long, value_name = "TITLE")]
   title: Option<String>,
+  /// Milliseconds to keep polling before failing (default 10000, 100..=120000).
+  #[arg(long = "timeout-ms", value_name = "MS")]
+  #[serde(rename = "timeout-ms", default)]
+  timeout_ms: Option<u64>,
+  /// Milliseconds between OCR attempts (default 250, 50..=10000).
+  #[arg(long = "interval-ms", value_name = "MS")]
+  #[serde(rename = "interval-ms", default)]
+  interval_ms: Option<u64>,
+}
+
+impl WaitForWindowTextArgs {
+  fn options(&self) -> Result<auv_driver::WaitOptions, String> {
+    super::screen::text_wait_options(self.timeout_ms, self.interval_ms)
+  }
+
+  /// Decodes the query and wait budget from protocol inputs (Runner path).
+  pub(crate) fn decode(input: &InvokeCommandInput) -> Result<(String, auv_driver::WaitOptions), String> {
+    let args = crate::command::decode_args::<Self>(input)?;
+    let options = args.options()?;
+    Ok((args.query, options))
+  }
 }
 
 #[invoke_command(
@@ -275,9 +296,10 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
       return Ok(InvokeCommandOutput::completed());
     }
 
+    let options = args.options()?;
     let query = args.query;
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, true).await?;
+    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, Some(options)).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
@@ -514,7 +536,7 @@ pub async fn recognize_window_text(
   wait: bool,
 ) -> Result<WindowTextRecognition, crate::InvokeFailure> {
   let session = auv::local::open().map_err(|error| error.to_string())?;
-  Ok(recognize_window_text_with_session(&session, selector, query, wait).await?)
+  Ok(recognize_window_text_with_session(&session, selector, query, wait.then(auv_driver::WaitOptions::default)).await?)
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -522,13 +544,14 @@ async fn recognize_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
   query: String,
-  wait: bool,
+  wait: Option<auv_driver::WaitOptions>,
 ) -> Result<WindowTextRecognition, String> {
-  use auv_driver::{RelativeRect, WaitOptions};
+  use auv_driver::RelativeRect;
   use std::{thread, time::Instant};
 
   let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
-  let wait_options = WaitOptions::default();
+  let wait_options = wait.unwrap_or_default();
+  let wait = wait.is_some();
   let started = Instant::now();
   loop {
     let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
@@ -536,7 +559,10 @@ async fn recognize_window_text_with_session(
       session.vision().find_text_in_capture(&capture, &query, RelativeRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
     if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
       if wait && matches.matches.is_empty() {
-        return Err(format!("window.waitForText did not find text {query:?} before timeout"));
+        return Err(format!(
+          "window.waitForText did not find text {query:?} within {} ms; capture the window to check what is shown, or raise --timeout-ms",
+          wait_options.timeout.as_millis()
+        ));
       }
 
       // TODO(invoke-recognition-result-artifacts): this records the window OCR

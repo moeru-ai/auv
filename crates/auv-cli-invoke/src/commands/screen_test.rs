@@ -166,3 +166,41 @@ fn dry_run_text_input(command_id: &str, target: Option<&str>) -> InvokeCommandIn
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }
+
+fn wait_input(pairs: &[(&str, &str)]) -> InvokeCommandInput {
+  InvokeCommandInput {
+    command_id: "screen.waitForText".into(),
+    target: None,
+    inputs: pairs.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  }
+}
+
+// ROOT CAUSE:
+//
+// If a page took longer than 5 s to show the text, screen.waitForText
+// failed: the wait budget was hard-coded. OSWorld agents passed `timeout`
+// keys that did not exist (49 calls, silently ignored) and saw the text
+// appear 10-85 s after failed waits.
+//
+// The fix accepts `timeout-ms`/`interval-ms` and defaults to 10 s.
+#[test]
+fn screen_wait_decodes_its_budget_from_protocol_inputs() {
+  let (query, options) = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready")])).unwrap();
+  assert_eq!(query, "Ready");
+  assert_eq!(options.timeout, std::time::Duration::from_secs(10));
+  assert_eq!(options.poll_interval, std::time::Duration::from_millis(250));
+
+  let (_, options) = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready"), ("timeout-ms", "30000")])).unwrap();
+  assert_eq!(options.timeout, std::time::Duration::from_secs(30));
+  let (_, options) = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready"), ("timeout_ms", "2000")])).unwrap();
+  assert_eq!(options.timeout, std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn screen_wait_rejects_budgets_outside_the_supported_range() {
+  let error = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready"), ("timeout-ms", "999999")])).unwrap_err();
+  assert!(error.contains("timeout-ms must be within 100..=120000"), "{error}");
+}

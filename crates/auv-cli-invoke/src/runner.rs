@@ -23,7 +23,13 @@ where
       return Ok(response);
     }
     if started.elapsed() >= options.timeout {
-      return Err(format!("{command_id} did not find text {query:?} before timeout"));
+      // TODO(text-wait-timeout-evidence): report the recognized lines or the
+      // last capture with the failure. OcrMatches carries only matches, so
+      // this needs the recognition result to keep all lines first.
+      return Err(format!(
+        "{command_id} did not find text {query:?} within {} ms; capture the screen to check what is shown, or raise --timeout-ms",
+        options.timeout.as_millis()
+      ));
     }
     tokio::select! {
       _ = cancellation.cancelled() => return Err("invoke cancelled".to_string()),
@@ -270,15 +276,15 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         }
       }
     },
-    "window.waitForText" => match input.inputs.get("query").cloned() {
-      None => Err("window.waitForText omitted its typed query argument".to_string()),
-      Some(query) => match runner.windows().resolve(selected_window_selector(&input)).await {
+    "window.waitForText" => match crate::commands::window::WaitForWindowTextArgs::decode(&input) {
+      Err(error) => Err(error),
+      Ok((query, options)) => match runner.windows().resolve(selected_window_selector(&input)).await {
         Err(status) => Err(format!("WindowService/ResolveWindow failed: {status}")),
         Ok(window) => {
           let response = wait_for_selected_text(
             command_id,
             &query,
-            auv_driver::WaitOptions::default(),
+            options,
             &input.cancellation,
             || {
               let window = window.clone();
@@ -345,14 +351,14 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       }
       .await
     }
-    "screen.waitForText" => match input.inputs.get("query").cloned() {
-      None => Err("screen.waitForText omitted its typed query argument".to_string()),
-      Some(query) => {
+    "screen.waitForText" => match crate::commands::screen::WaitForScreenTextArgs::decode(&input) {
+      Err(error) => Err(error),
+      Ok((query, options)) => {
         let displays = runner.displays();
         let response = wait_for_selected_text(
           command_id,
           &query,
-          auv_driver::WaitOptions::default(),
+          options,
           &input.cancellation,
           || {
             let displays = displays.clone();

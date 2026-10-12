@@ -135,12 +135,59 @@ struct FindScreenTextArgs {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke screen.waitForText \"Ready\"\n\nWindows reads the primary display only. Text on another display is not found."
+  after_long_help = "Examples:
+  auv invoke screen.waitForText \"Ready\"
+
+  # Wait up to 30 seconds for a slow page
+  auv invoke screen.waitForText \"Order confirmed\" --timeout-ms 30000
+
+Windows reads the primary display only. Text on another display is not found."
 )]
-struct WaitForScreenTextArgs {
+pub(crate) struct WaitForScreenTextArgs {
   /// Text to wait for in the captured image.
   #[arg(value_name = "TEXT")]
   query: String,
+  /// Milliseconds to keep polling before failing (default 10000, 100..=120000).
+  #[arg(long = "timeout-ms", value_name = "MS")]
+  #[serde(rename = "timeout-ms", default)]
+  timeout_ms: Option<u64>,
+  /// Milliseconds between OCR attempts (default 250, 50..=10000).
+  #[arg(long = "interval-ms", value_name = "MS")]
+  #[serde(rename = "interval-ms", default)]
+  interval_ms: Option<u64>,
+}
+
+/// Validates a text wait budget shared by screen and window waits.
+///
+/// NOTICE: The shared 5 s `WaitOptions` default was too short for page
+/// loads: OSWorld agents saw text appear 10-85 s after a failed wait, and 49
+/// calls passed a `timeout` key that did not exist and was ignored.
+pub(crate) fn text_wait_options(timeout_ms: Option<u64>, interval_ms: Option<u64>) -> Result<auv_driver::WaitOptions, String> {
+  let timeout_ms = timeout_ms.unwrap_or(10_000);
+  let interval_ms = interval_ms.unwrap_or(250);
+  if !(100..=120_000).contains(&timeout_ms) {
+    return Err(format!("timeout-ms must be within 100..=120000, got {timeout_ms}"));
+  }
+  if !(50..=10_000).contains(&interval_ms) {
+    return Err(format!("interval-ms must be within 50..=10000, got {interval_ms}"));
+  }
+  Ok(auv_driver::WaitOptions {
+    timeout: std::time::Duration::from_millis(timeout_ms),
+    poll_interval: std::time::Duration::from_millis(interval_ms),
+  })
+}
+
+impl WaitForScreenTextArgs {
+  fn options(&self) -> Result<auv_driver::WaitOptions, String> {
+    text_wait_options(self.timeout_ms, self.interval_ms)
+  }
+
+  /// Decodes the query and wait budget from protocol inputs (Runner path).
+  pub(crate) fn decode(input: &InvokeCommandInput) -> Result<(String, auv_driver::WaitOptions), String> {
+    let args = crate::command::decode_args::<Self>(input)?;
+    let options = args.options()?;
+    Ok((args.query, options))
+  }
 }
 
 #[invoke_command(
@@ -158,7 +205,7 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let matches = recognize_screen_text_with_cancellation(args.query, false, &input.cancellation).await?;
+    let matches = recognize_screen_text_with_cancellation(args.query, None, &input.cancellation).await?;
     Ok(screen_text_matches_output(&matches)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -183,7 +230,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let matches = recognize_screen_text_with_cancellation(args.query, true, &input.cancellation).await?;
+    let matches = recognize_screen_text_with_cancellation(args.query.clone(), Some(args.options()?), &input.cancellation).await?;
     Ok(screen_text_matches_output(&matches)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -195,16 +242,17 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, crate::InvokeFailure> {
+  let wait = wait.then(auv_driver::WaitOptions::default);
   Ok(recognize_screen_text_with_cancellation(query, wait, &Default::default()).await?)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 async fn recognize_screen_text_with_cancellation(
   query: String,
-  wait: bool,
+  wait: Option<auv_driver::WaitOptions>,
   cancellation: &crate::InvokeCancellation,
 ) -> Result<auv_driver::OcrMatches, String> {
-  use auv_driver::{CaptureOptions, RelativeRect, WaitOptions};
+  use auv_driver::{CaptureOptions, RelativeRect};
 
   cancellation.check().map_err(|error| error.to_string())?;
   let session = auv::local::open().map_err(|error| error.to_string())?;
@@ -221,8 +269,8 @@ async fn recognize_screen_text_with_cancellation(
     cancellation.check().map_err(|error| error.to_string())?;
     Ok((matches, capture))
   };
-  let (matches, capture) = if wait {
-    crate::runner::wait_for_selected_text("screen.waitForText", &query, WaitOptions::default(), cancellation, observe, |(matches, _)| {
+  let (matches, capture) = if let Some(options) = wait {
+    crate::runner::wait_for_selected_text("screen.waitForText", &query, options, cancellation, observe, |(matches, _)| {
       !matches.matches.is_empty()
     })
     .await?
