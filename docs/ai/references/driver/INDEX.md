@@ -91,6 +91,7 @@ Count: **70**
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 - [`windows-wheel-acceptance-matrix.md`](windows-wheel-acceptance-matrix.md): Per-application matrix of background wheel acceptance via `PostMessageW(WM_MOUSEWHEEL)` across Win32, DirectComposition, Chromium/Electron, and Qt toolkits (Brief 6).
+- [`2026-10-12-windows-keyboard-targeted.jsonl`](2026-10-12-windows-keyboard-targeted.jsonl): Empirical trial records (38 trials across 4 commands and 3 app architectures) evaluating Windows targeted keyboard input under `InputPolicy::BackgroundOnly`, documenting the in-app focus crux and modifier key state table disconnect.
 
 
 ## Related
