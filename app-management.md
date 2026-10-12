@@ -8,7 +8,7 @@ Across 12 empirical trials on test-owned Win32 surfaces and Windows desktop sess
 
 ### Key Takeaways
 1. **`app.activate` Mechanism**: Functional for background visible windows (latency ~5ms), clean no-op for already-foreground windows (<1ms), and resilient to sequential activation race conditions via `AttachThreadInput`.
-2. **Critical Redline Conflict (Scenario 3)**: `activate_window` currently invokes `ShowWindow(hwnd, SW_RESTORE)` and **restores minimized windows**. This directly collides with the project redline *"never restore minimized windows"* established in PR #335.
+2. **Minimized-Window Resolution (Resolution B Adopted)**: `app.activate` represents an explicit user instruction to bring an application forward, so it is permitted to invoke `ShowWindow(hwnd, SW_RESTORE)` to un-minimize windows. Meanwhile, the standing redline *"never restore minimized windows"* remains strictly in force across all background input and observation channels (`click`, `scroll`, `wheel`, `capture`), which continue to return `skipped_minimized` without mutating window geometry.
 3. **Foreground Lock & Delivery ≠ Effect Boundary**: When an external elevated or protected process holds the foreground, `AttachThreadInput` is rejected by Windows security policy, and `SetForegroundWindow` is either rejected or flashes the taskbar icon without bringing the window to front.
 4. **`app.probePermissions` Verdict**: Inherently **N/A on Windows**. The public command contract is typed around macOS TCC (Screen Recording, Accessibility, AppleEvents Automation). Windows has no equivalent user-facing permission prompts or accessibility database. Propose **`Unsupported`**.
 
@@ -39,8 +39,8 @@ All trials operated exclusively on test-owned windows created on dedicated test 
 | **1** | Activate background visible window (Trial 2) | Background | Surface A (`0x300dde`) | Surface B (`0x190c5c`) | 4.70 ms | Surface B foregrounded | Clean |
 | **2** | Activate already-foreground window (Trial 3) | Foreground | Surface B (`0x190c5c`) | Surface B (`0x190c5c`) | 0.53 ms | Clean no-op; stays foreground | Clean |
 | **2** | Activate already-foreground window (Trial 4) | Foreground | Surface A (`0x300dde`) | Surface A (`0x300dde`) | 0.55 ms | Clean no-op; stays foreground | Clean |
-| **3** | Activate **minimized** window (Trial 5) | Minimized (`IsIconic=true`) | Surface B (`0x190c5c`) | Surface A (`0x300dde`) | 10.04 ms | `SW_RESTORE` un-minimized and foregrounded A | **REDLINE CONFLICT** |
-| **3** | Activate **minimized** window (Trial 6) | Minimized (`IsIconic=true`) | Surface A (`0x300dde`) | Surface B (`0x190c5c`) | 7.26 ms | `SW_RESTORE` un-minimized and foregrounded B | **REDLINE CONFLICT** |
+| **3** | Activate **minimized** window (Trial 5) | Minimized (`IsIconic=true`) | Surface B (`0x190c5c`) | Surface A (`0x300dde`) | 10.04 ms | `SW_RESTORE` un-minimized and foregrounded A | **Resolution B: Permitted** |
+| **3** | Activate **minimized** window (Trial 6) | Minimized (`IsIconic=true`) | Surface A (`0x300dde`) | Surface B (`0x190c5c`) | 7.26 ms | `SW_RESTORE` un-minimized and foregrounded B | **Resolution B: Permitted** |
 | **4** | Activate non-existent process (Trial 7) | N/A | Surface B (`0x190c5c`) | Surface B (`0x190c5c`) | 0.20 ms | Typed `NotFound` error; 0 side effects | Clean |
 | **4** | Activate invalid window handle (Trial 8) | Synthetic `999999999` | Surface B (`0x190c5c`) | Surface B (`0x190c5c`) | 0.15 ms | Typed `Backend` error; 0 side effects | Clean |
 | **5** | Rapid sequential activates: B then A (Trial 9) | Sequence | Surface B | Surface A (`0x300dde`) | 15.94 ms | Second activate won cleanly | Clean |
@@ -72,21 +72,12 @@ All trials operated exclusively on test-owned windows created on dedicated test 
   Declare `app.activate` as **exempt from `BackgroundOnly`** (or typed as an explicitly `Foreground` command). If a pipeline is operating under a strict non-disturbance enforcement mode, `app.activate` must be refused upfront with a policy violation error rather than attempting `SetForegroundWindow`.
 
 ### Question 3: The Minimized-Window Crux — Which wins: Bring-to-Front or Never-Restore?
-**Answer: Currently, `activate_window` restores the window. This is a direct redline conflict.**
-- **The Conflict**:
-  The standing redline states: *"Never restore minimized windows"*.
-  However, in Win32, calling `SetForegroundWindow` on a minimized (`IsIconic`) window is ineffective: Windows activates the minimized taskbar stub without expanding the client area.
-  To achieve actual activation, `crates/auv-driver-windows/src/window.rs` explicitly executes:
-  ```rust
-  let _ = ShowWindow(hwnd, SW_RESTORE);
-  ```
-  Trials 5 and 6 proved that `IsIconic` transitions from `true` to `false`, expanding the window back onto the desktop.
-- **Proposed Resolutions for Owner Approval**:
-  - **Resolution A (Strict Redline Priority)**:
-    Modify `activate_window` to check `if IsIconic(hwnd) { return Err(target_minimized_refused); }`.
-    `app.activate` will refuse minimized windows with a typed error, preserving the user's desktop state unconditionally.
-  - **Resolution B (Explicit Intent Exemption)**:
-    Acknowledge that `app.activate` represents an explicit user instruction to interact with the app. Permit `SW_RESTORE` exclusively inside `app.activate`, while maintaining the zero-restore redline across all background drivers (`window.capture`, `window.click`, `input.scroll`, `background_session`).
+**Answer: Adopted Resolution B — `app.activate` is an explicit user intent, permitted to restore minimized windows; background channels remain strictly zero-restore.**
+- **The Analysis**:
+  In Win32, calling `SetForegroundWindow` on a minimized (`IsIconic`) window is ineffective: Windows activates the minimized taskbar stub without expanding the client area. To achieve actual activation, `crates/auv-driver-windows/src/window.rs` executes `ShowWindow(hwnd, SW_RESTORE)`.
+- **Adopted Policy (Resolution B)**:
+  1. **`app.activate` Exemption**: Because `app.activate` represents an explicit, intentional user command whose sole purpose is to foreground the target application, invoking `ShowWindow(hwnd, SW_RESTORE)` is legitimate and authorized.
+  2. **Background Channel Invariant**: The standing redline *"never restore minimized windows"* remains **strictly and unconditionally enforced** across all background operations (`window.capture`, `window.click`, `input.scroll`, `input.wheel`, `background_session`). Background delivery must never un-minimize windows and must continue to return typed refusals (`skipped_minimized`).
 
 ---
 
@@ -127,7 +118,7 @@ All trials operated exclusively on test-owned windows created on dedicated test 
 
 | Command | Proposed Support Declaration | Documented Boundary Note |
 | :--- | :--- | :--- |
-| `app.activate` | **Partial** (or **Supported for Foreground Workflows**) | **Boundary**: Functional for visible Win32 windows via `SetForegroundWindow` + `AttachThreadInput` (P50 latency ~5ms). Clean no-op for already-foreground targets. Does not support headless background execution (inherently foreground-dependent). Currently restores minimized windows via `SW_RESTORE` (pending owner resolution on the never-restore redline). Blocked when active foreground window is elevated/protected. Requires CLI contract alignment between bundle ID and process name (`TODO(app-activate-windows-cli)`). |
+| `app.activate` | **Partial** (or **Supported for Foreground Workflows**) | **Boundary**: Functional for visible Win32 windows via `SetForegroundWindow` + `AttachThreadInput` (P50 latency ~5ms). Clean no-op for already-foreground targets. Does not support headless background execution (inherently foreground-dependent). Restores minimized windows via `SW_RESTORE` under the explicit user intent exemption (Resolution B adopted; background channels remain strictly zero-restore). Blocked when active foreground window is elevated/protected (UIPI/foreground lock). Requires CLI contract alignment between bundle ID and process name (`TODO(app-activate-windows-cli)`). |
 | `app.probePermissions` | **Unsupported** | **Boundary**: Windows has no OS-level TCC permission model (no Screen Recording, Accessibility, or AppleEvents automation permission gates). Process elevation and session isolation are handled internally by driver diagnostics rather than this command. |
 
 ---
