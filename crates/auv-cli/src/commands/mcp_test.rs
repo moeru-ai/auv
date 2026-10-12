@@ -498,6 +498,9 @@ async fn invoke_description_lists_inputs_and_example_calls() {
   let description = invoke.description.as_deref().unwrap_or_default();
 
   assert!(description.contains("  inputs.query (required)"), "{description}");
+  // OSWorld agents on Linux copied the macOS example id `com.google.Chrome`
+  // into most Chrome episodes; the preamble says ids differ by platform.
+  assert!(description.contains("run `window.list` instead of guessing"), "{description}");
   assert!(description.contains(r#"  example: {"command_id":"input.pressKeys","inputs":{"keys":"[\"cmd\",\"shift\",\"p\"]"}}"#), "{description}");
   let schema = serde_json::to_value(&invoke.input_schema).unwrap();
   let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "screen.waitForText").unwrap();
