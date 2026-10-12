@@ -677,6 +677,7 @@ mod frontend {
       let mut tools = self.tool_router.list_all();
       if let Some(invoke_tool) = tools.iter_mut().find(|tool| tool.name == "invoke") {
         invoke_tool.input_schema = invoke_tool_input_schema_for_registry(self.invoke_registry.as_ref());
+        invoke_tool.description = Some(invoke_tool_description(self.invoke_registry.as_ref()).into());
       }
       Ok(ListToolsResult::with_all_items(tools))
     }
@@ -719,6 +720,98 @@ mod frontend {
     Arc::new(schema)
   }
 
+  /// Renders the command catalog into the `invoke` description.
+  ///
+  /// NOTICE: Model clients render tool definitions from standard JSON Schema
+  /// keys; the `x-auv-commands` extension never reached the model (an OSWorld
+  /// request cost the same input tokens with or without it), so agents guessed
+  /// `inputs` keys. The description is the one field every client shows.
+  fn invoke_tool_description(registry: &InvokeRegistry) -> String {
+    let mut text = String::from(
+      "Invoke one AUV command and record it as a Run. Set `command_id` to one command below and \
+       pass its arguments in `inputs` as string values, keyed exactly as listed; list values are JSON array strings. \
+       Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
+       command; it is not a claim that the path was run.\n\nCommands:",
+    );
+    for command in registry.all() {
+      text.push_str(&format!("\n\n{}: {}", command.id, command.description));
+      match command.role {
+        auv_cli_invoke::CommandRole::Desktop => {}
+        auv_cli_invoke::CommandRole::Alias { canonical } => text.push_str(&format!("\n  alias of: {canonical}")),
+        auv_cli_invoke::CommandRole::Fixture => text.push_str("\n  fixture: processes data you supply; does not control a desktop"),
+      }
+      text.push_str(&format!("\n  support: {}", platform_support_summary(command)));
+      for argument in command_arguments(command) {
+        let required = if argument.required {
+          "required"
+        } else {
+          "optional"
+        };
+        text.push_str(&format!("\n  inputs.{} ({required}): {}", argument.input_key, argument.help));
+      }
+      if command.target != auv_cli_invoke::command::TargetPolicy::Forbidden {
+        text.push_str(&format!("\n  target: {}", command.target.help()));
+      }
+      // A command whose examples do not parse is caught by the registry tests;
+      // the description stays usable without them.
+      for example in command.examples().unwrap_or_default().iter().take(2) {
+        text.push_str(&format!("\n  example: {}", mcp_example_call(command.id, example)));
+      }
+    }
+    text
+  }
+
+  /// One line of per-platform support, such as `macOS supported; Linux partial (foreground delivery only); Windows unsupported`.
+  ///
+  /// Only `Partial` notes are shown: they name the limit a caller must work within. Other
+  /// notes explain driver internals and stay in `x-auv-commands`.
+  fn platform_support_summary(command: &InvokeCommand) -> String {
+    auv_cli_invoke::Platform::ALL
+      .iter()
+      .map(|platform| {
+        let support = command.support.on(*platform);
+        match (support.state, support.note) {
+          (auv_cli_invoke::SupportState::Partial, Some(note)) => format!("{} partial ({note})", platform.label()),
+          (state, _) => format!("{} {}", platform.label(), state.as_str()),
+        }
+      })
+      .collect::<Vec<_>>()
+      .join("; ")
+  }
+
+  struct CommandArgument {
+    input_key: String,
+    required: bool,
+    help: String,
+  }
+
+  fn command_arguments(command: &InvokeCommand) -> Vec<CommandArgument> {
+    command
+      .clap_command()
+      .get_arguments()
+      .filter(|argument| argument.get_id() != "help")
+      .map(|argument| CommandArgument {
+        input_key: argument.get_long().unwrap_or_else(|| argument.get_id().as_str()).to_string(),
+        required: argument.is_required_set(),
+        help: argument.get_help().map(ToString::to_string).unwrap_or_default(),
+      })
+      .collect()
+  }
+
+  /// One example as the MCP `invoke` arguments a client sends.
+  fn mcp_example_call(command_id: &str, example: &auv_cli_invoke::InvokeExample) -> Value {
+    let mut call = serde_json::json!({ "command_id": command_id, "inputs": example.inputs });
+    if let Some(target) = &example.target {
+      let (field, id) = match target {
+        ExecutionTarget::Application { id } => ("application_id", id),
+        ExecutionTarget::Window { id } => ("window_id", id),
+        ExecutionTarget::Display { id } => ("display_id", id),
+      };
+      call["target"] = serde_json::json!({ field: id });
+    }
+    call
+  }
+
   fn invoke_command_metadata(command: &InvokeCommand) -> Value {
     let clap_command = command.clap_command();
     serde_json::json!({
@@ -741,6 +834,12 @@ mod frontend {
           "repeated": matches!(argument.get_action(), clap::ArgAction::Append),
           "help": argument.get_help().map(ToString::to_string),
         }))
+        .collect::<Vec<_>>(),
+      "examples": command
+        .examples()
+        .unwrap_or_default()
+        .iter()
+        .map(|example| serde_json::json!({ "summary": example.summary, "cli": example.cli, "call": mcp_example_call(command.id, example) }))
         .collect::<Vec<_>>(),
     })
   }

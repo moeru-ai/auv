@@ -473,3 +473,33 @@ async fn mcp_invoke_without_a_selection_still_runs_the_local_adapter() {
   assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
   assert_ne!(result.is_error, Some(true), "{result:?}");
 }
+
+// ROOT CAUSE:
+//
+// If a model client listed MCP tools, it rendered only standard schema keys,
+// so the `x-auv-commands` argument metadata never reached the model. OSWorld
+// agents guessed `inputs` keys (`text` instead of `query`) and list encodings
+// (`"CTRL+L"` instead of a JSON array string) in about 100 failed calls.
+//
+// The fix renders the command catalog with inputs and examples into the
+// `invoke` description.
+#[tokio::test]
+async fn invoke_description_lists_inputs_and_example_calls() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let (server_transport, client_transport) = tokio::io::duplex(1 << 20);
+  tokio::spawn(async move {
+    let service = server.serve(server_transport).await?;
+    service.waiting().await?;
+    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+  let tools = client.list_all_tools().await.unwrap();
+  let invoke = tools.iter().find(|tool| tool.name == "invoke").expect("invoke tool");
+  let description = invoke.description.as_deref().unwrap_or_default();
+
+  assert!(description.contains("  inputs.query (required)"), "{description}");
+  assert!(description.contains(r#"  example: {"command_id":"input.pressKeys","inputs":{"keys":"[\"cmd\",\"shift\",\"p\"]"}}"#), "{description}");
+  let schema = serde_json::to_value(&invoke.input_schema).unwrap();
+  let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "screen.waitForText").unwrap();
+  assert_eq!(wait["examples"][0]["call"], serde_json::json!({ "command_id": "screen.waitForText", "inputs": { "query": "Ready" } }));
+}
