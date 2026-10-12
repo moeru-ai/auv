@@ -198,7 +198,7 @@ mod native {
   use auv_driver_common::error::DriverResult;
   use auv_driver_common::geometry::{CoordinateSpace, Rect};
   use auv_driver_common::window::{Window, WindowRef};
-  use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, TRUE};
+  use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, SetLastError, TRUE, WIN32_ERROR};
   use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -212,12 +212,18 @@ mod native {
   use crate::error::backend;
 
   pub(super) fn list_windows() -> DriverResult<Vec<Window>> {
+    crate::desktop::ensure_input_desktop();
     let mut handles: Vec<HWND> = Vec::new();
+    // Clear last error prior to EnumWindows. Win32 EnumWindows does not reset last-error,
+    // so any stale error (such as ERROR_ALREADY_EXISTS from earlier process startup)
+    // would otherwise cause windows-rs to treat a FALSE return as a fatal failure.
+    unsafe { SetLastError(WIN32_ERROR(0)) };
     // SAFETY: `enum_proc` only pushes into the Vec referenced by `lparam`, which
     // outlives the synchronous EnumWindows call.
     let enumeration = unsafe { EnumWindows(Some(enum_proc), LPARAM(&mut handles as *mut Vec<HWND> as isize)) };
     if let Err(error) = enumeration
       && error.code().is_err()
+      && handles.is_empty()
     {
       return Err(backend(format!("EnumWindows failed: {error}")));
     }

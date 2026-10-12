@@ -35,6 +35,10 @@ path = "src/bin/replay_qqmusic_operation/main.rs"
 name = "spike-verify-experiments"
 path = "src/bin/spike_verify_experiments/main.rs"
 
+[[bin]]
+name = "measure-settle"
+path = "src/bin/measure_settle.rs"
+
 [dependencies]
 auv-auto-loop = { version = "0.0.34", path = "../auv-auto-loop" }
 auv-driver-common = { version = "0.0.34", path = "../auv-driver-common" }
