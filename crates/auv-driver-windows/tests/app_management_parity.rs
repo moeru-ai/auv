@@ -131,11 +131,19 @@ fn hwnd_format(hwnd: HWND) -> String {
 }
 
 #[test]
+#[ignore = "activates test windows and asserts GetForegroundWindow; requires an unlocked interactive desktop"]
 fn live_app_management_parity_evaluation() {
+  if std::env::var("CI").is_ok() {
+    println!("Skipping live app management evaluation in CI environment");
+    return;
+  }
+
   println!("\n=== Starting Windows App Management Parity Live Evaluation (#211) ===");
 
   let session = WindowsDriver::new().open_local().expect("create driver session");
-  let jsonl_path = PathBuf::from(r"F:\auv\docs\ai\references\driver\2026-10-13-windows-app-management.jsonl");
+  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let repo_root = manifest_dir.ancestors().nth(2).unwrap_or(&manifest_dir);
+  let jsonl_path = repo_root.join("docs/ai/references/driver/2026-10-13-windows-app-management.jsonl");
   let mut jsonl_file = OpenOptions::new().create(true).write(true).truncate(true).open(&jsonl_path).expect("open jsonl output file");
 
   let mut records = Vec::new();
