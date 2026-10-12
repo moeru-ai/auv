@@ -53,7 +53,7 @@ struct ActivateAppArgs {}
   support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver can activate a process by name, which this command does not use") },
   target = RequiredApplication,
   group = "app",
-  description = "Bring a target macOS app to the foreground before a foreground-dependent step.",
+  description = "Bring a target app to the foreground before a foreground-dependent step.",
   input = ActivateAppArgs,
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> InvokeCommandResult {

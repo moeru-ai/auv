@@ -190,7 +190,7 @@ pub struct ScrollPointResult {
   id = "input.scrollPoint",
   support = { macos: Unsupported("the driver exposes only window-owned scrolling"), linux: Supported, windows: Supported },
   group = "input",
-  description = "Scroll foreground logical pixels at a screen coordinate.",
+  description = "Scroll at a logical screen point by delta_x/delta_y pixels (positive delta_y scrolls down). Needs no target; use it when no app or window target is known.",
   input = ScreenScrollArgs,
 )]
 async fn scroll_point(input: InvokeCommandInput, args: ScreenScrollArgs) -> InvokeCommandResult {
@@ -255,7 +255,7 @@ struct FocusTextArgs {
   support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an accessibility tree and focus_node that this command does not use") },
   target = RequiredApplication,
   group = "input",
-  description = "Focus a target macOS text input through AX using its visible text.",
+  description = "Focus a text input in a target app through accessibility, located by its visible text.",
   input = FocusTextArgs,
 )]
 async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> InvokeCommandResult {
@@ -312,7 +312,7 @@ struct AxFocusTextArgs {
   role = Alias("input.focusText"),
   target = RequiredApplication,
   group = "input",
-  description = "Compatibility alias for input.focusText; focuses a text input through the same macOS AX focus operation.",
+  description = "Compatibility spelling of input.focusText; prefer input.focusText.",
   input = AxFocusTextArgs,
 )]
 async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) -> InvokeCommandResult {
@@ -452,7 +452,7 @@ struct PressKeysArgs {
   id = "input.keys",
   target = OptionalKeyboard,
   group = "input",
-  description = "Press and release a key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.",
+  description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Keys are released in reverse order; effects remain unverified.",
   input = PressKeysArgs,
   support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
 )]
@@ -466,7 +466,7 @@ async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::In
   id = "input.pressKeys",
   target = OptionalKeyboard,
   group = "input",
-  description = "Press and release a key combination, optionally repeated. Equivalent to input.keys.",
+  description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Equivalent to input.keys.",
   input = PressKeysArgs,
   support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   role = Alias("input.keys"),
@@ -609,7 +609,7 @@ async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> c
   support = { macos: Supported, linux: Partial("foreground delivery only; targeted delivery is unsupported"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   target = OptionalKeyboard,
   group = "input",
-  description = "Press a keyboard key or shortcut through the platform input driver.",
+  description = "Press one key or shortcut written as one string, such as \"enter\" or \"ctrl+l\".",
   input = PressKeyArgs,
 )]
 async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
@@ -1492,7 +1492,7 @@ pub struct ScrollResult {
   support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   target = RequiredWindow,
   group = "input",
-  description = "Scroll at a point in a target window by logical-pixel deltas (positive dy scrolls down).",
+  description = "Scroll at a point in a target window by logical-pixel deltas (positive dy scrolls down). Requires an app or window target; without one, use input.scrollPoint.",
   input = ScrollArgs,
 )]
 async fn scroll(input: InvokeCommandInput, args: ScrollArgs) -> crate::InvokeExecutionResult {

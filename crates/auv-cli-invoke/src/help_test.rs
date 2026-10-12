@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::{Platform, SupportState, default_registry, render_command_help, render_help_index};
 
 fn word(state: SupportState) -> &'static str {
@@ -55,4 +57,38 @@ fn an_alias_names_its_canonical_command_in_its_help() {
   let registry = default_registry();
   let help = render_command_help(registry.resolve("input.pressKeys").expect("input.pressKeys is registered"));
   assert!(help.contains("This command is an alias of input.keys."), "{help}");
+}
+
+#[test]
+fn every_command_documents_at_least_one_example_it_accepts() {
+  for command in default_registry().all() {
+    let examples = command.examples().unwrap_or_else(|error| panic!("{error}"));
+    assert!(!examples.is_empty(), "{} has no `auv invoke` example in its long help", command.id);
+  }
+}
+
+// ROOT CAUSE:
+//
+// If an MCP caller only saw the `invoke` schema, it could not tell which
+// `inputs` keys a command takes or how list values are encoded. An OSWorld
+// agent sent `{"keys": "CTRL+L"}` and `{"text": ...}` for `query`, and 84 of
+// about 160 failed calls in one run were such argument mistakes.
+//
+// The fix derives protocol inputs from the CLI examples, so MCP can show
+// calls the command accepts.
+#[test]
+fn examples_resolve_to_the_protocol_inputs_mcp_sends() {
+  let registry = default_registry();
+  let press_keys = registry.resolve("input.pressKeys").unwrap().examples().unwrap();
+  assert_eq!(press_keys[0].inputs.get("keys").map(String::as_str), Some(r#"["cmd","shift","p"]"#));
+
+  let wait = registry.resolve("screen.waitForText").unwrap().examples().unwrap();
+  assert_eq!(wait[0].inputs, BTreeMap::from([("query".to_string(), "Ready".to_string())]));
+  assert_eq!(wait[0].cli, r#"auv invoke screen.waitForText "Ready""#);
+}
+
+#[test]
+fn example_comments_become_summaries() {
+  let examples = default_registry().resolve("screen.findText").unwrap().examples().unwrap();
+  assert_eq!(examples[0].summary.as_deref(), Some("Find text on the current screen"));
 }

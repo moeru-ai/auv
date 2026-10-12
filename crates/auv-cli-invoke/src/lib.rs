@@ -25,7 +25,7 @@ pub use command::{
   TypedInvokeArgs,
 };
 pub use commands::input::emit_input_action_result;
-pub use help::{render_command_help, render_help_index};
+pub use help::{InvokeExample, render_command_help, render_help_index};
 pub use models::{
   ExecutionTarget, InvokeArtifactResult, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable,
   InvokeReportTableRow, InvokeRequest, InvokeResult, InvokeStatus,
