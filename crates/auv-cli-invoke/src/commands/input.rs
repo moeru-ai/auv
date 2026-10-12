@@ -1917,8 +1917,13 @@ fn click_window_selector(application_id: &str, title: Option<&str>) -> auv_drive
   use auv_driver::{App, TextMatcher, WindowSelector};
 
   let title = title.filter(|value| !value.trim().is_empty()).map(|title| TextMatcher::Contains(title.to_string()));
+  #[cfg(target_os = "windows")]
+  let app = Some(App::name(application_id));
+  #[cfg(not(target_os = "windows"))]
+  let app = Some(App::bundle_id(application_id));
+
   WindowSelector {
-    app: Some(App::bundle_id(application_id)),
+    app,
     main_visible: title.is_none(),
     title,
   }
