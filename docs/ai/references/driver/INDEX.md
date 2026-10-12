@@ -90,6 +90,7 @@ Count: **70**
 - [`2026-10-12-windows-media-control.md`](2026-10-12-windows-media-control.md): `mediaControl.*` on Windows: the platform-neutral now-playing contract (`now-playing-v0`, the command verification rule) moved to `auv-driver-common::media` with `auv-media-macos` re-exporting it, the SMTC current-session mapping onto it, controls that poll the same session until the effect shows or 3 s pass, live evidence for all six commands against QQ Music, and the finding that a skip's after-state can read not playing while the app switches tracks.
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
+- [`windows-wheel-acceptance-matrix.md`](windows-wheel-acceptance-matrix.md): Per-application matrix of background wheel acceptance via `PostMessageW(WM_MOUSEWHEEL)` across Win32, DirectComposition, Chromium/Electron, and Qt toolkits (Brief 6).
 
 
 ## Related
