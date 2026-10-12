@@ -12,7 +12,7 @@ fn resolve_from_windows_matches_title_contains() {
     },
     title: Some("GNOME Text Editor".to_string()),
     app_name: Some("Text Editor".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(42),
     frame: Rect::new(0.0, 0.0, 500.0, 400.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -33,7 +33,7 @@ fn resolve_from_windows_matches_title_contains_case_insensitive() {
     },
     title: Some("Settings".to_string()),
     app_name: Some("GNOME Settings".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(42),
     frame: Rect::new(0.0, 0.0, 500.0, 400.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -54,7 +54,7 @@ fn resolve_from_windows_matches_app_name_contains_case_insensitive() {
     },
     title: Some("Settings".to_string()),
     app_name: Some("GNOME Settings".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(42),
     frame: Rect::new(0.0, 0.0, 500.0, 400.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -91,7 +91,7 @@ fn main_visible_prefers_application_window_over_desktop_shell_surface() {
     },
     title: Some("Main stage".to_string()),
     app_name: Some("gnome-shell".to_string()),
-    app_bundle_id: Some("org.gnome.Shell".to_string()),
+    application_id: Some("org.gnome.Shell".to_string()),
     process_id: None,
     frame: Rect::new(0.0, 55.0, 100.0, 56.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -104,7 +104,7 @@ fn main_visible_prefers_application_window_over_desktop_shell_surface() {
     },
     title: Some("AGENTS.md - Visual Studio Code".to_string()),
     app_name: Some("code".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(0.0, 32.0, 2560.0, 1408.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -152,7 +152,7 @@ fn capture_target() -> Window {
     },
     title: Some("Editor".into()),
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(3.0, 4.0, 2.0, 2.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -289,7 +289,7 @@ fn window_capture_rejects_nonexistent_reference_on_live_desktop() {
     },
     title: None,
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(10.0, 10.0, 10.0, 10.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -353,18 +353,18 @@ fn an_unknown_application_id_lists_the_visible_applications() {
     },
     title: Some("notes.txt - Text Editor".to_string()),
     app_name: Some("gnome-text-editor".to_string()),
-    app_bundle_id: Some("org.gnome.TextEditor".to_string()),
+    application_id: Some("org.gnome.TextEditor".to_string()),
     process_id: Some(42),
     frame: Rect::new(0.0, 0.0, 500.0, 400.0),
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
   };
-  let selector = SelectWindow::main_visible().owned_by(auv_driver_common::App::bundle_id("com.google.Chrome"));
+  let selector = SelectWindow::main_visible().owned_by(auv_driver_common::App::id("com.google.Chrome"));
   let error = resolve_from_windows(std::slice::from_ref(&editor), &selector).unwrap_err();
   assert_eq!(error.to_string(), "application \"com.google.Chrome\" (visible applications: org.gnome.TextEditor) was not found");
   // The executable name is not an application id on Linux.
-  let by_executable = SelectWindow::main_visible().owned_by(auv_driver_common::App::bundle_id("gnome-text-editor"));
+  let by_executable = SelectWindow::main_visible().owned_by(auv_driver_common::App::id("gnome-text-editor"));
   assert!(resolve_from_windows(&[editor], &by_executable).is_err());
 }
 
@@ -381,7 +381,7 @@ fn the_main_window_outranks_a_larger_frame() {
     reference: WindowRef { id: id.to_string() },
     title: Some(title.to_string()),
     app_name: Some("soffice".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame,
     coordinate_space: CoordinateSpace::Screen,

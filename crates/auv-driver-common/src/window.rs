@@ -19,7 +19,10 @@ pub struct Window {
   pub reference: WindowRef,
   pub title: Option<String>,
   pub app_name: Option<String>,
-  pub app_bundle_id: Option<String>,
+  /// Platform application id: a bundle id on macOS, a desktop application id
+  /// on Linux (AT-SPI AccessibleId, or the GTK id / WM_CLASS class on X11).
+  /// Windows does not report one yet.
+  pub application_id: Option<String>,
   pub process_id: Option<u32>,
   pub frame: Rect,
   pub coordinate_space: CoordinateSpace,
@@ -43,7 +46,7 @@ pub fn find_window(windows: impl IntoIterator<Item = Window>, id: &str) -> Drive
 // NOTICE(app-not-found-hint): `DriverError::NotFound` has only a target, so the
 // hint rides in it. Move it to a structured recovery field if NotFound gains one.
 pub fn application_not_found(selector: &AppSelector, windows: &[Window]) -> DriverError {
-  let requested = [&selector.bundle, &selector.name]
+  let requested = [&selector.id, &selector.name]
     .into_iter()
     .flatten()
     .map(|matcher| match matcher {
@@ -52,7 +55,7 @@ pub fn application_not_found(selector: &AppSelector, windows: &[Window]) -> Driv
     .collect::<Vec<_>>()
     .join(" ");
   let visible =
-    windows.iter().filter(|window| window.is_visible).filter_map(|window| window.app_bundle_id.as_deref().or(window.app_name.as_deref()));
+    windows.iter().filter(|window| window.is_visible).filter_map(|window| window.application_id.as_deref().or(window.app_name.as_deref()));
   DriverError::NotFound {
     target: format!("application {requested:?} ({})", visible_applications_hint(visible)),
   }

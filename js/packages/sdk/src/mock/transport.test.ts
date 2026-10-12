@@ -8,7 +8,7 @@ import { AuvRpcError } from '../transport/errors'
 import { serveMockDaemon } from './daemon'
 import { createMockTransport } from './transport'
 
-const window = { applicationBundleId: 'dev.auv.mock.music', frame: { height: 580, width: 480, x: 920, y: 120 }, ref: { windowId: 'w-music' }, title: 'Music' }
+const window = { applicationId: 'dev.auv.mock.music', frame: { height: 580, width: 480, x: 920, y: 120 }, ref: { windowId: 'w-music' }, title: 'Music' }
 
 async function mockRunner(define: Parameters<typeof createMockTransport>[0]) {
   const connection = await connectTransport(createMockTransport(define))
@@ -21,7 +21,7 @@ describe('mock Runner transport', () => {
       service(WindowService, {
         listWindows: () => ({ windows: [window] }),
         resolveWindow: (request) => {
-          expect(request.selector?.application).toEqual({ case: 'applicationBundleId', value: 'dev.auv.mock.music' })
+          expect(request.selector?.application).toEqual({ case: 'applicationId', value: 'dev.auv.mock.music' })
           return { window }
         },
       })
@@ -30,7 +30,7 @@ describe('mock Runner transport', () => {
 
     const [listed] = await runner.windows.list()
     expect(listed?.id).toBe('w-music')
-    const resolved = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'dev.auv.mock.music' } })
+    const resolved = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.music' } })
     expect(resolved.window.title).toBe('Music')
     await connection.close()
   })

@@ -966,8 +966,8 @@ The current scope terms are `screen`, `display`, `window`, and `region`.
 An execution target identifies the resource an invoke operation acts on. The
 shared invoke model distinguishes `Application`, `Window`, and `Display`
 targets instead of carrying an untyped string. The CLI spells these as
-`app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
-`--target` value retains its historical meaning as an application id.
+`app:<application-id>`, `window:<window-id>`, and `display:<display-id>`. A
+bare `--target` value retains its historical meaning as an application id.
 
 What an application id names depends on the platform. The `window.*` commands match a bundle id
 on macOS, the AT-SPI `AccessibleId` on Linux, and the executable file name on Windows (for
@@ -1165,7 +1165,7 @@ elements that overlap multiple layout or backing surfaces.
 
 A window candidate is one possible window match returned by a window-listing
 operation. Candidates should include enough metadata for inspection and stable
-selection, such as window ref, native window id when available, owner bundle id,
+selection, such as window ref, native window id when available, owner application id,
 owner pid, title, bounds, display relationship, layer, area, visibility, and the
 reason it appears in the ordered list.
 

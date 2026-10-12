@@ -18,7 +18,7 @@ import { RefChip, ValueView } from './ValueView'
 interface RefGroup {
   /** App name for a window group; `undefined` for handles that are not windows. */
   app?: string
-  bundleId?: string
+  applicationId?: string
   key: string
   refs: string[]
 }
@@ -178,7 +178,7 @@ function CallPanel() {
       return call?.refs ?? []
     return call.refs.filter((ref) => {
       const resource = resources[ref]
-      const window = resource?.kind === 'window' ? `${resource.handle.title ?? ''} ${resource.handle.bundleId ?? ''}` : ''
+      const window = resource?.kind === 'window' ? `${resource.handle.title ?? ''} ${resource.handle.applicationId ?? ''}` : ''
       return `${ref} ${refHint(resource) ?? ''} ${window}`.toLowerCase().includes(needle)
     })
   }, [call, query, resources])
@@ -228,7 +228,7 @@ function CallPanel() {
                     aria-label="Filter handles"
                     className="input text-[12px] h-7"
                     onChange={event => setQuery(event.target.value)}
-                    placeholder="Filter by title, app, bundle or id"
+                    placeholder="Filter by title, app, app id or id"
                     value={query}
                   />
                 )}
@@ -239,7 +239,7 @@ function CallPanel() {
                     {group.app !== undefined && (
                       <div className="text-[11.5px] px-3 pb-1 pt-2.5 bg-surface-1 flex gap-1.5 items-baseline top-0 sticky z-1">
                         <span className="text-fg font-medium truncate">{group.app || '(unknown app)'}</span>
-                        {group.bundleId && <span className="text-[10.5px] text-fg-subtle font-mono truncate">{group.bundleId}</span>}
+                        {group.applicationId && <span className="text-[10.5px] text-fg-subtle font-mono truncate">{group.applicationId}</span>}
                         <span className="text-[10.5px] text-fg-subtle font-mono ml-auto shrink-0">{group.refs.length}</span>
                       </div>
                     )}
@@ -289,11 +289,11 @@ function groupByApp(refs: string[], resources: Record<string, Resource>): RefGro
   const groups = new Map<string, RefGroup>()
   for (const ref of refs) {
     const resource = resources[ref]
-    const key = resource?.kind === 'window' ? `app:${resource.handle.bundleId ?? resource.handle.app ?? ''}` : 'other'
+    const key = resource?.kind === 'window' ? `app:${resource.handle.applicationId ?? resource.handle.app ?? ''}` : 'other'
     let group = groups.get(key)
     if (!group) {
       group = resource?.kind === 'window'
-        ? { app: resource.handle.app ?? '', bundleId: resource.handle.bundleId, key, refs: [] }
+        ? { app: resource.handle.app ?? '', applicationId: resource.handle.applicationId, key, refs: [] }
         : { key, refs: [] }
       groups.set(key, group)
     }

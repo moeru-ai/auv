@@ -253,7 +253,7 @@ const runner = auv.runner({
 const displays = await runner.displays.list({ signal })
 // The app's main visible window. Also `appName`, `pid` or `frontmost`, with
 // `title` or `titleContains`; the full `WindowSelector` works too.
-const window = await runner.windows.resolve({ bundleId: 'com.example.App' }, { signal })
+const window = await runner.windows.resolve({ applicationId: 'com.example.App' }, { signal })
 
 const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
@@ -269,7 +269,7 @@ directly, without resolving it again:
 
 ```ts
 const windows = await runner.windows.list({ signal })
-const music = windows.find(w => w.window.applicationBundleId === 'com.netease.163music')
+const music = windows.find(w => w.window.applicationId === 'com.netease.163music')
 await music?.click({ x: 400, y: 50 }, { click: { count: 1 } })
 ```
 
@@ -463,7 +463,7 @@ for (const method of netease.apis) {
 }
 
 const result = await netease.invokeUnaryJson({
-  input: { applicationBundleId: 'com.netease.163music' },
+  input: { applicationId: 'com.netease.163music' },
   method: '/auv.netease_music.v1.PlayerService/GetNowPlaying',
 })
 

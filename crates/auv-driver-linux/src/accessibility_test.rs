@@ -30,7 +30,7 @@ fn focus_result_uses_ax_focus_path() {
     },
     title: Some("Settings".to_string()),
     app_name: Some("gnome-control-center".to_string()),
-    app_bundle_id: Some("org.gnome.Settings".to_string()),
+    application_id: Some("org.gnome.Settings".to_string()),
     process_id: None,
     frame: Rect::new(0.0, 0.0, 800.0, 600.0),
     coordinate_space: CoordinateSpace::Screen,

@@ -60,7 +60,7 @@ pub fn resolve_target_window<'a>(windows: &'a [Window], input: &ReadinessProbeIn
           .as_ref()
           .is_none_or(|expected_title| window.title.as_deref().is_some_and(|title| title.contains(expected_title)))
     } else {
-      input.app_bundle_id.as_ref().is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+      input.application_id.as_ref().is_none_or(|expected| window.application_id.as_deref() == Some(expected.as_str()))
         && input.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
     }
   })
@@ -87,12 +87,12 @@ fn frontmost_check(frontmost: Option<&Window>, target: Option<&Window>, input: &
     );
   }
   if target.is_none()
-    && let Some(expected_bundle) = input.app_bundle_id.as_deref()
-    && frontmost.app_bundle_id.as_deref() != Some(expected_bundle)
+    && let Some(expected_bundle) = input.application_id.as_deref()
+    && frontmost.application_id.as_deref() != Some(expected_bundle)
   {
     return ReadinessCheck::fail(
       "target_app_frontmost",
-      format!("frontmost app {:?} does not match target bundle {expected_bundle}", frontmost.app_bundle_id),
+      format!("frontmost app {:?} does not match target bundle {expected_bundle}", frontmost.application_id),
     );
   }
   ReadinessCheck::pass("target_app_frontmost", "target app/window is frontmost")

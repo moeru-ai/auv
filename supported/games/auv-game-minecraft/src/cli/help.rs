@@ -26,7 +26,7 @@ USAGE
 }
 
 const MINECRAFT_USAGE_LINES: &[&str] = &[
-  "auv-minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <bundle-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false]",
+  "auv-minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <application-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false]",
   "auv-minecraft calibrate-projection --frame <minecraft-spatial-frame.json> --screenshot <frame.png> --target-block <x,y,z> [--target-semantics hit_face_center|block_center] [--screenshot-is-minecraft-window true|false]",
   "auv-minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false]",
   "auv-minecraft export-spatial-bundle <run-id> --output-dir <dir>",

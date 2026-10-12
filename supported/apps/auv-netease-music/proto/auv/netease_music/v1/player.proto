@@ -59,7 +59,7 @@ enum PlaybackControlState {
 
 message GetNowPlayingRequest {
   // Absence uses com.netease.163music.
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message GetNowPlayingResponse {
@@ -78,7 +78,7 @@ message GetNowPlayingResponse {
 }
 
 message PlayRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message PlayResponse {
@@ -86,7 +86,7 @@ message PlayResponse {
 }
 
 message PauseRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message PauseResponse {
@@ -94,7 +94,7 @@ message PauseResponse {
 }
 
 message TogglePlayerRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message TogglePlayerResponse {
@@ -102,7 +102,7 @@ message TogglePlayerResponse {
 }
 
 message NextRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message NextResponse {
@@ -110,7 +110,7 @@ message NextResponse {
 }
 
 message PreviousRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
 }
 
 message PreviousResponse {
@@ -119,7 +119,7 @@ message PreviousResponse {
 
 message SeekRequest {
   double position_seconds = 1;
-  optional string application_bundle_id = 2;
+  optional string application_id = 2;
 }
 
 message SeekResponse {
@@ -127,7 +127,7 @@ message SeekResponse {
 }
 
 message GetStatusRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
   optional uint64 settle_milliseconds = 2;
 }
 

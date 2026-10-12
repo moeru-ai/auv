@@ -293,7 +293,7 @@ fn test_window() -> auv_driver::Window {
     },
     title: Some("Example".to_string()),
     app_name: Some("Example".to_string()),
-    app_bundle_id: Some("com.example.App".to_string()),
+    application_id: Some("com.example.App".to_string()),
     process_id: Some(1),
     frame: Rect {
       origin: Point::new(0.0, 0.0),

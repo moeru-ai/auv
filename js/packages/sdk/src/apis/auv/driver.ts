@@ -206,7 +206,7 @@ export interface RunnerClient {
     /** Lists windows as ready-to-use clients carrying their metadata. */
     list: (options?: OperationOptions) => Promise<readonly WindowClient[]>
     /**
-     * The window a selector names, such as `{ bundleId: 'com.apple.TextEdit' }`
+     * The window a selector names, such as `{ applicationId: 'com.apple.TextEdit' }`
      * for that app's main visible window. Takes a `WindowQuery` or the full
      * `WindowSelector`.
      */
@@ -359,8 +359,8 @@ const GRPC_NOT_FOUND = 5
  * no title, its main visible window.
  */
 export interface WindowQuery {
+  applicationId?: string
   appName?: string
-  bundleId?: string
   /** The frontmost app; the default when no application field is given. */
   frontmost?: boolean
   pid?: number
@@ -737,7 +737,7 @@ function windowSelectorOf(selector: Init<typeof WindowSelectorSchema> | WindowQu
     return selector as Init<typeof WindowSelectorSchema>
   const query = selector as WindowQuery
   const applications = [
-    query.bundleId === undefined ? undefined : { case: 'applicationBundleId' as const, value: query.bundleId },
+    query.applicationId === undefined ? undefined : { case: 'applicationId' as const, value: query.applicationId },
     query.appName === undefined ? undefined : { case: 'applicationName' as const, value: query.appName },
     query.pid === undefined ? undefined : { case: 'processId' as const, value: query.pid },
     query.frontmost ? { case: 'frontmostApplication' as const, value: true } : undefined,
@@ -747,7 +747,7 @@ function windowSelectorOf(selector: Init<typeof WindowSelectorSchema> | WindowQu
     query.titleContains === undefined ? undefined : { case: 'titleContains' as const, value: query.titleContains },
   ].filter(value => value !== undefined)
   if (applications.length > 1)
-    throw new TypeError('WindowQuery takes one of bundleId, appName, pid and frontmost')
+    throw new TypeError('WindowQuery takes one of applicationId, appName, pid and frontmost')
   if (windows.length > 1)
     throw new TypeError('WindowQuery takes one of title and titleContains')
   return {

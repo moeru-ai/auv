@@ -9,7 +9,9 @@ pub enum TextMatcher {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSelector {
-  pub bundle: Option<TextMatcher>,
+  /// Platform application id, as `Window::application_id` reports it: a bundle
+  /// id on macOS, a desktop application id on Linux.
+  pub id: Option<TextMatcher>,
   pub name: Option<TextMatcher>,
   pub process_id: Option<u32>,
   pub frontmost: bool,
@@ -18,15 +20,11 @@ pub struct AppSelector {
 pub struct App;
 
 impl App {
-  pub fn bundle(bundle: impl Into<String>) -> AppSelector {
+  pub fn id(application_id: impl Into<String>) -> AppSelector {
     AppSelector {
-      bundle: Some(TextMatcher::Exact(bundle.into())),
+      id: Some(TextMatcher::Exact(application_id.into())),
       ..AppSelector::default()
     }
-  }
-
-  pub fn bundle_id(bundle_id: impl Into<String>) -> AppSelector {
-    Self::bundle(bundle_id)
   }
 
   pub fn name(name: impl Into<String>) -> AppSelector {

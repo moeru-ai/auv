@@ -68,8 +68,8 @@ fn ensure_target_focused(target: &InputTarget) -> DriverResult<()> {
 pub(crate) fn target_is_focused(target: &InputTarget, active: Option<&auv_driver_common::Window>) -> bool {
   match (target, active) {
     (InputTarget::Window(window), Some(active)) => active.reference == window.reference,
-    (InputTarget::Application { bundle_id }, Some(active)) => {
-      active.app_bundle_id.as_deref() == Some(bundle_id.as_str()) || active.app_name.as_deref() == Some(bundle_id.as_str())
+    (InputTarget::Application { id }, Some(active)) => {
+      active.application_id.as_deref() == Some(id.as_str()) || active.app_name.as_deref() == Some(id.as_str())
     }
     _ => false,
   }

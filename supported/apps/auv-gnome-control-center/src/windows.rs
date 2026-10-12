@@ -100,7 +100,7 @@ mod platform {
   pub fn resolve_window(session: &LinuxDriverSession) -> Result<Window, DriverError> {
     let selectors = [
       WindowSelector::default().owned_by(AppSelector {
-        bundle: Some(TextMatcher::Contains(APP_ID.to_string())),
+        id: Some(TextMatcher::Contains(APP_ID.to_string())),
         ..AppSelector::default()
       }),
       WindowSelector::default().owned_by(AppSelector {
@@ -125,7 +125,7 @@ mod platform {
   }
 
   fn matches_settings_window(window: &Window) -> bool {
-    window.app_bundle_id.as_deref().is_some_and(|id| id.contains(APP_ID))
+    window.application_id.as_deref().is_some_and(|id| id.contains(APP_ID))
       || window.app_name.as_deref().is_some_and(|name| name.contains(PROCESS_NAME) || name.contains("Settings"))
       || window.title.as_deref().is_some_and(|title| SETTINGS_WINDOW.best_match(title).is_some())
   }

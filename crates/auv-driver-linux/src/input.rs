@@ -268,7 +268,7 @@ pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: P
 /// focus keeps the ordinary Ctrl+V.
 pub(crate) fn focused_terminal() -> bool {
   crate::atspi::active_window().ok().flatten().is_some_and(|window| {
-    [window.app_bundle_id.as_deref(), window.app_name.as_deref()].into_iter().flatten().any(auv_driver_common::is_terminal_emulator)
+    [window.application_id.as_deref(), window.app_name.as_deref()].into_iter().flatten().any(auv_driver_common::is_terminal_emulator)
   })
 }
 

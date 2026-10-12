@@ -1,5 +1,10 @@
 # AUV Window Management API Design
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 ## Background
 
 AUV currently has a typed `session.window()` surface for observing and acting

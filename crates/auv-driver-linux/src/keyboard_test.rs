@@ -55,7 +55,7 @@ fn a_keyboard_target_is_served_only_while_it_has_focus() {
     reference: WindowRef { id: id.to_string() },
     title: Some(app_name.to_string()),
     app_name: Some(app_name.to_string()),
-    app_bundle_id: app_id.map(str::to_string),
+    application_id: app_id.map(str::to_string),
     process_id: None,
     frame: Rect::new(0.0, 0.0, 10.0, 10.0),
     coordinate_space: CoordinateSpace::Screen,
@@ -64,9 +64,7 @@ fn a_keyboard_target_is_served_only_while_it_has_focus() {
   };
   let editor = window("atspi::editor", Some("org.gnome.TextEditor"), "gnome-text-editor");
   let terminal = window("atspi::terminal", None, "org.gnome.Terminal");
-  let app = |id: &str| InputTarget::Application {
-    bundle_id: id.to_string(),
-  };
+  let app = |id: &str| InputTarget::Application { id: id.to_string() };
 
   assert!(crate::keyboard::target_is_focused(&app("org.gnome.TextEditor"), Some(&editor)));
   assert!(crate::keyboard::target_is_focused(&app("org.gnome.Terminal"), Some(&terminal)), "falls back to the app name");

@@ -167,7 +167,7 @@ export function mockRunner(desktop: MockDesktop): Transport {
         const application = request.selector?.application
         const title = request.selector?.window
         const found = desktop.windows().find(candidate =>
-          (application?.case !== 'applicationBundleId' || candidate.bundleId === application.value)
+          (application?.case !== 'applicationId' || candidate.applicationId === application.value)
           && (application?.case !== 'applicationName' || candidate.app === application.value)
           && (application?.case !== 'processId' || candidate.pid === application.value)
           && (title?.case !== 'titleExact' || candidate.title === title.value)
@@ -263,8 +263,8 @@ export function mockRunner(desktop: MockDesktop): Transport {
         const recipient = request.target?.recipient
         if (recipient?.case === 'window')
           window(recipient.value.ref?.windowId)
-        else if (recipient?.case === 'applicationBundleId' && !desktop.hasApplication(recipient.value))
-          throw new AuvRpcError(NOT_FOUND, `No running application with bundle ID ${recipient.value}`)
+        else if (recipient?.case === 'applicationId' && !desktop.hasApplication(recipient.value))
+          throw new AuvRpcError(NOT_FOUND, `No running application with application ID ${recipient.value}`)
         const path = recipient?.case === 'window' ? InputDeliveryPath.WINDOW_TARGETED_KEYBOARD : InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS
         const actions = []
         for (const input of request.inputs) {
@@ -402,7 +402,7 @@ function thumbHashOf(canvas: OffscreenCanvas): Uint8Array {
 
 function windowMessage(window: WindowInfo) {
   return {
-    applicationBundleId: window.bundleId,
+    applicationId: window.applicationId,
     applicationName: window.app,
     frame: window.frame,
     isMain: true,

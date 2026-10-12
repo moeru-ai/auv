@@ -904,7 +904,7 @@ fn window_scoped_positions_convert_with_the_current_window_frame() {
     },
     title: None,
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: auv_driver::Rect::new(100.0, 50.0, 400.0, 300.0),
     coordinate_space: auv_driver::CoordinateSpace::Screen,

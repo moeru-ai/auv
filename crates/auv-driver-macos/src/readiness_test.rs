@@ -15,7 +15,7 @@ fn window(id: &str, bundle: &str, title: &str, frame: Rect, is_main: bool) -> Wi
     reference: WindowRef { id: id.to_string() },
     title: Some(title.to_string()),
     app_name: Some("TextEdit".to_string()),
-    app_bundle_id: Some(bundle.to_string()),
+    application_id: Some(bundle.to_string()),
     process_id: Some(42),
     frame,
     coordinate_space: CoordinateSpace::Screen,
@@ -28,7 +28,7 @@ fn input() -> ReadinessProbeInput {
   ReadinessProbeInput {
     window_number: Some(11),
     window_title: Some("Untitled".to_string()),
-    app_bundle_id: Some("com.apple.TextEdit".to_string()),
+    application_id: Some("com.apple.TextEdit".to_string()),
     expected_window_frame: Some(Rect {
       origin: Point { x: 100.0, y: 80.0 },
       size: Size {
@@ -106,7 +106,7 @@ fn readiness_blocks_missing_expected_window_frame() {
 #[test]
 fn readiness_resolves_window_number_even_when_bundle_metadata_is_missing() {
   let mut target = window("11", "com.apple.TextEdit", "Untitled", input().expected_window_frame.unwrap(), true);
-  target.app_bundle_id = None;
+  target.application_id = None;
 
   let report = assess_readiness(&permissions(), std::slice::from_ref(&target), Some(&target), &input());
 

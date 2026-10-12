@@ -146,7 +146,7 @@ describe('typed remote invoke from a browser', () => {
         },
       })
       await expect(runner.invokeUnaryJson({
-        input: { applicationBundleId: 'dev.auv.nonexistent-browser-player' },
+        input: { applicationId: 'dev.auv.nonexistent-browser-player' },
         method: nowPlaying!,
       })).resolves.toEqual({})
       const responses = await runner.invokeServerStreamJson({ input: {}, method: listSongs! })

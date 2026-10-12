@@ -940,7 +940,8 @@ message InputTarget {
     // Only ref and observed process_id establish identity; other fields are not
     // trusted as current state. A window is not a text-control selector.
     Window window = 1;
-    string application_bundle_id = 2;
+    // The platform application ID that windows.list reports.
+    string application_id = 2;
     // Must be true. Global delivery depends on the current foreground control.
     bool foreground = 3;
   }

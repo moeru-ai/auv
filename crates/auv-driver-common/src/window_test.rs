@@ -56,7 +56,7 @@ fn window(id: &str) -> Window {
     reference: WindowRef { id: id.to_string() },
     title: None,
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(0.0, 0.0, 10.0, 10.0),
     coordinate_space: CoordinateSpace::Screen,

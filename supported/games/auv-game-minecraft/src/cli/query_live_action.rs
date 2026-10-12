@@ -20,7 +20,7 @@ impl DirectWindowPointClickExecutor {
     let window = session
       .window()
       .resolve(auv_driver::WindowSelector {
-        app: Some(auv_driver::App::bundle_id(self.target_app.clone())),
+        app: Some(auv_driver::App::id(self.target_app.clone())),
         title: Some(auv_driver::TextMatcher::Contains(self.target_title.clone())),
         main_visible: true,
       })

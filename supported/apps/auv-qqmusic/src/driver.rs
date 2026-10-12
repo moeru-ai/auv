@@ -143,7 +143,7 @@ impl QqMusicDriver for MacosQqMusicDriver {
 
 fn main_window_selector(app_id: &str) -> WindowSelector {
   WindowSelector {
-    app: Some(App::bundle_id(app_id)),
+    app: Some(App::id(app_id)),
     title: None,
     main_visible: true,
   }

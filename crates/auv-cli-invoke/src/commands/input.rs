@@ -1930,7 +1930,7 @@ fn click_window_selector(application_id: &str, title: Option<&str>) -> auv_drive
   #[cfg(target_os = "windows")]
   let app = Some(App::name(application_id));
   #[cfg(not(target_os = "windows"))]
-  let app = Some(App::bundle_id(application_id));
+  let app = Some(App::id(application_id));
 
   WindowSelector {
     app,
@@ -2093,9 +2093,7 @@ fn local_keyboard_target(
 ) -> Result<auv_driver::InputTarget, crate::InvokeFailure> {
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
-    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
-      bundle_id: id.clone(),
-    },
+    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application { id: id.clone() },
     Some(crate::ExecutionTarget::Window { id }) => {
       auv_driver::InputTarget::Window(session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
         auv_driver::DriverError::NotFound {

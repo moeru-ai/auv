@@ -16,7 +16,7 @@ fn window(id: &str, title: &str, frame: Rect, is_main: bool) -> Window {
     reference: WindowRef { id: id.to_string() },
     title: Some(title.to_string()),
     app_name: Some("notepad.exe".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(42),
     frame,
     coordinate_space: CoordinateSpace::Screen,
@@ -29,7 +29,7 @@ fn input() -> ReadinessProbeInput {
   ReadinessProbeInput {
     window_number: Some(11),
     window_title: Some("Untitled".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     expected_window_frame: Some(Rect {
       origin: Point { x: 100.0, y: 80.0 },
       size: Size {

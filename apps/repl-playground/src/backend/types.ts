@@ -103,7 +103,7 @@ export interface TextSearchResult {
 
 export interface WindowInfo {
   app?: string
-  bundleId?: string
+  applicationId?: string
   frame: Rect
   id: string
   pid?: number

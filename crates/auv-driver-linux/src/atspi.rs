@@ -517,9 +517,8 @@ fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: b
     title: non_empty(accessible.name.clone()),
     app_name: non_empty(app.name.clone()),
     // NOTICE(linux-atspi-app-id): AT-SPI exposes Linux desktop application ids
-    // through AccessibleId. This reuses the shared app_bundle_id field until a
-    // platform-neutral app identity field is approved in auv-driver.
-    app_bundle_id: non_empty(app.accessible_id.clone()),
+    // through the application's AccessibleId.
+    application_id: non_empty(app.accessible_id.clone()),
     process_id: None,
     frame: accessible.bounds,
     coordinate_space: CoordinateSpace::Screen,

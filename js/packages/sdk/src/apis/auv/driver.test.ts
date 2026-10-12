@@ -117,7 +117,7 @@ describe('runner Driver control surface', () => {
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
     const modifiers = { alt: true, control: true, meta: true, shift: true }
     await runner.input.click({ x: 10, y: 20 }, { button: MouseButton.RIGHT, click: { count: 1 }, modifiers })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     await window.click({ x: 10, y: 20 }, { button: MouseButton.MIDDLE, modifiers })
     const screen = fromBinary(ClickPointRequestSchema, calls[0]!.body)
     const targeted = fromBinary(ClickPointRequestSchema, calls[2]!.body)
@@ -156,7 +156,7 @@ describe('runner Driver control surface', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     const response = await window.scroll({ x: 10, y: 20 }, { deltaX: -15, deltaY: 300 }, {
       deliveryCandidates: [ScrollDeliveryCandidate.WINDOW_TARGETED_WHEEL, ScrollDeliveryCandidate.FOREGROUND_HID],
       policy: InputPolicy.BACKGROUND_ONLY,
@@ -202,7 +202,7 @@ describe('runner Driver control surface', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     const events = []
     for await (const event of await window.scrollMotion({ x: 10, y: 20 }, {
       sampleRateHz: 60,
@@ -271,7 +271,7 @@ describe('runner Driver control surface', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     const seen: number[] = []
 
     const completed = await window.scrollUntil({ x: 10, y: 20 }, {
@@ -331,7 +331,7 @@ describe('runner Driver control surface', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     const stops: ScrollUntilStopReason[] = []
 
     const completed = await window.scrollUntil({ x: 10, y: 20 }, {
@@ -391,7 +391,7 @@ describe('runner Driver control surface', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     function* steps() {
       yield { holdMs: 5, velocityY: 600 }
       yield { holdMs: 5, velocityY: -200 }
@@ -493,7 +493,7 @@ describe('runner Driver control surface', () => {
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
 
     const window = await runner.windows.resolve({
-      application: { case: 'applicationBundleId', value: 'com.example.App' },
+      application: { case: 'applicationId', value: 'com.example.App' },
     })
 
     expect(window.id).toBe('window-42')
@@ -504,7 +504,7 @@ describe('runner Driver control surface', () => {
     expect(capture.window?.title).toBe('Current title')
 
     const resolve = fromBinary(ResolveWindowRequestSchema, calls[0]!.body)
-    expect(resolve.selector?.application).toEqual({ case: 'applicationBundleId', value: 'com.example.App' })
+    expect(resolve.selector?.application).toEqual({ case: 'applicationId', value: 'com.example.App' })
     const captureRequest = fromBinary(CaptureWindowRequestSchema, calls[1]!.body)
     expect(captureRequest.window?.windowId).toBe('window-42')
     expect(captureRequest.resolution, 'native by default').toBe(CaptureResolution.UNSPECIFIED)
@@ -574,7 +574,7 @@ describe('window clients', () => {
     const calls: UnaryCall[] = []
     const connection = await windowConnection(calls)
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const resolved = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const resolved = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     expect(resolved.id).toBe('w-1')
     expect(resolved.window.title).toBe('Inbox')
     expect(resolved.window.frame).toMatchObject({ height: 600, width: 800, x: 10, y: 20 })
@@ -591,19 +591,19 @@ describe('window clients', () => {
     const calls: UnaryCall[] = []
     const connection = await windowConnection(calls)
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    await runner.windows.resolve({ bundleId: 'com.example.App' })
+    await runner.windows.resolve({ applicationId: 'com.example.App' })
     await runner.windows.resolve({ appName: 'Music', titleContains: 'Liked' })
     await runner.windows.resolve({})
     await runner.windows.resolve({ application: { case: 'processId', value: 42 } })
     const selectors = calls.map(call => fromBinary(ResolveWindowRequestSchema, call.body).selector)
     expect(selectors.map(selector => [selector?.application, selector?.window])).toEqual([
-      [{ case: 'applicationBundleId', value: 'com.example.App' }, { case: 'mainVisible', value: true }],
+      [{ case: 'applicationId', value: 'com.example.App' }, { case: 'mainVisible', value: true }],
       [{ case: 'applicationName', value: 'Music' }, { case: 'titleContains', value: 'Liked' }],
       [{ case: 'frontmostApplication', value: true }, { case: 'mainVisible', value: true }],
       [{ case: 'processId', value: 42 }, { case: undefined }],
     ])
     // Two application fields are ambiguous, so they fail before any call.
-    await expect(runner.windows.resolve({ appName: 'Music', bundleId: 'com.apple.Music' })).rejects.toThrow(TypeError)
+    await expect(runner.windows.resolve({ applicationId: 'com.apple.Music', appName: 'Music' })).rejects.toThrow(TypeError)
     expect(calls).toHaveLength(4)
     await connection.close()
   })
@@ -620,7 +620,7 @@ describe('window clients', () => {
     const calls: UnaryCall[] = []
     const connection = await windowConnection(calls)
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const window = await runner.windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     await window.click({ coordinateSpace: { case: 'screen', value: true }, x: 30, y: 40 })
     await window.click({ coordinateSpace: { case: 'displayId', value: 'd-2' }, x: 1, y: 2 })
     await window.click({ bounds: { height: 10, width: 20, x: 100, y: 200 }, text: 'Play' } as { bounds: { height: number, width: number, x: number, y: number } })
@@ -645,7 +645,7 @@ describe('window clients', () => {
     const calls: UnaryCall[] = []
     const connection = await windowConnection(calls)
     const auv = createAuv(connection)
-    const first = await auv.runner({ runId: 'run-1', runnerClass: 'auv.core.local' }).windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const first = await auv.runner({ runId: 'run-1', runnerClass: 'auv.core.local' }).windows.resolve({ application: { case: 'applicationId', value: 'com.example.App' } })
     const second = auv.runner({ runId: 'run-2', runnerClass: 'auv.core.local' })
 
     for (const target of [first, first.window, first.window.ref!, 'w-1'])

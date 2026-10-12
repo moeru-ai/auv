@@ -16,7 +16,7 @@ fn sample_window() -> Window {
     },
     title: None,
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(123),
     frame: Rect::new(100.0, 200.0, 800.0, 600.0),
     coordinate_space: CoordinateSpace::Screen,

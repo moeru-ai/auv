@@ -49,3 +49,4 @@ Count: **33**
 - Shared vocabulary: [`../../../TERMS_AND_CONCEPTS.md`](../../../TERMS_AND_CONCEPTS.md)
 
 - [`2026-10-08-domain-result-naming-migration.md`](2026-10-08-domain-result-naming-migration.md) — Domain result names, proto/SDK migration, and restricted use of observation.
+- [`2026-10-12-application-id-naming-migration.md`](2026-10-12-application-id-naming-migration.md) — Neutral application id names replacing macOS-shaped bundle id fields across driver, proto, SDK and CLI.

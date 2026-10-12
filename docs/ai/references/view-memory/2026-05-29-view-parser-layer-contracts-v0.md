@@ -5,6 +5,11 @@
 > reserve `observation` for information used to decide the next action.
 > See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 Date: 2026-05-29
 
 Status: v0 contract spec. Pins the trait shape, input/output types,

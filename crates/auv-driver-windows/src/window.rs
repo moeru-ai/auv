@@ -132,7 +132,7 @@ fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> Driver
 /// window, so the caller sees which ids it could use.
 fn missing_window(windows: &[Window], selector: &WindowSelector, target: &str) -> auv_driver_common::error::DriverError {
   match &selector.app {
-    Some(app) if !app.frontmost && (app.bundle.is_some() || app.name.is_some()) => {
+    Some(app) if !app.frontmost && (app.id.is_some() || app.name.is_some()) => {
       let owned = windows.iter().any(|window| window.is_visible && matches_app_selector(window, app));
       if owned {
         not_found(target)
@@ -172,10 +172,10 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
     return false;
   }
   // NOTICE: a Windows application id is its executable file name, the APP of
-  // `window.list` (`app_bundle_id` is always `None`). The CLI's local path
+  // `window.list` (`application_id` is always `None`). The CLI's local path
   // selects it by name and a Runner client by application id, so both match
   // the executable name; see `matches_executable`.
-  for matcher in [&selector.bundle, &selector.name].into_iter().flatten() {
+  for matcher in [&selector.id, &selector.name].into_iter().flatten() {
     if !window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, matcher)) {
       return false;
     }
@@ -370,8 +370,10 @@ mod native {
       },
       title: window_title(hwnd),
       app_name: process_name(pid),
-      // NOTICE: app_bundle_id is macOS-only; Windows has no equivalent.
-      app_bundle_id: None,
+      // TODO(windows-application-id): the process image name in app_name is
+      // the id app.activate accepts. Reporting it here too would change
+      // window.resolve matching, so it waits for an owner-approved slice.
+      application_id: None,
       process_id: (pid != 0).then_some(pid),
       frame,
       coordinate_space: CoordinateSpace::Screen,

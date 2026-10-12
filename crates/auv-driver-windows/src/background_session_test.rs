@@ -143,7 +143,7 @@ fn window(hwnd: isize, process_id: u32) -> Window {
     },
     title: Some(format!("window {hwnd}")),
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(process_id),
     // Stale on purpose: the session must trust the live frame, not the one it was handed.
     frame: Rect::new(0.0, 0.0, 1.0, 1.0),

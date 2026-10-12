@@ -69,7 +69,7 @@ describe('millisecond durations', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const window = await runner.windows.resolve({ bundleId: 'com.example.App' })
+    const window = await runner.windows.resolve({ applicationId: 'com.example.App' })
 
     await window.click({ x: 1, y: 2 }, { click: { count: 2, interval: 80 } })
     await runner.input.pressKey('return', { settle: 120 })

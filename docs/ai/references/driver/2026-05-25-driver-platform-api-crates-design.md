@@ -5,6 +5,11 @@
 > same fields. See Part B.4 of
 > `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 Date: 2026-05-25
 
 Status: proposed design, pending review

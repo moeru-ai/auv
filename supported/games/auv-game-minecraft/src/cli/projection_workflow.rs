@@ -339,7 +339,7 @@ fn capture_target_screenshot(target_app: &str, target_title: Option<&str>) -> Au
   let window = session
     .window()
     .resolve(auv_driver::WindowSelector {
-      app: Some(auv_driver::App::bundle_id(target_app)),
+      app: Some(auv_driver::App::id(target_app)),
       title: target_title.map(|title| auv_driver::TextMatcher::Contains(title.to_string())),
       main_visible: true,
     })

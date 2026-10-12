@@ -65,7 +65,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       ));
     }
   };
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window = match session.window().resolve(Window::main_visible().owned_by(app)) {
     Ok(window) => window,
     Err(error) => {
@@ -84,7 +84,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
   };
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
   let app_context = ScanAppContext {
-    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.application_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };
@@ -564,7 +564,7 @@ impl SidebarScanReader for LiveSidebarObserver {
 #[cfg(target_os = "macos")]
 impl LiveSidebarObserver {
   fn capture_ax_scrollbar_boundary(&self) -> Option<SidebarScrollbarBoundary> {
-    let app = self.window.app_bundle_id.as_deref().filter(|bundle_id| !bundle_id.trim().is_empty()).unwrap_or(DEFAULT_APP_ID);
+    let app = self.window.application_id.as_deref().filter(|bundle_id| !bundle_id.trim().is_empty()).unwrap_or(DEFAULT_APP_ID);
     let snapshot = capture_ax_tree_snapshot(app, 8, 64).ok()?;
     sidebar_ax_scrollbar_boundary(&snapshot.snapshot.nodes, &self.window, self.sidebar_bounds)
   }

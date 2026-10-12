@@ -2107,7 +2107,7 @@ fn input_target_to_proto(target: &auv_driver::InputTarget) -> proto::InputTarget
   proto::InputTarget {
     recipient: Some(match target {
       auv_driver::InputTarget::Foreground => Recipient::Foreground(true),
-      auv_driver::InputTarget::Application { bundle_id } => Recipient::ApplicationBundleId(bundle_id.clone()),
+      auv_driver::InputTarget::Application { id } => Recipient::ApplicationId(id.clone()),
       auv_driver::InputTarget::Window(window) => Recipient::Window(proto::Window {
         r#ref: Some(proto::WindowRef {
           window_id: window.reference.id.clone(),
@@ -2506,8 +2506,8 @@ fn window_selector_to_proto(value: auv_driver::WindowSelector) -> Result<proto::
   use proto::window_selector::{Application, Window};
 
   let app = value.app.ok_or_else(|| CapabilityError::InvalidArgument("Window selector must identify an application".to_string()))?;
-  let application = match (app.bundle, app.name, app.process_id, app.frontmost) {
-    (Some(TextMatcher::Exact(value)), None, None, false) => Application::ApplicationBundleId(value),
+  let application = match (app.id, app.name, app.process_id, app.frontmost) {
+    (Some(TextMatcher::Exact(value)), None, None, false) => Application::ApplicationId(value),
     (None, Some(TextMatcher::Exact(value)), None, false) => Application::ApplicationName(value),
     (None, None, Some(value), false) if value > 0 => Application::ProcessId(value),
     (None, None, None, true) => Application::FrontmostApplication(true),
@@ -2551,7 +2551,7 @@ fn window_from_proto(window: proto::Window) -> Result<auv_driver::Window, Capabi
     },
     title: window.title,
     app_name: window.application_name,
-    app_bundle_id: window.application_bundle_id,
+    application_id: window.application_id,
     process_id: window.process_id,
     frame: auv_driver::Rect::new(frame.x, frame.y, frame.width, frame.height),
     coordinate_space: auv_driver::CoordinateSpace::Screen,

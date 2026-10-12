@@ -6,7 +6,7 @@ use crate::Rect;
 pub struct ReadinessProbeInput {
   pub window_number: Option<i64>,
   pub window_title: Option<String>,
-  pub app_bundle_id: Option<String>,
+  pub application_id: Option<String>,
   pub expected_window_frame: Option<Rect>,
   pub max_window_frame_drift_px: f64,
   pub require_frontmost: bool,
@@ -18,14 +18,14 @@ impl ReadinessProbeInput {
   pub fn for_window_target(
     window_number: Option<i64>,
     window_title: Option<String>,
-    app_bundle_id: Option<String>,
+    application_id: Option<String>,
     target_window_x: f64,
     target_window_y: f64,
   ) -> Self {
     Self {
       window_number,
       window_title,
-      app_bundle_id,
+      application_id,
       expected_window_frame: None,
       max_window_frame_drift_px: 2.0,
       require_frontmost: true,

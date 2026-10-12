@@ -163,7 +163,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
             items={[
               ['title', handle.title],
               ['app', handle.app],
-              ['bundle', handle.bundleId],
+              ['app id', handle.applicationId],
               ['window', handle.id],
               ['pid', handle.pid === undefined ? undefined : String(handle.pid)],
               ['frame', rectText(handle.frame)],

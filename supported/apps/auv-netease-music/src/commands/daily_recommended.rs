@@ -112,7 +112,7 @@ pub(crate) fn scan_daily_recommended_songs(inputs: &Inputs) -> Result<SongListSc
     ocr_options: inputs.ocr_options.clone(),
   };
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
 
@@ -140,12 +140,12 @@ pub(crate) fn scan_daily_recommended_songs(inputs: &Inputs) -> Result<SongListSc
 #[cfg(target_os = "macos")]
 pub fn run_daily_recommended_play(inputs: &DailyRecommendedPlayInputs) -> Result<DailyRecommendedPlayResult, String> {
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
 
   let app_context = ScanAppContext {
-    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.application_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };

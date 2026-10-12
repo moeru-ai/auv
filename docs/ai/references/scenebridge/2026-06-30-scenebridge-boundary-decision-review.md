@@ -1,5 +1,10 @@
 # SceneBridge A2: NetEase Sidebar Boundary Decision Review
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 **Date:** 2026-06-30  
 **Status:** **owner accepted Package A** — final decision record for SceneBridge A2.
 A3 prototype boundary landed separately. Session API P14 pause unchanged.

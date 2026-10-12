@@ -461,7 +461,7 @@ pub(crate) fn scan_playlist_songs(inputs: &Inputs, reference: &crate::PlaylistRe
     return Err(format!("playlist select verification failed before song scan: observed_title={:?}", select.verification.observed_title()));
   }
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   crate::commands::song::scan_open_song_list(
@@ -500,7 +500,7 @@ fn run_playlist_select_resolved(
   let target_viewport_index = target.viewport_index.unwrap_or(0);
 
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
@@ -959,7 +959,7 @@ fn run_playlist_play_resolved(
   }
 
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
-  let app = App::bundle(inputs.app_id.clone());
+  let app = App::id(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   let diagnostics = select.diagnostics.clone();

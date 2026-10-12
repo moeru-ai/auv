@@ -24,7 +24,7 @@ async function mock() {
 describe('mock Runner', () => {
   it('clicks a window at a window-local point, and the scene reacts', async () => {
     const { connection, desktop, runner } = await mock()
-    const counter = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'dev.auv.mock.counter' } })
+    const counter = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.counter' } })
 
     const response = await counter.click({ x: 210, y: 198 }) // the Increment button
     expect(response.windowPoint).toMatchObject({ x: 210, y: 198 })
@@ -35,7 +35,7 @@ describe('mock Runner', () => {
 
   it('converts a screen position for a window scroll, like the Runner', async () => {
     const { connection, desktop, runner } = await mock()
-    const music = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'dev.auv.mock.music' } })
+    const music = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.music' } })
     const before = desktop.accessibilityTree().children.find(window => window.value === 'Music')!.children[1]!.frame!.y
 
     const response = await music.scroll(Position.screen(1020, 320), { deltaY: 96 })
@@ -47,7 +47,7 @@ describe('mock Runner', () => {
 
   it('rejects window input outside the window and window options on a global click', async () => {
     const { connection, runner } = await mock()
-    const counter = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'dev.auv.mock.counter' } })
+    const counter = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.counter' } })
 
     await expect(counter.click({ x: 5000, y: 5 })).rejects.toMatchObject({ rpcCode: 3 })
     await expect(runner.input.click({ x: 10, y: 10 }, { policy: InputPolicy.BACKGROUND_ONLY })).rejects.toMatchObject({ rpcCode: 3 })
@@ -57,7 +57,7 @@ describe('mock Runner', () => {
 
   it('types into the focused field through window keyboard input', async () => {
     const { connection, desktop, runner } = await mock()
-    const todos = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'dev.auv.mock.todos' } })
+    const todos = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.todos' } })
 
     await todos.click({ x: 100, y: 74 }) // the "Add a todo" field
     await todos.typeText('Write the mock Runner')

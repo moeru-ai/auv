@@ -12,7 +12,7 @@ fn pixels_are_excluded_from_the_public_window_capture_result() {
       },
       title: Some("Fixture".to_string()),
       app_name: Some("Fixture App".to_string()),
-      app_bundle_id: Some("com.example.Fixture".to_string()),
+      application_id: Some("com.example.Fixture".to_string()),
       process_id: Some(42),
       frame: Rect::new(10.0, 20.0, 640.0, 480.0),
       coordinate_space: CoordinateSpace::Screen,

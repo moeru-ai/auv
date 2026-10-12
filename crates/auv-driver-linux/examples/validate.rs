@@ -456,7 +456,7 @@ fn find_window(session: &LinuxDriverSession, substr: &str) -> Result<Window, Box
       .resolve(SelectWindow::title_contains(substr))
       .or_else(|_| {
         session.window().resolve(WindowSelector::default().owned_by(AppSelector {
-          bundle: Some(TextMatcher::Contains(substr.to_string())),
+          id: Some(TextMatcher::Contains(substr.to_string())),
           ..AppSelector::default()
         }))
       })

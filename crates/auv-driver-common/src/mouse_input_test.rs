@@ -130,7 +130,7 @@ fn held_route_cannot_switch_targets() {
   coordinator.down(0, Point::new(1., 2.), MouseButton::Left, Duration::from_secs(1), receiver.clone()).unwrap();
   let mut request = crate::MoveMouseRequest::direct(Point::new(3., 4.));
   request.target = Some(crate::InputTarget::Application {
-    bundle_id: "other.target".into(),
+    id: "other.target".into(),
   });
   assert!(coordinator.motion(request, None, receiver.clone(), |_| true).is_err());
   assert_eq!(*receiver.events.lock().unwrap(), ["move", "down"]);

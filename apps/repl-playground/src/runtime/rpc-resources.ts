@@ -105,7 +105,7 @@ export class CallScope {
   }
 
   window(info: WindowInfo): WindowHandle {
-    const handle: WindowHandle = { $ref: `window:${info.id}`, app: info.app, bundleId: info.bundleId, frame: info.frame, id: info.id, kind: 'window', pid: info.pid, title: info.title }
+    const handle: WindowHandle = { $ref: `window:${info.id}`, app: info.app, applicationId: info.applicationId, frame: info.frame, id: info.id, kind: 'window', pid: info.pid, title: info.title }
     // A window ref is stable across calls; keep the first producer for lineage.
     const existing = usePlayground.getState().resources[handle.$ref]
     this.refs.push(handle.$ref)

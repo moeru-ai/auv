@@ -42,7 +42,7 @@ fn empty_memory() -> ViewMemory {
     schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
     source_scan_uri: ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
     memory_id: "app:scope".into(),
-    app_bundle_id: "app".into(),
+    application_id: "app".into(),
     scope_id: "scope".into(),
     last_reconstructed_at_millis: 0,
     anchors: Vec::new(),

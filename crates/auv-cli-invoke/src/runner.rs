@@ -692,10 +692,11 @@ fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::Wi
     .target
     .as_ref()
     .and_then(crate::ExecutionTarget::application_id)
-    // TODO(cross-platform-application-selector): Application targets currently
-    // carry bundle/accessibility ids. Add an explicit application-name target
-    // only through an owner-approved target-contract extension.
-    .map(|bundle_id| auv_driver::App::bundle_id(bundle_id.to_string()))
+    // TODO(application-name-target): application targets carry platform
+    // application ids, never application names. Add an explicit
+    // application-name target only through an owner-approved target contract
+    // extension.
+    .map(|application_id| auv_driver::App::id(application_id.to_string()))
     .unwrap_or_else(auv_driver::App::frontmost);
   let title =
     input.inputs.get("title").filter(|title| !title.trim().is_empty()).map(|title| auv_driver::TextMatcher::Contains(title.clone()));
@@ -734,9 +735,7 @@ async fn runner_keyboard_target(
 ) -> Result<auv_driver::InputTarget, crate::InvokeFailure> {
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
-    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
-      bundle_id: id.clone(),
-    },
+    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application { id: id.clone() },
     Some(crate::ExecutionTarget::Window { id }) => auv_driver::InputTarget::Window(runner.windows().get(id).await?.resource().clone()),
     Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
   };

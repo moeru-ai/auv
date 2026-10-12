@@ -12,6 +12,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 **Goal:** Build an example-only `netease_playlist_ls` CLI that uses existing AUV macOS driver APIs to produce a structured NetEase playlist sidebar scan artifact.
 
 **Architecture:** Keep NetEase-specific logic in `examples/netease_playlist_ls.rs`. The example owns parser heuristics, structured artifact types, sidebar region detection, reconstruction, and human rendering. AUV framework crates remain app-agnostic; any missing driver capability discovered during implementation must be recorded as a gap instead of moving NetEase logic into core.

@@ -317,7 +317,7 @@ impl LiveViewProvider {
     let session = auv_driver::open_local().map_err(|error| format!("live viewport driver open failed: {error}"))?;
     let window = session
       .window()
-      .resolve(Window::main_visible().owned_by(App::bundle(self.inputs.app_id.clone())))
+      .resolve(Window::main_visible().owned_by(App::id(self.inputs.app_id.clone())))
       .map_err(|error| format!("live viewport target window not found: {error}"))?;
     let capture = session
       .window()

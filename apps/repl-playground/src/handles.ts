@@ -80,7 +80,7 @@ export interface TextMatch {
 export interface WindowHandle {
   readonly $ref: `window:${string}`
   readonly app?: string
-  readonly bundleId?: string
+  readonly applicationId?: string
   /** Logical screen-space frame of the window. */
   readonly frame: Rect
   readonly id: string

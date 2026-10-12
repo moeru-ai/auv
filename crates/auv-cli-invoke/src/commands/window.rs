@@ -79,7 +79,7 @@ pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, crate::InvokeF
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke window.capture --title Untitled\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n  auv invoke window.capture --target notepad.exe\n\nOn Linux, app targets match the AT-SPI AccessibleId in window.list (BUNDLE in --wide output). Use --title when that field is absent. Linux captures a display crop and does not activate or unocclude the window.\n\nOn Windows, an app target is the executable file name shown as APP in window.list, matched exactly and ignoring case (for example notepad.exe). Windows renders the window itself with PrintWindow, without activating, raising or restoring it, and keeps the visible frame."
+  after_long_help = "Examples:\n  auv invoke window.capture --title Untitled\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n  auv invoke window.capture --target notepad.exe\n\nOn Linux, app targets match the AT-SPI AccessibleId in window.list (APP ID in --wide output). Use --title when that field is absent. Linux captures a display crop and does not activate or unocclude the window.\n\nOn Windows, an app target is the executable file name shown as APP in window.list, matched exactly and ignoring case (for example notepad.exe). Windows renders the window itself with PrintWindow, without activating, raising or restoring it, and keeps the visible frame."
 )]
 struct CaptureWindowArgs {
   /// Window title text used to select the capture target.
@@ -620,20 +620,22 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<au
     ..WindowSelector::default()
   };
   if let Some(target) = input.application_target()? {
-    // NOTICE: Windows has no bundle id (`app_bundle_id` is always `None`), so a bundle selector
-    // can never match there. Its application identifier is the executable file name, the
-    // `app_name` of `window.list`, which the driver matches ignoring case.
+    // NOTICE: Windows reports no application id yet (TODO(windows-application-id)),
+    // so an id selector can never match there. Its application identifier is the
+    // executable file name, the `app_name` of `window.list`, which the driver
+    // matches ignoring case.
     #[cfg(target_os = "windows")]
     {
       selector.app = Some(App::name(target));
     }
-    // Linux reuses AccessibleId in app_bundle_id. Do not guess application
-    // names when that identifier is absent; callers can select by title.
-    // TODO(cross-platform-application-selector): application-name targets
-    // require an owner-approved target contract, as in runner.rs.
+    // Linux reports the AT-SPI AccessibleId as the application id. Do not
+    // guess application names when that id is absent; callers can select by
+    // title.
+    // TODO(application-name-target): application-name targets require an
+    // owner-approved target contract, as in runner.rs.
     #[cfg(not(target_os = "windows"))]
     {
-      selector.app = Some(App::bundle_id(target));
+      selector.app = Some(App::id(target));
     }
   }
   if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
@@ -653,8 +655,8 @@ fn window_report_fields(window: &auv_driver::Window) -> Vec<InvokeReportField> {
   if let Some(app_name) = &window.app_name {
     fields.push(InvokeReportField::new("Application", app_name));
   }
-  if let Some(bundle_id) = &window.app_bundle_id {
-    fields.push(InvokeReportField::new("Bundle ID", bundle_id));
+  if let Some(application_id) = &window.application_id {
+    fields.push(InvokeReportField::new("Application ID", application_id));
   }
   fields
 }
@@ -666,8 +668,8 @@ struct WindowRow {
   app: String,
   title: String,
   frame: String,
-  #[table(wide)]
-  bundle: String,
+  #[table(wide, header = "APP ID")]
+  application_id: String,
   #[table(wide, header = "PID")]
   process_id: String,
   #[table(wide)]
@@ -692,7 +694,7 @@ fn window_list_report(windows: &[auv_driver::Window]) -> InvokeReport {
         app: window.app_name.as_deref().report_or("unknown").to_string(),
         title: window.title.as_deref().report_or("untitled").to_string(),
         frame: window.frame.report_value(),
-        bundle: window.app_bundle_id.as_deref().report_or("unknown").to_string(),
+        application_id: window.application_id.as_deref().report_or("unknown").to_string(),
         process_id: window.process_id.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
         flags: flags.join(","),
       }

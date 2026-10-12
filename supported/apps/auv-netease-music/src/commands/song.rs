@@ -23,7 +23,7 @@ pub(crate) fn scan_open_song_list(
   known_limits: Vec<String>,
 ) -> Result<SongListScanResult, String> {
   let app = ScanAppContext {
-    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.application_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };

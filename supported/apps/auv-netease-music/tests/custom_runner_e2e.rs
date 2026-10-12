@@ -66,7 +66,7 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   let mut netease = auv_netease_music::api::v1::player_service_client::PlayerServiceClient::new(transport);
   let response = netease
     .get_now_playing(auv_netease_music::api::v1::GetNowPlayingRequest {
-      application_bundle_id: Some("dev.auv.nonexistent-test-player".to_string()),
+      application_id: Some("dev.auv.nonexistent-test-player".to_string()),
     })
     .await
     .expect("call app-owned RPC through daemon aggregation")

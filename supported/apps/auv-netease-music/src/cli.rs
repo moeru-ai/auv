@@ -867,7 +867,7 @@ async fn remote_now_playing(context: auv::AuvContext, app_id: &str) -> Result<au
   let mut service = crate::api::v1::player_service_client::PlayerServiceClient::new(transport);
   let result = service
     .get_now_playing(crate::api::v1::GetNowPlayingRequest {
-      application_bundle_id: Some(app_id.to_string()),
+      application_id: Some(app_id.to_string()),
     })
     .await
     .map(tonic::Response::into_inner)

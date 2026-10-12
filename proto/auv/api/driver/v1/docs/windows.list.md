@@ -1,7 +1,7 @@
 # List windows
 
 Lists the windows the Runner can see right now, front to back. Each window
-carries its reference (`ref.windowId`), application name and bundle ID,
+carries its reference (`ref.windowId`), application name and application ID,
 process ID, title and frame.
 
 ## Coordinates
@@ -29,12 +29,12 @@ listing is never used for input.
 
 ```ts
 const windows = await device.windows.list()
-const music = windows.find(w => w.window.applicationBundleId === 'com.netease.163music')
+const music = windows.find(w => w.window.applicationId === 'com.netease.163music')
 ```
 
 ```rust
 let windows = runner.windows().list().await?;
-let music = windows.into_iter().find(|w| w.resource().app_bundle_id.as_deref() == Some("com.netease.163music"));
+let music = windows.into_iter().find(|w| w.resource().application_id.as_deref() == Some("com.netease.163music"));
 ```
 
 ### From the command line

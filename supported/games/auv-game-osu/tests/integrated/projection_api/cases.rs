@@ -9,7 +9,7 @@ fn test_window(width: f64, height: f64) -> Window {
     },
     title: Some("osu!".to_string()),
     app_name: Some("osu!".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(100.0, 200.0, width, height),
     coordinate_space: CoordinateSpace::Screen,

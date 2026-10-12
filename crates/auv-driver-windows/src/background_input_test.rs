@@ -120,7 +120,7 @@ fn window_receives_modified_click_messages_without_modifier_carryover() {
     },
     title: None,
     app_name: None,
-    app_bundle_id: None,
+    application_id: None,
     process_id: None,
     frame: Rect::new(100.0, 100.0, 320.0, 200.0),
     coordinate_space: CoordinateSpace::Screen,

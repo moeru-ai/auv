@@ -1068,7 +1068,7 @@ fn input_target_from_proto(
   match target.and_then(|target| target.recipient).ok_or_else(|| Status::invalid_argument("target is required"))? {
     Recipient::Foreground(true) => Ok(auv_driver::InputTarget::Foreground),
     Recipient::Foreground(false) => Err(Status::invalid_argument("foreground target must be true")),
-    Recipient::ApplicationBundleId(bundle_id) => Ok(auv_driver::InputTarget::Application { bundle_id }),
+    Recipient::ApplicationId(id) => Ok(auv_driver::InputTarget::Application { id }),
     Recipient::Window(observed) => {
       let reference = observed.r#ref.ok_or_else(|| Status::invalid_argument("window.ref is required"))?;
       let expected = observed.process_id.filter(|pid| *pid > 0).ok_or_else(|| Status::invalid_argument("window.process_id is required"))?;
@@ -2533,8 +2533,8 @@ impl WindowService for LocalWindowService {
 
 fn selector_from_proto(selector: proto::WindowSelector) -> Result<auv_driver::WindowSelector, Status> {
   let app = match selector.application {
-    Some(proto::window_selector::Application::ApplicationBundleId(value)) if !value.trim().is_empty() => auv_driver::AppSelector {
-      bundle: Some(auv_driver::TextMatcher::Exact(value)),
+    Some(proto::window_selector::Application::ApplicationId(value)) if !value.trim().is_empty() => auv_driver::AppSelector {
+      id: Some(auv_driver::TextMatcher::Exact(value)),
       ..Default::default()
     },
     Some(proto::window_selector::Application::ApplicationName(value)) if !value.trim().is_empty() => auv_driver::AppSelector {
@@ -2575,7 +2575,7 @@ fn window_to_proto(window: auv_driver::Window) -> proto::Window {
     }),
     title: window.title,
     application_name: window.app_name,
-    application_bundle_id: window.app_bundle_id,
+    application_id: window.application_id,
     process_id: window.process_id,
     frame: Some(proto::ScreenRect {
       x: window.frame.origin.x,

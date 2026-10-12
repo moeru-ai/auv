@@ -203,7 +203,7 @@ export function toRect(rect: undefined | { height: number, width: number, x: num
 export function toWindow(window: NativeWindow): WindowInfo {
   return {
     app: window.applicationName,
-    bundleId: window.applicationBundleId,
+    applicationId: window.applicationId,
     frame: toRect(window.frame) ?? { height: 0, width: 0, x: 0, y: 0 },
     id: window.ref?.windowId ?? '',
     pid: window.processId,

@@ -10,6 +10,11 @@
 > See
 > [`retired-app-local-invoke-and-run-artifact-reuse.md`](../../../archive/verticals/netease-music/retired-app-local-invoke-and-run-artifact-reuse.md).
 
+> NOTICE: Application id naming migration (2026-10-12). This note uses the
+> previous macOS-shaped "bundle id" names, such as `app_bundle_id`,
+> `App::bundle`, `application_bundle_id` or `bundleId`. See the
+> [migration and current mapping](../runtime/2026-10-12-application-id-naming-migration.md) before implementing examples.
+
 **Date:** 2026-06-30  
 **Status:** **owner-approved A5 docs-only** — freezes which JSON / trace / inspect fields
 count as identity proof vs run-time geometry or diagnostics on the NetEase playlist

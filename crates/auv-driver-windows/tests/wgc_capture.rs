@@ -105,7 +105,7 @@ fn create_test_window(
     },
     title: Some(title.to_string()),
     app_name: Some("test_runner.exe".to_string()),
-    app_bundle_id: None,
+    application_id: None,
     process_id: Some(std::process::id()),
     frame: Rect::new(x as f64, y as f64, width as f64, height as f64),
     coordinate_space: CoordinateSpace::Screen,

@@ -277,7 +277,8 @@ pub enum InputTarget {
   /// Explicit global input. No activation or recipient guarantee.
   Foreground,
   Application {
-    bundle_id: String,
+    /// Platform application id, as `Window::application_id` reports it.
+    id: String,
   },
   Window(Window),
 }

@@ -102,8 +102,8 @@ export class MockDesktop {
   readonly #windows: MockWindow[] = [
     {
       app: 'Todos',
+      applicationId: 'dev.auv.mock.todos',
       background: '#fdfcf8',
-      bundleId: 'dev.auv.mock.todos',
       frame: { height: 560, width: 760, x: 120, y: 120 },
       id: 'w-todos',
       pid: 4101,
@@ -112,8 +112,8 @@ export class MockDesktop {
     },
     {
       app: 'Counter',
+      applicationId: 'dev.auv.mock.counter',
       background: '#f4f7fb',
-      bundleId: 'dev.auv.mock.counter',
       frame: { height: 300, width: 420, x: 1700, y: 220 },
       id: 'w-counter',
       pid: 4102,
@@ -125,8 +125,8 @@ export class MockDesktop {
     },
     {
       app: 'Music',
+      applicationId: 'dev.auv.mock.music',
       background: '#fafafa',
-      bundleId: 'dev.auv.mock.music',
       decorate: (ctx, frame) => this.#decorateMusic(ctx, frame),
       frame: { height: 580, width: 480, x: 920, y: 120 },
       id: 'w-music',
@@ -197,11 +197,11 @@ export class MockDesktop {
   }
 
   /** Scene graph as an accessibility tree, the shape a real AX snapshot would have. */
-  /** Whether an application with this bundle ID is running. */
-  hasApplication(bundleId: string): boolean {
+  /** Whether an application with this application ID is running. */
+  hasApplication(applicationId: string): boolean {
     // NOTICE(mock-activation): mock windows never overlap, so activation has
-    // nothing to reorder; the Runner only validates the bundle ID.
-    return this.#windows.some(window => window.bundleId === bundleId)
+    // nothing to reorder; the Runner only validates the application ID.
+    return this.#windows.some(window => window.applicationId === applicationId)
   }
 
   /** Presses a key: Return adds the drafted todo while the input is focused. */
@@ -439,6 +439,6 @@ function roundRect(ctx: OffscreenCanvasRenderingContext2D, rect: Rect, radius: n
 }
 
 function toInfo(window: MockWindow): WindowInfo {
-  const { app, bundleId, frame, id, pid, title } = window
-  return { app, bundleId, frame: { ...frame }, id, pid, title }
+  const { app, applicationId, frame, id, pid, title } = window
+  return { app, applicationId, frame: { ...frame }, id, pid, title }
 }

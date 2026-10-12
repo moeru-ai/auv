@@ -69,7 +69,7 @@ describe('runner discovery through a real AUV daemon', () => {
           'auv.netease_music.v1.PlayRequest': {
             additionalProperties: false,
             properties: {
-              applicationBundleId: { type: 'string' },
+              applicationId: { type: 'string' },
             },
             type: 'object',
           },
@@ -123,7 +123,7 @@ describe('runner discovery through a real AUV daemon', () => {
         },
       })
       await expect(runner.invokeUnaryJson({
-        input: { applicationBundleId: 'dev.auv.nonexistent-test-player' },
+        input: { applicationId: 'dev.auv.nonexistent-test-player' },
         method: nowPlaying!,
       })).resolves.toEqual({})
 

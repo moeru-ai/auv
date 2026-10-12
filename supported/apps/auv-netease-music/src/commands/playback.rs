@@ -326,10 +326,10 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let window = session
     .window()
-    .resolve(Window::main_visible().owned_by(App::bundle(inputs.app_id.clone())))
+    .resolve(Window::main_visible().owned_by(App::id(inputs.app_id.clone())))
     .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   let app = ScanAppContext {
-    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.application_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };

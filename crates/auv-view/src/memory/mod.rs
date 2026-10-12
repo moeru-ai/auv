@@ -49,7 +49,7 @@ pub struct ViewMemory {
   pub schema_version: String,
   pub source_scan_uri: ArtifactUri,
   pub memory_id: String,
-  pub app_bundle_id: String,
+  pub application_id: String,
   pub scope_id: String,
   pub last_reconstructed_at_millis: u64,
   pub anchors: Vec<ViewAnchor>,
@@ -150,12 +150,12 @@ pub fn memory_from_reconstruction_parts(input: MemoryWriteInput<'_>, reconstruct
     return None;
   }
 
-  let memory_id = build_memory_id(input.app_bundle_id, input.scope_id);
+  let memory_id = build_memory_id(input.application_id, input.scope_id);
   Some(ViewMemory {
     schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
     source_scan_uri: input.source_scan_uri,
     memory_id,
-    app_bundle_id: input.app_bundle_id.to_string(),
+    application_id: input.application_id.to_string(),
     scope_id: input.scope_id.to_string(),
     last_reconstructed_at_millis: input.last_reconstructed_at_millis,
     anchors: reconstruction.anchor_index.clone(),
@@ -215,7 +215,7 @@ mod tests {
     let memory = memory_from_reconstruction_parts(
       MemoryWriteInput {
         source_scan_uri: source_scan_uri(),
-        app_bundle_id: "com.netease.163music",
+        application_id: "com.netease.163music",
         scope_id: "playlist_sidebar",
         root: &root,
         scope_snapshot: ViewMemoryScopeSnapshot {
@@ -251,7 +251,7 @@ mod tests {
     let memory = memory_from_reconstruction_parts(
       MemoryWriteInput {
         source_scan_uri: source_scan_uri(),
-        app_bundle_id: "com.netease.163music",
+        application_id: "com.netease.163music",
         scope_id: "playlist_sidebar",
         root: &root,
         scope_snapshot: ViewMemoryScopeSnapshot {

@@ -18,7 +18,7 @@ service RecommendationService {
 message DailyRecommendedRef {}
 
 message PlayDailyRecommendedRequest {
-  optional string application_bundle_id = 1;
+  optional string application_id = 1;
   optional uint32 max_top_scrolls = 2;
   optional double top_scroll_amount = 3;
   optional uint64 settle_milliseconds = 4;

@@ -3,10 +3,9 @@
 //! frame-drift checks.
 //!
 //! Mirrors the macOS driver's `assess_readiness`, substituting Windows'
-//! process/session signals for macOS's TCC permissions. Windows has no
-//! app-bundle/app-activation concept (see `window.rs`'s NOTICE on
-//! `app_bundle_id`), so target resolution and the frontmost check operate at
-//! the window level instead of the app level.
+//! process/session signals for macOS's TCC permissions. Windows does not
+//! report `application_id` yet (see `window.rs`), so target resolution and the
+//! frontmost check operate at the window level instead of the app level.
 
 use auv_driver_common::permission::PermissionStatus;
 use auv_driver_common::{ReadinessCheck, ReadinessProbeInput, ReadinessReport, Rect, Window};
@@ -75,9 +74,8 @@ pub fn resolve_target_window<'a>(windows: &'a [Window], input: &ReadinessProbeIn
           .as_ref()
           .is_none_or(|expected_title| window.title.as_deref().is_some_and(|title| title.contains(expected_title)))
     } else {
-      // NOTICE: app_bundle_id is a macOS concept with no Windows equivalent
-      // (see `window.rs`), so matching without a window number relies on
-      // window_title alone.
+      // NOTICE: Windows does not report application_id yet (see `window.rs`),
+      // so matching without a window number relies on window_title alone.
       input.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
     }
   })

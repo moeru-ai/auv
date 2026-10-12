@@ -18,7 +18,7 @@ struct Service;
 #[tonic::async_trait]
 impl PlayerService for Service {
   async fn get_now_playing(&self, request: Request<proto::GetNowPlayingRequest>) -> Result<Response<proto::GetNowPlayingResponse>, Status> {
-    let requested = app_id(request.into_inner().application_bundle_id);
+    let requested = app_id(request.into_inner().application_id);
     let state = blocking("now-playing read", auv_media_macos::now_playing).await?;
     let state = if state.source_bundle_id.as_deref() == Some(requested.as_str()) {
       state
@@ -42,29 +42,27 @@ impl PlayerService for Service {
   }
 
   async fn play(&self, request: Request<proto::PlayRequest>) -> Result<Response<proto::PlayResponse>, Status> {
-    let delivery = deliver_playback_control(request.into_inner().application_bundle_id, auv_media_macos::MediaCommand::Play).await?;
+    let delivery = deliver_playback_control(request.into_inner().application_id, auv_media_macos::MediaCommand::Play).await?;
     Ok(Response::new(proto::PlayResponse { delivery }))
   }
 
   async fn pause(&self, request: Request<proto::PauseRequest>) -> Result<Response<proto::PauseResponse>, Status> {
-    let delivery = deliver_playback_control(request.into_inner().application_bundle_id, auv_media_macos::MediaCommand::Pause).await?;
+    let delivery = deliver_playback_control(request.into_inner().application_id, auv_media_macos::MediaCommand::Pause).await?;
     Ok(Response::new(proto::PauseResponse { delivery }))
   }
 
   async fn toggle_player(&self, request: Request<proto::TogglePlayerRequest>) -> Result<Response<proto::TogglePlayerResponse>, Status> {
-    let delivery =
-      deliver_playback_control(request.into_inner().application_bundle_id, auv_media_macos::MediaCommand::TogglePlayPause).await?;
+    let delivery = deliver_playback_control(request.into_inner().application_id, auv_media_macos::MediaCommand::TogglePlayPause).await?;
     Ok(Response::new(proto::TogglePlayerResponse { delivery }))
   }
 
   async fn next(&self, request: Request<proto::NextRequest>) -> Result<Response<proto::NextResponse>, Status> {
-    let delivery = deliver_playback_control(request.into_inner().application_bundle_id, auv_media_macos::MediaCommand::NextTrack).await?;
+    let delivery = deliver_playback_control(request.into_inner().application_id, auv_media_macos::MediaCommand::NextTrack).await?;
     Ok(Response::new(proto::NextResponse { delivery }))
   }
 
   async fn previous(&self, request: Request<proto::PreviousRequest>) -> Result<Response<proto::PreviousResponse>, Status> {
-    let delivery =
-      deliver_playback_control(request.into_inner().application_bundle_id, auv_media_macos::MediaCommand::PreviousTrack).await?;
+    let delivery = deliver_playback_control(request.into_inner().application_id, auv_media_macos::MediaCommand::PreviousTrack).await?;
     Ok(Response::new(proto::PreviousResponse { delivery }))
   }
 
@@ -75,7 +73,7 @@ impl PlayerService for Service {
     }
     let position = std::time::Duration::try_from_secs_f64(request.position_seconds)
       .map_err(|_| Status::invalid_argument("position_seconds is outside the representable range"))?;
-    let requested_app = app_id(request.application_bundle_id);
+    let requested_app = app_id(request.application_id);
     blocking("playback seek", move || seek_playback(position, &requested_app)).await?;
     Ok(Response::new(proto::SeekResponse {
       position_seconds: request.position_seconds,
@@ -85,7 +83,7 @@ impl PlayerService for Service {
   async fn get_status(&self, request: Request<proto::GetStatusRequest>) -> Result<Response<proto::GetStatusResponse>, Status> {
     let request = request.into_inner();
     let mut inputs = crate::PlaybackStatusInputs::with_defaults();
-    inputs.app_id = app_id(request.application_bundle_id);
+    inputs.app_id = app_id(request.application_id);
     if let Some(value) = request.settle_milliseconds {
       inputs.settle_ms = value;
     }
@@ -202,7 +200,7 @@ impl RecommendationService for Service {
   ) -> Result<Response<proto::PlayDailyRecommendedResponse>, Status> {
     let request = request.into_inner();
     let mut inputs = crate::DailyRecommendedPlayInputs::with_defaults();
-    inputs.app_id = app_id(request.application_bundle_id);
+    inputs.app_id = app_id(request.application_id);
     if let Some(value) = request.max_top_scrolls {
       inputs.max_top_scrolls = value as usize;
     }
@@ -303,8 +301,8 @@ where
     .map_err(|error| operation_status(operation, error))
 }
 
-async fn deliver_playback_control(application_bundle_id: Option<String>, command: auv_media_macos::MediaCommand) -> Result<String, Status> {
-  let requested_app = app_id(application_bundle_id);
+async fn deliver_playback_control(application_id: Option<String>, command: auv_media_macos::MediaCommand) -> Result<String, Status> {
+  let requested_app = app_id(application_id);
   blocking("playback control", move || control_playback(command, &requested_app)).await
 }
 
@@ -330,7 +328,7 @@ fn scan_inputs(options: Option<proto::ScanOptions>) -> Result<crate::Inputs, Sta
   let Some(options) = options else {
     return Ok(inputs);
   };
-  inputs.app_id = app_id(options.application_bundle_id);
+  inputs.app_id = app_id(options.application_id);
   if let Some(value) = options.max_scrolls {
     inputs.max_scrolls = value as usize;
   }
@@ -519,7 +517,7 @@ mod tests {
     let status = Service
       .seek(Request::new(proto::SeekRequest {
         position_seconds: -1.0,
-        application_bundle_id: None,
+        application_id: None,
       }))
       .await
       .expect_err("negative seek position must be rejected");

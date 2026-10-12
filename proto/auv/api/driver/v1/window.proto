@@ -22,7 +22,7 @@ service WindowService {
     option (auv.api.annotations.v1.presentation) = {
       name: "windows.resolve"
       title: "Find a window"
-      description: "Finds one window by application (bundle ID, name, process ID or the frontmost app) and optionally by title."
+      description: "Finds one window by application (application ID, name, process ID or the frontmost app) and optionally by title."
     };
   }
 }
@@ -33,7 +33,8 @@ message WindowRef {
 
 message WindowSelector {
   oneof application {
-    string application_bundle_id = 1;
+    // The platform application ID that windows.list reports.
+    string application_id = 1;
     string application_name = 2;
     uint32 process_id = 3;
     bool frontmost_application = 4;
@@ -49,7 +50,9 @@ message Window {
   WindowRef ref = 1;
   optional string title = 2;
   optional string application_name = 3;
-  optional string application_bundle_id = 4;
+  // Platform application ID: a bundle ID on macOS, a desktop application ID
+  // on Linux. Windows does not report one yet.
+  optional string application_id = 4;
   optional uint32 process_id = 5;
   ScreenRect frame = 6;
   bool is_main = 7;

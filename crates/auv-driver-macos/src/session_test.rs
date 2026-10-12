@@ -39,7 +39,7 @@ fn main_visible_owned_by_bundle_picks_visible_window_without_candidate_display_c
     1389,
     1050,
   )]);
-  let selector = SelectWindow::main_visible().owned_by(App::bundle("com.netease.163music"));
+  let selector = SelectWindow::main_visible().owned_by(App::id("com.netease.163music"));
 
   let resolved = resolve_from_observed_windows(&snapshot, &selector).unwrap();
 
@@ -142,7 +142,7 @@ mod no_steal_tests {
       },
       title: None,
       app_name: None,
-      app_bundle_id: None,
+      application_id: None,
       process_id: Some(123),
       frame: Rect::new(100.0, 200.0, 800.0, 600.0),
       coordinate_space: CoordinateSpace::Screen,
@@ -730,8 +730,7 @@ fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
 #[ignore = "requires a live macOS WindowServer"]
 fn missing_application_keyboard_target_is_not_found() {
   let session = MacosDriverSession { _private: () };
-  let error =
-    session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("ai.moeru.auv.nonexistent-input-test"))).unwrap_err();
+  let error = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("ai.moeru.auv.nonexistent-input-test"))).unwrap_err();
   assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
 }
 
@@ -743,8 +742,7 @@ fn missing_application_keyboard_target_is_not_found() {
 #[ignore = "requires a live macOS WindowServer"]
 fn unresolved_bundle_that_is_not_running_says_so() {
   let session = MacosDriverSession { _private: () };
-  let error =
-    session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("ai.moeru.auv.nonexistent-window-test"))).unwrap_err();
+  let error = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("ai.moeru.auv.nonexistent-window-test"))).unwrap_err();
   match error {
     DriverError::NotFound { target } => assert!(target.contains("(not running)"), "{target}"),
     other => panic!("expected NotFound, got {other}"),
@@ -766,7 +764,7 @@ fn background_keyboard_delivery_does_not_activate() {
       .input()
       .input_keyboard(
         &auv_driver_common::InputTarget::Application {
-          bundle_id: "com.netease.163music".into(),
+          id: "com.netease.163music".into(),
         },
         vec![auv_driver_common::KeyboardInput::PressKeys {
           policy,
@@ -793,7 +791,7 @@ fn background_keyboard_delivery_does_not_activate() {
 #[ignore = "requires a live macOS WindowServer"]
 fn foreground_preparation_rejects_stale_window() {
   let session = MacosDriverSession { _private: () };
-  let mut window = session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("com.netease.163music"))).unwrap();
+  let mut window = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("com.netease.163music"))).unwrap();
   window.reference.id = "999999999".into();
   session
     .window()
@@ -858,7 +856,7 @@ fn keyboard_sequence_validates_later_keys_before_resolving_target() {
     .input()
     .input_keyboard(
       &auv_driver_common::InputTarget::Application {
-        bundle_id: "ai.moeru.auv.nonexistent-keyboard-test".into(),
+        id: "ai.moeru.auv.nonexistent-keyboard-test".into(),
       },
       vec![
         auv_driver_common::KeyboardInput::PressKeys {
@@ -1081,7 +1079,7 @@ fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
 fn repeated_preparation_keeps_running_fixture_identity() {
   let session = MacosDriverSession { _private: () };
   let target = InputTarget::Application {
-    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+    id: "ai.moeru.auv.keyboard-validation-fixture".into(),
   };
   let (pid, _) = resolve_input_target(&target).unwrap();
   for iteration in 0..30 {
@@ -1135,7 +1133,7 @@ fn preparation_rejects_exited_application_and_resolves_restarted_instance() {
   let mut fixture = Fixture(Command::new(&executable).arg(&output).spawn().unwrap(), output);
   let session = MacosDriverSession { _private: () };
   let target = InputTarget::Application {
-    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+    id: "ai.moeru.auv.keyboard-validation-fixture".into(),
   };
   for generation in 0..2 {
     if generation > 0 {

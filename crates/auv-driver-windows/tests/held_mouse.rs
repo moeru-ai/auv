@@ -135,7 +135,7 @@ fn run(foreground: bool) {
       },
       title: None,
       app_name: None,
-      app_bundle_id: None,
+      application_id: None,
       process_id: Some(std::process::id()),
       frame: Rect::new(100.0, 100.0, 640.0, 480.0),
       coordinate_space: CoordinateSpace::Screen,

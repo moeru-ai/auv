@@ -367,7 +367,7 @@ async fn resolved_window_child_retains_the_exact_resource_reference() {
       },
       title: None,
       app_name: None,
-      app_bundle_id: None,
+      application_id: None,
       process_id: None,
       frame: auv_driver::Rect::new(0.0, 0.0, 100.0, 100.0),
       coordinate_space: auv_driver::CoordinateSpace::Screen,
