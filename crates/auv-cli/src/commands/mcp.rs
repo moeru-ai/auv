@@ -731,7 +731,18 @@ mod frontend {
       "Invoke one AUV command and record it as a Run. Set `command_id` to one command below and \
        pass its arguments in `inputs` as string values, keyed exactly as listed; list values are JSON array strings. \
        Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
-       command; it is not a claim that the path was run.\n\nCommands:",
+       command; it is not a claim that the path was run.\n\n\
+       Input delivery: `inputs.input-policy` decides how input reaches a target window. Leave it unset unless an \
+       action had no visible effect. Delivery never proves the app reacted; check with a capture.\n\
+       - background-preferred (default for click, drag and scroll on a window target): send input to the window \
+       without raising it or moving the real pointer. An inactive or covered app can ignore it.\n\
+       - foreground-preferred (default for keyboard commands): raise the target window first, then send real input. \
+       Use it when background delivery had no visible effect.\n\
+       - background-only: never raise the window and never fall back; the call fails instead. Use it only when the \
+       user's foreground must not change.\n\
+       Platforms: Linux focuses the target window and sends all input to the foreground; background-only fails. \
+       Windows sends background pointer input as window messages, which some toolkits ignore. On Windows and \
+       Linux, keyboard commands type into the focused window only.\n\nCommands:",
     );
     for command in registry.all() {
       text.push_str(&format!("\n\n{}: {}", command.id, command.description));
@@ -761,20 +772,15 @@ mod frontend {
     text
   }
 
-  /// One line of per-platform support, such as `macOS supported; Linux partial (foreground delivery only); Windows unsupported`.
+  /// One line of per-platform support, such as `macOS supported; Linux partial; Windows unsupported`.
   ///
-  /// Only `Partial` notes are shown: they name the limit a caller must work within. Other
-  /// notes explain driver internals and stay in `x-auv-commands`.
+  /// NOTICE: Cell notes record source-audit facts for the support matrix, not caller guidance, and
+  /// the same delivery note repeats on every keyboard command. The description explains input
+  /// delivery once in its header; notes stay in `x-auv-commands` and `auv invoke <id> --help`.
   fn platform_support_summary(command: &InvokeCommand) -> String {
     auv_cli_invoke::Platform::ALL
       .iter()
-      .map(|platform| {
-        let support = command.support.on(*platform);
-        match (support.state, support.note) {
-          (auv_cli_invoke::SupportState::Partial, Some(note)) => format!("{} partial ({note})", platform.label()),
-          (state, _) => format!("{} {}", platform.label(), state.as_str()),
-        }
-      })
+      .map(|platform| format!("{} {}", platform.label(), command.support.on(*platform).state.as_str()))
       .collect::<Vec<_>>()
       .join("; ")
   }
