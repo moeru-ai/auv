@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **70**
+Count: **71**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -92,6 +92,7 @@ Count: **70**
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 - [`windows-wheel-acceptance-matrix.md`](windows-wheel-acceptance-matrix.md): Per-application matrix of background wheel acceptance via `PostMessageW(WM_MOUSEWHEEL)` across Win32, DirectComposition, Chromium/Electron, and Qt toolkits (Brief 6).
 - [`2026-10-12-windows-keyboard-targeted.jsonl`](2026-10-12-windows-keyboard-targeted.jsonl): Empirical trial records (38 trials across 4 commands and 3 app architectures) evaluating Windows targeted keyboard input under `InputPolicy::BackgroundOnly`, documenting the in-app focus crux and modifier key state table disconnect.
+- [`2026-10-13-windows-app-management.jsonl`](2026-10-13-windows-app-management.jsonl): Empirical trial records (12 trials across `app.activate` and `app.probePermissions`) evaluating Windows app management, documenting the minimized-window restore redline conflict, cross-process foreground lock behavior, and probePermissions N/A status.
 
 
 ## Related
