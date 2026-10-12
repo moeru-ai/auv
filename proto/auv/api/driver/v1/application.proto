@@ -1,0 +1,82 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/window.proto";
+import "google/protobuf/duration.proto";
+
+// Controls application-level state that is not scoped to one Window.
+service ApplicationService {
+  rpc ActivateApplication(ActivateApplicationRequest) returns (ActivateApplicationResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    // Foreground activation changes the focus context used by later input.
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "applications.activate"
+      title: "Activate an application"
+      description: "Brings an application to the front by the application ID that windows.list reports (a bundle ID on macOS, a process image name on Windows) and reports whether it became active."
+    };
+  }
+}
+
+message ActivateApplicationRequest {
+  // The opaque id that ListWindows reports for a window's application on the
+  // Runner's platform. The Runner's platform decides its kind, which the
+  // response reports in `application_id_kind`.
+  string application_id = 1;
+  // Absence uses the owning app.activate default of 150 ms.
+  google.protobuf.Duration settle = 2;
+}
+
+message ActivateApplicationResponse {
+  string requested_application_id = 1;
+  ApplicationIdKind application_id_kind = 2;
+  ApplicationActivationMethod method = 3;
+  // Set when the platform activated the application through one window.
+  WindowRef activated_window = 4;
+  ApplicationActivationVerification verification = 5;
+}
+
+// Exact wire projection of auv_driver::ApplicationIdKind.
+enum ApplicationIdKind {
+  APPLICATION_ID_KIND_UNSPECIFIED = 0;
+  // macOS bundle identifier.
+  APPLICATION_ID_KIND_BUNDLE_ID = 1;
+  // Windows process image name.
+  APPLICATION_ID_KIND_PROCESS_NAME = 2;
+  // Linux Wayland desktop application id. Activation is not implemented yet.
+  APPLICATION_ID_KIND_DESKTOP_APP_ID = 3;
+  // Linux X11 WM_CLASS. Activation is not implemented yet.
+  APPLICATION_ID_KIND_WM_CLASS = 4;
+}
+
+// Exact wire projection of auv_driver::ApplicationActivationMethod.
+enum ApplicationActivationMethod {
+  APPLICATION_ACTIVATION_METHOD_UNSPECIFIED = 0;
+  APPLICATION_ACTIVATION_METHOD_APPLE_SCRIPT_ACTIVATE = 1;
+  APPLICATION_ACTIVATION_METHOD_FOREGROUND_WINDOW = 2;
+  APPLICATION_ACTIVATION_METHOD_EWMH_ACTIVE_WINDOW = 3;
+}
+
+// Exact wire projection of auv_driver::ApplicationActivationVerification.
+message ApplicationActivationVerification {
+  oneof verification {
+    VerifiedForeground verified_foreground = 1;
+    ForegroundMismatch foreground_mismatch = 2;
+    VerificationUnavailable unavailable = 3;
+  }
+}
+
+message VerifiedForeground {
+  string observed_application_id = 1;
+}
+
+message ForegroundMismatch {
+  string observed_application_id = 1;
+}
+
+message VerificationUnavailable {
+  string reason = 1;
+}

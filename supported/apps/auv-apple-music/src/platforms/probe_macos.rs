@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use auv_driver::LocalDriverSession;
 #[cfg(target_os = "macos")]
-use auv_driver_macos::{ApplicationControl, DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH, ObservedAxNode, ObservedAxTreeSnapshot};
+use auv_driver_macos::{DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH, ObservedAxNode, ObservedAxTreeSnapshot};
 
 pub const DEFAULT_MUSIC_APP_BUNDLE_ID: &str = "com.apple.Music";
 pub const DEFAULT_ACTIVATE_SETTLE_MS: u64 = 800;
@@ -113,7 +113,8 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
 
   // Step 1: activate Music.app
   session
-    .activate_bundle_id(&inputs.bundle_id, Duration::from_millis(inputs.activate_settle_ms))
+    .applications()
+    .activate(&inputs.bundle_id, Duration::from_millis(inputs.activate_settle_ms))
     .map_err(|error| format!("Music.app activation failed: {error}"))?;
   result.activated = true;
 

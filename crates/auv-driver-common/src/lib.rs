@@ -21,9 +21,7 @@ pub mod vision;
 pub mod window;
 
 pub use accessibility::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOptions};
-pub use application::{
-  ApplicationActivationResult, ApplicationActivationVerification, ProcessActivationResult, ProcessActivationVerification,
-};
+pub use application::{ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind};
 pub use capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};

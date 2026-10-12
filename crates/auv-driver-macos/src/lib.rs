@@ -31,9 +31,11 @@ pub mod types;
 pub mod native;
 
 pub use accessibility::{DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH};
-pub use application::ApplicationControl;
+pub use application::ApplicationApi;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
-pub use auv_driver_common::{ApplicationActivationResult, ApplicationActivationVerification};
+pub use auv_driver_common::{
+  ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind,
+};
 pub use auv_driver_common::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOptions};
 pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 pub use driver::{MacosDriver, MacosDriverSession};

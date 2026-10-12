@@ -1125,7 +1125,11 @@ On macOS the same local Runner additionally publishes
 `auv.api.driver.macos.v1.PermissionService/ProbePermissions` and
 `auv.api.driver.macos.v1.MediaControlService/{GetNowPlaying,Play,Pause,TogglePlayPause,NextTrack,PreviousTrack}`,
 `auv.api.driver.macos.v1.ApplicationService/ActivateBundleId`, and
-`auv.api.driver.macos.v1.AccessibilityService/FocusText`. Permission status
+`auv.api.driver.macos.v1.AccessibilityService/FocusText`.
+(Migration notice, 2026-10-12: `ActivateBundleId` was deleted and replaced by
+the platform-neutral `auv.api.driver.v1.ApplicationService/ActivateApplication`,
+served on every platform; see "Application Activation Result" in
+`docs/TERMS_AND_CONCEPTS.md`.) Permission status
 is an exact four-field projection with explicit granted, missing, and unknown
 states; unspecified or unknown wire enum values fail closed. The permission
 slice is covered by descriptor and pure mapper tests, runtime reflection,

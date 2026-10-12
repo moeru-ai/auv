@@ -112,35 +112,21 @@ fn permission_probe_mapper_preserves_every_status() {
 }
 
 #[test]
-fn application_activation_mapper_preserves_each_verification_variant() {
-  use auv_api_proto::auv::api::driver::macos::v1::application_activation_verification::Verification;
-
-  let cases = [
-    auv_driver::ApplicationActivationVerification::VerifiedForeground {
-      observed_bundle_id: "com.example.Verified".to_string(),
-    },
-    auv_driver::ApplicationActivationVerification::ForegroundMismatch {
-      observed_bundle_id: "com.example.Other".to_string(),
-    },
-    auv_driver::ApplicationActivationVerification::Unavailable {
-      reason: "update unavailable".to_string(),
-    },
-  ];
-  for verification in cases {
-    let mapped = application_activation_to_proto(auv_driver::ApplicationActivationResult {
-      requested_bundle_id: "com.example.Requested".to_string(),
-      verification,
-    });
-    assert_eq!(mapped.requested_bundle_id, "com.example.Requested");
-    assert!(matches!(
-      mapped.verification.and_then(|verification| verification.verification),
-      Some(Verification::VerifiedForeground(_) | Verification::ForegroundMismatch(_) | Verification::Unavailable(_))
-    ));
+fn linux_application_activation_is_unimplemented_not_activation_only() {
+  // The Linux facade returns these errors for Wayland and X11 sessions; the
+  // Runner must surface them as UNIMPLEMENTED, never as a response.
+  for kind in [
+    auv_driver::ApplicationIdKind::DesktopAppId,
+    auv_driver::ApplicationIdKind::WmClass,
+  ] {
+    let status = driver_status(auv_driver::application::unsupported_activation(kind));
+    assert_eq!(status.code(), tonic::Code::Unimplemented);
+    assert!(status.message().contains("Linux"), "{}", status.message());
   }
 }
 
 #[test]
-fn application_request_validation_rejects_blank_bundle_and_invalid_duration() {
+fn application_request_validation_rejects_blank_application_id_and_invalid_duration() {
   assert_eq!(
     duration_from_proto(
       Some(prost_types::Duration {
@@ -154,7 +140,7 @@ fn application_request_validation_rejects_blank_bundle_and_invalid_duration() {
     .code(),
     tonic::Code::InvalidArgument
   );
-  assert_eq!(application_bundle_id("  ").expect_err("blank bundle id").code(), tonic::Code::InvalidArgument);
+  assert_eq!(requested_application_id("  ").expect_err("blank application id").code(), tonic::Code::InvalidArgument);
 }
 
 #[test]

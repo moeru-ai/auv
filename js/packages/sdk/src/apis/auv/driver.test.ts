@@ -3,6 +3,7 @@ import type { UnaryCall } from '../../transport/types'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 
+import { ActivateApplicationRequestSchema, ActivateApplicationResponseSchema, ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
@@ -605,6 +606,43 @@ describe('window clients', () => {
     // Two application fields are ambiguous, so they fail before any call.
     await expect(runner.windows.resolve({ applicationId: 'com.apple.Music', appName: 'Music' })).rejects.toThrow(TypeError)
     expect(calls).toHaveLength(4)
+    await connection.close()
+  })
+
+  it('activates an application through the platform-neutral ApplicationService', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          if (call.method !== '/auv.api.driver.v1.ApplicationService/ActivateApplication')
+            throw new Error(`unexpected method: ${call.method}`)
+          const { applicationId } = fromBinary(ActivateApplicationRequestSchema, call.body)
+          return toBinary(ActivateApplicationResponseSchema, create(ActivateApplicationResponseSchema, {
+            activatedWindow: { windowId: 'w-1' },
+            applicationIdKind: ApplicationIdKind.PROCESS_NAME,
+            method: ApplicationActivationMethod.FOREGROUND_WINDOW,
+            requestedApplicationId: applicationId,
+            verification: { verification: { case: 'verifiedForeground', value: { observedApplicationId: applicationId } } },
+          }))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+
+    const result = await runner.applications.activate({ applicationId: 'notepad.exe' })
+    expect(result).toMatchObject({
+      activatedWindow: { windowId: 'w-1' },
+      applicationIdKind: ApplicationIdKind.PROCESS_NAME,
+      method: ApplicationActivationMethod.FOREGROUND_WINDOW,
+      requestedApplicationId: 'notepad.exe',
+    })
+    expect(result.verification?.verification).toEqual({ case: 'verifiedForeground', value: expect.objectContaining({ observedApplicationId: 'notepad.exe' }) })
+    expect(calls).toHaveLength(1)
     await connection.close()
   })
 

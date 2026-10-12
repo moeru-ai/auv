@@ -17,7 +17,7 @@ UIA, and `Windows.Media.Ocr`.
 - UIA accessibility tree capture, node focus, node select
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
-- App-level activation by process name (`ApplicationControl::activate_process_name`)
+- App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke app.activate`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
 - Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window capture stream that never serves a stale frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
 - Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
@@ -32,7 +32,6 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-window-capture-dpi)` | `src/capture.rs` | Tighter DPI/border mapping for window capture |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
-| `TODO(app-activate-windows-cli)` | `crates/auv-cli-invoke/src/commands/app.rs` | Wire `activate_process_name` into the `app.activate` CLI command (needs an owner decision on the shared output contract) |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |

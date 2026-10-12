@@ -6,6 +6,8 @@ import type { MockDesktop } from './mock-desktop'
 import type { DisplayInfo, WindowInfo } from './types'
 
 import {
+  ApplicationActivationMethod,
+  ApplicationIdKind,
   ApplicationService,
   AuvRpcError,
   CaptureResolution,
@@ -361,11 +363,18 @@ export function mockRunner(desktop: MockDesktop): Transport {
     })
 
     service(ApplicationService, {
-      activateBundleId: async (request) => {
+      // The mock desktop names applications by bundle ID, so it answers like a
+      // macOS Runner.
+      activateApplication: async (request) => {
         await delay(LATENCY_MS.key)
-        if (!desktop.hasApplication(request.bundleId))
-          throw new AuvRpcError(NOT_FOUND, `No running application with bundle ID ${request.bundleId}`)
-        return { requestedBundleId: request.bundleId, verification: { verification: { case: 'verifiedForeground', value: { observedBundleId: request.bundleId } } } }
+        if (!desktop.hasApplication(request.applicationId))
+          throw new AuvRpcError(NOT_FOUND, `No running application with bundle ID ${request.applicationId}`)
+        return {
+          applicationIdKind: ApplicationIdKind.BUNDLE_ID,
+          method: ApplicationActivationMethod.APPLE_SCRIPT_ACTIVATE,
+          requestedApplicationId: request.applicationId,
+          verification: { verification: { case: 'verifiedForeground', value: { observedApplicationId: request.applicationId } } },
+        }
       },
     })
   })

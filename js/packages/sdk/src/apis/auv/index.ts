@@ -1,5 +1,6 @@
 // Driver enums callers pass or read; without them clients mirror raw numbers.
 export { PermissionStatus } from '../../gen/auv/api/driver/macos/v1/permission_pb'
+export { ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 export { CaptureResolution } from '../../gen/auv/api/driver/v1/capture_pb'
 
 export {

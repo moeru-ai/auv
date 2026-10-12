@@ -556,6 +556,11 @@ impl RunnerExecution {
     self.runner.overlay()
   }
 
+  /// Returns application activation capabilities.
+  pub fn applications(&self) -> runner::ApplicationClient {
+    self.runner.applications()
+  }
+
   /// Returns macOS-specific capabilities.
   pub fn macos(&self) -> runner::MacosClient {
     self.runner.macos()

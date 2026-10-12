@@ -3,10 +3,10 @@
 use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
 use auv_api_proto::auv::api::driver::macos::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
-use auv_api_proto::auv::api::driver::macos::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::{MediaControlService, MediaControlServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::permission_service_server::{PermissionService, PermissionServiceServer};
 use auv_api_proto::auv::api::driver::v1 as proto;
+use auv_api_proto::auv::api::driver::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
 use auv_api_proto::auv::api::driver::v1::capture_service_server::{CaptureService, CaptureServiceServer};
 use auv_api_proto::auv::api::driver::v1::display_service_server::{DisplayService, DisplayServiceServer};
 use auv_api_proto::auv::api::driver::v1::input_service_server::{InputService, InputServiceServer};
@@ -340,55 +340,26 @@ fn ax_focus_result_to_proto(result: auv_driver::AxFocusResult) -> Result<macos_p
 
 #[tonic::async_trait]
 impl ApplicationService for LocalApplicationService {
-  async fn activate_bundle_id(
+  async fn activate_application(
     &self,
-    request: Request<macos_proto::ActivateBundleIdRequest>,
-  ) -> Result<Response<macos_proto::ActivateBundleIdResponse>, Status> {
+    request: Request<proto::ActivateApplicationRequest>,
+  ) -> Result<Response<proto::ActivateApplicationResponse>, Status> {
     let request = request.into_inner();
-    let bundle_id = application_bundle_id(&request.bundle_id)?;
+    let application_id = requested_application_id(&request.application_id)?;
     let settle = duration_from_proto(request.settle, std::time::Duration::from_millis(150), "settle")?;
-    #[cfg(target_os = "macos")]
-    {
-      use auv_driver_macos::ApplicationControl as _;
-
-      let result = self.session.activate_bundle_id(bundle_id, settle).map_err(driver_status)?;
-      Ok(Response::new(application_activation_to_proto(result)))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-      let _ = (&self.session, settle);
-      Err(Status::unimplemented("macOS ApplicationService is unavailable on this local Driver platform"))
-    }
+    // Platforms without activation (Linux today) return a typed Unsupported
+    // error, which `driver_status` maps to UNIMPLEMENTED.
+    let result = self.session.applications().activate(application_id, settle).map_err(driver_status)?;
+    Ok(Response::new(auv::protocol::application::encode(result)))
   }
 }
 
-fn application_bundle_id(bundle_id: &str) -> Result<&str, Status> {
-  let bundle_id = bundle_id.trim();
-  if bundle_id.is_empty() {
-    return Err(Status::invalid_argument("bundle_id is required"));
+fn requested_application_id(application_id: &str) -> Result<&str, Status> {
+  let application_id = application_id.trim();
+  if application_id.is_empty() {
+    return Err(Status::invalid_argument("application_id is required"));
   }
-  Ok(bundle_id)
-}
-
-fn application_activation_to_proto(result: auv_driver::ApplicationActivationResult) -> macos_proto::ActivateBundleIdResponse {
-  use auv_driver::ApplicationActivationVerification as Domain;
-  use macos_proto::application_activation_verification::Verification;
-
-  let verification = match result.verification {
-    Domain::VerifiedForeground { observed_bundle_id } => {
-      Verification::VerifiedForeground(macos_proto::VerifiedForeground { observed_bundle_id })
-    }
-    Domain::ForegroundMismatch { observed_bundle_id } => {
-      Verification::ForegroundMismatch(macos_proto::ForegroundMismatch { observed_bundle_id })
-    }
-    Domain::Unavailable { reason } => Verification::Unavailable(macos_proto::VerificationUnavailable { reason }),
-  };
-  macos_proto::ActivateBundleIdResponse {
-    requested_bundle_id: result.requested_bundle_id,
-    verification: Some(macos_proto::ApplicationActivationVerification {
-      verification: Some(verification),
-    }),
-  }
+  Ok(application_id)
 }
 
 #[derive(Default)]
@@ -2760,10 +2731,11 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<RecentFramesServiceServer<super::recent_frames::Service>>().await;
   health_reporter.set_serving::<TextRecognitionServiceServer<LocalTextRecognitionService>>().await;
   health_reporter.set_serving::<InputServiceServer<LocalInputService>>().await;
+  // Served on every platform: Linux answers with a typed UNIMPLEMENTED until
+  // its activation backends land, instead of an absent service.
+  health_reporter.set_serving::<ApplicationServiceServer<LocalApplicationService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<PermissionServiceServer<LocalPermissionService>>().await;
-  #[cfg(target_os = "macos")]
-  health_reporter.set_serving::<ApplicationServiceServer<LocalApplicationService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<AccessibilityServiceServer<LocalAccessibilityService>>().await;
   #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -2777,11 +2749,10 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     "auv.api.driver.v1.RecentFramesService",
     "auv.api.driver.v1.TextRecognitionService",
     "auv.api.driver.v1.InputService",
+    "auv.api.driver.v1.ApplicationService",
   ];
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.PermissionService");
-  #[cfg(target_os = "macos")]
-  served_services.push("auv.api.driver.macos.v1.ApplicationService");
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.AccessibilityService");
   #[cfg(any(target_os = "macos", target_os = "windows"))]
