@@ -23,7 +23,7 @@ PR #335 declared background keyboard as `unsupported` with the design principle 
 3. **The Thread Modifier State Disconnect**:
    Chords (`input.keys`, e.g., `Ctrl+A`, `Ctrl+C`) and held keys (`input.holdKeys`) **fail semantically in the background**. Posting `WM_KEYDOWN(VK_CONTROL)` places a message in the queue but **does not update the thread's asynchronous key state table** (`GetKeyState(VK_CONTROL)` remains 0). When `WM_KEYDOWN(VK_A)` arrives, the control evaluates `GetKeyState`, observes that `Ctrl` is not active, and degenerates into typing the raw letter `'a'`.
 4. **Proposed Declarations**:
-   - `input.typeText`: Propose `partial` with strict boundary documentation (works only when targeting a specific Win32 child `Edit` HWND; fails on top-level windows and Chromium/Electron), OR remain `unsupported` until a child-control targeting contract lands.
+   - `input.typeText`: Propose **Partial: 机制已证，需 child HWND targeting（未实现）** (tested mechanism works when dispatching directly to a child Win32 `Edit` HWND, but public `auv invoke --target` currently resolves only to top-level windows via `App::name`; without driver-level child control resolution, public API invocations cannot route to child controls and are dropped by `DefWindowProcW`).
    - `input.key`: Propose `unsupported` (narrow subset works on child Win32 `Edit`, but navigation/chords fail).
    - `input.keys`: Propose `unsupported` (architectural limitation of Win32 message queue).
    - `input.holdKeys`: Propose `unsupported` (cannot sustain logical key state in background without `SendInput`).
@@ -40,7 +40,7 @@ Total: **38 trials** recorded in `docs/ai/references/driver/2026-10-12-windows-k
 
 | Command | Win32 Child Edit (`win32-receiver` / Notepad Edit) | Win32 Top-Level HWND | Chromium / Electron (`msedge.exe` / Edge Beta) | Verdict |
 | :--- | :--- | :--- | :--- | :--- |
-| **`input.typeText`** | **Works** (100% semantic text entry via `WM_CHAR`) | **Fails** (0% text entry; dropped by `DefWindowProc`) | **Fails** (0% text entry; dropped by `RenderWidgetHost`) | **Partial** (bounded) |
+| **`input.typeText`** | **Works** (100% semantic text entry via `WM_CHAR`) | **Fails** (0% text entry; dropped by `DefWindowProc`) | **Fails** (0% text entry; dropped by `RenderWidgetHost`) | **Partial: 机制已证，需 child HWND targeting（未实现）** |
 | **`input.key`** | **Partial** (`backspace` works; `return`/`tab` ignored by single-line) | **Fails** (dropped by top-level procedure) | **Fails** (dropped by `HWNDMessageHandler`) | **Unsupported** |
 | **`input.keys`** (chords) | **Fails** (degenerates to typing `'a'`, `GetKeyState==0`) | **Fails** (dropped by top-level procedure) | **Fails** (dropped by Chromium Aura focus gate) | **Unsupported** |
 | **`input.holdKeys`** | **Fails** (does not hold `GetKeyState`; repeat requires focus) | **Fails** (dropped by top-level procedure) | **Fails** (dropped by Chromium Aura focus gate) | **Unsupported** |
@@ -88,7 +88,9 @@ Total: **38 trials** recorded in `docs/ai/references/driver/2026-10-12-windows-k
 ### 3.4 Crux Diagnostic: Top-Level vs. Child Control Routing
 - **Target Surface**: Top-level window HWNDs (`hwnd_notepad` and `hwnd_receiver`).
 - **Result**: **0% semantic effect**.
-- **Root Cause**: Win32 does not automatically route top-level `WM_CHAR` or `WM_KEYDOWN` down to child controls. If an automation framework passes a top-level window handle (e.g. `--target window:1707394`) instead of the child control HWND (`--target window:2165768`), the top-level procedure executes `DefWindowProcW`, which discards the message.
+- **Root Cause & Public API Seam**:
+  Win32 does not automatically route top-level `WM_CHAR` or `WM_KEYDOWN` down to child controls. If an automation framework passes a top-level window handle instead of the child control HWND, the top-level procedure executes `DefWindowProcW`, which discards the message.
+  Crucially, live trials proved that the message mechanism succeeds when posting directly to a child `Edit` HWND. However, the public CLI `auv invoke --target` (e.g. `--target app:notepad` via the recently landed `App::name` resolution) currently resolves only down to top-level window HWNDs. As long as `auv-driver` lacks child control inspection and targeting, the public API cannot reach the child `Edit` control and remains completely inoperative. Hence, `Partial` strictly means **"机制已证，需 child HWND targeting（未实现）"**.
 
 ---
 
@@ -121,11 +123,11 @@ Total: **38 trials** recorded in `docs/ai/references/driver/2026-10-12-windows-k
 
 | Command | Proposed Support Declaration | Documented Boundary Note |
 | :--- | :--- | :--- |
-| `input.typeText` | **Partial** (or remain **Unsupported**) | **Boundary**: Supported *only* when targeting a specific Win32 child `Edit` control HWND (`window:<child_hwnd>`). Unsupported when targeting top-level window HWNDs, application targets, or modern frameworks (Chromium, Electron, WinUI, WPF). Delivery does not verify effects. |
+| `input.typeText` | **Partial: 机制已证，需 child HWND targeting（未实现）** | **Boundary**: Underlying Win32 message mechanism is proven when posting directly to child `Edit` HWNDs. However, public `auv invoke --target` currently resolves only down to top-level window HWNDs (`App::name`). As long as `auv-driver` lacks child control resolution, public API delivery to top-level windows drops messages (`DefWindowProcW`). Unsupported on top-level targets and Chromium/Electron. |
 | `input.key` | **Unsupported** | Single keys cannot reliably navigate or submit in the background. Return and Tab behave inconsistently across control styles. |
 | `input.keys` | **Unsupported** | Win32 message queue cannot simulate modifier state (`GetKeyState`). Chords fail and degenerate into typing raw characters. |
 | `input.holdKeys` | **Unsupported** | Cannot sustain logical modifier or key state in background without global input injection. |
 | `input.keyboard` | **Partial** / **Unsupported** | Inherits action-level boundaries; batch chords or holds fail. |
 
 ### Final Recommendation for Issue #211
-Retain PR #335's default `unsupported` declaration for targeted keyboard input unless an explicit child-control targeting contract (e.g., UI automation control resolution returning child HWNDs) is introduced. If `input.typeText` is enabled as `partial`, it must carry the strict boundary note that it works only on direct Win32 `Edit` child controls and is ineffective against Chromium, Electron, and top-level windows.
+Retain PR #335's default `unsupported` declaration for targeted keyboard input unless an explicit child-control targeting contract (e.g., UI automation control resolution returning child HWNDs) is introduced. If `input.typeText` is marked `partial`, its accurate declaration is **"机制已证，需 child HWND targeting（未实现）"**: the underlying child-HWND `PostMessageW` mechanism is verified, but public `invoke --target` currently resolves only to top-level windows (the scope of the recently landed `App::name` fix). As long as `auv-driver` does not resolve child controls, the public API cannot deliver text in the background.
