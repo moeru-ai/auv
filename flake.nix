@@ -97,6 +97,7 @@
                 ]
               );
 
+            PROTOC = pkgs.lib.getExe pkgs.buildPackages.protobuf;
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           };
@@ -126,6 +127,7 @@
               (with pkgs; [
                 cmake
                 pkg-config
+                buildPackages.protobuf
               ])
               ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
                 (swiftc pkgs)
@@ -156,6 +158,8 @@
                   leptonica
                 ]
               );
+
+            env.PROTOC = pkgs.lib.getExe pkgs.buildPackages.protobuf;
 
             # NOTICE(nix-macos-framework): mediaremote-adapter defaults to a
             # universal framework, while Nix's compiler runtime is native to
