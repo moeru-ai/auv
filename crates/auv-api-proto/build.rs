@@ -30,12 +30,14 @@ const SCHEMA_PATHS: &[&str] = &[
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let protoc = protoc_bin_vendored::protoc_bin_path()?;
-  // NOTICE(proto-build): Cargo builds use a vendored `protoc` so this crate can
-  // compile outside the Nix dev shell; `nix develop` still provides `protobuf`
-  // and `buf` for explicit schema work.
-  unsafe {
-    std::env::set_var("PROTOC", protoc);
+  println!("cargo:rerun-if-env-changed=PROTOC");
+  // NOTICE(proto-build): Honor the caller's `PROTOC`; otherwise use the vendored
+  // compiler so Cargo builds still work without a system Protobuf installation.
+  if std::env::var_os("PROTOC").is_none() {
+    let protoc = protoc_bin_vendored::protoc_bin_path()?;
+    unsafe {
+      std::env::set_var("PROTOC", protoc);
+    }
   }
 
   let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
