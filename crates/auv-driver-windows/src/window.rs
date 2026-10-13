@@ -285,7 +285,12 @@ mod native {
       && target_thread != foreground_thread
       && unsafe { AttachThreadInput(current_thread, target_thread, true) }.as_bool();
     unsafe {
-      let _ = ShowWindow(hwnd, SW_RESTORE);
+      // NOTICE: SW_RESTORE also turns a maximized window back into a normal one,
+      // which moved the window under a click point computed from its frame
+      // before activation. Only a minimized window needs restoring.
+      if IsIconic(hwnd).as_bool() {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+      }
       let _ = BringWindowToTop(hwnd);
     }
     let activated = unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd;
