@@ -129,6 +129,21 @@ fn prepared_text_retains_replace_submit_and_per_character_timing() {
   );
 }
 
+// ROOT CAUSE:
+//
+// If an agent spelled punctuation out (`ctrl+comma`), the Linux key parser
+// failed with `invalid key comma` because a multi-character name had to be in
+// the named-key table.
+//
+// The fix resolves spelled-out names through the shared key names.
+#[test]
+fn spelled_out_punctuation_resolves_to_its_character_keysym() {
+  assert_eq!(keysym::named_or_char("comma").unwrap(), ',' as i32);
+  assert_eq!(keysym::named_or_char("bracket_left").unwrap(), '[' as i32);
+  assert_eq!(keysym::named_or_char("plus").unwrap(), '+' as i32);
+  assert!(keysym::named_or_char("nope").is_err());
+}
+
 #[test]
 fn shared_key_symbols_preserve_linux_named_key_behavior() {
   assert_eq!(keysym::named_or_char("enter").unwrap(), auv_driver_common::Keysym::Return.raw() as i32);

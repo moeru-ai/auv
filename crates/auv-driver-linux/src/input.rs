@@ -487,6 +487,13 @@ pub(crate) mod keysym {
       return Err(invalid_input("key must not be empty"));
     };
     if chars.next().is_some() {
+      // A spelled-out character name (`comma`, `bracket_left`) resolves through
+      // the shared key names to the character it names.
+      if let Ok(auv_driver_common::Key::Symbol(symbol)) = raw.parse::<auv_driver_common::Key>()
+        && let Some(named) = symbol.key_char().filter(char::is_ascii_graphic)
+      {
+        return for_char(named);
+      }
       return Err(invalid_input(format!("invalid key {raw}; use a special key, shortcut, or type_text for multi-character text")));
     }
     for_char(ch)

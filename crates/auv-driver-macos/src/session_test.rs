@@ -312,6 +312,28 @@ mod no_steal_tests {
     }
   }
 
+  // ROOT CAUSE:
+  //
+  // If an agent spelled punctuation out (`cmd+comma`, `ctrl+bracket_left`),
+  // the macOS key parser failed with `invalid key "comma"` because only one
+  // literal character reached the ANSI table.
+  //
+  // The fix resolves spelled-out names through the shared key names.
+  #[test]
+  fn spelled_out_punctuation_resolves_to_its_shortcut_character() {
+    let keys = |keys: &[&str]| {
+      parse_key_combination(&PressKeysOptions {
+        keys: keys.iter().map(|key| key.to_string()).collect(),
+        count: 1,
+        ..Default::default()
+      })
+    };
+    assert_eq!(keys(&["cmd", "comma"]).unwrap(), keys(&["cmd", ","]).unwrap());
+    assert_eq!(keys(&["ctrl", "bracket_left"]).unwrap(), keys(&["ctrl", "["]).unwrap());
+    assert_eq!(keys(&["cmd", "plus"]).unwrap(), keys(&["cmd", "+"]).unwrap());
+    assert!(keys(&["cmd", "nope"]).is_err());
+  }
+
   #[test]
   fn macos_virtual_key_code_covers_shortcut_characters() {
     assert_eq!(macos_virtual_key_code('a').expect("a"), 0);

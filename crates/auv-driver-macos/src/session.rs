@@ -1353,9 +1353,15 @@ fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
       code
     } else {
       let mut chars = name.chars();
+      // A spelled-out character name (`comma`, `bracket_left`) resolves through
+      // the shared key names to the character it names.
       let character = chars
         .next()
         .filter(|_| chars.next().is_none())
+        .or_else(|| match name.parse::<auv_driver_common::Key>() {
+          Ok(auv_driver_common::Key::Symbol(symbol)) => symbol.key_char().filter(char::is_ascii_graphic),
+          _ => None,
+        })
         .ok_or_else(|| invalid_input(format!("invalid key {key:?}; expected one key name or ANSI character")))?;
       implicit_shift |= character.is_ascii_uppercase()
         || matches!(

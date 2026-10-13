@@ -39,14 +39,36 @@ mod vk {
   pub const CONTROL: u16 = 0x11;
   pub const MENU: u16 = 0x12; // Alt
   pub const ESCAPE: u16 = 0x1B;
+  pub const PAUSE: u16 = 0x13;
+  pub const CAPITAL: u16 = 0x14; // Caps Lock
   pub const SPACE: u16 = 0x20;
+  pub const PRIOR: u16 = 0x21; // Page Up
+  pub const NEXT: u16 = 0x22; // Page Down
+  pub const END: u16 = 0x23;
+  pub const HOME: u16 = 0x24;
+  pub const LEFT: u16 = 0x25;
+  pub const UP: u16 = 0x26;
+  pub const RIGHT: u16 = 0x27;
+  pub const DOWN: u16 = 0x28;
+  pub const SNAPSHOT: u16 = 0x2C; // Print Screen
+  pub const INSERT: u16 = 0x2D;
   pub const DELETE: u16 = 0x2E;
   pub const LWIN: u16 = 0x5B;
+  pub const APPS: u16 = 0x5D; // Menu
+  pub const F1: u16 = 0x70;
+  pub const NUMLOCK: u16 = 0x90;
+  pub const SCROLL: u16 = 0x91;
   // Media keys (global — no app focus required).
   pub const MEDIA_NEXT_TRACK: u16 = 0xB0;
   pub const MEDIA_PREV_TRACK: u16 = 0xB1;
   pub const MEDIA_STOP: u16 = 0xB2;
   pub const MEDIA_PLAY_PAUSE: u16 = 0xB3;
+}
+
+/// Keys that Win32 sends with `KEYEVENTF_EXTENDEDKEY`: the navigation block
+/// and the right-hand keys that share scan codes with the keypad.
+fn is_extended_key(code: u16) -> bool {
+  matches!(code, vk::PRIOR | vk::NEXT | vk::END | vk::HOME | vk::LEFT | vk::UP | vk::RIGHT | vk::DOWN | vk::INSERT | vk::DELETE | vk::APPS)
 }
 
 /// A parsed key request: zero or more modifier virtual-keys plus one target key.
@@ -179,13 +201,17 @@ fn combination(options: &PressKeysOptions) -> DriverResult<Vec<u16>> {
     }
 
     ordinary |= modifier.is_none();
-    let code = modifier
-      .or_else(|| special_virtual_key(key))
-      .or_else(|| single_char_virtual_key(key))
-      .ok_or_else(|| invalid_input(format!("invalid key {key:?}")))?;
+    let (code, needs_shift) = match modifier {
+      Some(modifier) => (modifier, false),
+      None => key_virtual_key(key).ok_or_else(|| invalid_input(format!("invalid key {key:?}")))?,
+    };
 
     if codes.contains(&code) {
       return Err(invalid_input("a combination cannot contain duplicate keys"));
+    }
+    // A shifted character such as `+` on a US layout is Shift plus its key.
+    if needs_shift && !codes.contains(&vk::SHIFT) {
+      codes.insert(0, vk::SHIFT);
     }
 
     codes.push(code);
@@ -564,15 +590,13 @@ fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
   if trimmed.contains('+') {
     return parse_shortcut(trimmed);
   }
-  if let Some(key) = special_virtual_key(trimmed) {
+  if let Some((key, needs_shift)) = key_virtual_key(trimmed) {
     return Ok(KeyChord {
-      modifiers: Vec::new(),
-      key,
-    });
-  }
-  if let Some(key) = single_char_virtual_key(trimmed) {
-    return Ok(KeyChord {
-      modifiers: Vec::new(),
+      modifiers: if needs_shift {
+        vec![vk::SHIFT]
+      } else {
+        Vec::new()
+      },
       key,
     });
   }
@@ -587,10 +611,13 @@ fn parse_shortcut(shortcut: &str) -> DriverResult<KeyChord> {
     return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like ctrl+f or ctrl+shift+p")));
   }
   let (key_part, modifier_parts) = parts.split_last().expect("len checked >= 2");
-  let key = single_char_virtual_key(key_part)
-    .or_else(|| special_virtual_key(key_part))
-    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; unsupported key {key_part}")))?;
-  let mut modifiers = Vec::new();
+  let (key, needs_shift) =
+    key_virtual_key(key_part).ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; unsupported key {key_part}")))?;
+  let mut modifiers = if needs_shift {
+    vec![vk::SHIFT]
+  } else {
+    Vec::new()
+  };
   for raw in modifier_parts {
     let modifier =
       modifier_virtual_key(raw).ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {raw}")))?;
@@ -629,6 +656,25 @@ fn special_virtual_key(raw: &str) -> Option<u16> {
     Key::Symbol(Keysym::space) => Some(vk::SPACE),
     Key::Symbol(Keysym::Delete) => Some(vk::DELETE),
     Key::Symbol(Keysym::BackSpace) => Some(vk::BACK),
+    Key::Symbol(Keysym::Left) => Some(vk::LEFT),
+    Key::Symbol(Keysym::Up) => Some(vk::UP),
+    Key::Symbol(Keysym::Right) => Some(vk::RIGHT),
+    Key::Symbol(Keysym::Down) => Some(vk::DOWN),
+    Key::Symbol(Keysym::Home) => Some(vk::HOME),
+    Key::Symbol(Keysym::End) => Some(vk::END),
+    Key::Symbol(Keysym::Page_Up) => Some(vk::PRIOR),
+    Key::Symbol(Keysym::Page_Down) => Some(vk::NEXT),
+    Key::Symbol(Keysym::Insert) => Some(vk::INSERT),
+    Key::Symbol(Keysym::Menu) => Some(vk::APPS),
+    Key::Symbol(Keysym::Print) => Some(vk::SNAPSHOT),
+    Key::Symbol(Keysym::Pause) => Some(vk::PAUSE),
+    Key::Symbol(Keysym::Caps_Lock) => Some(vk::CAPITAL),
+    Key::Symbol(Keysym::Num_Lock) => Some(vk::NUMLOCK),
+    Key::Symbol(Keysym::Scroll_Lock) => Some(vk::SCROLL),
+    // VK_F1..VK_F24 are contiguous, like the F1..F24 keysyms.
+    Key::Symbol(symbol) if (Keysym::F1.raw()..=Keysym::F24.raw()).contains(&symbol.raw()) => {
+      Some(vk::F1 + (symbol.raw() - Keysym::F1.raw()) as u16)
+    }
     Key::Symbol(Keysym::XF86_AudioPlay) => Some(vk::MEDIA_PLAY_PAUSE),
     Key::Symbol(Keysym::XF86_AudioNext) => Some(vk::MEDIA_NEXT_TRACK),
     Key::Symbol(Keysym::XF86_AudioPrev) => Some(vk::MEDIA_PREV_TRACK),
@@ -637,20 +683,36 @@ fn special_virtual_key(raw: &str) -> Option<u16> {
   }
 }
 
-/// Maps a single ASCII alphanumeric character to its virtual-key code. Letters
-/// map to their uppercase code point and digits to their ASCII code, which is
-/// the Win32 VK convention for `0-9`/`A-Z`.
-fn single_char_virtual_key(raw: &str) -> Option<u16> {
+/// Resolves one non-modifier key name to its virtual-key code and whether
+/// the active layout needs Shift for it. Names outside the named-key table
+/// fall back to the character they spell: a single character (`,`) or a
+/// shared logical name (`comma`, `bracket_left`).
+fn key_virtual_key(raw: &str) -> Option<(u16, bool)> {
+  if let Some(code) = special_virtual_key(raw) {
+    return Some((code, false));
+  }
   let mut chars = raw.chars();
-  let first = chars.next()?;
-  if chars.next().is_some() {
+  let character = match (chars.next(), chars.next()) {
+    (Some(character), None) => character,
+    _ => match raw.parse::<auv_driver_common::Key>().ok()? {
+      auv_driver_common::Key::Symbol(symbol) => symbol.key_char().filter(char::is_ascii_graphic)?,
+      auv_driver_common::Key::Modifier(_) => return None,
+    },
+  };
+  char_virtual_key(character)
+}
+
+/// Maps a printable ASCII character to a virtual-key code. Letters and digits
+/// use the Win32 VK convention for `0-9`/`A-Z`; punctuation depends on the
+/// keyboard layout, so it asks the active layout.
+fn char_virtual_key(character: char) -> Option<(u16, bool)> {
+  if character.is_ascii_alphanumeric() {
+    return Some((u16::from(character.to_ascii_uppercase() as u8), false));
+  }
+  if !character.is_ascii_graphic() {
     return None;
   }
-  if first.is_ascii_alphanumeric() {
-    Some(u16::from(first.to_ascii_uppercase() as u8))
-  } else {
-    None
-  }
+  native::layout_virtual_key(character)
 }
 
 #[cfg(target_os = "windows")]
@@ -663,9 +725,9 @@ mod native {
   use auv_driver_common::geometry::Point;
   use auv_driver_common::input::TypeTextOptions;
   use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY, VkKeyScanW,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -719,6 +781,14 @@ mod native {
   }
 
   fn virtual_key_input(vk: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+    // NOTICE: navigation keys share scan codes with the numeric keypad. Without
+    // KEYEVENTF_EXTENDEDKEY, applications that read scan codes can see a
+    // keypad key (for example `4` instead of Left when Num Lock is on).
+    let flags = if super::is_extended_key(vk) {
+      flags | KEYEVENTF_EXTENDEDKEY
+    } else {
+      flags
+    };
     INPUT {
       r#type: INPUT_KEYBOARD,
       Anonymous: INPUT_0 {
@@ -731,6 +801,21 @@ mod native {
         },
       },
     }
+  }
+
+  /// The active layout's virtual key for `character`, and whether it needs
+  /// Shift. AltGr (Ctrl+Alt) characters are not supported as key names.
+  pub(super) fn layout_virtual_key(character: char) -> Option<(u16, bool)> {
+    let scan = unsafe { VkKeyScanW(character as u16) };
+    if scan == -1 {
+      return None;
+    }
+    let [code, shift_state] = (scan as u16).to_le_bytes();
+    // Bit 0 is Shift; bits 1-2 are Ctrl and Alt, which a key name cannot express.
+    if shift_state & 0b110 != 0 {
+      return None;
+    }
+    Some((u16::from(code), shift_state & 1 != 0))
   }
 
   pub(super) fn current_position() -> DriverResult<Point> {
@@ -955,6 +1040,10 @@ mod native {
   }
 
   pub(super) fn foreground_process() -> Option<u32> {
+    None
+  }
+
+  pub(super) fn layout_virtual_key(_character: char) -> Option<(u16, bool)> {
     None
   }
 }

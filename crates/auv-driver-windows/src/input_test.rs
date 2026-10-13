@@ -92,7 +92,6 @@ fn parse_key_chord_deduplicates_modifiers() {
 fn parse_key_chord_rejects_empty_and_unknown() {
   assert!(parse_key_chord("   ").is_err());
   assert!(parse_key_chord("ctrl+").is_err());
-  assert!(parse_key_chord("ctrl+@").is_err());
   assert!(parse_key_chord("nope").is_err());
 }
 
@@ -160,6 +159,65 @@ fn click_batch_and_partial_delivery_cleanup_preserve_release_order() {
   }
 }
 
+// ROOT CAUSE:
+//
+// If an agent pressed an arrow, Home/End, Page Up/Down or a function key on
+// Windows, or named punctuation (`ctrl+comma`, `ctrl+,`), the driver failed
+// with `invalid key` because its table held only Return, Tab, Escape, Space,
+// Delete, Backspace and media keys, and single characters had to be ASCII
+// letters or digits.
+//
+// The fix adds the navigation and function keys and resolves punctuation
+// through the shared key names and the active keyboard layout.
+#[test]
+fn navigation_and_function_keys_resolve_to_virtual_keys() {
+  assert_eq!(parse_key_chord("Left").unwrap().key, vk::LEFT);
+  assert_eq!(parse_key_chord("arrow_right").unwrap().key, vk::RIGHT);
+  assert_eq!(parse_key_chord("Page-Down").unwrap().key, vk::NEXT);
+  assert_eq!(parse_key_chord("home").unwrap().key, vk::HOME);
+  assert_eq!(parse_key_chord("F5").unwrap().key, vk::F1 + 4);
+  assert_eq!(parse_key_chord("f24").unwrap().key, vk::F1 + 23);
+  assert_eq!(
+    parse_key_chord("ctrl+shift+Left").unwrap(),
+    KeyChord {
+      modifiers: vec![vk::CONTROL, vk::SHIFT],
+      key: vk::LEFT
+    }
+  );
+  assert!(is_extended_key(vk::LEFT) && is_extended_key(vk::DELETE) && !is_extended_key(vk::RETURN));
+}
+
+// Punctuation resolves through VkKeyScanW, so these run on Windows only; the
+// expected codes are those of a US layout, which CI and the test host use.
+#[cfg(target_os = "windows")]
+#[test]
+fn punctuation_resolves_through_the_active_layout() {
+  const VK_OEM_COMMA: u16 = 0xBC;
+  const VK_OEM_PLUS: u16 = 0xBB;
+  assert_eq!(
+    parse_key_chord("ctrl+,").unwrap(),
+    KeyChord {
+      modifiers: vec![vk::CONTROL],
+      key: VK_OEM_COMMA
+    }
+  );
+  assert_eq!(
+    parse_key_chord("ctrl+comma").unwrap(),
+    KeyChord {
+      modifiers: vec![vk::CONTROL],
+      key: VK_OEM_COMMA
+    }
+  );
+  // `+` is Shift plus `=` on a US layout.
+  assert_eq!(
+    parse_key_chord("ctrl+plus").unwrap(),
+    KeyChord {
+      modifiers: vec![vk::SHIFT, vk::CONTROL],
+      key: VK_OEM_PLUS
+    }
+  );
+}
+
 #[test]
 fn shared_key_symbols_preserve_windows_named_key_behavior() {
   assert_eq!(special_virtual_key("enter"), Some(vk::RETURN));
@@ -167,7 +225,6 @@ fn shared_key_symbols_preserve_windows_named_key_behavior() {
   assert_eq!(special_virtual_key("backspace"), Some(vk::BACK));
   assert_eq!(special_virtual_key("play_pause"), Some(vk::MEDIA_PLAY_PAUSE));
   assert_eq!(special_virtual_key("forward_delete"), None);
-  assert_eq!(special_virtual_key("f1"), None);
   assert_eq!(modifier_virtual_key("win"), Some(vk::LWIN));
   assert_eq!(modifier_virtual_key("super"), None);
 }
