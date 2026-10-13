@@ -116,14 +116,40 @@ impl TextRecognition {
     }))
   }
 
+  /// Returns regions whose text contains `query` after both sides pass
+  /// through [`normalize_match_text`].
   pub fn find_contains(&self, query: &str) -> Vec<&RecognizedText> {
-    let normalized_query = query.to_lowercase();
-    self.regions.iter().filter(|region| region.text.to_lowercase().contains(&normalized_query)).collect()
+    let normalized_query = normalize_match_text(query);
+    if normalized_query.is_empty() {
+      return Vec::new();
+    }
+    self.regions.iter().filter(|region| normalize_match_text(&region.text).contains(&normalized_query)).collect()
   }
 
   pub fn best_contains(&self, query: &str) -> Option<&RecognizedText> {
     self.find_contains(query).into_iter().next()
   }
+}
+
+/// Normalizes a text query or recognized text the same way before matching.
+///
+/// Besides whitespace and case, this folds typographic quotes and dashes and
+/// drops spaces next to `.` and `,`. OCR engines disagree on punctuation in
+/// both directions: Vision reports `“Report — Final”` as `"Report - Final"`,
+/// and Tesseract reads `Huashan.jpg` as `Huashan. jpg`. A caller typing the
+/// visible text must still match.
+pub fn normalize_match_text(text: &str) -> String {
+  let folded = text
+    .chars()
+    .map(|character| match character {
+      '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{2032}' => '\'',
+      '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{2033}' => '"',
+      '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+      other => other,
+    })
+    .collect::<String>();
+  let collapsed = folded.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+  collapsed.replace(" .", ".").replace(". ", ".").replace(" ,", ",").replace(", ", ",")
 }
 
 #[cfg(test)]

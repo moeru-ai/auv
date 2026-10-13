@@ -8,7 +8,7 @@
 use std::fmt;
 
 use auv_driver_common::geometry::Rect;
-use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
+use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions, normalize_match_text};
 #[cfg(target_os = "linux")]
 use image::ImageEncoder;
 
@@ -210,10 +210,6 @@ fn rect_strictly_contains(container: Rect, candidate: Rect) -> bool {
     && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
     && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height;
   contains && candidate.size.width * candidate.size.height < container.size.width * container.size.height
-}
-
-fn normalize_match_text(text: &str) -> String {
-  text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
