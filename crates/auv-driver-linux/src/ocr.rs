@@ -216,19 +216,7 @@ fn parse_confidence(raw: &str) -> Option<f32> {
 }
 
 fn union_words(words: &[RecognizedWord]) -> Option<Rect> {
-  let mut iter = words.iter();
-  let first = iter.next()?.bounds;
-  let mut min_x = first.origin.x;
-  let mut min_y = first.origin.y;
-  let mut max_x = first.origin.x + first.size.width;
-  let mut max_y = first.origin.y + first.size.height;
-  for word in iter {
-    min_x = min_x.min(word.bounds.origin.x);
-    min_y = min_y.min(word.bounds.origin.y);
-    max_x = max_x.max(word.bounds.origin.x + word.bounds.size.width);
-    max_y = max_y.max(word.bounds.origin.y + word.bounds.size.height);
-  }
-  Some(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y))
+  words.iter().map(|word| word.bounds).reduce(Rect::union)
 }
 
 fn mean_confidence(words: &[RecognizedWord]) -> Option<f32> {

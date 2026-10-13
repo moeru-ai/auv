@@ -179,6 +179,8 @@ fn normalize_match_text_keeps_sentence_and_list_boundaries() {
   assert_eq!(normalize_match_text("Chapter 1. 5 items"), "chapter 1. 5 items");
   assert_eq!(normalize_match_text("a, b"), "a, b");
   assert_eq!(normalize_match_text("设 置 中心"), "设置中心");
+  assert_eq!(normalize_match_text("第 1 页 ， 共 12 首"), "第1页，共12首");
+  assert_eq!(normalize_match_text("설정 열기"), "설정 열기");
   assert_eq!(normalize_match_text("打开 File"), "打开 file");
 }
 
@@ -195,5 +197,28 @@ fn word_spans_bound_a_match_by_its_words_and_join_cjk_glyphs() {
   assert_eq!(matches.matches.len(), 1);
   assert_eq!(matches.matches[0].bounds, Rect::new(20.0, 0.0, 10.0, 10.0));
   let matches = match_word_spans([&menu[..], &cjk[..]], "设置");
+  assert_eq!(matches.matches.len(), 1);
   assert_eq!(matches.matches[0].bounds, Rect::new(0.0, 0.0, 22.0, 10.0));
+  // Confidence averages the words that report one.
+  assert_eq!(matches.matches[0].confidence, 0.5);
+  let unrated = [RecognizedWord {
+    confidence: None,
+    ..word("Edit", 0.0)
+  }];
+  assert_eq!(match_word_spans([&unrated[..]], "edit").matches[0].confidence, 0.0);
+}
+
+#[test]
+fn word_spans_keep_the_narrower_of_nested_matches() {
+  let word = |text: &str, x: f64, width: f64| RecognizedWord {
+    text: text.into(),
+    bounds: Rect::new(x, 0.0, width, 10.0),
+    confidence: None,
+  };
+  // "Save" matches alone and, from the earlier start, as "Save As"'s prefix
+  // span; the wider span that contains the word-only match is dropped.
+  let line = [word("Save", 0.0, 20.0), word("As", 24.0, 10.0)];
+  let matches = match_word_spans([&line[..]], "save");
+  assert_eq!(matches.matches.len(), 1);
+  assert_eq!(matches.matches[0].bounds, Rect::new(0.0, 0.0, 20.0, 10.0));
 }

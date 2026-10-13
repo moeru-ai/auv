@@ -1,40 +1,5 @@
 use super::*;
 
-#[test]
-fn union_rect_encloses_all_word_rects() {
-  let rects = [
-    RectF {
-      x: 10.0,
-      y: 20.0,
-      width: 30.0,
-      height: 10.0,
-    },
-    RectF {
-      x: 50.0,
-      y: 18.0,
-      width: 20.0,
-      height: 14.0,
-    },
-  ];
-
-  let bounds = union_rect(&rects).expect("non-empty input yields bounds");
-
-  assert_eq!(
-    bounds,
-    RectF {
-      x: 10.0,
-      y: 18.0,
-      width: 60.0,
-      height: 14.0,
-    }
-  );
-}
-
-#[test]
-fn union_rect_is_none_for_empty_input() {
-  assert_eq!(union_rect(&[]), None);
-}
-
 // Other platforms return `Unsupported` before validating the buffer.
 #[cfg(target_os = "windows")]
 #[test]

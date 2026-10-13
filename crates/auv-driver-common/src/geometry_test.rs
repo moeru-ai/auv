@@ -104,3 +104,8 @@ fn round_out_covers_a_fractional_rect_with_whole_units() {
   assert_eq!(Rect::new(-0.25, 10.0, 0.5, 2.0).round_out(), Rect::new(-1.0, 10.0, 2.0, 2.0));
   assert_eq!(Rect::new(4.0, 6.0, 8.0, 2.0).round_out(), Rect::new(4.0, 6.0, 8.0, 2.0));
 }
+
+#[test]
+fn union_encloses_both_rects() {
+  assert_eq!(Rect::new(10.0, 20.0, 30.0, 10.0).union(Rect::new(50.0, 18.0, 20.0, 14.0)), Rect::new(10.0, 18.0, 60.0, 14.0));
+}

@@ -166,7 +166,7 @@ pub fn match_word_spans<'a>(lines: impl IntoIterator<Item = &'a [RecognizedWord]
           continue;
         }
         let span = &words[start..=end];
-        let bounds = span.iter().skip(1).fold(span[0].bounds, |bounds, word| union(bounds, word.bounds));
+        let bounds = span.iter().skip(1).fold(span[0].bounds, |bounds, word| bounds.union(word.bounds));
         let confidences = span.iter().filter_map(|word| word.confidence).collect::<Vec<_>>();
         matches.push(OcrMatch {
           text: candidate,
@@ -186,14 +186,6 @@ pub fn match_word_spans<'a>(lines: impl IntoIterator<Item = &'a [RecognizedWord]
   OcrMatches { matches }
 }
 
-fn union(a: Rect, b: Rect) -> Rect {
-  let x = a.origin.x.min(b.origin.x);
-  let y = a.origin.y.min(b.origin.y);
-  let right = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
-  let bottom = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
-  Rect::new(x, y, right - x, bottom - y)
-}
-
 fn strictly_contains(container: Rect, candidate: Rect) -> bool {
   container.contains_rect(candidate) && candidate.size.width * candidate.size.height < container.size.width * container.size.height
 }
@@ -206,7 +198,8 @@ fn strictly_contains(container: Rect, candidate: Rect) -> bool {
 /// `“Report — Final”` as `"Report - Final"`, and Tesseract reads `Huashan.jpg`
 /// as `Huashan. jpg`. A caller typing the visible text must still match.
 ///
-/// Spaces between two CJK characters are dropped.
+/// Spaces between two CJK characters, or between a CJK character and a
+/// digit, are dropped.
 ///
 /// A space after `.` stays before anything but a lowercase letter, so a
 /// sentence end (`For example. Commands`) does not turn into a word that
@@ -232,9 +225,12 @@ pub fn normalize_match_text(text: &str) -> String {
       if matches!(next, Some('.' | ',')) || (previous == Some('.') && next.is_some_and(char::is_lowercase)) {
         continue;
       }
-      // OCR engines report CJK glyphs as separate words (`设 置`); CJK text
-      // has no spaces between characters to keep.
-      if previous.is_some_and(is_cjk) && next.is_some_and(is_cjk) {
+      // OCR engines report CJK glyphs as separate words (`设 置`, `第 1 页`);
+      // Chinese and Japanese text has no spaces between characters to keep.
+      let joins_cjk = |a: char, b: char| (is_cjk(a) && (is_cjk(b) || b.is_ascii_digit())) || (a.is_ascii_digit() && is_cjk(b));
+      if let (Some(previous), Some(next)) = (previous, next)
+        && joins_cjk(previous, next)
+      {
         continue;
       }
     }
@@ -243,14 +239,21 @@ pub fn normalize_match_text(text: &str) -> String {
   normalized
 }
 
-/// Han, kana and hangul, which are written without spaces between characters.
+/// Chinese and Japanese characters and punctuation, which are written without
+/// spaces between characters.
+// NOTICE: Hangul is left out on purpose: Korean separates words with spaces,
+// and dropping them would let a query match across words. The set covers the
+// scripts and punctuation seen in OCR'd UI text; extend it with evidence.
 fn is_cjk(character: char) -> bool {
   matches!(character,
-    '\u{3040}'..='\u{30FF}' // Hiragana, Katakana
+    '\u{3000}'..='\u{303F}' // CJK symbols and punctuation (、。「」)
+    | '\u{3040}'..='\u{30FF}' // Hiragana, Katakana
+    | '\u{3100}'..='\u{312F}' // Bopomofo
     | '\u{3400}'..='\u{4DBF}' // CJK Extension A
     | '\u{4E00}'..='\u{9FFF}' // CJK Unified Ideographs
-    | '\u{AC00}'..='\u{D7AF}' // Hangul syllables
     | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+    | '\u{FF00}'..='\u{FFEF}' // Halfwidth and fullwidth forms (：（）, half-width katakana)
+    | '\u{20000}'..='\u{2FA1F}' // CJK Extension B and later
   )
 }
 

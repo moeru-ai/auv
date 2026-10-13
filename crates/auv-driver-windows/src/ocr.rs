@@ -25,43 +25,6 @@ pub enum OcrError {
   Runtime(String),
 }
 
-/// Axis-aligned rectangle in image pixel space.
-///
-/// Kept host-independent so the line-bounds union logic can be unit tested
-/// without a live WinRT OCR engine.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct RectF {
-  x: f64,
-  y: f64,
-  width: f64,
-  height: f64,
-}
-
-/// Computes the bounding rectangle that encloses every input rectangle.
-///
-/// `Windows.Media.Ocr` exposes a bounding rect per word but not per line, so a
-/// line's bounds are derived from the union of its word rects.
-fn union_rect(rects: &[RectF]) -> Option<RectF> {
-  let mut iter = rects.iter().copied();
-  let first = iter.next()?;
-  let mut min_x = first.x;
-  let mut min_y = first.y;
-  let mut max_x = first.x + first.width;
-  let mut max_y = first.y + first.height;
-  for rect in iter {
-    min_x = min_x.min(rect.x);
-    min_y = min_y.min(rect.y);
-    max_x = max_x.max(rect.x + rect.width);
-    max_y = max_y.max(rect.y + rect.height);
-  }
-  Some(RectF {
-    x: min_x,
-    y: min_y,
-    width: max_x - min_x,
-    height: max_y - min_y,
-  })
-}
-
 /// One `Windows.Media.Ocr` line with its word boxes, in image pixels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrLine {
@@ -70,32 +33,15 @@ pub struct OcrLine {
 }
 
 /// One region per line; a line's bounds are the union of its word boxes.
-pub fn text_recognition_from_lines(lines: &[OcrLine]) -> TextRecognition {
+pub(crate) fn text_recognition_from_lines(lines: &[OcrLine]) -> TextRecognition {
   let regions = lines
     .iter()
-    .map(|line| {
-      let rects = line
-        .words
-        .iter()
-        .map(|word| RectF {
-          x: word.bounds.origin.x,
-          y: word.bounds.origin.y,
-          width: word.bounds.size.width,
-          height: word.bounds.size.height,
-        })
-        .collect::<Vec<_>>();
-      let bounds = union_rect(&rects).unwrap_or(RectF {
-        x: 0.0,
-        y: 0.0,
-        width: 0.0,
-        height: 0.0,
-      });
-      RecognizedText {
-        text: line.text.clone(),
-        bounds: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
-        // NOTICE: Windows.Media.Ocr does not expose recognition confidence.
-        confidence: None,
-      }
+    .map(|line| RecognizedText {
+      text: line.text.clone(),
+      // `Windows.Media.Ocr` exposes a bounding rect per word but not per line.
+      bounds: line.words.iter().map(|word| word.bounds).reduce(Rect::union).unwrap_or_default(),
+      // NOTICE: Windows.Media.Ocr does not expose recognition confidence.
+      confidence: None,
     })
     .collect::<Vec<_>>();
   TextRecognition {
