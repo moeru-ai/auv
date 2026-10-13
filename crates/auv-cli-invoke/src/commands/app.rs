@@ -1,4 +1,4 @@
-use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, invoke_command};
+use crate::{CommandGroup, FailureCode, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeFailure, invoke_command};
 use crate::{InvokeReport, InvokeReportField, InvokeReportSection};
 use clap::Args;
 
@@ -12,35 +12,35 @@ pub fn group() -> CommandGroup {
 
 #[invoke_command(
   id = "app.probePermissions",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has a permission probe that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the result names macOS privacy permissions; the Windows driver's elevation, UIAccess and session probe has no field in it") },
   group = "app",
   description = "Probe macOS screen recording, accessibility, and automation permissions.",
   input = ProbePermissionsArgs,
 )]
-async fn probe_permissions(input: InvokeCommandInput, _args: ProbePermissionsArgs) -> InvokeCommandResult {
+async fn probe_permissions(input: InvokeCommandInput, _args: ProbePermissionsArgs) -> crate::InvokeExecutionResult {
   if input.target.is_some() {
-    return Err("app.probePermissions cannot use --target".to_string());
+    return Err("app.probePermissions cannot use --target".to_string().into());
   }
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
   let permissions = read_permissions().await?;
-  permission_probe_output(&permissions)
+  Ok(permission_probe_output(&permissions)?)
 }
 
 pub fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeCommandResult {
   Ok(InvokeCommandOutput::from_result(permissions)?.with_report(permission_report(permissions)))
 }
 
-pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
+pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, InvokeFailure> {
   #[cfg(target_os = "macos")]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    session.permission().probe().map_err(|error| error.to_string())
+    Ok(session.permission().probe().map_err(|error| error.to_string())?)
   }
   #[cfg(not(target_os = "macos"))]
   {
-    Err("app.probePermissions is only available on macOS".to_string())
+    Err(InvokeFailure::new(FailureCode::Unsupported, "app.probePermissions is only available on macOS"))
   }
 }
 
@@ -56,9 +56,9 @@ struct ActivateAppArgs {}
   description = "Bring a target app to the foreground before a foreground-dependent step.",
   input = ActivateAppArgs,
 )]
-async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> InvokeCommandResult {
+async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> crate::InvokeExecutionResult {
   let result = activate_application(input.application_target()?.map(str::to_string)).await?;
-  activation_output(&result)
+  Ok(activation_output(&result)?)
 }
 
 pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> InvokeCommandResult {
@@ -76,7 +76,7 @@ pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> In
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
-pub async fn activate_application(_target_application_id: Option<String>) -> Result<auv_driver::ApplicationActivationResult, String> {
+pub async fn activate_application(_target_application_id: Option<String>) -> Result<auv_driver::ApplicationActivationResult, InvokeFailure> {
   let target_application_id = _target_application_id
     .as_deref()
     .filter(|value| !value.trim().is_empty())
@@ -86,7 +86,7 @@ pub async fn activate_application(_target_application_id: Option<String>) -> Res
     use auv_driver_macos::ApplicationControl;
 
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    session.activate_bundle_id(target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
+    Ok(session.activate_bundle_id(target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())?)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -97,7 +97,7 @@ pub async fn activate_application(_target_application_id: Option<String>) -> Res
     // command's output type is the macOS-specific `ApplicationActivationResult`
     // (bundle-id shaped). Wiring Windows here needs an owner-approved decision
     // on the shared CLI output contract before this branch changes.
-    Err("app.activate is only available on macOS".to_string())
+    Err(InvokeFailure::new(FailureCode::Unsupported, "app.activate is only available on macOS"))
   }
 }
 

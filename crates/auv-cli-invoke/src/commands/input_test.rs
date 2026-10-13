@@ -589,6 +589,39 @@ async fn focus_text_requires_application_even_in_dry_run() {
   assert_eq!(error.code, crate::FailureCode::InvalidTarget);
 }
 
+// ROOT CAUSE:
+//
+// If `input.focusText` or `input.axFocusText` ran where its cell is `Unsupported` (Linux and
+// Windows), the refusal reached the caller as `command_failed`, because `focus_text` returned a
+// plain `String` and `InvokeFailure::from(String)` assigns that code.
+//
+// Before the fix, a caller could not tell a platform without a path from a focus attempt that
+// failed. The fix keeps the refusal typed as `unsupported`. It refuses before any platform access,
+// so the commands run for real here.
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn focus_text_refuses_as_unsupported_off_macos() {
+  for command in [
+    focus_text_input_invoke_command(),
+    ax_focus_text_input_invoke_command(),
+  ] {
+    let error = command
+      .invoke(crate::InvokeCommandInput {
+        command_id: command.id.into(),
+        target: Some(crate::ExecutionTarget::Application {
+          id: "com.example.App".into(),
+        }),
+        inputs: [("query".into(), "Search".into())].into(),
+        typed_args: None,
+        dry_run: false,
+        cancellation: Default::default(),
+      })
+      .await
+      .unwrap_err();
+    assert_eq!(error.code, crate::FailureCode::Unsupported, "{}: {}", command.id, error.message);
+  }
+}
+
 // A target selects the recipient; an explicit delivery policy must survive parsing.
 #[test]
 fn keyboard_commands_accept_explicit_delivery_policy() {

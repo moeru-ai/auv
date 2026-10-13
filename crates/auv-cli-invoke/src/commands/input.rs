@@ -258,7 +258,7 @@ struct FocusTextArgs {
   description = "Focus a text input in a target app through accessibility, located by its visible text.",
   input = FocusTextArgs,
 )]
-async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> InvokeCommandResult {
+async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> crate::InvokeExecutionResult {
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
@@ -266,10 +266,10 @@ async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> In
   let query = input.inputs.get("query").cloned().unwrap_or_default();
   let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
   let result = focus_text(app, query, candidate.clone()).await?;
-  focus_text_output(&result, &candidate)
+  Ok(focus_text_output(&result, &candidate)?)
 }
 
-pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, String> {
+pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, crate::InvokeFailure> {
   #[cfg(target_os = "macos")]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
@@ -278,19 +278,21 @@ pub async fn focus_text(app: String, query: String, candidate: String) -> Result
     } else {
       auv_driver::AxTextSelector::Path(candidate)
     };
-    session
-      .accessibility()
-      .focus_text(auv_driver::FocusTextOptions {
-        app,
-        selector,
-        expected_role: None,
-      })
-      .map_err(|error| error.to_string())
+    Ok(
+      session
+        .accessibility()
+        .focus_text(auv_driver::FocusTextOptions {
+          app,
+          selector,
+          expected_role: None,
+        })
+        .map_err(|error| error.to_string())?,
+    )
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (app, query, candidate);
-    Err("input.focusText is only available on macOS".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.focusText is only available on macOS"))
   }
 }
 
@@ -315,7 +317,7 @@ struct AxFocusTextArgs {
   description = "Compatibility spelling of input.focusText; prefer input.focusText.",
   input = AxFocusTextArgs,
 )]
-async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) -> InvokeCommandResult {
+async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) -> crate::InvokeExecutionResult {
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
@@ -323,7 +325,7 @@ async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) 
   let query = input.inputs.get("query").cloned().unwrap_or_default();
   let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
   let result = focus_text(app, query, candidate.clone()).await?;
-  focus_text_output(&result, &candidate)
+  Ok(focus_text_output(&result, &candidate)?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]

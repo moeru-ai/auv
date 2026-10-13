@@ -254,7 +254,7 @@ fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 fn dry_run_input(command_id: &str, target: Option<&str>, query: Option<&str>) -> crate::InvokeCommandInput {
   crate::InvokeCommandInput {
     command_id: command_id.to_string(),
@@ -293,19 +293,44 @@ fn window_observation_commands_are_not_gated_out_on_windows() {
   }
 }
 
-// `window.clickText` stays macOS-only: the Windows driver has no window-targeted click that an
-// invoke command reaches (`TODO(invoke-window-click-text-windows)`). It must say so, not click
+// ROOT CAUSE:
+//
+// If `window.clickText` ran on Linux or Windows, where its cell is `Unsupported`
+// (`TODO(invoke-window-click-text-windows)`), the refusal reached the caller as `command_failed`,
+// because the handler returned a plain `String` and `InvokeFailure::from(String)` assigns that code.
+//
+// Before the fix, a caller could not tell a platform without a path from a click that failed. The
+// fix keeps the refusal typed as `unsupported`, and the command still refuses instead of clicking
 // through foreground input.
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 #[test]
-fn window_click_text_stays_unavailable_on_windows() {
+fn window_click_text_refuses_as_unsupported_off_macos() {
   let input = dry_run_input("window.clickText", Some("notepad.exe"), Some("Save"));
 
   let outcome = futures_executor::block_on(click_window_text_invoke_command().invoke(input));
 
-  // A dry run returns before platform access on macOS; on Windows the handler is not compiled in.
-  let error = outcome.expect_err("window.clickText has no Windows path");
+  // A dry run returns before platform access on macOS; elsewhere the handler is not compiled in.
+  let error = outcome.expect_err("window.clickText has no path here");
+  assert_eq!(error.code, crate::FailureCode::Unsupported, "unexpected refusal: {}", error.message);
   assert!(error.message.contains("only available on macOS"), "unexpected message: {}", error.message);
+}
+
+// Same root cause as above: on Linux, where their cells are `Unsupported`, `window.findText` and
+// `window.waitForText` refused as `command_failed`. The fix keeps those refusals typed as
+// `unsupported`.
+#[cfg(target_os = "linux")]
+#[test]
+fn window_text_commands_refuse_as_unsupported_on_linux() {
+  let commands = [
+    (find_window_text_invoke_command(), dry_run_input("window.findText", Some("org.example.App"), Some("Save"))),
+    (wait_for_window_text_invoke_command(), dry_run_input("window.waitForText", Some("org.example.App"), Some("Saved"))),
+  ];
+
+  for (command, input) in commands {
+    let id = input.command_id.clone();
+    let error = futures_executor::block_on(command.invoke(input)).expect_err("window text OCR has no Linux path");
+    assert_eq!(error.code, crate::FailureCode::Unsupported, "{id}: {}", error.message);
+  }
 }
 
 // On Windows an application is its executable file name: `app_bundle_id` is always `None`, so a

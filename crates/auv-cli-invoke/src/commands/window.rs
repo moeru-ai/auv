@@ -40,7 +40,7 @@ struct ListWindowsArgs {}
   description = "List visible window candidates using the normalized AUV window selector model.",
   input = ListWindowsArgs,
 )]
-async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> InvokeCommandResult {
+async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     if input.dry_run {
@@ -48,12 +48,12 @@ async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> Invo
     }
 
     let windows = observe_windows().await?;
-    list_windows_output(&windows)
+    Ok(list_windows_output(&windows)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = input;
-    Err("window.list is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.list is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -65,15 +65,15 @@ pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResul
   Ok(InvokeCommandOutput::from_result(windows)?.with_report(window_list_report(windows)))
 }
 
-pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
+pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, crate::InvokeFailure> {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    session.window().list().map_err(|error| error.to_string())
+    Ok(session.window().list().map_err(|error| error.to_string())?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
-    Err("window.list is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.list is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -95,7 +95,7 @@ struct CaptureWindowArgs {
   description = "Capture one single-display window without activating it and emit a coordinate contract. Linux uses an AT-SPI display crop; Windows uses PrintWindow.",
   input = CaptureWindowArgs,
 )]
-async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> InvokeCommandResult {
+async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let selector = window_selector(&input, args.title.as_deref())?;
@@ -122,7 +122,7 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window.capture is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.capture is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -172,22 +172,22 @@ fn window_capture_output_with_artifact(
   Ok(output.with_artifacts(artifact))
 }
 
-pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Result<WindowCapture, String> {
+pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Result<WindowCapture, crate::InvokeFailure> {
   capture_selected_window_recorded(selector).await.map(|(capture, _)| capture)
 }
 
 async fn capture_selected_window_recorded(
   selector: auv_driver::WindowSelector,
-) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
+) -> Result<(WindowCapture, Option<ArtifactMetadata>), crate::InvokeFailure> {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    capture_selected_window_recorded_with_session(&session, selector).await
+    Ok(capture_selected_window_recorded_with_session(&session, selector).await?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = selector;
-    Err("window.capture is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.capture is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -227,7 +227,7 @@ struct FindWindowTextArgs {
   description = "Capture a resolved window and locate OCR text anchors in logical screen coordinates.",
   input = FindWindowTextArgs,
 )]
-async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -> InvokeCommandResult {
+async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
@@ -238,12 +238,12 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, false).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
-    window_text_matches_output(&input.command_id, &result, overlay)
+    Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
   }
 }
 
@@ -268,7 +268,7 @@ struct WaitForWindowTextArgs {
   description = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
   input = WaitForWindowTextArgs,
 )]
-async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowTextArgs) -> InvokeCommandResult {
+async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
@@ -279,12 +279,12 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, true).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
-    window_text_matches_output(&input.command_id, &result, overlay)
+    Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
   }
 }
 
@@ -343,18 +343,18 @@ impl WindowClickPolicyArg {
 
 #[invoke_command(
   id = "window.clickText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported },
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has a window-targeted click that this command does not use") },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window, resolve an OCR text anchor, and click the match point in logical screen coordinates.",
   input = ClickWindowTextArgs,
 )]
-async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> InvokeCommandResult {
+async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> crate::InvokeExecutionResult {
   // TODO(invoke-window-click-text-windows): `window.findText` is wired on Windows, but a click
-  // is not. The Windows `WindowApi` has no window-targeted click, and `input().click_at` is
-  // foreground input. The only window-targeted click is `BackgroundSession`, a Rust API that
-  // `invoke` does not reach (Windows window commands reference). Wire this after an
-  // owner-approved decision on how an invoke command reaches it.
+  // is not. `WindowApi::click` posts a window-targeted click under the background input modes
+  // (`input.clickPoint --relative-to window` already reaches it), so the gap is wiring this
+  // handler, not a missing driver route. Wire it together with a run of the real binary against
+  // a covered receiver (the `window` scenario in `evals/auv-base`).
   #[cfg(target_os = "macos")]
   {
     let options =
@@ -381,7 +381,7 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
-    Err("window.clickText is only available on macOS".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS"))
   }
 }
 
@@ -424,7 +424,10 @@ fn window_text_click_output_base(result: &WindowTextClick) -> InvokeCommandResul
   Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
-pub async fn click_recognized_window_text(selector: auv_driver::WindowSelector, query: String) -> Result<WindowTextClick, String> {
+pub async fn click_recognized_window_text(
+  selector: auv_driver::WindowSelector,
+  query: String,
+) -> Result<WindowTextClick, crate::InvokeFailure> {
   click_recognized_window_text_with_options(selector, query, auv_driver::ClickOptions::default()).await
 }
 
@@ -432,7 +435,7 @@ pub async fn click_recognized_window_text_with_options(
   selector: auv_driver::WindowSelector,
   query: String,
   options: auv_driver::ClickOptions,
-) -> Result<WindowTextClick, String> {
+) -> Result<WindowTextClick, crate::InvokeFailure> {
   click_recognized_window_text_with_index_and_options(selector, query, 0, options).await
 }
 
@@ -441,16 +444,16 @@ pub async fn click_recognized_window_text_with_index_and_options(
   query: String,
   index: usize,
   options: auv_driver::ClickOptions,
-) -> Result<WindowTextClick, String> {
+) -> Result<WindowTextClick, crate::InvokeFailure> {
   #[cfg(target_os = "macos")]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    click_recognized_window_text_with_session(&session, selector, query, index, options).await
+    Ok(click_recognized_window_text_with_session(&session, selector, query, index, options).await?)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (selector, query, index, options);
-    Err("window.clickText is only available on macOS".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS"))
   }
 }
 
@@ -509,9 +512,9 @@ pub async fn recognize_window_text(
   selector: auv_driver::WindowSelector,
   query: String,
   wait: bool,
-) -> Result<WindowTextRecognition, String> {
+) -> Result<WindowTextRecognition, crate::InvokeFailure> {
   let session = auv::local::open().map_err(|error| error.to_string())?;
-  recognize_window_text_with_session(&session, selector, query, wait).await
+  Ok(recognize_window_text_with_session(&session, selector, query, wait).await?)
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -552,8 +555,8 @@ pub async fn recognize_window_text(
   _selector: auv_driver::WindowSelector,
   _query: String,
   _wait: bool,
-) -> Result<WindowTextRecognition, String> {
-  Err("window text OCR is only available on macOS and Windows".to_string())
+) -> Result<WindowTextRecognition, crate::InvokeFailure> {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
 }
 
 fn window_text_matches_output(

@@ -42,6 +42,10 @@ pub fn now_playing_state_output(state: &NowPlayingState) -> InvokeCommandResult 
 pub async fn read_now_playing() -> Result<NowPlayingOutput, String> {
   #[cfg(target_os = "windows")]
   let state = auv_driver_windows::media::now_playing().map_err(|error| error.to_string())?;
+  // TODO(invoke-driver-failure-migration): on Linux, `MediaError::Unsupported` reaches the caller
+  // of this and `control_media` as `command_failed`, not `unsupported`. Both helpers also back the
+  // Runner's media service, so typing them belongs with the Runner route's refusals
+  // (`TODO(invoke-support-runner-route)`), not with the local-handler refusals.
   #[cfg(not(target_os = "windows"))]
   let state = auv_media_macos::now_playing().map_err(|error| error.to_string())?;
   Ok(build_now_playing_output(&state))

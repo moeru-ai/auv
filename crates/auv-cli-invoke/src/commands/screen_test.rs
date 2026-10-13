@@ -132,20 +132,26 @@ fn screen_text_commands_are_not_gated_out_on_windows() {
   }
 }
 
-// `screen.clickText` stays macOS-only (`TODO(invoke-screen-click-text-windows)`): it would move the
-// real cursor. It must say so, not click.
-#[cfg(target_os = "windows")]
+// ROOT CAUSE:
+//
+// If `screen.clickText` ran on Linux or Windows, where its cell is `Unsupported`
+// (`TODO(invoke-screen-click-text-windows)`), the refusal reached the caller as `command_failed`,
+// because the handler returned a plain `String` and `InvokeFailure::from(String)` assigns that code.
+//
+// Before the fix, a caller could not tell a platform without a path from a click that failed. The
+// fix keeps the refusal typed as `unsupported`, and the command still refuses instead of clicking.
+#[cfg(not(target_os = "macos"))]
 #[test]
-fn screen_click_text_stays_unavailable_on_windows() {
+fn screen_click_text_refuses_as_unsupported_off_macos() {
   let input = dry_run_text_input("screen.clickText", None);
 
-  let error =
-    futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no Windows path");
+  let error = futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no path here");
 
+  assert_eq!(error.code, crate::FailureCode::Unsupported, "unexpected refusal: {}", error.message);
   assert!(error.message.contains("only available on macOS"), "unexpected message: {}", error.message);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 fn dry_run_text_input(command_id: &str, target: Option<&str>) -> InvokeCommandInput {
   InvokeCommandInput {
     command_id: command_id.to_string(),

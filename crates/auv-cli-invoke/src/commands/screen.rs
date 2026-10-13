@@ -150,7 +150,7 @@ struct WaitForScreenTextArgs {
   description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates. Target activation is not yet available for this command.",
   input = FindScreenTextArgs,
 )]
-async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> InvokeCommandResult {
+async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.findText")?;
@@ -159,12 +159,12 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
     }
 
     let matches = recognize_screen_text_with_cancellation(args.query, false, &input.cancellation).await?;
-    screen_text_matches_output(&matches)
+    Ok(screen_text_matches_output(&matches)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen text OCR is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -175,7 +175,7 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
   description = "Poll live-desktop OCR until a text anchor appears or the timeout expires. Target activation is not yet available for this command.",
   input = WaitForScreenTextArgs,
 )]
-async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> InvokeCommandResult {
+async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.waitForText")?;
@@ -184,18 +184,18 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
     }
 
     let matches = recognize_screen_text_with_cancellation(args.query, true, &input.cancellation).await?;
-    screen_text_matches_output(&matches)
+    Ok(screen_text_matches_output(&matches)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen text OCR is only available on macOS, Linux and Windows"))
   }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  recognize_screen_text_with_cancellation(query, wait, &Default::default()).await
+pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, crate::InvokeFailure> {
+  Ok(recognize_screen_text_with_cancellation(query, wait, &Default::default()).await?)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
@@ -238,8 +238,8 @@ async fn recognize_screen_text_with_cancellation(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  Err("screen text OCR is only available on macOS, Linux and Windows".to_string())
+pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, crate::InvokeFailure> {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen text OCR is only available on macOS, Linux and Windows"))
 }
 
 fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommandResult {
@@ -270,12 +270,12 @@ struct ClickScreenTextArgs {
 
 #[invoke_command(
   id = "screen.clickText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported },
+  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver can click a screen point in the foreground, which this command does not use") },
   group = "screen",
   description = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. Target activation is not yet available for this command.",
   input = ClickScreenTextArgs,
 )]
-async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs) -> InvokeCommandResult {
+async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(target_os = "macos")]
   {
     reject_target_activation(&input, "screen.clickText")?;
@@ -285,15 +285,16 @@ async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs)
     }
 
     let result = click_recognized_screen_text(query).await?;
-    screen_text_click_output(&result)
+    Ok(screen_text_click_output(&result)?)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
     // TODO(invoke-screen-click-text-windows): the Windows driver can click a screen point in the
-    // foreground, but this command would move the real cursor, and no check of that has run on a
-    // desktop nobody is using. Re-open it when that evidence can be taken without disturbing one.
-    Err("screen.clickText is only available on macOS".to_string())
+    // foreground, but this command does not use it. It would move the real cursor, as it does on
+    // macOS. The evals' `foreground` scenario can now take that evidence on its own receiver; wire
+    // the command (primary display only) together with such a run.
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS"))
   }
 }
 
@@ -323,7 +324,7 @@ pub fn recorded_screen_text_click_output(result: &ScreenTextClick, ocr_source: O
   screen_text_click_output(result)
 }
 
-pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {
+pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, crate::InvokeFailure> {
   #[cfg(target_os = "macos")]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
@@ -348,7 +349,7 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
   #[cfg(not(target_os = "macos"))]
   {
     let _ = query;
-    Err("screen.clickText is only available on macOS".to_string())
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS"))
   }
 }
 

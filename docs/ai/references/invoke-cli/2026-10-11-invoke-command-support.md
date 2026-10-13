@@ -76,9 +76,16 @@ acts on them depends on its toolkit (see the
 - **Tested.** The registry, help and MCP tests run on each CI platform. They check that the
   declaration is complete, internally consistent, and rendered the same by both frontends.
 - **Not validated.** Nothing checks that a cell matches the code it describes. A `cfg` gate and a
-  cell can drift apart, and a reviewer has to catch it. No test runs a command on a platform to
-  confirm its cell, because a dry run proves nothing about support and a live run drives a desktop.
-  The macOS and Linux cells were read, not run, in this slice.
+  cell can drift apart, and a reviewer has to catch it. Apart from the refusals below, no test runs
+  a command on a platform to confirm its cell, because a dry run proves nothing about support and a
+  live run drives a desktop. The macOS and Linux cells were read, not run, in this slice.
+- **Refusals are typed.** When a command whose cell is `unsupported` refuses, its local handler
+  answers with the failure code `unsupported`, not `command_failed`, so a caller can tell a platform
+  without a path from an attempt that failed. Tests beside `app.*`, `input.focusText`,
+  `screen.clickText` and `window.*` run those refusals off macOS; CI runs them on Linux. Not covered:
+  media control on Linux still refuses as `command_failed` (`TODO(invoke-driver-failure-migration)`
+  in `media_control.rs`), and a refusal from a selected Runner belongs to the Runner route
+  (`TODO(invoke-support-runner-route)`).
 - **Not covered.** A selected Runner's support is a separate route. `TODO(invoke-support-runner-route)`:
   a second set of cells, after the Runner audit #211 asks for.
 - **Not generated.** No cell claims more than #211's own status rules allow. The #211 checklist is

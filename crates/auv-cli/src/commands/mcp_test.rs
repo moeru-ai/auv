@@ -195,7 +195,7 @@ fn mcp_support_metadata_comes_from_the_executable_definition() {
   }
 
   let click_text = super::invoke_command_metadata(registry.resolve("screen.clickText").unwrap());
-  assert_eq!(click_text["support"]["windows"], serde_json::json!({ "state": "unsupported" }));
+  assert_eq!(click_text["support"]["linux"], serde_json::json!({ "state": "unsupported" }));
   assert_eq!(click_text["support"]["macos"], serde_json::json!({ "state": "supported" }));
 
   let type_text = super::invoke_command_metadata(registry.resolve("input.typeText").unwrap());

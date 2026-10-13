@@ -49,7 +49,7 @@ fn command_help_names_the_limit_of_a_partial_platform() {
 fn command_help_shows_an_unsupported_platform_as_no() {
   let registry = default_registry();
   let help = render_command_help(registry.resolve("screen.clickText").expect("screen.clickText is registered"));
-  assert!(help.contains("  Windows no\n"), "{help}");
+  assert!(help.contains("  Linux   no\n"), "{help}");
 }
 
 #[test]
