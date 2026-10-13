@@ -39,6 +39,7 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(overlay-follow-multi-mouse)` | `src/session.rs` | Only the shared default mouse drives the live cursors |
 | `TODO(overlay-live-status-producers)` | `src/overlay_follow.rs` | Only Rust callers can set a cursor status; `auv invoke`, MCP and the Runner do not start a follower |
 | `TODO(windows-targeted-keyboard)` | `src/input.rs`, `src/background_session.rs` | Background keyboard delivery; a session answers keyboard requests as `unsupported` |
+| `TODO(windows-posted-minimized)` | `src/background_input.rs` | Direct posted clicks and wheels do not refuse a minimized target under `background_only` |
 | `TODO(windows-background-cloaked)` | `src/background_session.rs` | A window DWM cloaks (another virtual desktop) is treated as live; it needs its own typed state and live evidence |
 | `TODO(background-session-wait-for-frame)` | `src/background_session.rs` | A blocking wait for the next frame; callers poll `capture`, which answers `Unchanged` without copying |
 | `TODO(background-session-foreground-grant)` | `src/background_session.rs` | A delivery reports no focus disturbance without observing it; a just-launched process can still take the foreground on its first activation |
@@ -59,9 +60,11 @@ control hit-tested under the target point via `PostMessageW`, after descending t
 UIA-adjacent Win32 child hierarchy with `ChildWindowFromPointEx`. This never raises,
 focuses, or activates the window, unlike `SendInput`. Delivery is best-effort:
 `PostMessageW` succeeding only means the message was queued, not that the target
-processed it — classic Win32/MFC/WinForms controls handle it reliably, while
-Chromium/Electron/WinUI/UWP surfaces and most GPU-rendered custom UI read real HID
-input instead and silently ignore posted messages. Windows has no second, more
+processed it. A posted message carries only what is in it (no cursor, focus or key
+state), so whether an application acts on it varies per application: classic Win32
+controls do, XAML content ignores posted mouse input, and a Chromium page counts
+posted clicks but did not scroll on a posted wheel while covered (see the support
+matrix's "Windows Background Session By Application" table). Windows has no second, more
 compatible route today, so `ClickOptions::window_strategy`'s two variants
 (`ChromiumCompatible`/`PidTargeted`) both resolve to this same delivery on Windows.
 

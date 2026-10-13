@@ -10,11 +10,14 @@
 //!
 //! Delivery is best-effort: a successful `PostMessageW` call only means the
 //! message was queued on the target's thread, not that the target processed
-//! it. Classic Win32/MFC/WinForms controls read these messages reliably;
-//! Chromium/Electron/WinUI/UWP surfaces and most GPU-rendered custom UI read
-//! real HID input instead and will silently ignore this path. There is no
-//! second, more-compatible Windows route today, so `WindowClickStrategy`'s
-//! two variants both resolve to this same delivery on Windows.
+//! it. A posted message carries only what is in it (no cursor, focus or key
+//! state), so whether an application acts on it varies per application, not
+//! per toolkit label: classic Win32 controls act on it, XAML content ignores
+//! posted mouse input, and a Chromium page counts posted clicks but did not
+//! scroll on a posted wheel while covered (`docs/SUPPORT_MATRIX.md`, "Windows
+//! Background Session By Application"). There is no second, more-compatible
+//! Windows route today, so `WindowClickStrategy`'s two variants both resolve
+//! to this same delivery on Windows.
 
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Point;
@@ -35,6 +38,12 @@ pub(crate) fn validate_modifiers(modifiers: ClickModifiers) -> DriverResult<()> 
   Ok(())
 }
 
+// TODO(windows-posted-minimized): posting to a minimized window succeeds and
+// reports delivery, though the window paints nothing until restored. The
+// input-mode rule (TERMS_AND_CONCEPTS.md, "Input Mode") says `background_only`
+// refuses a minimized target, as `capture_window` does with `InvalidInput`.
+// Deferred because the refusal changes direct click and wheel results and
+// needs its own slice with a regression test.
 #[cfg(target_os = "windows")]
 pub(crate) fn click_at_window(
   window: &Window,

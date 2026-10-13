@@ -207,7 +207,11 @@ impl InputApi<'_> {
   /// Validate a foreground batch before delivery and preserve action progress.
   /// Windows target-aware keyboard routing awaits an exact recipient lease.
   // TODO(windows-targeted-keyboard): accept Window/Application only after the
-  // recipient can be revalidated before every action and repetition.
+  // recipient can be revalidated before every action and repetition. A posted
+  // route also needs child-control resolution (a top-level window drops posted
+  // `WM_CHAR`) and a decision on modifiers, which posted messages cannot carry
+  // (`GetKeyState` in the target thread stays unchanged). Probe, not command
+  // evidence: docs/ai/references/driver/2026-10-12-windows-targeted-keyboard-probe.md.
   pub fn input_keyboard(
     &self,
     target: &InputTarget,
