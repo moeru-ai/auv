@@ -248,6 +248,11 @@ struct FocusTextArgs {
   /// Text identifying the input to focus.
   #[arg(value_name = "TEXT")]
   query: String,
+  /// Accessibility path of the input, from an earlier focus result; when set it
+  /// selects the input instead of TEXT.
+  #[arg(long, value_name = "PATH")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  candidate: Option<String>,
 }
 
 #[invoke_command(
@@ -258,14 +263,13 @@ struct FocusTextArgs {
   description = "Focus a text input in a target app through accessibility, located by its visible text.",
   input = FocusTextArgs,
 )]
-async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> crate::InvokeExecutionResult {
+async fn focus_text_input(input: InvokeCommandInput, args: FocusTextArgs) -> crate::InvokeExecutionResult {
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
   let app = input.application_target()?.ok_or_else(|| "input.focusText requires --target app:".to_string())?.to_string();
-  let query = input.inputs.get("query").cloned().unwrap_or_default();
-  let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
-  let result = focus_text(app, query, candidate.clone()).await?;
+  let candidate = args.candidate.unwrap_or_default();
+  let result = focus_text(app, args.query, candidate.clone()).await?;
   Ok(focus_text_output(&result, &candidate)?)
 }
 
@@ -302,6 +306,11 @@ struct AxFocusTextArgs {
   /// Text identifying the input to focus.
   #[arg(value_name = "TEXT")]
   query: String,
+  /// Accessibility path of the input, from an earlier focus result; when set it
+  /// selects the input instead of TEXT.
+  #[arg(long, value_name = "PATH")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  candidate: Option<String>,
 }
 
 // NOTICE(input-ax-focus-text-alias): this command is a compatibility alias for
@@ -317,14 +326,13 @@ struct AxFocusTextArgs {
   description = "Compatibility spelling of input.focusText; prefer input.focusText.",
   input = AxFocusTextArgs,
 )]
-async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) -> crate::InvokeExecutionResult {
+async fn ax_focus_text_input(input: InvokeCommandInput, args: AxFocusTextArgs) -> crate::InvokeExecutionResult {
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
   let app = input.application_target()?.ok_or_else(|| "input.axFocusText requires --target app:".to_string())?.to_string();
-  let query = input.inputs.get("query").cloned().unwrap_or_default();
-  let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
-  let result = focus_text(app, query, candidate.clone()).await?;
+  let candidate = args.candidate.unwrap_or_default();
+  let result = focus_text(app, args.query, candidate.clone()).await?;
   Ok(focus_text_output(&result, &candidate)?)
 }
 

@@ -793,11 +793,10 @@ mod frontend {
 
   fn command_arguments(command: &InvokeCommand) -> Vec<CommandArgument> {
     command
-      .clap_command()
-      .get_arguments()
-      .filter(|argument| argument.get_id() != "help")
+      .input_arguments()
+      .iter()
       .map(|argument| CommandArgument {
-        input_key: argument.get_long().unwrap_or_else(|| argument.get_id().as_str()).to_string(),
+        input_key: auv_cli_invoke::command::input_key(argument),
         required: argument.is_required_set(),
         help: argument.get_help().map(ToString::to_string).unwrap_or_default(),
       })

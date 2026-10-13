@@ -395,12 +395,13 @@ async fn selected_commands_without_a_runner_route_are_refused_before_daemon_reso
 // agents sent `timeout` to screen.waitForText 49 times and got the fixed wait.
 //
 // Before the fix, the unknown key was ignored. The fix rejects it as
-// invalid_input and names the accepted inputs; declared keys and the protocol
-// `overlay` key still pass.
+// invalid_input and names the accepted inputs; declared keys, the `target`
+// fallback key on commands that take a target, and the protocol `overlay`
+// key still pass.
 #[tokio::test]
 async fn undeclared_input_keys_fail_before_daemon_resolution() {
-  let input = |inputs: &[(&str, &str)]| crate::InvokeCommandInput {
-    command_id: "window.findText".to_string(),
+  let input = |command_id: &str, inputs: &[(&str, &str)]| crate::InvokeCommandInput {
+    command_id: command_id.to_string(),
     target: None,
     inputs: inputs.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect(),
     typed_args: None,
@@ -408,20 +409,26 @@ async fn undeclared_input_keys_fail_before_daemon_resolution() {
     cancellation: crate::InvokeCancellation::new(),
   };
 
-  let error =
-    invoke(input(&[("query", "Ready"), ("timeout", "30000")]), Default::default()).await.expect_err("timeout is not a declared input");
+  let error = invoke(input("window.findText", &[("query", "Ready"), ("timeout", "30000")]), Default::default())
+    .await
+    .expect_err("timeout is not a declared input");
   assert_eq!(error.code, crate::FailureCode::InvalidInput);
-  assert!(error.message.contains("does not accept input timeout"), "{}", error.message);
-  assert!(error.message.contains("query, title, target"), "{}", error.message);
+  assert_eq!(error.message, "window.findText does not accept input timeout; accepted inputs: query, title, target");
 
   let registry = crate::default_registry();
-  registry
-    .resolve("window.findText")
-    .unwrap()
-    .validate(&input(&[
+  let validate = |command_id: &str, inputs: &[(&str, &str)]| registry.resolve(command_id).unwrap().validate(&input(command_id, inputs));
+  validate(
+    "window.findText",
+    &[
       ("query", "Ready"),
       ("title", "Import"),
+      ("target", "com.apple.TextEdit"),
       ("overlay", "false"),
-    ]))
-    .expect("declared inputs pass");
+    ],
+  )
+  .expect("declared inputs pass");
+  let forbidden = validate("display.list", &[("target", "com.apple.TextEdit")]).expect_err("display.list takes no target");
+  assert_eq!(forbidden.message, "display.list does not accept input target; accepted inputs: none");
+  let id_spelling = validate("input.clickPoint", &[("x", "1"), ("y", "1"), ("click_count", "2")]).expect_err("ids are not input keys");
+  assert!(id_spelling.message.contains("does not accept input click_count"), "{}", id_spelling.message);
 }
