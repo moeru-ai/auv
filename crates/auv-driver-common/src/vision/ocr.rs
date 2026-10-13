@@ -133,13 +133,20 @@ impl TextRecognition {
 
 /// Normalizes a text query or recognized text the same way before matching.
 ///
-/// Besides whitespace and case, this folds typographic quotes and dashes and
-/// drops spaces next to `.` and `,`. OCR engines disagree on punctuation in
-/// both directions: Vision reports `“Report — Final”` as `"Report - Final"`,
-/// and Tesseract reads `Huashan.jpg` as `Huashan. jpg`. A caller typing the
-/// visible text must still match.
+/// Besides whitespace and case, this folds typographic quotes and dashes,
+/// drops spaces before `.` and `,`, and joins `. ` before a lowercase letter.
+/// OCR engines disagree on punctuation in both directions: Vision reports
+/// `“Report — Final”` as `"Report - Final"`, and Tesseract reads `Huashan.jpg`
+/// as `Huashan. jpg`. A caller typing the visible text must still match.
+///
+/// A space after `.` stays before anything but a lowercase letter, so a
+/// sentence end (`For example. Commands`) does not turn into a word that
+/// matches `example.com`.
 pub fn normalize_match_text(text: &str) -> String {
   let folded = text
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
     .chars()
     .map(|character| match character {
       '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{2032}' => '\'',
@@ -147,9 +154,19 @@ pub fn normalize_match_text(text: &str) -> String {
       '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
       other => other,
     })
-    .collect::<String>();
-  let collapsed = folded.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
-  collapsed.replace(" .", ".").replace(". ", ".").replace(" ,", ",").replace(", ", ",")
+    .collect::<Vec<_>>();
+  let mut normalized = String::with_capacity(text.len());
+  for (index, &character) in folded.iter().enumerate() {
+    if character == ' ' {
+      let previous = index.checked_sub(1).map(|previous| folded[previous]);
+      let next = folded.get(index + 1).copied();
+      if matches!(next, Some('.' | ',')) || (previous == Some('.') && next.is_some_and(char::is_lowercase)) {
+        continue;
+      }
+    }
+    normalized.extend(character.to_lowercase());
+  }
+  normalized
 }
 
 #[cfg(test)]

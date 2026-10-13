@@ -145,8 +145,8 @@ fn ocr_matches_share_action_point_and_best_match_contract() {
 // screen with typographic punctuation found nothing; Tesseract splits
 // `Huashan.jpg` into `Huashan. jpg`.
 //
-// The fix folds quotes, dashes, whitespace and spacing around `.`/`,` on both
-// sides before matching.
+// The fix folds quotes, dashes, whitespace and the OCR spacing around `.`/`,`
+// on both sides before matching, without joining sentence or list boundaries.
 #[test]
 fn find_contains_matches_across_ocr_punctuation_variants() {
   let recognition = TextRecognition {
@@ -169,4 +169,13 @@ fn find_contains_matches_across_ocr_punctuation_variants() {
     assert_eq!(recognition.find_contains(query).len(), 1, "{query}");
   }
   assert!(recognition.find_contains("  ").is_empty());
+}
+
+#[test]
+fn normalize_match_text_keeps_sentence_and_list_boundaries() {
+  assert_eq!(normalize_match_text("File: Huashan. jpg"), "file: huashan.jpg");
+  assert_eq!(normalize_match_text("Open  “Report — Final” ,now"), "open \"report - final\",now");
+  assert_eq!(normalize_match_text("For example. Commands"), "for example. commands");
+  assert_eq!(normalize_match_text("Chapter 1. 5 items"), "chapter 1. 5 items");
+  assert_eq!(normalize_match_text("a, b"), "a, b");
 }
