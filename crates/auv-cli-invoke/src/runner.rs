@@ -42,7 +42,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         format!("{} is not a core command, so a selected Runner cannot run it", input.command_id),
       ));
     };
-    command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
+    command.validate(&input)?;
     // TODO(invoke-support-runner-route): a fixture command processes data the caller supplies and
     // touches no desktop, so it could run locally inside the selected Run instead of being refused.
     // Whether it should is part of the Runner route's support, which needs an owner decision.

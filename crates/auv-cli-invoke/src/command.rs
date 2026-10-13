@@ -430,10 +430,54 @@ impl InvokeCommand {
     if let Err(error) = input.cancellation.check() {
       return Box::pin(async move { Err(error.to_string().into()) });
     }
-    if let Err(error) = self.target.validate(&input) {
-      return Box::pin(async move { Err(InvokeFailure::new(FailureCode::InvalidTarget, error)) });
+    if let Err(failure) = self.validate(&input) {
+      return Box::pin(async move { Err(failure) });
     }
     (self.handler)(input)
+  }
+
+  /// Checks the target and the protocol input keys before any frontend runs
+  /// the command locally or routes it to a Runner.
+  pub fn validate(&self, input: &InvokeCommandInput) -> Result<(), InvokeFailure> {
+    self.target.validate(input).map_err(|message| InvokeFailure::new(FailureCode::InvalidTarget, message))?;
+    self.validate_input_keys(input).map_err(|message| InvokeFailure::new(FailureCode::InvalidInput, message))
+  }
+
+  /// Rejects protocol input keys that the command does not declare.
+  ///
+  /// Protocol callers (MCP, Runner, library) pass `inputs` as a free-form map
+  /// that serde decodes leniently, so a misspelled or invented key such as
+  /// `timeout` was dropped and the command ran with its default. CLI calls
+  /// carry clap-parsed `typed_args`, which clap already checked.
+  fn validate_input_keys(&self, input: &InvokeCommandInput) -> Result<(), String> {
+    if input.typed_args.is_some() {
+      return Ok(());
+    }
+    let command = self.clap_command();
+    let arguments = command.get_arguments().filter(|argument| argument.get_id() != "help").collect::<Vec<_>>();
+    let accepted = |key: &str| {
+      // `overlay` is the protocol spelling of `--no-overlay` (see `crate::parse_cli`).
+      key == "overlay" || arguments.iter().any(|argument| argument.get_long() == Some(key) || argument.get_id().as_str() == key)
+    };
+    let unknown = input.inputs.keys().filter(|key| !accepted(key)).map(String::as_str).collect::<Vec<_>>();
+    if unknown.is_empty() {
+      return Ok(());
+    }
+    let declared = arguments
+      .iter()
+      .filter(|argument| !argument.get_id().as_str().starts_with("auv_"))
+      .map(|argument| argument.get_long().unwrap_or_else(|| argument.get_id().as_str()))
+      .collect::<Vec<_>>();
+    Err(format!(
+      "{} does not accept input {}; accepted inputs: {}",
+      self.id,
+      unknown.join(", "),
+      if declared.is_empty() {
+        "none besides target".to_string()
+      } else {
+        format!("{}, target", declared.join(", "))
+      },
+    ))
   }
 
   pub fn clap_command(&self) -> Command {

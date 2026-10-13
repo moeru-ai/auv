@@ -387,3 +387,41 @@ async fn selected_commands_without_a_runner_route_are_refused_before_daemon_reso
     assert_eq!(error.code, crate::FailureCode::Unsupported, "{command_id}: {}", error.message);
   }
 }
+
+// ROOT CAUSE:
+//
+// If an MCP or Runner caller passed an input key that the command does not
+// declare, serde dropped it and the command ran with its defaults. OSWorld
+// agents sent `timeout` to screen.waitForText 49 times and got the fixed wait.
+//
+// Before the fix, the unknown key was ignored. The fix rejects it as
+// invalid_input and names the accepted inputs; declared keys and the protocol
+// `overlay` key still pass.
+#[tokio::test]
+async fn undeclared_input_keys_fail_before_daemon_resolution() {
+  let input = |inputs: &[(&str, &str)]| crate::InvokeCommandInput {
+    command_id: "window.findText".to_string(),
+    target: None,
+    inputs: inputs.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: crate::InvokeCancellation::new(),
+  };
+
+  let error =
+    invoke(input(&[("query", "Ready"), ("timeout", "30000")]), Default::default()).await.expect_err("timeout is not a declared input");
+  assert_eq!(error.code, crate::FailureCode::InvalidInput);
+  assert!(error.message.contains("does not accept input timeout"), "{}", error.message);
+  assert!(error.message.contains("query, title, target"), "{}", error.message);
+
+  let registry = crate::default_registry();
+  registry
+    .resolve("window.findText")
+    .unwrap()
+    .validate(&input(&[
+      ("query", "Ready"),
+      ("title", "Import"),
+      ("overlay", "false"),
+    ]))
+    .expect("declared inputs pass");
+}
