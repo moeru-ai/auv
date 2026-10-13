@@ -68,7 +68,22 @@ mod vk {
 /// Keys that Win32 sends with `KEYEVENTF_EXTENDEDKEY`: the navigation block
 /// and the right-hand keys that share scan codes with the keypad.
 fn is_extended_key(code: u16) -> bool {
-  matches!(code, vk::PRIOR | vk::NEXT | vk::END | vk::HOME | vk::LEFT | vk::UP | vk::RIGHT | vk::DOWN | vk::INSERT | vk::DELETE | vk::APPS)
+  matches!(
+    code,
+    vk::PRIOR
+      | vk::NEXT
+      | vk::END
+      | vk::HOME
+      | vk::LEFT
+      | vk::UP
+      | vk::RIGHT
+      | vk::DOWN
+      | vk::INSERT
+      | vk::DELETE
+      | vk::APPS
+      | vk::SNAPSHOT
+      | vk::NUMLOCK
+  )
 }
 
 /// A parsed key request: zero or more modifier virtual-keys plus one target key.
@@ -646,7 +661,8 @@ fn modifier_virtual_key(raw: &str) -> Option<u16> {
 fn special_virtual_key(raw: &str) -> Option<u16> {
   use auv_driver_common::{Key, Keysym};
   // forward_delete is a macOS alias, not an existing Windows input spelling.
-  if matches!(raw.to_ascii_lowercase().as_str(), "forwarddelete" | "forward_delete") {
+  // Compare without separators, as the shared parser does (`forward-delete`).
+  if raw.chars().filter(char::is_ascii_alphanumeric).collect::<String>().eq_ignore_ascii_case("forwarddelete") {
     return None;
   }
   match raw.parse::<Key>().ok()? {
@@ -725,9 +741,9 @@ mod native {
   use auv_driver_common::geometry::Point;
   use auv_driver_common::input::TypeTextOptions;
   use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY, VkKeyScanW,
+    GetAsyncKeyState, GetKeyboardLayout, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY, VkKeyScanExW,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -803,16 +819,25 @@ mod native {
     }
   }
 
-  /// The active layout's virtual key for `character`, and whether it needs
-  /// Shift. AltGr (Ctrl+Alt) characters are not supported as key names.
+  /// The foreground application's keyboard-layout virtual key for
+  /// `character`, and whether it needs Shift.
+  ///
+  /// NOTICE: Windows keyboard layouts are per thread. `VkKeyScanW` would read
+  /// the calling (daemon or Runner worker) thread's layout, which can differ
+  /// from the focused application's on a multi-layout system, so the layout of
+  /// the foreground window's thread is used. Characters that need Ctrl, Alt
+  /// (AltGr) or other shift-state bits cannot be expressed as one key name.
   pub(super) fn layout_virtual_key(character: char) -> Option<(u16, bool)> {
-    let scan = unsafe { VkKeyScanW(character as u16) };
+    let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+    let thread = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(foreground, None) };
+    let layout = unsafe { GetKeyboardLayout(thread) };
+    let scan = unsafe { VkKeyScanExW(character as u16, layout) };
     if scan == -1 {
       return None;
     }
     let [code, shift_state] = (scan as u16).to_le_bytes();
-    // Bit 0 is Shift; bits 1-2 are Ctrl and Alt, which a key name cannot express.
-    if shift_state & 0b110 != 0 {
+    // Bit 0 is Shift; any other bit (Ctrl, Alt, Hankaku, reserved) is rejected.
+    if shift_state & !1 != 0 {
       return None;
     }
     Some((u16::from(code), shift_state & 1 != 0))

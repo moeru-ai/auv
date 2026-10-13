@@ -516,7 +516,8 @@ pub(crate) mod keysym {
       return Some(modifier);
     }
     // Keep this backend's existing named-key set and F1..F12 support.
-    if matches!(raw.to_ascii_lowercase().as_str(), "forwarddelete" | "forward_delete") {
+    // Compare without separators, as the shared parser does (`forward-delete`).
+    if raw.chars().filter(char::is_ascii_alphanumeric).collect::<String>().eq_ignore_ascii_case("forwarddelete") {
       return None;
     }
     match raw.parse::<Key>().ok()? {

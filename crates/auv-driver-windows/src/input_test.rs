@@ -185,6 +185,10 @@ fn navigation_and_function_keys_resolve_to_virtual_keys() {
     }
   );
   assert!(is_extended_key(vk::LEFT) && is_extended_key(vk::DELETE) && !is_extended_key(vk::RETURN));
+  assert_eq!(parse_key_chord("menu").unwrap().key, vk::APPS);
+  assert_eq!(parse_key_chord("PrintScreen").unwrap().key, vk::SNAPSHOT);
+  assert_eq!(parse_key_chord("caps_lock").unwrap().key, vk::CAPITAL);
+  assert!(parse_key_chord("forward-delete").is_err());
 }
 
 // Punctuation resolves through VkKeyScanW, so these run on Windows only; the
