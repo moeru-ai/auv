@@ -311,7 +311,7 @@ impl Rect {
 
   /// The smallest whole-unit rectangle that covers this one: the origin
   /// rounds down and the far edges round up. Capture backends that address
-  /// whole pixels use it for regions derived from OCR or layout bounds, which
+  /// whole units (pixels, or points on macOS) use it for regions derived from OCR or layout bounds, which
   /// are routinely fractional.
   pub fn round_out(self) -> Self {
     let x = self.origin.x.floor();
