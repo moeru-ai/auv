@@ -1,6 +1,6 @@
 # Windows media control
 
-Status: implemented on branch `feat/windows-media-control`. This is a feature slice of
+Status: implemented in #342 (the direct path) and #351 (the Runner service). This is a feature slice of
 [#211](https://github.com/moeru-ai/auv/issues/211): the six `mediaControl.*` commands on Windows.
 On 2026-10-12 the owner left the design to the implementer, and this note records the choice.
 
@@ -15,11 +15,11 @@ Controls (SMTC) backend onto that contract, and routes the invoke commands to it
 | `mediaControl.nowPlaying` | `partial`: no duration, elapsed time or playback rate | `auv_driver_windows::media::now_playing` |
 | `mediaControl.play`, `.pause`, `.togglePlayPause`, `.next`, `.previous` | `supported` | `auv_driver_windows::media::control` |
 
-Not in this slice (as of 2026-10-12; see Runner route section below for 2026-10-13 update):
+Not in this slice:
 
-- **The Runner's media service on Windows.** `MediaControlService` is the macOS-namespaced service
-  and originally read MediaRemote only (`TODO(windows-media-runner)` was closed on 2026-10-13 on branch
-  `feat/windows-runner-mediacontrol`; `TODO(invoke-support-runner-route)` remains a separate design task).
+- **The Runner's media service on Windows.** It came next, in #351 (see [Runner route](#runner-route-2026-10-13)),
+  which closed `TODO(windows-media-runner)`. Support cells for the Runner route are a separate design
+  task (`TODO(invoke-support-runner-route)`).
 - **Seek, stop, volume and choosing a session by app.** The driver has them for the QQ Music
   tooling, but no invoke command asks for them.
 - **The SMTC timeline.** It is behind `TODO(windows-media-timeline)`; see the mapping below.
@@ -186,9 +186,14 @@ state does not keep the raw SMTC status, so it is not known whether the status w
 
 ## Runner route (2026-10-13)
 
-Implemented on branch `feat/windows-runner-mediacontrol`, closing `TODO(windows-media-runner)`.
+Implemented in #351, closing `TODO(windows-media-runner)`.
 The Runner's `LocalMediaControlService` gRPC service in `crates/auv-cli/src/runner/local_driver.rs`
 is wired to `auv_driver_windows::media` on Windows, matching the direct invoke path from #342.
+
+On Windows the Runner now serves the macOS-namespaced service
+`auv.api.driver.macos.v1.MediaControlService`. The contract is platform-neutral since this slice
+moved it to `auv-driver-common::media`, but the proto package still says `macos`. Whether to move
+the service to a neutral package is a contract question for later.
 
 ### Implementation details
 
@@ -212,7 +217,9 @@ is wired to `auv_driver_windows::media` on Windows, matching the direct invoke p
 
 Host: Windows 11 Pro 10.0.29648, 2026-10-13, with live QQ Music (PID 21772) running in the background.
 Client: gRPC `MediaControlServiceClient` over local in-process tonic server.
-Evidence record: [`2026-10-13-windows-runner-mediacontrol.jsonl`](2026-10-13-windows-runner-mediacontrol.jsonl).
+Evidence record: [`evidence/2026-10-12-windows-media-control/runner.jsonl`](evidence/2026-10-12-windows-media-control/runner.jsonl)
+(from the ignored test `live_windows_runner_media_control_parity` in
+`crates/auv-cli/src/runner/local_driver_test.rs`).
 
 #### `mediaControl.nowPlaying` (3 runs)
 
@@ -248,16 +255,13 @@ Evidence record: [`2026-10-13-windows-runner-mediacontrol.jsonl`](2026-10-13-win
 - **Privacy masking**: User track titles and artists were masked; only Boolean presence and
   `track_changed` are committed.
 
-### Proposed support declarations (Runner route)
+### Runner route support: input to `TODO(invoke-support-runner-route)`
 
-| Command | Proposed Support | Note |
-| --- | --- | --- |
-| `mediaControl.nowPlaying` | `Partial` | Mechanism proven end-to-end; timeline fields null on Windows |
-| `mediaControl.play` | `Supported` | Proven verified |
-| `mediaControl.pause` | `Supported` | Proven verified |
-| `mediaControl.togglePlayPause` | `Supported` | Proven verified |
-| `mediaControl.next` | `Supported` | Proven verified |
-| `mediaControl.previous` | `Supported` | Proven verified |
+The command registry has `support` cells for the direct local path only, so there is no Runner
+cell to change. For the design behind `TODO(invoke-support-runner-route)`, the Runner route on
+Windows has the same shape as the direct path: `nowPlaying` has no timeline, and the five controls
+each ran once and were verified. That evidence is one in-process gRPC client, not a selected-Runner
+`auv invoke`.
 
 ## Validation
 

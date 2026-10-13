@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **71**
+Count: **74**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -38,6 +38,7 @@ Count: **71**
 - [`2026-08-05-mouse-motion-streaming-design.md`](2026-08-05-mouse-motion-streaming-design.md)
 - [`2026-08-06-open-source-mouse-motion-implementation-research.md`](2026-08-06-open-source-mouse-motion-implementation-research.md)
 - [`2026-08-06-input-performance-evidence.md`](2026-08-06-input-performance-evidence.md)
+- [`2026-08-07-wayland-capture-obs-sunshine-evidence.md`](2026-08-07-wayland-capture-obs-sunshine-evidence.md): Wayland portal/PipeWire capture lifecycle compared with OBS Studio and Sunshine at pinned commits.
 - [`2026-08-09-orca-computer-use-comparison-note.md`](2026-08-09-orca-computer-use-comparison-note.md)
 - [`2026-08-30-linux-wayland-pipewire-capture-runtime-design.md`](2026-08-30-linux-wayland-pipewire-capture-runtime-design.md)
 
@@ -88,12 +89,11 @@ Count: **71**
 - [`2026-10-09-pointer-position.md`](2026-10-09-pointer-position.md): Pointer, logical mouse and cursor kept apart; `GetPointerPosition`, `ScrollPoint` (scroll without a target window) and typed `key_down`/`key_up`; deferred logical-mouse reads and `WatchPointer`/`WatchMice` streams; macOS evidence.
 - [`2026-10-12-windows-paste-text.md`](2026-10-12-windows-paste-text.md): Windows `paste_text` for `input.pasteText` and `input.keyboard`: delayed clipboard rendering as the consumption boundary (the text is handed over only when a program asks for it, and the user's clipboard comes back right after the foreground application reads it), exclusion from clipboard history, cloud and monitors, a fail-and-restore result when nothing reads it in 2 s, the VirtualBox shared-clipboard and IME-composition findings, and live receiver evidence.
 - [`2026-10-12-windows-media-control.md`](2026-10-12-windows-media-control.md): `mediaControl.*` on Windows: the platform-neutral now-playing contract (`now-playing-v0`, the command verification rule) moved to `auv-driver-common::media` with `auv-media-macos` re-exporting it, the SMTC current-session mapping onto it, controls that poll the same session until the effect shows or 3 s pass, live evidence for all six commands against QQ Music, and the finding that a skip's after-state can read not playing while the app switches tracks.
+- [`2026-10-12-windows-scroll-until-background.md`](2026-10-12-windows-scroll-until-background.md): Posted-wheel `scroll_until` on the user's QQ Music through `auv invoke` (text 4 of 4, head and tail end stops, four timed motions), the `measure-settle` bench and why the 400 ms settle default stays, the `--region` requirement for multi-pane windows, and why the uncontrolled no-motion runs on Edge, Claude, NTQQ, Steam and VirtualBox carry no claim.
+- [`2026-10-12-windows-targeted-keyboard-probe.md`](2026-10-12-windows-targeted-keyboard-probe.md): Raw posted-keyboard probe, not command evidence: `WM_CHAR` reaches a classic `Edit` child but not its top-level window, posted modifiers leave `GetKeyState` unchanged, the records' contradictions, and what a targeted route would need; the keyboard cells stay foreground-only.
+- [`2026-10-13-windows-app-activation-probe.md`](2026-10-13-windows-app-activation-probe.md): Driver trials of window activation and the permission probe on two test-owned windows, why `app.activate` and `app.probePermissions` stay `Unsupported`, and corrections to the original document (the foreground-lock claim, `skipped_minimized`, "Resolution B adopted").
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
-- [`windows-wheel-acceptance-matrix.md`](windows-wheel-acceptance-matrix.md): Per-application matrix of background wheel acceptance via `PostMessageW(WM_MOUSEWHEEL)` across Win32, DirectComposition, Chromium/Electron, and Qt toolkits (Brief 6).
-- [`2026-10-12-windows-keyboard-targeted.jsonl`](2026-10-12-windows-keyboard-targeted.jsonl): Empirical trial records (38 trials across 4 commands and 3 app architectures) evaluating Windows targeted keyboard input under `InputPolicy::BackgroundOnly`, documenting the in-app focus crux and modifier key state table disconnect.
-- [`2026-10-13-windows-app-management.jsonl`](2026-10-13-windows-app-management.jsonl): Empirical trial records (12 trials across `app.activate` and `app.probePermissions`) evaluating Windows app management, documenting the minimized-window restore redline conflict, cross-process foreground lock behavior, and probePermissions N/A status.
-- [`2026-10-13-windows-runner-mediacontrol.jsonl`](2026-10-13-windows-runner-mediacontrol.jsonl): Empirical trial records (3 nowPlaying + 5 controls + 1 summary) evaluating the Windows Runner route for mediaControl against live QQ Music via gRPC, documenting verified outcomes, latency, and privacy masking.
 
 
 ## Related
