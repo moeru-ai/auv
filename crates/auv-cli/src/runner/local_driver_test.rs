@@ -1700,6 +1700,19 @@ fn scroll_until_update_carries_capture_ref_text_and_stop_reason() {
   assert!(proto.awaiting_decision && proto.text.is_none());
 }
 
+// A viewport that never moved must reach clients as its own reason, not as the end of content.
+#[test]
+fn scroll_until_keeps_never_moved_apart_from_the_end_on_the_wire() {
+  assert_eq!(
+    scroll_until_stop_reason_to_proto(auv_scan::ScrollUntilStopReason::NoVisualProgressFromStart),
+    proto::ScrollUntilStopReason::NoVisualProgressFromStart
+  );
+  assert_eq!(
+    scroll_until_stop_reason_to_proto(auv_scan::ScrollUntilStopReason::EndByNoVisualProgress),
+    proto::ScrollUntilStopReason::EndByNoVisualProgress
+  );
+}
+
 fn gradient_capture(width: u32, height: u32) -> auv_driver::Capture {
   auv_driver::Capture {
     origin: None,

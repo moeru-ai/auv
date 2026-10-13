@@ -2369,6 +2369,7 @@ fn scroll_until_stop_reason_from_proto(value: i32) -> Result<Option<auv_scan::Sc
   Ok(match proto::ScrollUntilStopReason::try_from(value) {
     Ok(proto::ScrollUntilStopReason::Unspecified) => None,
     Ok(proto::ScrollUntilStopReason::EndByNoVisualProgress) => Some(auv_scan::ScrollUntilStopReason::EndByNoVisualProgress),
+    Ok(proto::ScrollUntilStopReason::NoVisualProgressFromStart) => Some(auv_scan::ScrollUntilStopReason::NoVisualProgressFromStart),
     Ok(proto::ScrollUntilStopReason::TextVisible) => Some(auv_scan::ScrollUntilStopReason::TextVisible),
     Ok(proto::ScrollUntilStopReason::BudgetExhausted) => Some(auv_scan::ScrollUntilStopReason::BudgetExhausted),
     Ok(proto::ScrollUntilStopReason::PredicateSatisfied) => Some(auv_scan::ScrollUntilStopReason::PredicateSatisfied),

@@ -5,6 +5,13 @@
 > same fields. See Part B.4 of
 > `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.
 
+> **Migration (2026-10-13):** a scroll-until stop where no step moved the
+> viewport is now `no_visual_progress_from_start`, not
+> `end_by_no_visual_progress`. The records below predate the split, so a run
+> they report as `end_by_no_visual_progress` with no motion at any step (such as
+> the stale PipeWire frames) would now get the new reason. See "Scroll Until"
+> in `docs/TERMS_AND_CONCEPTS.md`.
+
 > Naming migration (2026-10-08): `ScrollUntilObservation` → `ScrollUntilUpdate`; `ScrollUntilObserve` → `ScrollUntilOutputOptions`; `onObservation` → `onUpdate`.
 > This dated note may retain the former names. Prefer concrete domain results;
 > reserve `observation` for information used to decide the next action.

@@ -155,9 +155,15 @@ impl ScrollUntilRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollUntilStopReason {
-  /// Consecutive steps showed no visual progress. This is not proof that no
-  /// more content exists; see the completeness-claim rule in TERMS.
+  /// The viewport moved, then consecutive steps showed no visual progress.
+  /// This is not proof that no more content exists; see the
+  /// completeness-claim rule in TERMS.
   EndByNoVisualProgress,
+  /// Consecutive steps showed no visual progress, and no step moved the
+  /// viewport. Content already at its end, an application that ignored every
+  /// step, and motion outside the motion region all look the same, so this is
+  /// never evidence of an end.
+  NoVisualProgressFromStart,
   /// The text query became visible.
   TextVisible,
   /// The step budget ran out first.
@@ -278,7 +284,13 @@ pub fn scroll_until(
     let stop = if result.text_match.is_some() {
       Some(ScrollUntilStopReason::TextVisible)
     } else if result.steps > 0 && no_motion_streak >= request.no_motion_confirmations {
-      Some(ScrollUntilStopReason::EndByNoVisualProgress)
+      // Motion resets the streak, so a streak as long as the step count means
+      // no step ever moved the viewport.
+      Some(if no_motion_streak == result.steps {
+        ScrollUntilStopReason::NoVisualProgressFromStart
+      } else {
+        ScrollUntilStopReason::EndByNoVisualProgress
+      })
     } else if result.steps >= request.max_steps {
       Some(ScrollUntilStopReason::BudgetExhausted)
     } else {

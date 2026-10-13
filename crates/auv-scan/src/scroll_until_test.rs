@@ -17,6 +17,8 @@ struct FakeList {
   lazy_after_waits: u32,
   bottom_waits: u32,
   text_row: Option<i64>,
+  /// The application drops every step, as a background window can.
+  ignores_input: bool,
   scrolls: u32,
   recognitions: u32,
   /// Backing pixels per point for native captures.
@@ -34,6 +36,7 @@ impl FakeList {
       lazy_after_waits: 0,
       bottom_waits: 0,
       text_row: None,
+      ignores_input: false,
       scrolls: 0,
       recognitions: 0,
       scale: 1,
@@ -62,8 +65,10 @@ fn action() -> InputActionResult {
 impl ScrollUntilSurface for FakeList {
   fn scroll(&mut self, step: &ScrollUntilStep) -> DriverResult<(InputActionResult, Scroll)> {
     self.scrolls += 1;
-    let delta = step.delta().delta_y as i64;
-    self.position = (self.position + delta).clamp(0, self.max_position());
+    if !self.ignores_input {
+      let delta = step.delta().delta_y as i64;
+      self.position = (self.position + delta).clamp(0, self.max_position());
+    }
     Ok((action(), step.delta()))
   }
 
@@ -158,6 +163,49 @@ fn end_stops_after_consecutive_no_motion_at_the_bottom() {
   assert_eq!(result.steps, 6);
   assert_eq!(streaks, [0, 0, 0, 0, 0, 1, 2]);
   assert_eq!(result.action.unwrap().selected_path, InputDeliveryPath::WindowTargetedWheel);
+}
+
+// ROOT CAUSE:
+//
+// If the application dropped every step (Steam's friends list and NTQQ did not move under a
+// background wheel on Windows, #348), the loop stopped as `end_by_no_visual_progress` after the
+// confirmation steps, the same reason a list that scrolled to its bottom gets.
+//
+// Before the fix, a caller could not tell "nothing ever moved" from "moved, then stopped", so an
+// ignored step read as the end of content. The fix stops with `no_visual_progress_from_start` when
+// no step moved the viewport, and keeps `end_by_no_visual_progress` for a viewport that moved first.
+#[test]
+fn a_viewport_that_never_moved_is_not_reported_as_an_end() {
+  let mut list = FakeList::new(2_000);
+  list.ignores_input = true;
+  let mut stops = Vec::new();
+  let result = scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |update| {
+    stops.push((update.no_motion_streak, update.stop));
+    Ok(ScrollUntilDecision::Continue)
+  })
+  .unwrap();
+
+  assert_eq!(result.reason, ScrollUntilStopReason::NoVisualProgressFromStart);
+  assert_eq!((result.steps, list.scrolls, list.position), (2, 2, 0));
+  assert_eq!(stops.last(), Some(&(2, Some(ScrollUntilStopReason::NoVisualProgressFromStart))));
+  assert_eq!(serde_json::to_value(result.reason).unwrap(), "no_visual_progress_from_start");
+}
+
+#[test]
+fn a_text_query_over_a_viewport_that_never_moved_is_not_reported_as_an_end() {
+  let mut list = FakeList::new(2_000);
+  list.ignores_input = true;
+  list.text_row = Some(420);
+  let result = run(
+    &mut list,
+    &request(ScrollUntilCondition::TextVisible {
+      query: "Target".to_string(),
+    }),
+  )
+  .unwrap();
+
+  assert_eq!(result.reason, ScrollUntilStopReason::NoVisualProgressFromStart);
+  assert!(result.text_match.is_none());
 }
 
 #[test]

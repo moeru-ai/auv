@@ -704,6 +704,10 @@ enum ScrollUntilStopReason {
   SCROLL_UNTIL_STOP_REASON_BUDGET_EXHAUSTED = 3;
   // The client's decision stopped the loop.
   SCROLL_UNTIL_STOP_REASON_PREDICATE_SATISFIED = 4;
+  // Like END_BY_NO_VISUAL_PROGRESS, but no step moved the viewport. Content
+  // already at its end and an application that ignored every step look the
+  // same, so this is never evidence of an end.
+  SCROLL_UNTIL_STOP_REASON_NO_VISUAL_PROGRESS_FROM_START = 5;
 }
 
 message ViewportPixelMotion {

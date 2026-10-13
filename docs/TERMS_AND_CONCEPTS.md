@@ -1674,8 +1674,12 @@ Scroll until is a bounded observation loop:
   caller opts out.
 - **Stop reasons:**
   - `text_visible`: OCR finds the query.
-  - `end_by_no_visual_progress`: a configured number of consecutive steps
-    showed no pixel motion.
+  - `end_by_no_visual_progress`: the viewport moved, then a configured
+    number of consecutive steps showed no pixel motion.
+  - `no_visual_progress_from_start`: the same number of steps showed no pixel
+    motion, and no step moved the viewport. Content already at its end, an
+    application that ignored every step, and motion outside the motion region
+    look the same, so it is never evidence of an end.
   - `budget_exhausted`: the step budget ran out.
   - `predicate_satisfied`: the caller's predicate stopped the loop. Over the
     Runner protocol, the predicate runs on the client, and the Runner waits
@@ -1684,7 +1688,8 @@ Scroll until is a bounded observation loop:
   motion), shared with the NetEase sidebar policy.
 - **What "end" means:** an observation, not proof that no more content
   exists. A slow lazy load, an occluded window, or capture failure can look
-  like an end.
+  like an end. Only `end_by_no_visual_progress` is reported as one, because
+  it needs motion before the stillness.
 - **Where it runs:** on the Runner (`InputService/ScrollUntil`), so captures
   stay local. It is reachable through `auv invoke input.scrollUntil` and the
   Rust and JS clients.

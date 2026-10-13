@@ -1570,6 +1570,7 @@ fn scroll_until_update_to_proto(
 fn scroll_until_stop_reason_to_proto(reason: auv_scan::ScrollUntilStopReason) -> proto::ScrollUntilStopReason {
   match reason {
     auv_scan::ScrollUntilStopReason::EndByNoVisualProgress => proto::ScrollUntilStopReason::EndByNoVisualProgress,
+    auv_scan::ScrollUntilStopReason::NoVisualProgressFromStart => proto::ScrollUntilStopReason::NoVisualProgressFromStart,
     auv_scan::ScrollUntilStopReason::TextVisible => proto::ScrollUntilStopReason::TextVisible,
     auv_scan::ScrollUntilStopReason::BudgetExhausted => proto::ScrollUntilStopReason::BudgetExhausted,
     auv_scan::ScrollUntilStopReason::PredicateSatisfied => proto::ScrollUntilStopReason::PredicateSatisfied,

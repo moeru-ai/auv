@@ -198,9 +198,11 @@ defaults (50 steps, 2 confirmations, 400 ms), the same as
 `auv invoke input.scrollUntil`. The mock desktop applies
 `sdk.SCROLL_UNTIL_DEFAULTS`, the same values.
 
-An `END_BY_NO_VISUAL_PROGRESS` stop means no visual motion was observed, not
-that no content is left. On the mock desktop, the Music window's song list
-scrolls (other windows do not):
+An `END_BY_NO_VISUAL_PROGRESS` stop means the view moved, then stopped moving;
+it is not proof that no content is left. `NO_VISUAL_PROGRESS_FROM_START` means
+no step moved the view at all, so the window may have ignored the scroll. On the
+mock desktop, the Music window's song list scrolls (other windows do not, and
+stop with `NO_VISUAL_PROGRESS_FROM_START`):
 
 ```ts
 const music = await auv.windows.resolve({ appName: 'Music' })

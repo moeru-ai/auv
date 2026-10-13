@@ -312,11 +312,13 @@ export function mockRunner(desktop: MockDesktop): Transport {
           const frame = capture(target.frame, desktop.displayAt(target.frame).scale, { case: 'windowId', value: target.id })
           const regions = desktop.text(target.frame)
           streak = moved ? 0 : streak + 1
+          // Motion resets the streak, so a streak as long as the step count means nothing moved.
+          const neverMoved = streak === steps
           const match = query ? regions.find(region => region.text.toLowerCase().includes(query.toLowerCase())) : undefined
           const stop = match
             ? ScrollUntilStopReason.TEXT_VISIBLE
             : streak >= noMotionConfirmations
-              ? ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS
+              ? neverMoved ? ScrollUntilStopReason.NO_VISUAL_PROGRESS_FROM_START : ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS
               : steps >= maxSteps ? ScrollUntilStopReason.BUDGET_EXHAUSTED : ScrollUntilStopReason.UNSPECIFIED
           const motion = { estimatedShift: moved ? Math.round(step.deltaY || step.deltaX) : 0, noMotion: !moved, normalizedDiff: moved ? 1 : 0 }
           const total = { deltaX: step.deltaX * steps, deltaY: step.deltaY * steps }
