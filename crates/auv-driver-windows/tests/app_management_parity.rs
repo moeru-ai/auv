@@ -11,7 +11,7 @@ use std::{
 
 use auv_driver_common::permission::PermissionStatus;
 use auv_driver_common::{Driver, WindowRef, WindowSelector};
-use auv_driver_windows::{ApplicationControl, WindowsDriver, probe_permissions};
+use auv_driver_windows::{WindowsDriver, probe_permissions};
 use serde_json::json;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
@@ -390,9 +390,9 @@ fn live_app_management_parity_evaluation() {
   // SCENARIO 4: Activate non-existent / closed app
   // =========================================================================
   println!("\n--- SCENARIO 4: Activate non-existent / closed app ---");
-  // Trial 7: Target non-existent process name via ApplicationControl
+  // Trial 7: Target non-existent process name via the application API
   let fg_before_7 = unsafe { GetForegroundWindow() };
-  let act_res_7 = session.activate_process_name("non_existent_app_xyz_99999.exe", Duration::from_millis(10));
+  let act_res_7 = session.applications().activate("non_existent_app_xyz_99999.exe", Duration::from_millis(10));
   let fg_after_7 = unsafe { GetForegroundWindow() };
   println!("  Trial 7 Result: {:?}, FG before: {}, FG after: {}", act_res_7, hwnd_format(fg_before_7), hwnd_format(fg_after_7));
   assert!(act_res_7.is_err(), "must fail with typed error");

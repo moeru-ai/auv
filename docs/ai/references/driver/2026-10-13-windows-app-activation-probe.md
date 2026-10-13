@@ -5,6 +5,11 @@ Status: probe record for #350 ([#211](https://github.com/moeru-ai/auv/issues/211
 [consolidation review](../invoke-cli/2026-10-13-windows-parity-consolidation-review.md) has the
 full reasoning.
 
+> **Migration notice:** the activation contract replaced `ApplicationControl::activate_process_name`
+> and `ProcessActivationResult` with `WindowsDriverSession::applications().activate`, which returns
+> the shared `ApplicationActivationResult`, and wired `app.activate` on Windows (cell `Supported`).
+> The harness now calls the new API. The trials below are kept as recorded.
+
 The trials call the driver directly: `WindowApi::activate`,
 `ApplicationControl::activate_process_name` and `probe_permissions`. They do not run
 `auv invoke app.activate` or `app.probePermissions`, which both refuse on Windows. The harness is
