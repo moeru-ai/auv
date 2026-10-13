@@ -96,6 +96,17 @@ that text again. Its records hold only whether the clipboard came back, never wh
 - **Delivery is not effect.** The receiver reports what it processed. A click counts only when its
   button reported `BN_CLICKED`; an observation counts only when the decoded frame equals the
   receiver's own state.
+- **An effect check must be able to see the effect.** A covered Chromium window stops painting, so
+  its frames show "no change" whatever the page did. Judge an effect by the application's own
+  state (a receiver's counts, a page title the page sets) or by frames from a window known to
+  paint, and pair a "no effect" result with a foreground control at the same point. A frame hash
+  from a window that may not paint is not evidence of a drop.
+- **Runs act only on windows they created.** Every Windows eval and every probe or bench outside
+  `evals/` works on receivers it starts or applications it launches itself, never on a window the
+  user has open: no input or activation there, and no records of the user's window titles, tabs,
+  tracks or clipboard. A run that can only act on the user's own session, such as media control
+  of what they are playing, needs the owner's approval for that run. `apps` skips an application
+  whose process is already running for this reason.
 - **Receivers start detached.** Whether a window may take the foreground is decided from its
   process. A receiver that is a descendant of the foreground application can keep a right that an
   independently launched application does not, so the harness starts receivers with the shell as

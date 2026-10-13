@@ -1523,6 +1523,18 @@ platforms.
   system, not by AUV: a window may become the foreground window only if its process holds the
   right to, and an application that merely activates itself inside its own input queue does
   not. See the [background session reference](ai/references/driver/2026-10-10-windows-background-session.md).
+- A posted message carries only what is in it. It does not move the cursor, change the focus or
+  the foreground, or update the key-state table the target thread reads. An application that
+  consults any of those before acting diverges from one that trusts the message. This one rule
+  covers the Windows findings so far:
+  - a posted Ctrl+A arrives as the letter `a`, because `GetKeyState(VK_CONTROL)` still reads 0
+    ([targeted keyboard probe](ai/references/driver/2026-10-12-windows-targeted-keyboard-probe.md));
+  - Chromium may redirect a posted wheel by the point it names rather than by the window it was
+    posted to (an open REVIEW in the background session reference);
+  - XAML content ignores posted mouse messages.
+
+  It is not a rule about toolkits. A Chromium page counts posted clicks
+  ([support matrix](SUPPORT_MATRIX.md#windows-background-session-by-application)).
 - A **frame stream** is the session's continuously drained capture of one window. It keeps only
   the newest frame and counts the frames the compositor delivers, so a read is never an older
   state of the window, a window that has not changed costs no pixel copy
@@ -1553,6 +1565,23 @@ path actually used. Click cardinality is a separate option and may request a
 single, double, or explicitly counted repeated click with an interval. An
 omitted interval for a repeated click means `Click::DEFAULT_INTERVAL` (75 ms)
 on every frontend and Runner.
+
+Only a foreground step restores a minimized window. That means:
+
+- `foreground_preferred` delivery;
+- an activation command such as `app.activate`;
+- a `background_preferred` action that fell back to foreground input.
+
+`background_only` never restores. It refuses a minimized target or reports it skipped, as the
+[background session](#background-session) does with `skipped_minimized`.
+
+The owner accepted this rule on 2026-10-13
+([consolidation review](ai/references/invoke-cli/2026-10-13-windows-parity-consolidation-review.md#24-appactivate-and-resolution-b)).
+It replaces the earlier wording "an activation is explicit user intent", which said nothing about
+input modes.
+
+On Windows, direct posted clicks and wheels do not check yet. They post to a minimized window and
+report delivery (`TODO(windows-posted-minimized)` in `auv-driver-windows`).
 
 `MouseButton` selects left, right, or middle for a complete click. Window
 `ClickOptions` and wire options default to left when omitted; Rust screen-click
