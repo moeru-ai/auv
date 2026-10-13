@@ -5,11 +5,8 @@
 //! image pixel coordinates. Mapping pixel coordinates back into screen or
 //! window space stays with the caller, exactly like the macOS driver.
 
-#[cfg(target_os = "windows")]
 use auv_driver_common::geometry::Rect;
-#[cfg(target_os = "windows")]
-use auv_driver_common::vision::RecognizedText;
-use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
+use auv_driver_common::vision::{RecognizedText, RecognizedWord, TextRecognition, TextRecognitionOptions};
 
 /// Errors raised while running Windows system OCR.
 #[derive(Debug, thiserror::Error)]
@@ -65,14 +62,62 @@ fn union_rect(rects: &[RectF]) -> Option<RectF> {
   })
 }
 
+/// One `Windows.Media.Ocr` line with its word boxes, in image pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrLine {
+  pub text: String,
+  pub words: Vec<RecognizedWord>,
+}
+
+/// One region per line; a line's bounds are the union of its word boxes.
+pub fn text_recognition_from_lines(lines: &[OcrLine]) -> TextRecognition {
+  let regions = lines
+    .iter()
+    .map(|line| {
+      let rects = line
+        .words
+        .iter()
+        .map(|word| RectF {
+          x: word.bounds.origin.x,
+          y: word.bounds.origin.y,
+          width: word.bounds.size.width,
+          height: word.bounds.size.height,
+        })
+        .collect::<Vec<_>>();
+      let bounds = union_rect(&rects).unwrap_or(RectF {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+      });
+      RecognizedText {
+        text: line.text.clone(),
+        bounds: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
+        // NOTICE: Windows.Media.Ocr does not expose recognition confidence.
+        confidence: None,
+      }
+    })
+    .collect::<Vec<_>>();
+  TextRecognition {
+    origin: None,
+    text: lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join("\n"),
+    regions,
+  }
+}
+
 /// Recognizes text in a raw RGBA image using the Windows system OCR engine.
 ///
 /// The returned [`TextRecognition`] has one region per recognized line, with
 /// bounds in image pixel coordinates. `options.recognition_languages` selects
 /// the OCR language when the first tag is installed; otherwise the user
 /// profile languages are used.
-#[cfg(target_os = "windows")]
 pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<TextRecognition, OcrError> {
+  Ok(text_recognition_from_lines(&recognize_lines_in_rgba(rgba, width, height, options)?))
+}
+
+/// Recognizes lines with their word boxes, in image pixel coordinates.
+#[cfg(target_os = "windows")]
+pub fn recognize_lines_in_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<Vec<OcrLine>, OcrError> {
   use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
   use windows::Security::Cryptography::CryptographicBuffer;
 
@@ -97,18 +142,18 @@ pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &Te
 
   let result = engine.RecognizeAsync(&bitmap).map_err(OcrError::from_winrt)?.get().map_err(OcrError::from_winrt)?;
 
-  text_recognition_from_result(&result)
+  lines_from_result(&result)
 }
 
 /// Stub used on non-Windows targets so the crate stays cross-compilable, in the
 /// same spirit as the macOS driver's non-macOS OCR stubs.
 #[cfg(not(target_os = "windows"))]
-pub fn recognize_text_in_rgba(
+pub fn recognize_lines_in_rgba(
   _rgba: &[u8],
   _width: u32,
   _height: u32,
   _options: &TextRecognitionOptions,
-) -> Result<TextRecognition, OcrError> {
+) -> Result<Vec<OcrLine>, OcrError> {
   Err(OcrError::Unsupported)
 }
 
@@ -149,40 +194,23 @@ fn create_engine(options: &TextRecognitionOptions) -> Result<windows::Media::Ocr
 }
 
 #[cfg(target_os = "windows")]
-fn text_recognition_from_result(result: &windows::Media::Ocr::OcrResult) -> Result<TextRecognition, OcrError> {
-  let mut regions = Vec::new();
-  let mut line_texts = Vec::new();
+fn lines_from_result(result: &windows::Media::Ocr::OcrResult) -> Result<Vec<OcrLine>, OcrError> {
+  let mut lines = Vec::new();
   for line in result.Lines().map_err(OcrError::from_winrt)? {
     let text = line.Text().map_err(OcrError::from_winrt)?.to_string();
-    let mut word_rects = Vec::new();
+    let mut words = Vec::new();
     for word in line.Words().map_err(OcrError::from_winrt)? {
       let rect = word.BoundingRect().map_err(OcrError::from_winrt)?;
-      word_rects.push(RectF {
-        x: f64::from(rect.X),
-        y: f64::from(rect.Y),
-        width: f64::from(rect.Width),
-        height: f64::from(rect.Height),
+      words.push(RecognizedWord {
+        text: word.Text().map_err(OcrError::from_winrt)?.to_string(),
+        bounds: Rect::new(f64::from(rect.X), f64::from(rect.Y), f64::from(rect.Width), f64::from(rect.Height)),
+        // NOTICE: Windows.Media.Ocr does not expose recognition confidence.
+        confidence: None,
       });
     }
-    let bounds = union_rect(&word_rects).unwrap_or(RectF {
-      x: 0.0,
-      y: 0.0,
-      width: 0.0,
-      height: 0.0,
-    });
-    line_texts.push(text.clone());
-    regions.push(RecognizedText {
-      text,
-      bounds: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
-      // NOTICE: Windows.Media.Ocr does not expose recognition confidence.
-      confidence: None,
-    });
+    lines.push(OcrLine { text, words });
   }
-  Ok(TextRecognition {
-    origin: None,
-    text: line_texts.join("\n"),
-    regions,
-  })
+  Ok(lines)
 }
 
 #[cfg(test)]

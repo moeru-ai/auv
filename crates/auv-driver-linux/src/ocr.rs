@@ -8,7 +8,7 @@
 use std::fmt;
 
 use auv_driver_common::geometry::Rect;
-use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions, normalize_match_text};
+use auv_driver_common::vision::{OcrMatches, RecognizedText, RecognizedWord, TextRecognition, TextRecognitionOptions, match_word_spans};
 #[cfg(target_os = "linux")]
 use image::ImageEncoder;
 
@@ -35,20 +35,10 @@ impl fmt::Display for OcrError {
 
 impl std::error::Error for OcrError {}
 
-#[derive(Clone, Debug, PartialEq)]
-struct Word {
-  text: String,
-  left: f64,
-  top: f64,
-  width: f64,
-  height: f64,
-  confidence: Option<f32>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Line {
   text: String,
-  words: Vec<Word>,
+  words: Vec<RecognizedWord>,
 }
 
 /// Recognizes text in a raw RGBA image using Tesseract.
@@ -169,47 +159,8 @@ fn text_recognition_from_tsv(tsv: &str) -> TextRecognition {
 }
 
 fn text_matches_from_tsv(tsv: &str, query: &str) -> OcrMatches {
-  let normalized_query = normalize_match_text(query);
-  if normalized_query.is_empty() {
-    return OcrMatches::default();
-  }
-
-  let mut matches = Vec::new();
-  for line in parse_tsv_lines(tsv) {
-    for start in 0..line.words.len() {
-      let mut candidate = String::new();
-      for end in start..line.words.len() {
-        if !candidate.is_empty() {
-          candidate.push(' ');
-        }
-        candidate.push_str(&line.words[end].text);
-        if !normalize_match_text(&candidate).contains(&normalized_query) {
-          continue;
-        }
-        let words = &line.words[start..=end];
-        let Some(bounds) = union_words(words) else {
-          break;
-        };
-        matches.push(OcrMatch {
-          text: candidate,
-          confidence: mean_confidence(words).unwrap_or_default() as f64,
-          bounds,
-        });
-        break;
-      }
-    }
-  }
-  let candidates = matches.clone();
-  matches.retain(|candidate| !candidates.iter().any(|other| candidate != other && rect_strictly_contains(candidate.bounds, other.bounds)));
-  OcrMatches { matches }
-}
-
-fn rect_strictly_contains(container: Rect, candidate: Rect) -> bool {
-  let contains = candidate.origin.x >= container.origin.x
-    && candidate.origin.y >= container.origin.y
-    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
-    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height;
-  contains && candidate.size.width * candidate.size.height < container.size.width * container.size.height
+  let lines = parse_tsv_lines(tsv);
+  match_word_spans(lines.iter().map(|line| line.words.as_slice()), query)
 }
 
 fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
@@ -246,13 +197,11 @@ fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
   lines.into_iter().map(|(_, line)| line).collect()
 }
 
-fn parse_word(columns: &[&str], text: String) -> Option<Word> {
-  Some(Word {
+fn parse_word(columns: &[&str], text: String) -> Option<RecognizedWord> {
+  let pixel = |index: usize| columns.get(index)?.parse::<f64>().ok();
+  Some(RecognizedWord {
     text,
-    left: columns.get(6)?.parse().ok()?,
-    top: columns.get(7)?.parse().ok()?,
-    width: columns.get(8)?.parse().ok()?,
-    height: columns.get(9)?.parse().ok()?,
+    bounds: Rect::new(pixel(6)?, pixel(7)?, pixel(8)?, pixel(9)?),
     confidence: parse_confidence(columns.get(10)?),
   })
 }
@@ -266,23 +215,23 @@ fn parse_confidence(raw: &str) -> Option<f32> {
   }
 }
 
-fn union_words(words: &[Word]) -> Option<Rect> {
+fn union_words(words: &[RecognizedWord]) -> Option<Rect> {
   let mut iter = words.iter();
-  let first = iter.next()?;
-  let mut min_x = first.left;
-  let mut min_y = first.top;
-  let mut max_x = first.left + first.width;
-  let mut max_y = first.top + first.height;
+  let first = iter.next()?.bounds;
+  let mut min_x = first.origin.x;
+  let mut min_y = first.origin.y;
+  let mut max_x = first.origin.x + first.size.width;
+  let mut max_y = first.origin.y + first.size.height;
   for word in iter {
-    min_x = min_x.min(word.left);
-    min_y = min_y.min(word.top);
-    max_x = max_x.max(word.left + word.width);
-    max_y = max_y.max(word.top + word.height);
+    min_x = min_x.min(word.bounds.origin.x);
+    min_y = min_y.min(word.bounds.origin.y);
+    max_x = max_x.max(word.bounds.origin.x + word.bounds.size.width);
+    max_y = max_y.max(word.bounds.origin.y + word.bounds.size.height);
   }
   Some(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y))
 }
 
-fn mean_confidence(words: &[Word]) -> Option<f32> {
+fn mean_confidence(words: &[RecognizedWord]) -> Option<f32> {
   let mut total = 0.0f32;
   let mut count = 0usize;
   for confidence in words.iter().filter_map(|word| word.confidence) {

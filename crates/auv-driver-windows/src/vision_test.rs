@@ -96,29 +96,41 @@ fn map_recognition_offsets_by_crop_origin_and_capture_scale() {
   assert_eq!(target.position.coordinate_space, auv_driver_common::CoordinateSpace::Window("geometry-window".into()));
 }
 
+// ROOT CAUSE:
+//
+// If a query matched one word of a long Windows OCR line (a menu bar such as
+// "File Edit View"), the match carried the whole line's bounds, because only
+// line regions reached the matcher, so window.clickText clicked the middle of
+// the line instead of the word.
+//
+// The fix matches over the OCR word boxes and bounds a match by its words.
 #[test]
-fn ocr_matches_filters_to_query_and_flattens_confidence() {
-  let recognition = TextRecognition {
-    origin: None,
-    text: "Play\nPause".to_string(),
-    regions: vec![
-      RecognizedText {
-        text: "Play".to_string(),
-        bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
-        // 0.5 is exactly representable in f32 and f64, so the flattened
-        // confidence compares cleanly.
-        confidence: Some(0.5),
-      },
-      recognized("Pause", Rect::new(0.0, 20.0, 10.0, 10.0)),
-    ],
+fn a_match_inside_a_long_line_is_bounded_by_its_words() {
+  use auv_driver_common::vision::RecognizedWord;
+  let word = |text: &str, x: f64| RecognizedWord {
+    text: text.to_string(),
+    bounds: Rect::new(x, 4.0, 30.0, 10.0),
+    confidence: None,
+  };
+  let lines = [crate::ocr::OcrLine {
+    text: "File Edit View".to_string(),
+    words: vec![word("File", 0.0), word("Edit", 40.0), word("View", 80.0)],
+  }];
+  let capture = capture(400, 200, Rect::new(100.0, 50.0, 200.0, 100.0));
+  let crop = CropPixels {
+    x: 20,
+    y: 10,
+    width: 200,
+    height: 100,
   };
 
-  let matches = ocr_matches_from_recognition(&recognition, "play");
+  let matches = map_matches_to_capture(match_word_spans(lines.iter().map(|line| line.words.as_slice()), "edit"), &capture, crop);
 
   assert_eq!(matches.matches.len(), 1);
-  let best = matches.best_match().expect("one match");
-  assert_eq!(best.text, "Play");
-  assert_eq!(best.confidence, 0.5);
+  assert_eq!(matches.matches[0].text, "Edit");
+  // (40 + 20) / 2 + 100, (4 + 10) / 2 + 50, 30 / 2, 10 / 2
+  assert_eq!(matches.matches[0].bounds, Rect::new(130.0, 57.0, 15.0, 5.0));
+  assert_eq!(text_recognition_from_lines(&lines).regions[0].bounds, Rect::new(0.0, 4.0, 110.0, 10.0));
 }
 
 #[test]

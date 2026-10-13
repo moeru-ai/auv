@@ -178,4 +178,22 @@ fn normalize_match_text_keeps_sentence_and_list_boundaries() {
   assert_eq!(normalize_match_text("For example. Commands"), "for example. commands");
   assert_eq!(normalize_match_text("Chapter 1. 5 items"), "chapter 1. 5 items");
   assert_eq!(normalize_match_text("a, b"), "a, b");
+  assert_eq!(normalize_match_text("设 置 中心"), "设置中心");
+  assert_eq!(normalize_match_text("打开 File"), "打开 file");
+}
+
+#[test]
+fn word_spans_bound_a_match_by_its_words_and_join_cjk_glyphs() {
+  let word = |text: &str, x: f64| RecognizedWord {
+    text: text.into(),
+    bounds: Rect::new(x, 0.0, 10.0, 10.0),
+    confidence: Some(0.5),
+  };
+  let menu = [word("File", 0.0), word("Edit", 20.0), word("View", 40.0)];
+  let cjk = [word("设", 0.0), word("置", 12.0)];
+  let matches = match_word_spans([&menu[..], &cjk[..]], "edit");
+  assert_eq!(matches.matches.len(), 1);
+  assert_eq!(matches.matches[0].bounds, Rect::new(20.0, 0.0, 10.0, 10.0));
+  let matches = match_word_spans([&menu[..], &cjk[..]], "设置");
+  assert_eq!(matches.matches[0].bounds, Rect::new(0.0, 0.0, 22.0, 10.0));
 }

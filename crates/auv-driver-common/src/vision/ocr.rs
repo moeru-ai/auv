@@ -131,6 +131,73 @@ impl TextRecognition {
   }
 }
 
+/// One recognized word and its own box, for OCR engines that report word
+/// boxes (Tesseract, Windows.Media.Ocr).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecognizedWord {
+  pub text: String,
+  pub bounds: Rect,
+  pub confidence: Option<f32>,
+}
+
+/// Finds `query` in runs of consecutive words on each line and bounds every
+/// match by the matched words only.
+///
+/// A line-level match puts the action point at the center of the whole line,
+/// so a query that hits one entry of a long OCR line (a menu bar, a toolbar)
+/// would act on the wrong control. Each match starts at a word and ends at the
+/// first word that completes the query; a match whose box strictly contains
+/// another match's box is dropped in favor of the narrower one.
+pub fn match_word_spans<'a>(lines: impl IntoIterator<Item = &'a [RecognizedWord]>, query: &str) -> OcrMatches {
+  let normalized_query = normalize_match_text(query);
+  if normalized_query.is_empty() {
+    return OcrMatches::default();
+  }
+  let mut matches = Vec::new();
+  for words in lines {
+    for start in 0..words.len() {
+      let mut candidate = String::new();
+      for end in start..words.len() {
+        if !candidate.is_empty() {
+          candidate.push(' ');
+        }
+        candidate.push_str(&words[end].text);
+        if !normalize_match_text(&candidate).contains(&normalized_query) {
+          continue;
+        }
+        let span = &words[start..=end];
+        let bounds = span.iter().skip(1).fold(span[0].bounds, |bounds, word| union(bounds, word.bounds));
+        let confidences = span.iter().filter_map(|word| word.confidence).collect::<Vec<_>>();
+        matches.push(OcrMatch {
+          text: candidate,
+          confidence: if confidences.is_empty() {
+            0.0
+          } else {
+            f64::from(confidences.iter().sum::<f32>() / confidences.len() as f32)
+          },
+          bounds,
+        });
+        break;
+      }
+    }
+  }
+  let candidates = matches.clone();
+  matches.retain(|candidate| !candidates.iter().any(|other| candidate != other && strictly_contains(candidate.bounds, other.bounds)));
+  OcrMatches { matches }
+}
+
+fn union(a: Rect, b: Rect) -> Rect {
+  let x = a.origin.x.min(b.origin.x);
+  let y = a.origin.y.min(b.origin.y);
+  let right = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
+  let bottom = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
+  Rect::new(x, y, right - x, bottom - y)
+}
+
+fn strictly_contains(container: Rect, candidate: Rect) -> bool {
+  container.contains_rect(candidate) && candidate.size.width * candidate.size.height < container.size.width * container.size.height
+}
+
 /// Normalizes a text query or recognized text the same way before matching.
 ///
 /// Besides whitespace and case, this folds typographic quotes and dashes,
@@ -138,6 +205,8 @@ impl TextRecognition {
 /// OCR engines disagree on punctuation in both directions: Vision reports
 /// `“Report — Final”` as `"Report - Final"`, and Tesseract reads `Huashan.jpg`
 /// as `Huashan. jpg`. A caller typing the visible text must still match.
+///
+/// Spaces between two CJK characters are dropped.
 ///
 /// A space after `.` stays before anything but a lowercase letter, so a
 /// sentence end (`For example. Commands`) does not turn into a word that
@@ -163,10 +232,26 @@ pub fn normalize_match_text(text: &str) -> String {
       if matches!(next, Some('.' | ',')) || (previous == Some('.') && next.is_some_and(char::is_lowercase)) {
         continue;
       }
+      // OCR engines report CJK glyphs as separate words (`设 置`); CJK text
+      // has no spaces between characters to keep.
+      if previous.is_some_and(is_cjk) && next.is_some_and(is_cjk) {
+        continue;
+      }
     }
     normalized.extend(character.to_lowercase());
   }
   normalized
+}
+
+/// Han, kana and hangul, which are written without spaces between characters.
+fn is_cjk(character: char) -> bool {
+  matches!(character,
+    '\u{3040}'..='\u{30FF}' // Hiragana, Katakana
+    | '\u{3400}'..='\u{4DBF}' // CJK Extension A
+    | '\u{4E00}'..='\u{9FFF}' // CJK Unified Ideographs
+    | '\u{AC00}'..='\u{D7AF}' // Hangul syllables
+    | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+  )
 }
 
 #[cfg(test)]
