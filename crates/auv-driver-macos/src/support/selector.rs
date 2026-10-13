@@ -123,19 +123,9 @@ impl AppLiveness {
 /// retry without another `window.list` round trip.
 pub(crate) fn app_resolution_message(selector_raw: &str, liveness: AppLiveness, snapshot: &ObservedWindowSnapshot) -> String {
   let visible = || {
-    let mut ids = snapshot
-      .windows
-      .iter()
-      .filter(|window| window.layer == 0 && !window.owner_bundle_id.trim().is_empty())
-      .map(|window| window.owner_bundle_id.as_str())
-      .collect::<Vec<_>>();
-    ids.sort_unstable_by_key(|id| id.to_lowercase());
-    ids.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    if ids.is_empty() {
-      "no visible application windows".to_string()
-    } else {
-      format!("visible applications: {}", ids.join(", "))
-    }
+    auv_driver_common::window::visible_applications_hint(
+      snapshot.windows.iter().filter(|window| window.layer == 0).map(|window| window.owner_bundle_id.as_str()),
+    )
   };
   match liveness {
     AppLiveness::NotRunning => format!("application {selector_raw:?} (not running; {})", visible()),

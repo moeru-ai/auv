@@ -137,12 +137,13 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
   {
     return false;
   }
-  // An application id (`--target app:<id>`) also matches the application name;
-  // see `matches_application_id`.
-  if let Some(bundle) = &selector.bundle
-    && !auv_driver_common::window::matches_application_id(window, bundle)
-  {
-    return false;
+  if let Some(bundle) = &selector.bundle {
+    let Some(app_bundle_id) = &window.app_bundle_id else {
+      return false;
+    };
+    if !matches_text(app_bundle_id, bundle) {
+      return false;
+    }
   }
   if let Some(name) = &selector.name {
     let Some(app_name) = &window.app_name else {

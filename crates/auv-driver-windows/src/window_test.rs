@@ -132,7 +132,7 @@ fn invisible_windows_are_never_matched() {
 }
 
 #[test]
-fn bundle_selector_never_matches_on_windows() {
+fn application_id_that_is_not_the_executable_is_rejected() {
   let windows = vec![window(
     "1",
     Some("Doc"),
@@ -164,9 +164,12 @@ fn application_id_matches_the_executable_and_a_miss_lists_visible_applications()
     window("1", Some("notes.txt - Notepad"), Some("Notepad.exe"), 10, Rect::new(0.0, 0.0, 800.0, 600.0)),
     window("2", Some("Edge"), Some("msedge.exe"), 11, Rect::new(0.0, 0.0, 800.0, 600.0)),
   ];
+  // The CLI's local path selects by name, a Runner client by application id.
   for id in ["notepad", "notepad.exe", "Notepad.exe"] {
-    let selector = WindowQuery::main_visible().owned_by(App::bundle_id(id));
-    assert_eq!(resolve_from_windows(&windows, &selector).unwrap().reference.id, "1", "{id}");
+    for app in [App::bundle_id(id), App::name(id)] {
+      let selector = WindowQuery::main_visible().owned_by(app);
+      assert_eq!(resolve_from_windows(&windows, &selector).unwrap().reference.id, "1", "{id}");
+    }
   }
   let error = resolve_from_windows(&windows, &WindowQuery::main_visible().owned_by(App::bundle_id("com.google.Chrome"))).unwrap_err();
   assert_eq!(

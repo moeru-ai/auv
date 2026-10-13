@@ -171,28 +171,35 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
   {
     return false;
   }
-  // An application id (`--target app:<id>`) also matches the application name;
-  // see `matches_application_id`.
-  if let Some(bundle) = &selector.bundle
-    && !auv_driver_common::window::matches_application_id(window, bundle)
-  {
-    return false;
-  }
-  if let Some(name) = &selector.name {
-    let Some(app_name) = &window.app_name else {
-      return false;
-    };
-    // NOTICE: `app_name` is an executable file name, and Windows file names are case-insensitive:
-    // the same program is `Notepad.exe` on disk and `notepad.exe` to the person typing it.
-    let matched = match name {
-      TextMatcher::Exact(expected) => app_name.eq_ignore_ascii_case(expected),
-      TextMatcher::Contains(needle) => app_name.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()),
-    };
-    if !matched {
+  // NOTICE: a Windows application id is its executable file name, the APP of
+  // `window.list` (`app_bundle_id` is always `None`). The CLI's local path
+  // selects it by name and a Runner client by application id, so both match
+  // the executable name; see `matches_executable`.
+  for matcher in [&selector.bundle, &selector.name].into_iter().flatten() {
+    if !window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, matcher)) {
       return false;
     }
   }
   true
+}
+
+/// Matches an executable file name. Windows file names are case-insensitive
+/// (the same program is `Notepad.exe` on disk and `notepad.exe` to the person
+/// typing it), and an exact name may leave out `.exe` (`notepad`).
+fn matches_executable(app_name: &str, matcher: &TextMatcher) -> bool {
+  match matcher {
+    TextMatcher::Exact(expected) => {
+      app_name.eq_ignore_ascii_case(expected) || without_exe_suffix(app_name).eq_ignore_ascii_case(without_exe_suffix(expected))
+    }
+    TextMatcher::Contains(needle) => app_name.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()),
+  }
+}
+
+fn without_exe_suffix(value: &str) -> &str {
+  match value.len().checked_sub(4) {
+    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
+    _ => value,
+  }
 }
 
 fn matches_text(value: &str, matcher: &TextMatcher) -> bool {

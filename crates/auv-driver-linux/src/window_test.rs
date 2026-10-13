@@ -337,3 +337,33 @@ fn window_capture_refreshes_stale_frame_on_live_desktop() {
     capture.backend
   );
 }
+
+// ROOT CAUSE:
+//
+// If an agent guessed an application id that no visible window carried
+// (`com.google.Chrome` on Linux), resolution failed with a bare "main visible
+// window was not found", and the agent spent a step on window.list.
+//
+// The fix keeps strict id matching and names the visible applications.
+#[test]
+fn an_unknown_application_id_lists_the_visible_applications() {
+  let editor = Window {
+    reference: WindowRef {
+      id: "1".to_string(),
+    },
+    title: Some("notes.txt - Text Editor".to_string()),
+    app_name: Some("gnome-text-editor".to_string()),
+    app_bundle_id: Some("org.gnome.TextEditor".to_string()),
+    process_id: Some(42),
+    frame: Rect::new(0.0, 0.0, 500.0, 400.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+  let selector = SelectWindow::main_visible().owned_by(auv_driver_common::App::bundle_id("com.google.Chrome"));
+  let error = resolve_from_windows(std::slice::from_ref(&editor), &selector).unwrap_err();
+  assert_eq!(error.to_string(), "application \"com.google.Chrome\" (visible applications: org.gnome.TextEditor) was not found");
+  // The executable name is not an application id on Linux.
+  let by_executable = SelectWindow::main_visible().owned_by(auv_driver_common::App::bundle_id("gnome-text-editor"));
+  assert!(resolve_from_windows(&[editor], &by_executable).is_err());
+}
