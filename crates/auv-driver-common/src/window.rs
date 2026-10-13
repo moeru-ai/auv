@@ -6,6 +6,7 @@ use crate::{
   error::{DriverError, DriverResult},
   geometry::{CoordinateSpace, Point, Rect, Size},
   input::DisturbanceLevel,
+  selector::{AppSelector, TextMatcher},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -34,6 +35,66 @@ pub fn find_window(windows: impl IntoIterator<Item = Window>, id: &str) -> Drive
   windows.into_iter().find(|window| window.reference.id == id).ok_or_else(|| DriverError::NotFound {
     target: format!("window:{id}"),
   })
+}
+
+/// Whether `window` belongs to the application a caller named with an
+/// application id (`--target app:<id>`).
+///
+/// The id is compared with the window's application id when it reports one
+/// (a macOS bundle id, a Linux AT-SPI or GTK application id), and with its
+/// application name otherwise or when that does not match, ignoring case and
+/// a `.exe` suffix. Windows windows carry no application id
+/// (`TODO(windows-application-id)`), and callers name Linux applications by
+/// executable as often as by id (`gnome-text-editor` for
+/// `org.gnome.TextEditor`).
+pub fn matches_application_id(window: &Window, id: &TextMatcher) -> bool {
+  let matches = |value: &str| match id {
+    TextMatcher::Exact(expected) => {
+      value.eq_ignore_ascii_case(expected) || without_exe_suffix(value).eq_ignore_ascii_case(without_exe_suffix(expected))
+    }
+    TextMatcher::Contains(needle) => value.to_lowercase().contains(&needle.to_lowercase()),
+  };
+  window.app_bundle_id.as_deref().is_some_and(matches) || window.app_name.as_deref().is_some_and(matches)
+}
+
+fn without_exe_suffix(value: &str) -> &str {
+  match value.len().checked_sub(4) {
+    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
+    _ => value,
+  }
+}
+
+/// A `NotFound` for an application selector that lists the applications
+/// owning visible windows, so a caller that guessed an id (`com.google.Chrome`
+/// on Linux, `notepad` for a packaged app) can retry without another
+/// `window.list` round trip.
+// NOTICE(app-not-found-hint): `DriverError::NotFound` has only a target, so the
+// hint rides in it. Move it to a structured recovery field if NotFound gains one.
+pub fn application_not_found(selector: &AppSelector, windows: &[Window]) -> DriverError {
+  let requested = [&selector.bundle, &selector.name]
+    .into_iter()
+    .flatten()
+    .map(|matcher| match matcher {
+      TextMatcher::Exact(text) | TextMatcher::Contains(text) => text.as_str(),
+    })
+    .collect::<Vec<_>>()
+    .join(" ");
+  let mut visible = windows
+    .iter()
+    .filter(|window| window.is_visible)
+    .filter_map(|window| window.app_bundle_id.as_deref().or(window.app_name.as_deref()))
+    .filter(|id| !id.trim().is_empty())
+    .collect::<Vec<_>>();
+  visible.sort_unstable_by_key(|id| id.to_lowercase());
+  visible.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+  let hint = if visible.is_empty() {
+    "no visible application windows".to_string()
+  } else {
+    format!("visible applications: {}", visible.join(", "))
+  };
+  DriverError::NotFound {
+    target: format!("application {requested:?} ({hint})"),
+  }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

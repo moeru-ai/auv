@@ -117,12 +117,31 @@ impl AppLiveness {
 ///
 /// `Unknown` keeps the pre-existing wording, which is all that can be said for
 /// a selector that carries no bundle id.
-pub(crate) fn app_resolution_message(selector_raw: &str, liveness: AppLiveness) -> String {
+///
+/// When the application is not running or unknown, the message also lists the
+/// bundle ids that own visible windows, so a caller that guessed an id can
+/// retry without another `window.list` round trip.
+pub(crate) fn app_resolution_message(selector_raw: &str, liveness: AppLiveness, snapshot: &ObservedWindowSnapshot) -> String {
+  let visible = || {
+    let mut ids = snapshot
+      .windows
+      .iter()
+      .filter(|window| window.layer == 0 && !window.owner_bundle_id.trim().is_empty())
+      .map(|window| window.owner_bundle_id.as_str())
+      .collect::<Vec<_>>();
+    ids.sort_unstable_by_key(|id| id.to_lowercase());
+    ids.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    if ids.is_empty() {
+      "no visible application windows".to_string()
+    } else {
+      format!("visible applications: {}", ids.join(", "))
+    }
+  };
   match liveness {
-    AppLiveness::NotRunning => format!("application {selector_raw:?} (not running)"),
+    AppLiveness::NotRunning => format!("application {selector_raw:?} (not running; {})", visible()),
     AppLiveness::Running => format!("application {selector_raw:?} (running, but resolved no visible window)"),
     AppLiveness::MultipleInstances => format!("application {selector_raw:?} (multiple running instances; select a window)"),
-    AppLiveness::Unknown => format!("visible application {selector_raw:?}"),
+    AppLiveness::Unknown => format!("visible application {selector_raw:?} ({})", visible()),
   }
 }
 

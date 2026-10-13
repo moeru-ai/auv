@@ -268,7 +268,7 @@ impl WindowApi<'_> {
               .as_deref()
               .map(|bundle_id| AppLiveness::from_probe(crate::native::window::running_application_pid(bundle_id)))
               .unwrap_or(AppLiveness::Unknown);
-            not_found(app_resolution_message(&app_selector, liveness))
+            not_found(app_resolution_message(&app_selector, liveness, &snapshot))
           })?;
           snapshot = filtered_snapshot;
           resolved_app

@@ -148,3 +148,32 @@ fn bundle_selector_never_matches_on_windows() {
 
   assert!(resolve_from_windows(&windows, &selector).is_err());
 }
+
+// ROOT CAUSE:
+//
+// If a caller targeted an application with `--target app:<id>`, the CLI built
+// a bundle-id selector, and Windows windows carry no bundle id, so every such
+// command failed with a bare "main visible window was not found", even for a
+// running `Notepad.exe`.
+//
+// The fix matches the id against the executable name as well (ignoring case
+// and `.exe`), and a miss lists the visible applications.
+#[test]
+fn application_id_matches_the_executable_and_a_miss_lists_visible_applications() {
+  let windows = vec![
+    window("1", Some("notes.txt - Notepad"), Some("Notepad.exe"), 10, Rect::new(0.0, 0.0, 800.0, 600.0)),
+    window("2", Some("Edge"), Some("msedge.exe"), 11, Rect::new(0.0, 0.0, 800.0, 600.0)),
+  ];
+  for id in ["notepad", "notepad.exe", "Notepad.exe"] {
+    let selector = WindowQuery::main_visible().owned_by(App::bundle_id(id));
+    assert_eq!(resolve_from_windows(&windows, &selector).unwrap().reference.id, "1", "{id}");
+  }
+  let error = resolve_from_windows(&windows, &WindowQuery::main_visible().owned_by(App::bundle_id("com.google.Chrome"))).unwrap_err();
+  assert_eq!(
+    error.to_string(),
+    auv_driver_common::error::DriverError::NotFound {
+      target: "application \"com.google.Chrome\" (visible applications: msedge.exe, Notepad.exe)".into()
+    }
+    .to_string()
+  );
+}

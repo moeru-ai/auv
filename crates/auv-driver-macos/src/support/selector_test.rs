@@ -44,18 +44,25 @@ fn capture_window_candidate_still_requires_fully_contained_default_window() {
 // actually observed.
 #[test]
 fn app_resolution_failure_names_the_observed_liveness() {
-  assert_eq!(app_resolution_message("com.apple.Preview", AppLiveness::NotRunning), "application \"com.apple.Preview\" (not running)");
+  let snapshot = sample_snapshot_with_partial_main_window();
   assert_eq!(
-    app_resolution_message("com.apple.Preview", AppLiveness::Running),
+    app_resolution_message("com.apple.Preview", AppLiveness::NotRunning, &snapshot),
+    "application \"com.apple.Preview\" (not running; visible applications: com.example.music)"
+  );
+  assert_eq!(
+    app_resolution_message("com.apple.Preview", AppLiveness::Running, &snapshot),
     "application \"com.apple.Preview\" (running, but resolved no visible window)"
   );
   assert_eq!(
-    app_resolution_message("com.apple.Preview", AppLiveness::MultipleInstances),
+    app_resolution_message("com.apple.Preview", AppLiveness::MultipleInstances, &snapshot),
     "application \"com.apple.Preview\" (multiple running instances; select a window)"
   );
   // A selector without a bundle id cannot be probed, so the message stays as it
   // was rather than claiming a liveness nobody observed.
-  assert_eq!(app_resolution_message("Preview", AppLiveness::Unknown), "visible application \"Preview\"");
+  assert_eq!(
+    app_resolution_message("Preview", AppLiveness::Unknown, &snapshot),
+    "visible application \"Preview\" (visible applications: com.example.music)"
+  );
 }
 
 // `NotFound` renders as `"{target} was not found"`, so the reason has to read as
@@ -66,14 +73,24 @@ fn app_resolution_failure_names_the_observed_liveness() {
 fn resolution_reason_reads_as_a_qualifier_after_the_shared_suffix() {
   let rendered = |liveness| {
     DriverError::NotFound {
-      target: app_resolution_message("com.apple.Preview", liveness),
+      target: app_resolution_message(
+        "com.apple.Preview",
+        liveness,
+        &ObservedWindowSnapshot {
+          windows: Vec::new(),
+          ..sample_snapshot_with_partial_main_window()
+        },
+      ),
     }
     .to_string()
   };
 
-  assert_eq!(rendered(AppLiveness::NotRunning), "application \"com.apple.Preview\" (not running) was not found");
+  assert_eq!(
+    rendered(AppLiveness::NotRunning),
+    "application \"com.apple.Preview\" (not running; no visible application windows) was not found"
+  );
   assert_eq!(rendered(AppLiveness::Running), "application \"com.apple.Preview\" (running, but resolved no visible window) was not found");
-  assert_eq!(rendered(AppLiveness::Unknown), "visible application \"com.apple.Preview\" was not found");
+  assert_eq!(rendered(AppLiveness::Unknown), "visible application \"com.apple.Preview\" (no visible application windows) was not found");
 }
 
 #[test]
