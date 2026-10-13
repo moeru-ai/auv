@@ -320,9 +320,10 @@ async fn live_windows_runner_media_control_parity() {
     .expect("connect to local runner media service");
   let mut client = MediaControlServiceClient::new(channel);
 
-  let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-  let repo_root = manifest_dir.ancestors().nth(2).unwrap_or(&manifest_dir);
-  let jsonl_path = repo_root.join("docs/ai/references/driver/2026-10-13-windows-runner-mediacontrol.jsonl");
+  // NOTICE: records go to the temp dir so a rerun cannot overwrite the committed
+  // evidence in docs/ai/references/driver/; copy the file there after review.
+  let jsonl_path = std::env::temp_dir().join("auv-windows-runner-mediacontrol.jsonl");
+  println!("Writing records to {}", jsonl_path.display());
   let mut jsonl_file =
     std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&jsonl_path).expect("open jsonl output file");
 

@@ -34,7 +34,8 @@ mod windows_impl {
   pub struct SettleMeasurementRecord {
     pub timestamp: String,
     pub surface: String,
-    pub window_title: String,
+    // NOTICE: no window title field. The QQ Music title is the playing track
+    // and artist, which is the user's own music and must not reach evidence.
     pub window_id: String,
     pub iteration: usize,
     pub cold: bool,
@@ -133,7 +134,9 @@ mod windows_impl {
     ensure_input_desktop();
 
     let mut runs_per_surface: usize = 55;
-    let mut output_path = PathBuf::from("docs/ai/references/driver/2026-10-12-windows-settle-timing.jsonl");
+    // NOTICE: the default output is the temp dir so a rerun cannot overwrite the
+    // committed evidence in docs/ai/references/driver/; pass --output to choose.
+    let mut output_path = env::temp_dir().join("auv-windows-settle-timing.jsonl");
 
     let args: Vec<String> = env::args().collect();
     let mut i = 1;
@@ -162,6 +165,10 @@ mod windows_impl {
     let session = WindowsDriver::new().open_local()?;
     let all_windows = list_windows()?;
 
+    // TODO(windows-settle-receiver): both surfaces are the user's own windows, so
+    // a run scrolls their playlist and Downloads folder. Replace them with a
+    // harness-owned scroll receiver before the next run; deferred because this
+    // change only stops the harness recording titles and overwriting evidence.
     let targets = [
       TargetSurface {
         name: "qqmusic",
@@ -203,10 +210,9 @@ mod windows_impl {
       };
 
       println!(
-        "Found window: REF {} [{}], Title: '{}', Frame: {}x{} at {},{}",
+        "Found window: REF {} [{}], Frame: {}x{} at {},{}",
         window.reference.id,
         window.app_name.as_deref().unwrap_or("?"),
-        window.title.as_deref().unwrap_or(""),
         window.frame.size.width,
         window.frame.size.height,
         window.frame.origin.x,
@@ -316,7 +322,6 @@ mod windows_impl {
         let record = SettleMeasurementRecord {
           timestamp: chrono_now_iso(),
           surface: target.name.to_string(),
-          window_title: window.title.as_deref().unwrap_or("").to_string(),
           window_id: window.reference.id.clone(),
           iteration: iter,
           cold: is_cold,

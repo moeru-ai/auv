@@ -5,7 +5,6 @@
 use std::{
   fs::OpenOptions,
   io::Write,
-  path::PathBuf,
   sync::{LazyLock, Mutex, mpsc},
   time::{Duration, Instant},
 };
@@ -123,11 +122,14 @@ fn create_surface(title: &str, x: i32, y: i32, width: i32, height: i32, color_bg
   }
 }
 
+/// Formats a window handle for the evidence records. Only test-owned surfaces
+/// carry their title: any other window belongs to the user, and its title
+/// (a browser tab, a game, a playing track) must not reach committed evidence.
 fn hwnd_format(hwnd: HWND) -> String {
-  let mut fg_title_buf = [0u16; 256];
-  let title_len = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut fg_title_buf) };
-  let fg_title = String::from_utf16_lossy(&fg_title_buf[..title_len as usize]);
-  format!("0x{:x} ('{}')", hwnd.0 as usize, fg_title)
+  match SURFACES.lock().unwrap().get(&(hwnd.0 as isize)) {
+    Some(title) => format!("0x{:x} ('{title}')", hwnd.0 as usize),
+    None => format!("0x{:x} (not a test surface)", hwnd.0 as usize),
+  }
 }
 
 #[test]
@@ -141,9 +143,9 @@ fn live_app_management_parity_evaluation() {
   println!("\n=== Starting Windows App Management Parity Live Evaluation (#211) ===");
 
   let session = WindowsDriver::new().open_local().expect("create driver session");
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-  let repo_root = manifest_dir.ancestors().nth(2).unwrap_or(&manifest_dir);
-  let jsonl_path = repo_root.join("docs/ai/references/driver/2026-10-13-windows-app-management.jsonl");
+  // NOTICE: records go to the temp dir so a rerun cannot overwrite the committed
+  // evidence in docs/ai/references/driver/; copy the file there after review.
+  let jsonl_path = std::env::temp_dir().join("auv-windows-app-management.jsonl");
   let mut jsonl_file = OpenOptions::new().create(true).write(true).truncate(true).open(&jsonl_path).expect("open jsonl output file");
 
   let mut records = Vec::new();
@@ -361,16 +363,7 @@ fn live_app_management_parity_evaluation() {
 
   let iconic_after_6 = unsafe { IsIconic(hwnd_b) }.as_bool();
   let fg_after_6 = unsafe { GetForegroundWindow() };
-  let mut fg_title_buf = [0u16; 256];
-  let title_len = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(fg_after_6, &mut fg_title_buf) };
-  let fg_title = String::from_utf16_lossy(&fg_title_buf[..title_len as usize]);
-  println!(
-    "  Trial 6 After: IsIconic(B)={}, FG={}, Title='{}', Latency={:.2}ms",
-    iconic_after_6,
-    hwnd_format(fg_after_6),
-    fg_title,
-    dur_6.as_secs_f64() * 1000.0
-  );
+  println!("  Trial 6 After: IsIconic(B)={}, FG={}, Latency={:.2}ms", iconic_after_6, hwnd_format(fg_after_6), dur_6.as_secs_f64() * 1000.0);
   assert!(act_res_6.is_ok());
   let restored_6 = iconic_before_6 && !iconic_after_6;
 
