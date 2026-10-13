@@ -205,7 +205,7 @@ mod native {
   };
   use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
   };
   use windows::core::PWSTR;
 
@@ -287,10 +287,16 @@ mod native {
     unsafe {
       // NOTICE: SW_RESTORE also turns a maximized window back into a normal one,
       // which moved the window under a click point computed from its frame
-      // before activation. Only a minimized window needs restoring.
-      if IsIconic(hwnd).as_bool() {
-        let _ = ShowWindow(hwnd, SW_RESTORE);
-      }
+      // before activation. Only a minimized window needs restoring; SW_SHOW
+      // keeps the activate-and-show side effect at the current size.
+      let _ = ShowWindow(
+        hwnd,
+        if IsIconic(hwnd).as_bool() {
+          SW_RESTORE
+        } else {
+          SW_SHOW
+        },
+      );
       let _ = BringWindowToTop(hwnd);
     }
     let activated = unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd;
