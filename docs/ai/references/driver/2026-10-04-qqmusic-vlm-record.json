@@ -24,8 +24,8 @@
       "perception": "SMTC session metadata query and CoreAudio process volume readback",
       "result": {
         "app_id": "QQMusic.exe",
-        "title": "好吧",
-        "artist": "拂言",
+        "title": "[track 1]",
+        "artist": "[artist 1]",
         "status": "Playing",
         "volume": 0.4
       }
@@ -49,7 +49,7 @@
       "perception": "SMTC MediaProperties Title polling readback",
       "result": {
         "success": true,
-        "previous_title": "好吧",
+        "previous_title": "[track 1]",
         "title_changed": true
       }
     },
