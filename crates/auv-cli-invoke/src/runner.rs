@@ -33,8 +33,25 @@ where
 }
 
 pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
-  if let Some(command) = crate::default_registry().resolve(&input.command_id) {
+  {
+    let registry = crate::default_registry();
+    // Every adapter arm below is a core command, so anything else has no Runner route.
+    let Some(command) = registry.resolve(&input.command_id) else {
+      return Err(crate::InvokeFailure::new(
+        crate::FailureCode::Unsupported,
+        format!("{} is not a core command, so a selected Runner cannot run it", input.command_id),
+      ));
+    };
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
+    // TODO(invoke-support-runner-route): a fixture command processes data the caller supplies and
+    // touches no desktop, so it could run locally inside the selected Run instead of being refused.
+    // Whether it should is part of the Runner route's support, which needs an owner decision.
+    if command.role == crate::CommandRole::Fixture {
+      return Err(crate::InvokeFailure::new(
+        crate::FailureCode::Unsupported,
+        format!("{} has no Runner route; run it without a selected Run or Device", input.command_id),
+      ));
+    }
   }
 
   match input.command_id.as_str() {
@@ -437,7 +454,13 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       }
       .await
     }
-    _ => unreachable!("typed Runner adapter was selected above"),
+    // A core command added without an adapter arm lands here; refuse it rather than panic.
+    _ => {
+      return Err(crate::InvokeFailure::new(
+        crate::FailureCode::Unsupported,
+        format!("{command_id} has no Runner adapter; run it without a selected Run or Device"),
+      ));
+    }
   };
   result.map_err(Into::into)
 }

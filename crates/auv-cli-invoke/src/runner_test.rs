@@ -358,3 +358,32 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
     }
   );
 }
+
+// ROOT CAUSE:
+//
+// If a command without a Runner adapter ran with a selected Run or Device (the fixture commands
+// `scan.frame` and `scan.coverage`, or an MCP adapter that is not a core command), the selected
+// Runner route connected to the daemon and then reached `unreachable!` in its command match,
+// which panicked the frontend.
+//
+// Before the fix, nothing refused those commands before the match. The fix refuses them as
+// `unsupported` before any daemon resolution.
+#[tokio::test]
+async fn selected_commands_without_a_runner_route_are_refused_before_daemon_resolution() {
+  for command_id in ["scan.frame", "scan.coverage", "example.notACoreCommand"] {
+    let error = invoke(
+      crate::InvokeCommandInput {
+        command_id: command_id.to_string(),
+        target: None,
+        inputs: Default::default(),
+        typed_args: None,
+        dry_run: false,
+        cancellation: Default::default(),
+      },
+      Default::default(),
+    )
+    .await
+    .expect_err("a command without a Runner route must be refused");
+    assert_eq!(error.code, crate::FailureCode::Unsupported, "{command_id}: {}", error.message);
+  }
+}
