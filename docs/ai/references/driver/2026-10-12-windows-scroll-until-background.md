@@ -1,5 +1,14 @@
 # Windows background scroll and `scroll_until` on QQ Music
 
+> **Migration (2026-10-13):** a scroll-until stop where no step moved the viewport is now
+> `no_visual_progress_from_start`, not `end_by_no_visual_progress`. The records below predate the
+> split. Every 2-step run in this note stopped on the default two no-motion confirmations, so no
+> step counted as motion and each would now get the new reason: `01a12fe9-d357`, `01a12fd9-6428`,
+> the Steam friends list run and the runs under "Applications that showed no motion". The records
+> do not state the confirmation count; the reading assumes the default. The 34- and 48-step runs
+> moved first and keep `end_by_no_visual_progress`. See
+> [scroll until](../../../TERMS_AND_CONCEPTS.md#scroll-until).
+
 Status: evidence note for the Windows scroll work in #348
 ([#211](https://github.com/moeru-ai/auv/issues/211)). It replaces the six slice documents that
 #348 merged at the repository root (`settle-timing.md`, `scroll-until-qqmusic-textvisible.md`,
