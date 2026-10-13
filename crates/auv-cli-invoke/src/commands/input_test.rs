@@ -283,6 +283,33 @@ fn click_point_rejects_incompatible_target_and_coordinate_basis() {
   assert!(error.contains("incompatible"), "{error}");
 }
 
+// ROOT CAUSE:
+//
+// If an OSWorld agent read a point from `display.capture` and clicked it with
+// an app target, the default window basis shifted the click by the window
+// origin (+70,+27 on LibreOffice), and `--relative-to screen` with a target was
+// rejected, so the agent had no way to say "this screen point, in this app".
+//
+// The fix keeps the window default and accepts screen points with app and
+// window targets; they map into the window before delivery.
+#[test]
+fn screen_points_with_an_app_target_map_into_the_window() {
+  let app = crate::ExecutionTarget::Application {
+    id: "libreoffice-impress".to_string(),
+  };
+  assert_eq!(point_basis("input.clickPoint", Some(&app), None, false, false, false).unwrap(), RelativeToArg::Window);
+  assert_eq!(point_basis("input.clickPoint", Some(&app), Some("screen"), false, true, false).unwrap(), RelativeToArg::Screen);
+  assert!(point_basis("input.clickPoint", Some(&app), Some("screen"), true, false, false).is_err(), "normalized needs a window basis");
+
+  let frame = auv_driver::Rect::new(70.0, 27.0, 1850.0, 1053.0);
+  assert_eq!(
+    screen_point_in_window("input.clickPoint", auv_driver::Point::new(486.0, 77.0), frame).unwrap(),
+    auv_driver::Point::new(416.0, 50.0)
+  );
+  let outside = screen_point_in_window("input.clickPoint", auv_driver::Point::new(20.0, 77.0), frame).unwrap_err();
+  assert!(outside.contains("outside the target window"), "{outside}");
+}
+
 fn test_window() -> auv_driver::Window {
   use auv_driver::geometry::{CoordinateSpace, Point, Rect, Size};
   use auv_driver::window::{Window, WindowRef};
@@ -885,7 +912,7 @@ fn drag_input_policy_requires_window_basis_and_reaches_the_plan() {
   let mut foreground = points.to_vec();
   foreground.push(("input-policy", "foreground-preferred"));
   assert_eq!(plan(&foreground, window).unwrap().policy, Some(auv_driver::InputPolicy::ForegroundPreferred));
-  assert_eq!(plan(&foreground, None).unwrap_err(), "input.drag --input-policy is valid only with --relative-to window");
+  assert_eq!(plan(&foreground, None).unwrap_err(), "input.drag --input-policy is valid only with an app: or window: target");
 }
 
 #[test]

@@ -649,7 +649,7 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
+  after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 640 360 --target app:com.apple.TextEdit --relative-to screen\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
 )]
 struct ClickPointArgs {
   /// Mouse button: left, right, or middle. Defaults to left.
@@ -660,7 +660,7 @@ struct ClickPointArgs {
   x: f64,
   /// Y coordinate in the selected coordinate basis.
   y: f64,
-  /// Coordinate basis. Defaults from --target: screen, window, or display.
+  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a point read from display.capture.
   #[arg(long, value_enum)]
   #[serde(rename = "relative-to", default)]
   relative_to: Option<RelativeToArg>,
@@ -671,7 +671,7 @@ struct ClickPointArgs {
   /// Window title text used with an app target.
   #[arg(long, value_name = "TEXT")]
   title: Option<String>,
-  /// Window input delivery policy. Valid only with --relative-to window.
+  /// Window input delivery policy. Valid only with an app or window target.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -774,6 +774,30 @@ impl ClickPointArgs {
   }
 }
 
+/// Whether `target` names an application or window. With such a target,
+/// `--relative-to screen` points (for example read from `display.capture`) go
+/// to that window: it is resolved and activated like a window-relative point.
+pub(crate) fn targets_window(target: Option<&crate::ExecutionTarget>) -> bool {
+  matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }))
+}
+
+/// Maps a screen point given with an app or window target into that window,
+/// rejecting points outside its frame.
+pub(crate) fn screen_point_in_window(
+  command_id: &str,
+  point: auv_driver::Point,
+  frame: auv_driver::Rect,
+) -> Result<auv_driver::Point, String> {
+  let local = auv_driver::Point::new(point.x - frame.origin.x, point.y - frame.origin.y);
+  if !(0.0..=frame.size.width).contains(&local.x) || !(0.0..=frame.size.height).contains(&local.y) {
+    return Err(format!(
+      "{command_id} screen point {},{} is outside the target window, whose frame is {},{} {}x{}",
+      point.x, point.y, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height
+    ));
+  }
+  Ok(local)
+}
+
 /// Resolves and validates the coordinate basis shared by point-based input commands.
 pub(crate) fn point_basis(
   command_id: &str,
@@ -796,7 +820,10 @@ pub(crate) fn point_basis(
   };
   match (target, basis) {
     (None, RelativeToArg::Screen)
-    | (Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }), RelativeToArg::Window)
+    | (
+      Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }),
+      RelativeToArg::Window | RelativeToArg::Screen,
+    )
     | (Some(crate::ExecutionTarget::Display { .. }), RelativeToArg::Display) => {}
     (None, RelativeToArg::Window) => return Err(format!("{command_id} --relative-to window requires --target app: or window:")),
     (None, RelativeToArg::Display) => return Err(format!("{command_id} --relative-to display requires --target display:")),
@@ -805,8 +832,8 @@ pub(crate) fn point_basis(
   if normalized && basis == RelativeToArg::Screen {
     return Err(format!("{command_id} --normalized is valid only relative to a window or display"));
   }
-  if has_input_policy && basis != RelativeToArg::Window {
-    return Err(format!("{command_id} --input-policy is valid only with --relative-to window"));
+  if has_input_policy && basis != RelativeToArg::Window && !(basis == RelativeToArg::Screen && targets_window(target)) {
+    return Err(format!("{command_id} --input-policy is valid only with an app: or window: target"));
   }
   if has_title && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
     return Err(format!("{command_id} --title requires --target app:"));
@@ -841,7 +868,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
     match basis {
-      RelativeToArg::Screen => {
+      RelativeToArg::Screen if !targets_window(input.target.as_ref()) => {
         let screen_point = ScreenPoint::new(args.x, args.y);
         let action = if input.dry_run {
           None
@@ -863,7 +890,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           action,
         })
       }
-      RelativeToArg::Window => {
+      RelativeToArg::Window | RelativeToArg::Screen => {
         let session = auv::local::open().map_err(|error| error.to_string())?;
         let target = input.target.as_ref().expect("window-relative target validated");
         let window = match target {
@@ -875,7 +902,11 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           }
           crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
         };
-        let point = resolve_local_point("input.clickPoint", args.x, args.y, args.normalized, window.frame.size, "window")?;
+        let point = if basis == RelativeToArg::Screen {
+          screen_point_in_window("input.clickPoint", auv_driver::Point::new(args.x, args.y), window.frame)?
+        } else {
+          resolve_local_point("input.clickPoint", args.x, args.y, args.normalized, window.frame.size, "window")?
+        };
         let window_point = auv_driver::WindowPoint::new(point.x, point.y);
         let screen_point = ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y);
         let action = if input.dry_run {
@@ -997,7 +1028,7 @@ struct DragArgs {
   #[arg(long, default_value = "left", value_parser = ["left", "right", "middle"])]
   #[serde(default = "default_click_button")]
   button: String,
-  /// Coordinate basis. Defaults from --target: screen, window, or display.
+  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a point read from display.capture.
   #[arg(long, value_enum)]
   #[serde(rename = "relative-to", default)]
   relative_to: Option<RelativeToArg>,
@@ -1008,7 +1039,7 @@ struct DragArgs {
   /// Window title text used with an app target.
   #[arg(long, value_name = "TEXT")]
   title: Option<String>,
-  /// Window input delivery policy. Valid only with --relative-to window.
+  /// Window input delivery policy. Valid only with an app or window target.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -1089,6 +1120,19 @@ impl DragPlan {
     ))
   }
 
+  /// Screen endpoints inside a target window: screen-basis points as given,
+  /// window-basis points mapped through the frame.
+  pub(crate) fn window_screen_points(&self, frame: auv_driver::Rect) -> Result<(ScreenPoint, ScreenPoint), crate::InvokeFailure> {
+    if self.basis != RelativeToArg::Screen {
+      return self.screen_points(frame, "window");
+    }
+    for point in [self.start, self.end] {
+      screen_point_in_window("input.drag", point, frame)
+        .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+    }
+    Ok((ScreenPoint::new(self.start.x, self.start.y), ScreenPoint::new(self.end.x, self.end.y)))
+  }
+
   /// Builds one straight drag path in screen coordinates. Window-targeted
   /// delivery also takes screen points; the driver stamps window-local positions.
   pub(crate) fn movement(&self, target: auv_driver::InputTarget, start: ScreenPoint, end: ScreenPoint) -> auv_driver::MoveMouseRequest {
@@ -1167,22 +1211,23 @@ async fn drag(input: InvokeCommandInput, args: DragArgs) -> crate::InvokeExecuti
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::InvokeExecutionResult {
   // Screen-relative validation needs no target lookup, so its dry run stays hermetic.
+  let window_target = targets_window(input.target.as_ref());
   let session = match (plan.basis, input.dry_run) {
-    (RelativeToArg::Screen, true) => None,
+    (RelativeToArg::Screen, true) if !window_target => None,
     _ => Some(auv::local::open()?),
   };
   let mut result = match plan.basis {
-    RelativeToArg::Screen => {
+    RelativeToArg::Screen if !window_target => {
       DragResult::planned(&plan, ScreenPoint::new(plan.start.x, plan.start.y), ScreenPoint::new(plan.end.x, plan.end.y))
     }
-    RelativeToArg::Window => {
+    RelativeToArg::Window | RelativeToArg::Screen => {
       let session = session.as_ref().expect("window resolution opens a session");
       let window = match input.target.as_ref().expect("window-relative target validated") {
         crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
         crate::ExecutionTarget::Window { id } => auv_driver::find_window(session.window().list()?, id)?,
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
-      let (start, end) = plan.screen_points(window.frame, "window")?;
+      let (start, end) = plan.window_screen_points(window.frame)?;
       let mut result = DragResult::planned(&plan, start, end);
       result.window = Some(window);
       result

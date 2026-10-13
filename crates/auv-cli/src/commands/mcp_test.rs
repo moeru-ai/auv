@@ -501,6 +501,9 @@ async fn invoke_description_lists_inputs_and_example_calls() {
   // OSWorld agents on Linux copied the macOS example id `com.google.Chrome`
   // into most Chrome episodes; the preamble says ids differ by platform.
   assert!(description.contains("run `window.list` instead of guessing"), "{description}");
+  // The same agents clicked display.capture points with an app target, which
+  // the window basis shifted by the window origin.
+  assert!(description.contains("A point read from a `display.capture` image is a screen point"), "{description}");
   assert!(description.contains(r#"  example: {"command_id":"input.pressKeys","inputs":{"keys":"[\"cmd\",\"shift\",\"p\"]"}}"#), "{description}");
   let schema = serde_json::to_value(&invoke.input_schema).unwrap();
   let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "screen.waitForText").unwrap();

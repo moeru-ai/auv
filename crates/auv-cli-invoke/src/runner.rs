@@ -504,7 +504,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
   let requested_point = requested.point();
   let click_options = selected_click_options(input)?;
   match basis {
-    crate::commands::input::RelativeToArg::Screen => {
+    crate::commands::input::RelativeToArg::Screen if !crate::commands::input::targets_window(input.target.as_ref()) => {
       let response =
         runner.input().click(&requested, click_options).await.map_err(|status| format!("InputService/ClickPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -518,7 +518,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
         action: Some(response.action),
       })
     }
-    crate::commands::input::RelativeToArg::Window => {
+    crate::commands::input::RelativeToArg::Window | crate::commands::input::RelativeToArg::Screen => {
       let windows = runner.windows();
       let resolved = match input.target.as_ref().expect("window-relative target validated") {
         crate::ExecutionTarget::Application { .. } => {
@@ -530,14 +530,18 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let window = resolved.resource();
-      let point = crate::commands::input::resolve_local_point(
-        "input.clickPoint",
-        requested_point.x,
-        requested_point.y,
-        normalized,
-        window.frame.size,
-        "window",
-      )?;
+      let point = if basis == crate::commands::input::RelativeToArg::Screen {
+        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)?
+      } else {
+        crate::commands::input::resolve_local_point(
+          "input.clickPoint",
+          requested_point.x,
+          requested_point.y,
+          normalized,
+          window.frame.size,
+          "window",
+        )?
+      };
       let response = resolved
         .click(auv_driver::WindowPoint::new(point.x, point.y), click_options)
         .await
@@ -890,19 +894,19 @@ async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
 
   let (mut result, target) = match plan.basis {
-    RelativeToArg::Screen => {
+    RelativeToArg::Screen if !crate::commands::input::targets_window(input.target.as_ref()) => {
       let start = auv_driver::ScreenPoint::new(plan.start.x, plan.start.y);
       let end = auv_driver::ScreenPoint::new(plan.end.x, plan.end.y);
       (DragResult::planned(&plan, start, end), auv_driver::InputTarget::Foreground)
     }
-    RelativeToArg::Window => {
+    RelativeToArg::Window | RelativeToArg::Screen => {
       let windows = runner.windows();
       let window = match input.target.as_ref().expect("window-relative target validated") {
         crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?.resource().clone(),
         crate::ExecutionTarget::Window { id } => windows.get(id).await?.resource().clone(),
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
-      let (start, end) = plan.screen_points(window.frame, "window")?;
+      let (start, end) = plan.window_screen_points(window.frame)?;
       let mut result = DragResult::planned(&plan, start, end);
       result.window = Some(window.clone());
       (result, auv_driver::InputTarget::Window(window))
