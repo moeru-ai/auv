@@ -1960,6 +1960,10 @@ fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<Reg
   let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_for_global_region(&targets, selector, region)?;
+  // The backend addresses whole capture units, so cover a fractional region
+  // (an OCR box, a layout rect) with whole units inside the display, and
+  // report the covered rect as the capture bounds.
+  let region = region.round_out().intersect(target.display.frame).ok_or_else(|| not_found("display containing region"))?;
   let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
   let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
   let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;

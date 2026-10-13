@@ -90,3 +90,17 @@ fn region_takes_two_of_start_end_and_size_per_axis_with_percentages() {
   });
   assert!(over.is_err(), "all three on one axis over-constrain it");
 }
+
+// ROOT CAUSE:
+//
+// If screen.captureRegion received an OCR box (385.5, 152.5, 160.5 x 13.5),
+// the macOS and Windows capture backends failed with "region x must be an
+// integer in backend capture units", because they address whole units.
+//
+// The fix covers the region with whole units instead of rejecting it.
+#[test]
+fn round_out_covers_a_fractional_rect_with_whole_units() {
+  assert_eq!(Rect::new(385.5, 152.5, 160.5, 13.5).round_out(), Rect::new(385.0, 152.0, 161.0, 14.0));
+  assert_eq!(Rect::new(-0.25, 10.0, 0.5, 2.0).round_out(), Rect::new(-1.0, 10.0, 2.0, 2.0));
+  assert_eq!(Rect::new(4.0, 6.0, 8.0, 2.0).round_out(), Rect::new(4.0, 6.0, 8.0, 2.0));
+}
