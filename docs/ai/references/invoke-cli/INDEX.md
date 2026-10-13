@@ -2,8 +2,9 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **28**
+Count: **29**
 
+- [`2026-10-13-runner-route-support-design.md`](2026-10-13-runner-route-support-design.md) — proposal (not implemented): typed refusals and `runner` support cells for the selected-Runner route; where it differs from the direct cells today
 - [`2026-10-13-windows-parity-consolidation-review.md`](2026-10-13-windows-parity-consolidation-review.md) — owner-adopted review of the Windows #211 slices: one Windows capability matrix with evidence levels, the cell decisions and change set (C1 to C6), evidence that cannot back a claim, the minimized-window rule, the four central principles, and the priority list of missing work
 - [`2026-10-12-windows-screen-and-foreground-commands.md`](2026-10-12-windows-screen-and-foreground-commands.md) — live evidence for the 13 Windows `display.*`, `screen.*` and foreground `input.*` commands that had only a source path; topmost receiver, IME and fade-in findings
 - [`2026-10-11-invoke-command-support.md`](2026-10-11-invoke-command-support.md) — typed per-platform support declared by every invoke command, shown in help and MCP metadata; what the states mean and what the first table found

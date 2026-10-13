@@ -80,7 +80,9 @@ acts on them depends on its toolkit (see the
   confirm its cell, because a dry run proves nothing about support and a live run drives a desktop.
   The macOS and Linux cells were read, not run, in this slice.
 - **Not covered.** A selected Runner's support is a separate route. `TODO(invoke-support-runner-route)`:
-  a second set of cells, after the Runner audit #211 asks for.
+  a second set of cells, after the Runner audit #211 asks for. The
+  [Runner route proposal](2026-10-13-runner-route-support-design.md) records where the route
+  differs from these cells today.
 - **Not generated.** No cell claims more than #211's own status rules allow. The #211 checklist is
   edited by hand from the [coverage audit](2026-10-11-invoke-platform-coverage-audit.md); nothing
   produces it from the registry, so it can fall behind again. The registry is the live answer.
