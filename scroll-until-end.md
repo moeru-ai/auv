@@ -21,8 +21,8 @@ Brief 4 validates `scroll_until` with the `--until end` condition on Windows, pr
 
 | Run Type | Surface / Target | Run ID | Steps | Delivered $\Delta$ | Stop Reason | Last Motion Diff | Final Position Confirmation |
 | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :--- |
-| **Positive End (Tail)** | QQ Music (Lyrics Bottom) | `01a12fde-4f20-773b-9918-cb1906305387` | 48 | $dy = +5760.0$ | `end_by_no_visual_progress` | `0.008357` ($< 0.01$) | **Confirmed**: Concluding lines of 《秋至的春信》 (`送你一个春天吧 / 送你告别的话 / 春枝在秋长大 / 春枝在冬开花`) followed by blank background space. Clamped at tail. |
-| **Positive End (Head)** | QQ Music (Lyrics Top) | `01a12feb-37f3-771a-8fd2-436adcb2d1f3` | 34 | $dy = -4080.0$ | `end_by_no_visual_progress` | `0.000399` ($< 0.01$) | **Confirmed**: Song credits (`编曲：昆仑 / 混音：昆仑 / 封面设计：永遇乐`) and opening verse. Viewport clamped at top $0.0$. |
+| **Positive End (Tail)** | QQ Music (Lyrics Bottom) | `01a12fde-4f20-773b-9918-cb1906305387` | 48 | $dy = +5760.0$ | `end_by_no_visual_progress` | `0.008357` ($< 0.01$) | **Confirmed**: Concluding lines of `[track]` (`[lyric line 5] / [lyric line 6] / [lyric line 7] / [lyric line 8]`) followed by blank background space. Clamped at tail. |
+| **Positive End (Head)** | QQ Music (Lyrics Top) | `01a12feb-37f3-771a-8fd2-436adcb2d1f3` | 34 | $dy = -4080.0$ | `end_by_no_visual_progress` | `0.000399` ($< 0.01$) | **Confirmed**: Song credits (`[credits]`) and opening verse. Viewport clamped at top $0.0$. |
 | **Diagnostic (Budget)** | QQ Music (Mid-Stream Up) | `01a12fea-51a1-75f1-a925-4eb1655c0c16` | 50 | $dy = -6000.0$ | `budget_exhausted` | `0.009393` (active) | **Confirmed**: 50-step budget enforced mid-scroll without hanging; active motion shift $20$ ongoing. |
 | **Diagnostic (Budget)** | QQ Music (Mid-Stream Up) | `01a12fea-c488-7277-9a99-44c42bfbb1f7` | 50 | $dy = -6000.0$ | `budget_exhausted` | `0.009521` (active) | **Confirmed**: Second run identically halts at step 50 budget bound. |
 | **Diagnostic (Region)** | QQ Music (Broad Region) | `01a12fe9-d357-755b-90d1-bf033155081f` | 2 | $dy = -240.0$ | `end_by_no_visual_progress` | `0.009804` ($< 0.01$) | **Analysis**: Broad region `0.4,0.2,0.5,0.6` diluted 1-line diff to $0.98\%$, tripping early stop. Tightened text region `0.52,0.24,0.22,0.50` resolved this cleanly. |
@@ -38,12 +38,12 @@ Brief 4 validates `scroll_until` with the `--until end` condition on Windows, pr
 - **Visual Evidence**:
   - Displays the final lines of the song:
     ```text
-    送你一个春天吧
-    送你告别的话
-    春枝在秋长大
-    春枝在冬开花
+    [lyric line 5]
+    [lyric line 6]
+    [lyric line 7]
+    [lyric line 8]
     ```
-  - Below the final line `春枝在冬开花`, there is completely blank gradient background space.
+  - Below the final line `[lyric line 8]`, there is completely blank gradient background space.
   - Continued scroll steps deliver wheel ticks, but the lyrics view cannot scroll down further; motion diff drops to `0.008357` ($< 0.01$), triggering `EndByNoVisualProgress`.
 
 ### Run 2: Lyrics Head End (`01a12feb-37f3-771a-8fd2-436adcb2d1f3`)
@@ -52,14 +52,12 @@ Brief 4 validates `scroll_until` with the `--until end` condition on Windows, pr
 - **Visual Evidence**:
   - Displays the opening metadata and intro lines:
     ```text
-    秋至的春信 VIP
-    昆仑 / 在与东
+    [track]
+    [artist]
 
-    编曲：昆仑
-    混音：昆仑
-    封面设计：永遇乐
-    让我送你一个春天吧
-    开满热烈的花
+    [credits]
+    [lyric line 9]
+    [lyric line 10]
     ```
   - The scroll position is clamped to the absolute top ($0.0$).
   - Over steps 33 and 34, `normalized_diff = 0.000399`, completing `end_by_no_visual_progress` with 2 consecutive confirmations.

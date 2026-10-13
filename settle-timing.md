@@ -23,7 +23,7 @@ Both surfaces were tested in their natural desktop layout on Windows 11:
 
 1. **Surface 1 (Owner-Selected Anchor)**: **QQ Music** (`QQMusic.exe`)
    - Window ID: `1639628`
-   - Window Title: `秋至的春信 - 昆仑 / 在与东`
+   - Window Title: `[track] - [artist]`
    - Window Frame: `1280x822` at `(446, 344)`
    - Scroll Target Point: `(750.0, 350.0)` (center of lyrics/playlist view)
    - State: Audio playback cleanly paused via `mediaControl.pause` prior to benchmark to ensure zero autonomous pixel changes from playback progress.

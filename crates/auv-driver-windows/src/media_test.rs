@@ -48,8 +48,8 @@ fn test_now_playing_state_serialization() {
     app_id: "QQMusic.exe".to_string(),
     status: MediaPlaybackStatus::Playing,
     track: Some(MediaTrackMetadata {
-      title: "落灯花".to_string(),
-      artist: "漆柚".to_string(),
+      title: "[track]".to_string(),
+      artist: "[artist]".to_string(),
       album_title: "".to_string(),
       album_artist: "".to_string(),
       genres: vec![],
@@ -58,7 +58,7 @@ fn test_now_playing_state_serialization() {
 
   let json = serde_json::to_string(&state).expect("Serialize failed");
   assert!(json.contains("QQMusic.exe"));
-  assert!(json.contains("落灯花"));
+  assert!(json.contains("[track]"));
   assert!(json.contains("Playing"));
 
   let deser: NowPlayingState = serde_json::from_str(&json).expect("Deserialize failed");

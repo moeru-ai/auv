@@ -19,7 +19,7 @@ Brief 5 validates `ScrollUntilStep::Motion` (timed wheel scroll) on Windows via 
 
 ## 2. Test Runs & Quantitative Results
 
-Target: QQ Music (`QQMusic.exe`, HWND `1639628`, Process ID `21772`), Playlist View (`喜欢 - 歌曲 714`), Scroll Point `(500.0, 500.0)`, Region `--region 0.20,0.30,0.70,0.65`, Settle `50ms`, Policy `BackgroundOnly`.
+Target: QQ Music (`QQMusic.exe`, HWND `1639628`, Process ID `21772`), Playlist View (`[playlist]`), Scroll Point `(500.0, 500.0)`, Region `--region 0.20,0.30,0.70,0.65`, Settle `50ms`, Policy `BackgroundOnly`.
 
 | Run | Duration & Easing | Requested $\Delta y$ | Delivered $\Delta y$ | Quantization Error | Emitted Wheel Units | Sub-Steps Dispatched / Planned | Before Frame SHA256 | After Frame SHA256 | Normalized Diff | Viewport Verified |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |

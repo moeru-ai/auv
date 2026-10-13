@@ -22,7 +22,7 @@ Brief 3 validates `scroll_until` with `ScrollUntilCondition::TextVisible` agains
 
 - **Application**: QQ Music (`QQMusic.exe`, PID `21772`)
 - **Window ID**: `1639628`
-- **Window Title**: `秋至的春信 - 昆仑 / 在与东   `
+- **Window Title**: `[track] - [artist]`
 - **Window Frame**: `1280x822` at logical screen origin `(446, 344)`
 - **Surface Layout**:
   - Left pane: Static album art, track information.
@@ -39,49 +39,49 @@ Brief 3 validates `scroll_until` with `ScrollUntilCondition::TextVisible` agains
 ### Table 1: End-to-End `scroll_until` TextVisible Runs
 
 | Run # | Target Query | Steps | Delivered Delta | Stop Reason | Matched Text Line | Matched Bounds (Screen px) | Verified |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1** | `"藏"` | 4 | `dx=0, dy=480` | `text_visible` | `没 关 系 我 已 经 把 它 们 都 藏 在 信 中` | `[1177, 861, 279, 20]` | Yes (exact) |
-| **2** | `"拆"` | 3 | `dx=0, dy=360` | `text_visible` | `拆 开 之 时 南 边 会 吹 来 我 赠 的 风` | `[1177, 837, 280, 20]` | Yes (exact) |
-| **3** | `"送"` | 1 | `dx=0, dy=120` | `text_visible` | `让 我 送 亻 尔 一 个 春 天 吧` | `[1177, 853, 180, 19]` | Yes (exact) |
-| **4** | `"答"` | 4 | `dx=0, dy=480` | `text_visible` | `信 回 答` | `[1218, 881, 79, 19]` | Yes (exact) |
+| :---: | :---: | :---: | :---: | :---: | :--- | :---: | :---: |
+| **1** | `"[token 1]"` | 4 | `dx=0, dy=480` | `text_visible` | `[lyric line 1]` | `[1177, 861, 279, 20]` | Yes (exact) |
+| **2** | `"[token 2]"` | 3 | `dx=0, dy=360` | `text_visible` | `[lyric line 2]` | `[1177, 837, 280, 20]` | Yes (exact) |
+| **3** | `"[token 3]"` | 1 | `dx=0, dy=120` | `text_visible` | `[lyric line 3]` | `[1177, 853, 180, 19]` | Yes (exact) |
+| **4** | `"[token 4]"` | 4 | `dx=0, dy=480` | `text_visible` | `[lyric line 4]` | `[1218, 881, 79, 19]` | Yes (exact) |
 | **5 (Neg)** | `"不存在的目标文本"` | 10 | `dx=0, dy=1200` | `budget_exhausted` | *(none)* | *(none)* | Yes (clean exit) |
-| **6 (Diag)** | `"开满"` (no `--region`) | 2 | `dx=0, dy=240` | `end_by_no_visual_progress` | *(none)* | *(none)* | Diagnosed |
+| **6 (Diag)** | `"[token 5]"` (no `--region`) | 2 | `dx=0, dy=240` | `end_by_no_visual_progress` | *(none)* | *(none)* | Diagnosed |
 
 ---
 
 ## 4. Run Details & Verification Notes
 
-### Run 1: Query `"藏"`
+### Run 1: Query `"[token 1]"`
 - **Run ID**: `01a12fd6-e0ee-7786-8eaf-f4abb64a1926`
-- **Initial Viewport**: `藏` was initially completely off-screen (`window.findText "藏"` returned 0 matches prior to execution).
+- **Initial Viewport**: `[token 1]` was initially completely off-screen (`window.findText "[token 1]"` returned 0 matches prior to execution).
 - **Execution**: 4 steps delivered via `window_targeted_wheel` with `--settle-ms 50` and `--region 0.4,0.2,0.5,0.6`.
 - **Termination**: Stopped on Step 4 with `reason: "text_visible"`.
 - **Match Bounds**: `origin: (1177.0, 861.0), size: (279.0, 20.0)`.
-- **Verification Method**: An immediate independent `auv invoke window.findText "藏"` was executed against the live window. It returned 1 match with exact screen bounds `[1177, 861, 279, 20]`, proving that the reported bounding box strictly bounds the query text in the visible window.
+- **Verification Method**: An immediate independent `auv invoke window.findText "[token 1]"` was executed against the live window. It returned 1 match with exact screen bounds `[1177, 861, 279, 20]`, proving that the reported bounding box strictly bounds the query text in the visible window.
 
-### Run 2: Query `"拆"`
+### Run 2: Query `"[token 2]"`
 - **Run ID**: `01a12fd7-5f81-7572-92b5-084b15e7688d`
-- **Initial Viewport**: `拆` was off-screen (0 matches).
+- **Initial Viewport**: `[token 2]` was off-screen (0 matches).
 - **Execution**: 3 steps delivered (`dy = 360 px`).
 - **Termination**: Stopped on Step 3 with `reason: "text_visible"`.
 - **Match Bounds**: `origin: (1177.0, 837.0), size: (280.0, 20.0)`.
-- **Verification Method**: Verified via immediate `window.findText "拆"`, returning identical bounds `[1177, 837, 280, 20]`.
+- **Verification Method**: Verified via immediate `window.findText "[token 2]"`, returning identical bounds `[1177, 837, 280, 20]`.
 
-### Run 3: Query `"送"`
+### Run 3: Query `"[token 3]"`
 - **Run ID**: `01a12fd8-2325-715e-8b12-6fd29f93b7d3`
-- **Initial Viewport**: `送` was off-screen (0 matches).
+- **Initial Viewport**: `[token 3]` was off-screen (0 matches).
 - **Execution**: 1 step delivered (`dy = 120 px`).
 - **Termination**: Stopped on Step 1 with `reason: "text_visible"`.
 - **Match Bounds**: `origin: (1177.0, 853.0), size: (180.0, 19.0)`.
-- **Verification Method**: OCR text recognition on the step update capture accurately isolated the line `让 我 送 亻 尔 一 个 春 天 吧`.
+- **Verification Method**: OCR text recognition on the step update capture accurately isolated the line `[lyric line 3]`.
 
-### Run 4: Query `"答"`
+### Run 4: Query `"[token 4]"`
 - **Run ID**: `01a12fd8-c0a9-767a-8a07-2a2c38568f38`
-- **Initial Viewport**: `答` was off-screen (0 matches).
+- **Initial Viewport**: `[token 4]` was off-screen (0 matches).
 - **Execution**: 4 steps delivered (`dy = 480 px`).
 - **Termination**: Stopped on Step 4 with `reason: "text_visible"`.
 - **Match Bounds**: `origin: (1218.0, 881.0), size: (79.0, 19.0)`.
-- **Verification Method**: Verified via immediate `window.findText "答"`, returning identical bounds `[1218, 881, 79, 19]`.
+- **Verification Method**: Verified via immediate `window.findText "[token 4]"`, returning identical bounds `[1218, 881, 79, 19]`.
 
 ### Run 5 (Negative Test): Query `"不存在的目标文本"`
 - **Run ID**: `01a12fd9-317b-7182-8ada-686aeadcde28`
@@ -90,8 +90,8 @@ Brief 3 validates `scroll_until` with `ScrollUntilCondition::TextVisible` agains
 
 ### Run 6 (Diagnostic Test): Motion Region Masking
 - **Run ID**: `01a12fd9-6428-7715-af22-3b258c65075d`
-- **Parameters**: Query `"开满"`, but `--region` omitted (`None`, whole-window).
-- **Behavior**: After step 2, stopped with `reason: "end_by_no_visual_progress"`, even though `开满` had not been reached.
+- **Parameters**: Query `"[token 5]"`, but `--region` omitted (`None`, whole-window).
+- **Behavior**: After step 2, stopped with `reason: "end_by_no_visual_progress"`, even though `[token 5]` had not been reached.
 - **Root Cause Diagnosis**: See Key Finding 1 below.
 
 ---
@@ -106,13 +106,13 @@ Brief 3 validates `scroll_until` with `ScrollUntilCondition::TextVisible` agains
 - **Fix / Requirement**: Callers targeting multi-pane desktop windows must supply `--region <X,Y,W,H>` (e.g. `--region 0.4,0.2,0.5,0.6`) covering the scrolling pane. When cropped to the lyrics pane, `normalized_diff` measured **0.027–0.029** (> 0.01) with `estimated_shift = -20`, reliably preventing false-positive end detections.
 
 ### 2. Windows.Media.Ocr CJK Tokenization
-- The Windows native OCR engine (`Windows.Media.Ocr`) places spaces between adjacent CJK ideographs (e.g. `"拆 开 之 时 南 边 会 吹 来 我 赠 的 风"`).
+- The Windows native OCR engine (`Windows.Media.Ocr`) places spaces between adjacent CJK ideographs (e.g. `"[lyric line 2 (space-separated CJK)]"`).
 - Query matching in `auv-scan` (`text_match`) evaluates `text.best_contains(query)`, which checks `region.text.to_lowercase().contains(&normalized_query)`.
-- If a multi-character Chinese query without spaces is passed (such as `"拆开"`), it will fail to substring-match `"拆 开"`.
-- Single ideographs (`"藏"`, `"拆"`, `"送"`, `"答"`) or space-separated Chinese words (`"拆 开"`, `"信 回 答"`) match accurately.
+- If a multi-character Chinese query without spaces is passed (such as `"[word]"`), it will fail to substring-match `"[char 1] [char 2]"`.
+- Single ideographs (`"[token 1]"`, `"[token 2]"`, `"[token 3]"`, `"[token 4]"`) or space-separated Chinese words (`"[char 1] [char 2]"`, `"[lyric line 4]"`) match accurately.
 
 ### 3. QQ Music Inactivity Auto-Snap Dynamics
-- QQ Music incorporates an autonomous smooth snapping behavior: if a user or driver scrolls away from the current playback position and remains idle for ~3–5 seconds, the UI automatically animates back to center on the active playback line (`信你收到了吗`).
+- QQ Music incorporates an autonomous smooth snapping behavior: if a user or driver scrolls away from the current playback position and remains idle for ~3–5 seconds, the UI automatically animates back to center on the active playback line (`[active lyric line]`).
 - Because `scroll_until` with `settle_ms: 50` delivers steps in tight 50 ms intervals, `scroll_until` easily outpaces the 3–5 second inactivity timer. However, external verification probes (like `window.findText`) must be captured immediately following completion before the window snaps back.
 
 ---
