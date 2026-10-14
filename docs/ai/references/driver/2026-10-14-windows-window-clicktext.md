@@ -48,15 +48,28 @@ auv invoke window.clickText "Activate Target" --target win32-receiver.exe
        -> post_window_click (WM_LBUTTONDOWN / WM_LBUTTONUP via PostMessageW)
 ```
 
-### Invariants Maintained
+### Invariants & In-Process Telemetry
 - **Background-Only**: Input is delivered via posted window messages (`WM_LBUTTONDOWN`,
   `WM_LBUTTONUP`) directly to the target HWND. The desktop mouse cursor is not moved,
   and no global synthetic input (`SendInput`) is injected.
-- **Zero Disturbance**: Monitored by `DesktopWatch` (low-level hooks `WH_MOUSE_LL`,
-  `WH_KEYBOARD_LL`, and `EVENT_SYSTEM_FOREGROUND`). During all 5 trials:
+- **Desktop Watch Telemetry**: Monitored by `DesktopWatch` (low-level hooks `WH_MOUSE_LL`,
+  `WH_KEYBOARD_LL`, and `EVENT_SYSTEM_FOREGROUND`). Across the 5 trials:
+  - `violated = 0`: Zero desktop disturbance violations occurred.
+  - `held = 2`, `inconclusive = 3`: Trials 1, 3, and 5 were classified as `inconclusive`
+    (not `held`) because concurrent operator physical mouse movement was recorded
+    (`physical_mouse`: 18, 11, 26 events respectively, triggering `cursor_moved`).
   - `injected_mouse_total = 0`
   - `injected_keys_total = 0`
-  - `foreground_taken = 0` (the target window never stole foreground focus).
+  - `foreground_taken = 0` (the target window never stole foreground focus; foreground
+    remained at HWND 657296).
+- **Driver Verification vs. Semantic Verification**: Every trial reported `driver_verified: false`
+  from the Windows driver. As designed for posted Win32 window messages, the driver does not
+  claim synthetic OS-level effect verification. True verification is established semantically
+  by receiver-owned evidence (`BN_CLICKED` delivery, `clicks` counter increments, and visual
+  capture hash differences).
+- **Receiver Surface Scope**: The button caption change (`"Press"` $\to$ `"Activate Target"`)
+  and width expansion (110px $\to$ 180px) were applied to `win32-receiver.rs` as default layout
+  properties to ensure reliable OCR anchors across all evaluations without breaking other scenarios.
 
 ## Empirical Evidence Run
 
