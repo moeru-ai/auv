@@ -660,7 +660,7 @@ struct ClickPointArgs {
   x: f64,
   /// Y coordinate in the selected coordinate basis.
   y: f64,
-  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a point read from display.capture.
+  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a screen point, such as a display.capture pixel divided by its scale factor plus its capture origin.
   #[arg(long, value_enum)]
   #[serde(rename = "relative-to", default)]
   relative_to: Option<RelativeToArg>,
@@ -1034,7 +1034,7 @@ struct DragArgs {
   #[arg(long, default_value = "left", value_parser = ["left", "right", "middle"])]
   #[serde(default = "default_click_button")]
   button: String,
-  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a point read from display.capture.
+  /// Coordinate basis. Defaults from --target: screen, window, or display. Use screen with an app or window target for a screen point, such as a display.capture pixel divided by its scale factor plus its capture origin.
   #[arg(long, value_enum)]
   #[serde(rename = "relative-to", default)]
   relative_to: Option<RelativeToArg>,
@@ -1216,7 +1216,9 @@ async fn drag(input: InvokeCommandInput, args: DragArgs) -> crate::InvokeExecuti
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::InvokeExecutionResult {
-  // Screen-relative validation needs no target lookup, so its dry run stays hermetic.
+  // Screen-relative validation without a target needs no lookup, so its dry
+  // run stays hermetic. With an app or window target, even a dry run resolves
+  // the window, because the bounds check needs its frame.
   let window_target = targets_window(input.target.as_ref());
   let session = match (plan.basis, input.dry_run) {
     (RelativeToArg::Screen, true) if !window_target => None,

@@ -530,22 +530,24 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let window = resolved.resource();
-      let point = if basis == crate::commands::input::RelativeToArg::Screen {
-        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)?
+      let target: auv::client::runner::PointerTarget = if basis == crate::commands::input::RelativeToArg::Screen {
+        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)?;
+        // Send the screen point itself: the Runner converts it with the frame
+        // it reads at delivery, so a window that moved since ResolveWindow
+        // still gets the requested screen point.
+        auv_driver::ScreenPoint::new(requested_point.x, requested_point.y).into()
       } else {
-        crate::commands::input::resolve_local_point(
+        let point = crate::commands::input::resolve_local_point(
           "input.clickPoint",
           requested_point.x,
           requested_point.y,
           normalized,
           window.frame.size,
           "window",
-        )?
+        )?;
+        auv_driver::WindowPoint::new(point.x, point.y).into()
       };
-      let response = resolved
-        .click(auv_driver::WindowPoint::new(point.x, point.y), click_options)
-        .await
-        .map_err(|status| format!("InputService/ClickPoint failed: {status}"))?;
+      let response = resolved.click(target, click_options).await.map_err(|status| format!("InputService/ClickPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),

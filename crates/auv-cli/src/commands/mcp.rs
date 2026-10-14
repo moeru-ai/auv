@@ -736,8 +736,9 @@ mod frontend {
        on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
        application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
        Points: with an app or window `target`, point coordinates are window-local unless `inputs.relative-to` is \
-       `screen`. A point read from a `display.capture` image is a screen point: send it without `target`, or with \
-       `target` and `relative-to: screen`.\n\n\
+       `screen`. A `display.capture` image is in pixels: divide a pixel by the capture's scale factor and add its \
+       capture bounds origin to get a screen point. Send a screen point without `target`, or with `target` and \
+       `relative-to: screen`.\n\n\
        Input delivery: `inputs.input-policy` decides how input reaches a target window. Leave it unset unless an \
        action had no visible effect. Delivery never proves the app reacted; check with a capture.\n\
        - background-preferred (default for click, drag and scroll on a window target): send input to the window \
