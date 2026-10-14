@@ -129,3 +129,20 @@ fn matching_stage_origin_deduplicates_nested_same_origin_rects() {
 
   assert_eq!(origin, Some(Point::new(1752.0, 55.0)));
 }
+
+// ROOT CAUSE:
+//
+// If a caller asked whether an AT-SPI node was active or focused, the state
+// check looked for the state number inside `GetState`'s reply, but that reply
+// is a bitfield of two u32 words. ACTIVE (1) or FOCUSED (12) matched only by
+// accident, so the focused terminal was not recognized for Ctrl+Shift+V.
+//
+// The fix tests bit `n % 32` of word `n / 32`.
+#[test]
+fn state_set_is_a_bitfield_of_two_words() {
+  let active_and_focused = [(1 << 1) | (1 << 12), 0];
+  assert!(state_set_contains(&active_and_focused, STATE_ACTIVE));
+  assert!(state_set_contains(&active_and_focused, STATE_FOCUSED));
+  assert!(!state_set_contains(&[1, 0], STATE_ACTIVE));
+  assert!(state_set_contains(&[0, 1 << 2], 34));
+}

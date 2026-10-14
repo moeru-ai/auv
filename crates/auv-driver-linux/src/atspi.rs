@@ -475,7 +475,13 @@ fn property_string(proxy: &Proxy<'_>, name: &str) -> DriverResult<String> {
 
 fn state_contains(proxy: &Proxy<'_>, state: u32) -> DriverResult<bool> {
   let states: Vec<u32> = proxy.call("GetState", &()).map_err(|error| backend(format!("failed to read AT-SPI state: {error}")))?;
-  Ok(states.contains(&state))
+  Ok(state_set_contains(&states, state))
+}
+
+/// AT-SPI `GetState` returns the state set as a 64-bit bitfield split into
+/// two `u32` words (`au`), where state `n` is bit `n % 32` of word `n / 32`.
+fn state_set_contains(words: &[u32], state: u32) -> bool {
+  words.get((state / 32) as usize).is_some_and(|word| word & (1 << (state % 32)) != 0)
 }
 
 fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: bool) -> Window {
