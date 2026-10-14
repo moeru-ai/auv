@@ -14,11 +14,11 @@ use auv_driver_common::application::{
   ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind,
 };
 use auv_driver_common::error::DriverResult;
-use auv_driver_common::selector::{App, WindowSelector};
+use auv_driver_common::selector::{App, TextMatcher, WindowSelector};
 
 use crate::driver::WindowsDriverSession;
 use crate::error::invalid_input;
-use crate::window::{activate_window, list_windows, resolve_window};
+use crate::window::{activate_window, list_windows, matches_executable, resolve_window};
 
 /// Typed application control that is independent of a pre-resolved `Window`.
 ///
@@ -75,7 +75,9 @@ impl ApplicationApi<'_> {
 
 fn activation_verification(requested_process: &str, observation: Result<Option<String>, String>) -> ApplicationActivationVerification {
   match observation {
-    Ok(Some(observed_process)) if observed_process.eq_ignore_ascii_case(requested_process) => {
+    // The same executable rule as window selection, so `notepad` verifies
+    // against `Notepad.exe` instead of reporting a mismatch.
+    Ok(Some(observed_process)) if matches_executable(&observed_process, &TextMatcher::Exact(requested_process.to_string())) => {
       ApplicationActivationVerification::VerifiedForeground {
         observed_application_id: observed_process,
       }

@@ -53,7 +53,7 @@ struct ActivateAppArgs {}
   support = { macos: Supported, linux: Unsupported("application activation is not implemented on Linux yet"), windows: Supported },
   target = RequiredApplication,
   group = "app",
-  description = "Bring a target app to the foreground before a foreground-dependent step. The target is the application id window.list reports: a bundle id on macOS, a process image name on Windows.",
+  description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional).",
   input = ActivateAppArgs,
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> crate::InvokeExecutionResult {

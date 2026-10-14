@@ -59,12 +59,10 @@ impl ApplicationApi<'_> {
     }
 
     let requested_application_id = application_id.trim().to_string();
-    // AppleScript's activate returns once the application is frontmost, so only
-    // the LaunchServices fallback needs time to see it arrive.
     let verify_within = if launched_by_launch_services {
-      ACTIVATION_VERIFY_TIMEOUT
+      LAUNCH_VERIFY_TIMEOUT
     } else {
-      Duration::ZERO
+      ACTIVATE_VERIFY_TIMEOUT
     };
     let verification = wait_for_foreground(&requested_application_id, verify_within, || {
       crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
@@ -91,7 +89,17 @@ impl ApplicationApi<'_> {
 /// `foreground_mismatch` for an activation that succeeded. Only a foreground
 /// mismatch keeps checking; a verified foreground or an unavailable
 /// observation returns at once.
-const ACTIVATION_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const LAUNCH_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long activation keeps checking the frontmost application after
+/// AppleScript `activate` succeeded for a running application.
+///
+/// NOTICE: AppleScript `activate` can return before WindowServer reports the
+/// application frontmost. On macOS 26, activating TextEdit while Calculator
+/// was frontmost observed Calculator after the 150 ms settle, and TextEdit
+/// came forward a moment later. A running application comes forward much
+/// sooner than a launch, so this budget is shorter.
+const ACTIVATE_VERIFY_TIMEOUT: Duration = Duration::from_secs(2);
 const ACTIVATION_VERIFY_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Re-observes the frontmost application until it is the requested one or
