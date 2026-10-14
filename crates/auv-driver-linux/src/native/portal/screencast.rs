@@ -20,7 +20,7 @@ use spa::pod::Pod;
 use crate::error::{backend, invalid_input};
 
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
-use super::request::{run, session_connection};
+use super::request::{run, run_with_consent, session_connection};
 
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 // NOTICE: GNOME's mutter honors the negotiated `maxFramerate` and re-records a
@@ -110,7 +110,7 @@ impl ScreenCastSession {
     };
     let persistent = restore_tokens.is_some() && capture.screencast.version() >= 4;
     let start = |restore: Option<&str>| {
-      run("start screencast session", async {
+      run_with_consent("start screencast session", async {
         let mut options = SelectSourcesOptions::default()
           .set_sources(BitFlags::from(SourceType::Monitor))
           .set_multiple(true)

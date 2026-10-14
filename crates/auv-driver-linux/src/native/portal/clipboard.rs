@@ -17,7 +17,7 @@ use zbus::zvariant::OwnedValue;
 
 use crate::error::backend;
 
-use super::request::{run, session_connection};
+use super::request::{run, run_with_consent, session_connection};
 
 const TEXT_MIME: &str = "text/plain;charset=utf-8";
 const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -108,8 +108,9 @@ impl ClipboardSession {
     // did not return a portal response. Keep clipboard-only startup on
     // RequestClipboard+Start until an owner-approved input/libei slice defines
     // device selection policy.
-    let selected =
-      run("start clipboard session", async { remote_desktop.start(&owner.session, None, Default::default()).await?.response() })?;
+    let selected = run_with_consent("start clipboard session", async {
+      remote_desktop.start(&owner.session, None, Default::default()).await?.response()
+    })?;
     if !selected.is_clipboard_enabled() {
       return Err(backend("remote desktop portal started without clipboard access"));
     }

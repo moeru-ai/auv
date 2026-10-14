@@ -15,7 +15,7 @@ use crate::input::{combine_release, with_held_keys};
 
 use super::ScreenCastStream;
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
-use super::request::{run, session_connection};
+use super::request::{run, run_with_consent, session_connection};
 
 const BUTTON_LEFT: i32 = 0x110;
 const BUTTON_RIGHT: i32 = 0x111;
@@ -74,7 +74,7 @@ impl InputSession {
     };
     let persistent = restore_tokens.is_some() && input.remote_desktop.version() >= 2;
     let start = |restore: Option<&str>| {
-      run("start input session", async {
+      run_with_consent("start input session", async {
         let mut options = SelectDevicesOptions::default().set_devices(DeviceType::Keyboard | DeviceType::Pointer);
         if persistent {
           options = options.set_persist_mode(PersistMode::ExplicitlyRevoked).set_restore_token(restore);

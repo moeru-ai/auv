@@ -294,7 +294,7 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
 
 #[cfg(target_os = "linux")]
 fn portal_screenshot() -> DriverResult<image::RgbaImage> {
-  use crate::native::portal::run;
+  use crate::native::portal::run_with_consent;
   use ashpd::desktop::screenshot::{AvailableTargets, ScreenshotOptions, ScreenshotProxy};
 
   // NOTICE: this legacy Screenshot fallback can still request user consent;
@@ -306,7 +306,7 @@ fn portal_screenshot() -> DriverResult<image::RgbaImage> {
   // Disable area/window customization: its result has no coordinate metadata.
   // Version 3 also exposes an explicit Screen target. Version 2 remains bounded
   // by the single-output and exact pixel-dimension checks in `capture_area`.
-  let response = run("take portal screenshot", async {
+  let response = run_with_consent("take portal screenshot", async {
     let proxy = ScreenshotProxy::new().await?;
     let mut options = ScreenshotOptions::default().set_interactive(false).set_modal(true);
     if proxy.version() >= 3 {

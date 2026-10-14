@@ -9,4 +9,4 @@ pub use input::{InputSession, PortalInput};
 pub(crate) use persistence::RestoreTokenStore;
 pub use screencast::{ScreenCastFrame, ScreenCastSession, ScreenCastStream};
 
-pub(crate) use request::{run, session_connection};
+pub(crate) use request::{run, run_with_consent, session_connection};
