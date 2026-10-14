@@ -195,8 +195,8 @@ fn screen_wait_decodes_its_budget_from_protocol_inputs() {
 
   let (_, options) = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready"), ("timeout-ms", "30000")])).unwrap();
   assert_eq!(options.timeout, std::time::Duration::from_secs(30));
-  let (_, options) = WaitForScreenTextArgs::decode(&wait_input(&[("query", "Ready"), ("timeout_ms", "2000")])).unwrap();
-  assert_eq!(options.timeout, std::time::Duration::from_secs(2));
+  // Protocol inputs use the advertised key only; `InvokeCommand::validate`
+  // rejects the `timeout_ms` id spelling before decoding (#363).
 }
 
 #[test]
