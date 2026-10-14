@@ -119,13 +119,16 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
     for child in children(&connection, &app.reference)? {
       let accessible = accessible(&connection, child)?;
       if matches!(accessible.role.as_str(), "window" | "frame" | "dialog") && rect_has_area(accessible.bounds) {
-        windows.push(window_from_accessible(&app, &accessible, accessible.active));
+        // Only the first active window is main, matching `active_window`, even
+        // if a toolkit leaves a stale ACTIVE state on another window.
+        let is_main = accessible.active && !windows.iter().any(|window: &Window| window.is_main);
+        windows.push(window_from_accessible(&app, &accessible, is_main));
       }
     }
   }
   // The active (keyboard-focused) top-level window is the main one, so a
-  // modal dialog wins over the frame behind it. Without an active window,
-  // keep the first window as before.
+  // modal dialog wins over the frame behind it. When no listed window is
+  // active, the first window stays main as before.
   if !windows.iter().any(|window| window.is_main)
     && let Some(first) = windows.first_mut()
   {
@@ -302,8 +305,9 @@ fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Acc
   let name = property_string(&proxy, "Name").unwrap_or_default();
   let description = property_string(&proxy, "Description").unwrap_or_default();
   let accessible_id = property_string(&proxy, "AccessibleId").unwrap_or_default();
-  let focused = state_contains(&proxy, STATE_FOCUSED).unwrap_or(false);
-  let active = state_contains(&proxy, STATE_ACTIVE).unwrap_or(false);
+  let states = state_set(&proxy).unwrap_or_default();
+  let focused = state_set_contains(&states, STATE_FOCUSED);
+  let active = state_set_contains(&states, STATE_ACTIVE);
   drop(proxy);
   let bounds = extents(connection, &reference, COORD_TYPE_SCREEN).unwrap_or_default();
   Ok(Accessible {
@@ -492,8 +496,11 @@ fn property_string(proxy: &Proxy<'_>, name: &str) -> DriverResult<String> {
 }
 
 fn state_contains(proxy: &Proxy<'_>, state: u32) -> DriverResult<bool> {
-  let states: Vec<u32> = proxy.call("GetState", &()).map_err(|error| backend(format!("failed to read AT-SPI state: {error}")))?;
-  Ok(state_set_contains(&states, state))
+  Ok(state_set_contains(&state_set(proxy)?, state))
+}
+
+fn state_set(proxy: &Proxy<'_>) -> DriverResult<Vec<u32>> {
+  proxy.call("GetState", &()).map_err(|error| backend(format!("failed to read AT-SPI state: {error}")))
 }
 
 /// AT-SPI `GetState` returns the state set as a 64-bit bitfield split into

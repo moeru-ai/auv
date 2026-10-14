@@ -367,3 +367,30 @@ fn an_unknown_application_id_lists_the_visible_applications() {
   let by_executable = SelectWindow::main_visible().owned_by(auv_driver_common::App::bundle_id("gnome-text-editor"));
   assert!(resolve_from_windows(&[editor], &by_executable).is_err());
 }
+
+// ROOT CAUSE:
+//
+// If a modal dialog was focused, Linux marked the first listed window as main
+// instead of the dialog, so main-window resolution picked the larger frame
+// behind it (LibreOffice Writer behind its Hyperlink dialog).
+//
+// With the active window marked main, the dialog wins the ranking.
+#[test]
+fn the_main_window_outranks_a_larger_frame() {
+  let window = |id: &str, title: &str, is_main: bool, frame: Rect| Window {
+    reference: WindowRef { id: id.to_string() },
+    title: Some(title.to_string()),
+    app_name: Some("soffice".to_string()),
+    app_bundle_id: None,
+    process_id: None,
+    frame,
+    coordinate_space: CoordinateSpace::Screen,
+    is_main,
+    is_visible: true,
+  };
+  let windows = [
+    window("1", "Untitled 1 — LibreOffice Writer", false, Rect::new(0.0, 32.0, 2560.0, 1408.0)),
+    window("2", "Hyperlink", true, Rect::new(0.0, 0.0, 600.0, 400.0)),
+  ];
+  assert_eq!(resolve_from_windows(&windows, &SelectWindow::main_visible()).unwrap().reference.id, "2");
+}
