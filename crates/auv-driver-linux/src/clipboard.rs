@@ -32,6 +32,12 @@ pub fn served_reads(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult
   with_clipboard_session(state, |session| Ok(session.served_reads()))
 }
 
+/// Waits for the compositor's own read of a selection we just set; returns
+/// the read count a paste reader is compared against.
+pub fn settle_own_selection(state: &Arc<Mutex<LinuxDriverSessionState>>, since: u64) -> DriverResult<u64> {
+  with_clipboard_session(state, |session| Ok(session.settle_own_selection(since)))
+}
+
 /// Waits for a paste shortcut's reader to finish reading the selection;
 /// returns whether anything read it after `since`.
 pub fn wait_for_paste_reader(state: &Arc<Mutex<LinuxDriverSessionState>>, since: u64) -> DriverResult<bool> {

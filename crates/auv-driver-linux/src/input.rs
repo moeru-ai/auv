@@ -14,8 +14,8 @@ use auv_driver_common::input::{
 };
 
 use crate::clipboard::{
-  restore as restore_clipboard, served_reads as served_clipboard_reads, set_text as set_clipboard_text, snapshot as snapshot_clipboard,
-  wait_for_paste_reader,
+  restore as restore_clipboard, served_reads as served_clipboard_reads, set_text as set_clipboard_text, settle_own_selection,
+  snapshot as snapshot_clipboard, wait_for_paste_reader,
 };
 
 #[derive(Debug)]
@@ -262,8 +262,9 @@ pub(crate) fn paste_prepared(
 ) -> DriverResult<InputActionResult> {
   let snapshot = snapshot_clipboard(state)?;
   let result = (|| {
+    let reads_before_set = served_clipboard_reads(state)?;
     set_clipboard_text(state, &options.text)?;
-    let reads_before = served_clipboard_reads(state)?;
+    let reads_before = settle_own_selection(state, reads_before_set)?;
     with_input_session(state, |session| session.deliver_keyboard(layout, plan))?;
     // Keep serving the pasted text until the focused application has read it;
     // restoring earlier makes the portal drop the pending read.

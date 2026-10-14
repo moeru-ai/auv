@@ -29,6 +29,10 @@ const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 const PASTE_READ_START: Duration = Duration::from_secs(1);
 const PASTE_READ_QUIET: Duration = Duration::from_millis(200);
 const PASTE_READ_LIMIT: Duration = Duration::from_secs(5);
+/// How long to wait for the compositor's own read of a selection we just set,
+/// and how quiet reads must be before a paste shortcut is sent.
+const OWN_SELECTION_READ_WAIT: Duration = Duration::from_millis(300);
+const OWN_SELECTION_QUIET: Duration = Duration::from_millis(100);
 /// How long a new clipboard session waits for the portal to announce the
 /// current selection owner before treating the clipboard as empty.
 const OWNER_ANNOUNCE_WAIT: Duration = Duration::from_millis(300);
@@ -41,14 +45,21 @@ impl PortalClipboard {
   }
 }
 
+/// What the latest `SelectionOwnerChanged` said about the selection.
+#[derive(Clone, Debug)]
+struct AnnouncedOwner {
+  mime_types: Vec<String>,
+  session_is_owner: bool,
+}
+
 pub struct ClipboardSession {
   clipboard: Arc<Clipboard>,
   session: Arc<Session<RemoteDesktop>>,
   text: Arc<Mutex<String>>,
   owns_selection: bool,
-  /// MIME types of the latest `SelectionOwnerChanged`, or `None` before the
-  /// portal announced an owner.
-  owner_mime_types: Arc<Mutex<Option<Vec<String>>>>,
+  /// The latest `SelectionOwnerChanged`, or `None` before the portal
+  /// announced an owner.
+  owner: Arc<Mutex<Option<AnnouncedOwner>>>,
   /// Selection reads this session served, and when the latest one finished.
   served: Arc<Mutex<(u64, Option<std::time::Instant>)>>,
   opened_at: std::time::Instant,
@@ -73,12 +84,21 @@ impl ClipboardSession {
       session,
       text: Arc::new(Mutex::new(String::new())),
       owns_selection: false,
-      owner_mime_types: Arc::new(Mutex::new(None)),
+      owner: Arc::new(Mutex::new(None)),
       served: Arc::new(Mutex::new((0, None))),
       opened_at: std::time::Instant::now(),
       running: Arc::new(AtomicBool::new(true)),
       transfer_thread: None,
     };
+    // Subscribe before Start: mutter announces the current owner once, right
+    // after the portal enables the clipboard, and a later subscription misses it.
+    owner.transfer_thread = Some(spawn_transfer_thread(
+      Arc::clone(&owner.clipboard),
+      Arc::clone(&owner.text),
+      Arc::clone(&owner.owner),
+      Arc::clone(&owner.served),
+      Arc::clone(&owner.running),
+    )?);
     run("request clipboard access", owner.clipboard.request(&owner.session, Default::default()))?;
     // TODO(linux-portal-clipboard-devices): explicit
     // `RemoteDesktop.SelectDevices(types=0)` was tested on GNOME Wayland but
@@ -90,28 +110,21 @@ impl ClipboardSession {
     if !selected.is_clipboard_enabled() {
       return Err(backend("remote desktop portal started without clipboard access"));
     }
-    owner.transfer_thread = Some(spawn_transfer_thread(
-      Arc::clone(&owner.clipboard),
-      Arc::clone(&owner.text),
-      Arc::clone(&owner.owner_mime_types),
-      Arc::clone(&owner.served),
-      Arc::clone(&owner.running),
-    )?);
     owner.opened_at = std::time::Instant::now();
     Ok(owner)
   }
 
   pub fn snapshot(&mut self) -> DriverResult<String> {
-    if !self.owns_selection && !self.owner_offers_text() {
-      return Ok(String::new());
+    match self.announced_owner() {
+      Some(owner) if owner.session_is_owner => return Ok(self.text.lock().expect("clipboard owner text lock poisoned").clone()),
+      Some(owner) if !owner.mime_types.iter().any(|mime_type| mime_type == TEXT_MIME) => return Ok(String::new()),
+      Some(_) => {}
+      None if self.owns_selection => return Ok(self.text.lock().expect("clipboard owner text lock poisoned").clone()),
+      None => return Ok(String::new()),
     }
     let fd = match run("read portal clipboard", self.clipboard.selection_read(&self.session, TEXT_MIME)) {
       Ok(fd) => fd,
       Err(error) => {
-        if self.owns_selection {
-          let text = self.text.lock().expect("clipboard owner text lock poisoned").clone();
-          return Ok(text);
-        }
         let message = error.to_string();
         if message.contains("NoSelection") || message.contains("No such selection") || message.contains("Failed to selection read") {
           return Ok(String::new());
@@ -125,31 +138,47 @@ impl ClipboardSession {
     String::from_utf8(bytes).map_err(|error| backend(format!("portal clipboard returned non-UTF-8 text: {error}")))
   }
 
-  /// Whether the announced selection owner offers plain text.
+  /// The announced selection owner, waiting briefly after Start for the
+  /// portal's first announcement.
   ///
   /// NOTICE: xdg-desktop-portal-gnome 48.0 crashes (SIGSEGV/SIGTRAP) when
   /// `SelectionRead` finds no selection owner, and xdg-desktop-portal then
   /// answers every later `RequestClipboard` with "Invalid state" until it is
   /// restarted. Read only after the portal announced an owner with text;
-  /// otherwise the clipboard counts as empty. Seen on Debian 13 GNOME 48 with
-  /// xdg-desktop-portal 1.20.3 (`journalctl --user -u xdg-desktop-portal-gnome`:
-  /// "No selection owner available" followed by status=11/SEGV). Remove once
-  /// supported GNOME releases survive a read without an owner.
-  fn owner_offers_text(&self) -> bool {
+  /// without an announcement the clipboard counts as empty. Seen on Debian 13
+  /// GNOME 48 with xdg-desktop-portal 1.20.3 (`journalctl --user -u
+  /// xdg-desktop-portal-gnome`: "No selection owner available" followed by
+  /// status=11/SEGV). Remove once supported GNOME releases survive a read
+  /// without an owner.
+  fn announced_owner(&self) -> Option<AnnouncedOwner> {
     if let Some(remaining) = OWNER_ANNOUNCE_WAIT.checked_sub(self.opened_at.elapsed()) {
       thread::sleep(remaining);
     }
-    self
-      .owner_mime_types
-      .lock()
-      .expect("clipboard owner mime lock poisoned")
-      .as_ref()
-      .is_some_and(|mime_types| mime_types.iter().any(|mime_type| mime_type == TEXT_MIME))
+    self.owner.lock().expect("clipboard owner lock poisoned").clone()
   }
 
   /// Number of selection reads this session has served so far.
   pub fn served_reads(&self) -> u64 {
     self.served.lock().expect("clipboard served lock poisoned").0
+  }
+
+  /// Waits for the reads that installing our own selection triggers to pass,
+  /// and returns the read count to compare a paste reader against.
+  ///
+  /// NOTICE: mutter's clipboard manager (`meta-clipboard-manager.c`) reads
+  /// every new selection owner's text right away. Counting that read as the
+  /// paste reader would restore the clipboard before the focused application
+  /// read it.
+  pub fn settle_own_selection(&self, since: u64) -> u64 {
+    let started = std::time::Instant::now();
+    loop {
+      let (count, last) = *self.served.lock().expect("clipboard served lock poisoned");
+      let settled = count > since && last.is_some_and(|last| last.elapsed() >= OWN_SELECTION_QUIET);
+      if settled || (count == since && started.elapsed() >= OWN_SELECTION_READ_WAIT) || started.elapsed() >= PASTE_READ_LIMIT {
+        return count;
+      }
+      thread::sleep(Duration::from_millis(10));
+    }
   }
 
   /// Waits until a paste shortcut's reader has read the selection: for the
@@ -196,7 +225,7 @@ impl Drop for ClipboardSession {
 fn spawn_transfer_thread(
   clipboard: Arc<Clipboard>,
   text: Arc<Mutex<String>>,
-  owner_mime_types: Arc<Mutex<Option<Vec<String>>>>,
+  owner: Arc<Mutex<Option<AnnouncedOwner>>>,
   served: Arc<Mutex<(u64, Option<std::time::Instant>)>>,
   running: Arc<AtomicBool>,
 ) -> DriverResult<JoinHandle<()>> {
@@ -238,7 +267,10 @@ fn spawn_transfer_thread(
       let transfer = match event {
         Event::Idle => continue,
         Event::Owner(Some((_, changed))) => {
-          *owner_mime_types.lock().expect("clipboard owner mime lock poisoned") = Some(changed.mime_types().to_vec());
+          *owner.lock().expect("clipboard owner lock poisoned") = Some(AnnouncedOwner {
+            mime_types: changed.mime_types().to_vec(),
+            session_is_owner: changed.session_is_owner().unwrap_or(false),
+          });
           continue;
         }
         Event::Owner(None) => continue,

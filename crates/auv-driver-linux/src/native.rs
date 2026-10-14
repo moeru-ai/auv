@@ -118,6 +118,10 @@ pub mod portal {
     pub fn wait_for_reader(&self, _since: u64) -> bool {
       false
     }
+
+    pub fn settle_own_selection(&self, since: u64) -> u64 {
+      since
+    }
   }
 
   #[derive(Debug, Default)]
