@@ -323,7 +323,7 @@ impl WindowInput for WindowApi<'_> {
   }
 }
 
-fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
+pub(crate) fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
   if result.fallback_reason().is_none() {
     result.attempts.insert(0, InputAttempt::failure(unavailable_path, reason));
   }

@@ -71,6 +71,25 @@ posting. This does not lock user focus or guarantee which control inside that
 application receives an event. Per-control focus leases/selectors are outside
 this slice; reopening that boundary requires an approved driver contract.
 
+### Linux Wayland exception (2026-10-14, #376)
+
+Wayland gives clients no way to post keys to one window or to raise another
+window. On Linux Wayland a window or application target is therefore served
+only while it already has keyboard focus:
+
+- before each action, after the whole batch is validated, the target must be
+  the AT-SPI active window (a window target by reference, an application
+  target by AccessibleId or application name);
+- keys are delivered as foreground input, and each action's result records
+  the failed `window_targeted_keyboard` attempt as its fallback reason;
+- a target without focus fails with `invalid_input` naming the focused window,
+  and AUV does not try to move focus;
+- only `foreground-preferred` is accepted; background policies and held keys
+  (`input.keyDown`, `input.holdKeys`) with a target stay unsupported.
+
+This is a recorded foreground delivery to the confirmed target, not the global
+fallback the rule above forbids: nothing is sent unless the target has focus.
+
 ## Execution and verification
 
 `InputActionResult` remains the driver-owned direct result and tracing artifact.

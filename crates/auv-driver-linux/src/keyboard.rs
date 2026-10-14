@@ -5,8 +5,8 @@ use crate::{
   input::{KeyboardPlan, keysym, with_input_session},
 };
 use auv_driver_common::{
-  DriverError, DriverResult, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, InputTarget, KeyboardInput,
-  KeyboardInputError, KeyboardInputProgress, PressKeysOptions,
+  DriverError, DriverResult, InputActionResult, InputDeliveryPath, InputPolicy, InputTarget, KeyboardInput, KeyboardInputError,
+  KeyboardInputProgress, PressKeysOptions,
 };
 use std::time::Duration;
 
@@ -53,20 +53,26 @@ pub(crate) fn combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> 
 /// typing into whatever is in front.
 fn ensure_target_focused(target: &InputTarget) -> DriverResult<()> {
   let active = crate::atspi::active_window()?;
-  let focused = match (target, &active) {
-    (InputTarget::Window(window), Some(active)) => active.reference == window.reference,
-    (InputTarget::Application { bundle_id }, Some(active)) => {
-      active.app_bundle_id.as_deref() == Some(bundle_id.as_str()) || active.app_name.as_deref() == Some(bundle_id.as_str())
-    }
-    _ => false,
-  };
-  if focused {
+  if target_is_focused(target, active.as_ref()) {
     return Ok(());
   }
   let active = active.and_then(|window| window.title.or(window.app_name)).unwrap_or_else(|| "no window".to_string());
   Err(invalid_input(format!(
     "the keyboard target does not have keyboard focus and Wayland cannot focus it; focus it first (focused: {active})"
   )))
+}
+
+/// Whether `active` is the target window or a window of the target
+/// application. An application id is the AT-SPI AccessibleId `window.list`
+/// reports; the application name is accepted for apps without one.
+pub(crate) fn target_is_focused(target: &InputTarget, active: Option<&auv_driver_common::Window>) -> bool {
+  match (target, active) {
+    (InputTarget::Window(window), Some(active)) => active.reference == window.reference,
+    (InputTarget::Application { bundle_id }, Some(active)) => {
+      active.app_bundle_id.as_deref() == Some(bundle_id.as_str()) || active.app_name.as_deref() == Some(bundle_id.as_str())
+    }
+    _ => false,
+  }
 }
 
 impl InputApi<'_> {
@@ -120,15 +126,10 @@ impl InputApi<'_> {
       return Err(failure(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
     }
     // Wayland cannot address keys to one window or raise another one, so a
-    // window or application target is served only when it already has keyboard
-    // focus; every result then records the foreground fallback.
-    let targeted = match target {
-      InputTarget::Foreground => false,
-      target => {
-        ensure_target_focused(target).map_err(|cause| failure(cause, 0, vec![], 0))?;
-        true
-      }
-    };
+    // window or application target is served only while it has keyboard focus
+    // (checked before each action, after validation); every result records the
+    // foreground fallback.
+    let targeted = !matches!(target, InputTarget::Foreground);
     let plans = inputs
       .iter()
       .enumerate()
@@ -173,6 +174,9 @@ impl InputApi<'_> {
         KeyboardInput::TypeText { options, .. } => (1, Duration::ZERO, options.settle),
         KeyboardInput::PasteText { .. } => (1, Duration::ZERO, Duration::ZERO),
       };
+      if targeted {
+        ensure_target_focused(target).map_err(|cause| failure(cause, index, completed.clone(), 0))?;
+      }
       let mut combined: Option<InputActionResult> = None;
       for repetition in 0..count {
         if repetition > 0 {
@@ -201,12 +205,10 @@ impl InputApi<'_> {
       }
       let mut combined = combined.expect("positive count");
       if targeted {
-        combined.attempts.insert(
-          0,
-          InputAttempt::failure(
-            InputDeliveryPath::WindowTargetedKeyboard,
-            "Wayland cannot deliver keys to one window; the target has keyboard focus, so keys went to the foreground",
-          ),
+        crate::session::add_foreground_window_fallback_reason(
+          &mut combined,
+          InputDeliveryPath::WindowTargetedKeyboard,
+          "Wayland cannot deliver keys to one window; the target has keyboard focus, so keys went to the foreground",
         );
       }
       completed.push(combined);
