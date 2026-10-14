@@ -27,6 +27,17 @@ pub fn set_text(state: &Arc<Mutex<LinuxDriverSessionState>>, text: &str) -> Driv
   with_clipboard_session(state, |session| session.set_text(text))
 }
 
+/// Number of selection reads the clipboard session has served.
+pub fn served_reads(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<u64> {
+  with_clipboard_session(state, |session| Ok(session.served_reads()))
+}
+
+/// Waits for a paste shortcut's reader to finish reading the selection;
+/// returns whether anything read it after `since`.
+pub fn wait_for_paste_reader(state: &Arc<Mutex<LinuxDriverSessionState>>, since: u64) -> DriverResult<bool> {
+  with_clipboard_session(state, |session| Ok(session.wait_for_reader(since)))
+}
+
 fn with_clipboard_session<T>(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   operation: impl FnOnce(&mut ClipboardSession) -> DriverResult<T>,

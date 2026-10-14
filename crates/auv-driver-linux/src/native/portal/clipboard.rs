@@ -19,6 +19,19 @@ use super::request::{run, session_connection};
 
 const TEXT_MIME: &str = "text/plain;charset=utf-8";
 const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
+// NOTICE: an application answering Ctrl+V asks for the selection within a few
+// event-loop turns; Chrome reads in several rounds and inserts a later one
+// (seen on X11 in the OSWorld runs). Restoring the previous clipboard before
+// the reader finished made the portal reject the pending SelectionWrite
+// ("Transfer serial 1 doesn't match any transfer request") and nothing was
+// pasted. One second to start, then until reads stop for 200 ms, at most five
+// seconds, mirrors the X11 driver.
+const PASTE_READ_START: Duration = Duration::from_secs(1);
+const PASTE_READ_QUIET: Duration = Duration::from_millis(200);
+const PASTE_READ_LIMIT: Duration = Duration::from_secs(5);
+/// How long a new clipboard session waits for the portal to announce the
+/// current selection owner before treating the clipboard as empty.
+const OWNER_ANNOUNCE_WAIT: Duration = Duration::from_millis(300);
 
 pub struct PortalClipboard;
 
@@ -33,6 +46,12 @@ pub struct ClipboardSession {
   session: Arc<Session<RemoteDesktop>>,
   text: Arc<Mutex<String>>,
   owns_selection: bool,
+  /// MIME types of the latest `SelectionOwnerChanged`, or `None` before the
+  /// portal announced an owner.
+  owner_mime_types: Arc<Mutex<Option<Vec<String>>>>,
+  /// Selection reads this session served, and when the latest one finished.
+  served: Arc<Mutex<(u64, Option<std::time::Instant>)>>,
+  opened_at: std::time::Instant,
   running: Arc<AtomicBool>,
   transfer_thread: Option<JoinHandle<()>>,
 }
@@ -54,6 +73,9 @@ impl ClipboardSession {
       session,
       text: Arc::new(Mutex::new(String::new())),
       owns_selection: false,
+      owner_mime_types: Arc::new(Mutex::new(None)),
+      served: Arc::new(Mutex::new((0, None))),
+      opened_at: std::time::Instant::now(),
       running: Arc::new(AtomicBool::new(true)),
       transfer_thread: None,
     };
@@ -68,11 +90,21 @@ impl ClipboardSession {
     if !selected.is_clipboard_enabled() {
       return Err(backend("remote desktop portal started without clipboard access"));
     }
-    owner.transfer_thread = Some(spawn_transfer_thread(Arc::clone(&owner.clipboard), Arc::clone(&owner.text), Arc::clone(&owner.running))?);
+    owner.transfer_thread = Some(spawn_transfer_thread(
+      Arc::clone(&owner.clipboard),
+      Arc::clone(&owner.text),
+      Arc::clone(&owner.owner_mime_types),
+      Arc::clone(&owner.served),
+      Arc::clone(&owner.running),
+    )?);
+    owner.opened_at = std::time::Instant::now();
     Ok(owner)
   }
 
   pub fn snapshot(&mut self) -> DriverResult<String> {
+    if !self.owns_selection && !self.owner_offers_text() {
+      return Ok(String::new());
+    }
     let fd = match run("read portal clipboard", self.clipboard.selection_read(&self.session, TEXT_MIME)) {
       Ok(fd) => fd,
       Err(error) => {
@@ -91,6 +123,51 @@ impl ClipboardSession {
     let file = File::from(std_fd);
     let bytes = read_fd_to_end(file)?;
     String::from_utf8(bytes).map_err(|error| backend(format!("portal clipboard returned non-UTF-8 text: {error}")))
+  }
+
+  /// Whether the announced selection owner offers plain text.
+  ///
+  /// NOTICE: xdg-desktop-portal-gnome 48.0 crashes (SIGSEGV/SIGTRAP) when
+  /// `SelectionRead` finds no selection owner, and xdg-desktop-portal then
+  /// answers every later `RequestClipboard` with "Invalid state" until it is
+  /// restarted. Read only after the portal announced an owner with text;
+  /// otherwise the clipboard counts as empty. Seen on Debian 13 GNOME 48 with
+  /// xdg-desktop-portal 1.20.3 (`journalctl --user -u xdg-desktop-portal-gnome`:
+  /// "No selection owner available" followed by status=11/SEGV). Remove once
+  /// supported GNOME releases survive a read without an owner.
+  fn owner_offers_text(&self) -> bool {
+    if let Some(remaining) = OWNER_ANNOUNCE_WAIT.checked_sub(self.opened_at.elapsed()) {
+      thread::sleep(remaining);
+    }
+    self
+      .owner_mime_types
+      .lock()
+      .expect("clipboard owner mime lock poisoned")
+      .as_ref()
+      .is_some_and(|mime_types| mime_types.iter().any(|mime_type| mime_type == TEXT_MIME))
+  }
+
+  /// Number of selection reads this session has served so far.
+  pub fn served_reads(&self) -> u64 {
+    self.served.lock().expect("clipboard served lock poisoned").0
+  }
+
+  /// Waits until a paste shortcut's reader has read the selection: for the
+  /// first read after `since` to start, then for reads to stop. Returns whether
+  /// anything read the selection.
+  pub fn wait_for_reader(&self, since: u64) -> bool {
+    let started = std::time::Instant::now();
+    loop {
+      let (count, last) = *self.served.lock().expect("clipboard served lock poisoned");
+      let elapsed = started.elapsed();
+      if count == since && elapsed >= PASTE_READ_START {
+        return false;
+      }
+      if count > since && (last.is_some_and(|last| last.elapsed() >= PASTE_READ_QUIET) || elapsed >= PASTE_READ_LIMIT) {
+        return true;
+      }
+      thread::sleep(Duration::from_millis(20));
+    }
   }
 
   pub fn set_text(&mut self, text: &str) -> DriverResult<()> {
@@ -116,7 +193,13 @@ impl Drop for ClipboardSession {
 
 /// Each clipboard owner has a dedicated Portal connection with one session.
 /// Poll the typed signal stream so shutdown does not leave a detached listener.
-fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, running: Arc<AtomicBool>) -> DriverResult<JoinHandle<()>> {
+fn spawn_transfer_thread(
+  clipboard: Arc<Clipboard>,
+  text: Arc<Mutex<String>>,
+  owner_mime_types: Arc<Mutex<Option<Vec<String>>>>,
+  served: Arc<Mutex<(u64, Option<std::time::Instant>)>>,
+  running: Arc<AtomicBool>,
+) -> DriverResult<JoinHandle<()>> {
   let (ready_tx, ready_rx) = mpsc::channel();
   let thread_running = Arc::clone(&running);
   let handle = thread::spawn(move || {
@@ -127,17 +210,39 @@ fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, ru
         return;
       }
     };
+    let owner_changes = match run("subscribe to clipboard owner changes", clipboard.receive_selection_owner_changed::<RemoteDesktop>()) {
+      Ok(owner_changes) => owner_changes,
+      Err(error) => {
+        let _ = ready_tx.send(Err(error));
+        return;
+      }
+    };
     let mut transfers = std::pin::pin!(transfers);
+    let mut owner_changes = std::pin::pin!(owner_changes);
     if ready_tx.send(Ok(())).is_err() {
       return;
     }
+    enum Event<T, O> {
+      Transfer(Option<T>),
+      Owner(Option<O>),
+      Idle,
+    }
     while thread_running.load(Ordering::SeqCst) {
-      let transfer = future::block_on(future::race(async { Some(transfers.next().await) }, async {
-        async_io::Timer::after(Duration::from_millis(100)).await;
-        None
-      }));
-      let Some(transfer) = transfer else {
-        continue;
+      let event = future::block_on(future::race(
+        async { Event::Transfer(transfers.next().await) },
+        future::race(async { Event::Owner(owner_changes.next().await) }, async {
+          async_io::Timer::after(Duration::from_millis(100)).await;
+          Event::Idle
+        }),
+      ));
+      let transfer = match event {
+        Event::Idle => continue,
+        Event::Owner(Some((_, changed))) => {
+          *owner_mime_types.lock().expect("clipboard owner mime lock poisoned") = Some(changed.mime_types().to_vec());
+          continue;
+        }
+        Event::Owner(None) => continue,
+        Event::Transfer(transfer) => transfer,
       };
       let Some((session, mime_type, serial)) = transfer else {
         break;
@@ -150,6 +255,8 @@ fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, ru
         Err(backend("unsupported clipboard MIME type"))
       };
       let _ = run("finish clipboard write", clipboard.selection_write_done(&session, serial, result.is_ok()));
+      let mut served = served.lock().expect("clipboard served lock poisoned");
+      *served = (served.0 + 1, Some(std::time::Instant::now()));
     }
   });
   let ready = ready_rx
