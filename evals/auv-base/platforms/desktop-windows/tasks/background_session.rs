@@ -105,6 +105,14 @@ fn main() -> std::process::ExitCode {
       #[arg(long, default_value = "target/debug/auv.exe")]
       auv: PathBuf,
     },
+    /// The `window.clickText` invoke command, run as the real `auv` binary against a covered receiver.
+    ClickText {
+      #[arg(long)]
+      output: PathBuf,
+      /// The `auv` executable to run (build it with `cargo build -p auv-cli`).
+      #[arg(long, default_value = "target/debug/auv.exe")]
+      auv: PathBuf,
+    },
     /// `screen.findText` and `screen.waitForText`, run as the real `auv` binary against an uncovered receiver.
     Screen {
       #[arg(long)]
@@ -204,6 +212,9 @@ fn main() -> std::process::ExitCode {
       trials,
     }),
     Scenario::Window { output, auv } => auv_base_evals::desktop_windows::window_commands::window_commands(
+      &auv_base_evals::desktop_windows::window_commands::WindowCommandsOptions { output, auv },
+    ),
+    Scenario::ClickText { output, auv } => auv_base_evals::desktop_windows::window_commands::clicktext_trials(
       &auv_base_evals::desktop_windows::window_commands::WindowCommandsOptions { output, auv },
     ),
     Scenario::Screen { output, auv } => auv_base_evals::desktop_windows::screen_commands::screen_commands(

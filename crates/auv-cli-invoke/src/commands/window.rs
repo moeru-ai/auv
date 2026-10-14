@@ -4,7 +4,7 @@ use crate::{
 };
 use auv_cli_common::{TableRow, outputs::formats::table::TableOptions};
 use auv_driver::ScreenPoint;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use auv_driver::WindowInput as _;
 use auv_driver::overlay::{
   Overlay,
@@ -329,8 +329,8 @@ enum WindowClickPolicyArg {
   ForegroundPreferred,
 }
 
-// Only `window.clickText` reads it, and that command is macOS-only.
-#[cfg(target_os = "macos")]
+// Only `window.clickText` reads it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl WindowClickPolicyArg {
   fn driver_policy(self) -> auv_driver::InputPolicy {
     match self {
@@ -343,19 +343,14 @@ impl WindowClickPolicyArg {
 
 #[invoke_command(
   id = "window.clickText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has a window-targeted click that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("test-owned Win32 surface, background-only") },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window, resolve an OCR text anchor, and click the match point in logical screen coordinates.",
   input = ClickWindowTextArgs,
 )]
 async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> crate::InvokeExecutionResult {
-  // TODO(invoke-window-click-text-windows): `window.findText` is wired on Windows, but a click
-  // is not. `WindowApi::click` posts a window-targeted click under the background input modes
-  // (`input.clickPoint --relative-to window` already reaches it), so the gap is wiring this
-  // handler, not a missing driver route. Wire it together with a run of the real binary against
-  // a covered receiver (the `window` scenario in `evals/auv-base`).
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let options =
       super::input::click_options(args.input_policy.map(WindowClickPolicyArg::driver_policy), args.click_count, args.click_interval_ms);
@@ -363,7 +358,7 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
       return Ok(super::input::validation_only_output());
     }
 
-    let session = auv::local::open().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(crate::InvokeFailure::from)?;
     let result =
       click_recognized_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, args.query, args.index, options)
         .await?;
@@ -378,10 +373,10 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
     output.report.as_mut().expect("window text click output always has a report").fields.push(overlay.report_field());
     Ok(output)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS and Windows"))
   }
 }
 
@@ -445,15 +440,15 @@ pub async fn click_recognized_window_text_with_index_and_options(
   index: usize,
   options: auv_driver::ClickOptions,
 ) -> Result<WindowTextClick, crate::InvokeFailure> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
-    let session = auv::local::open().map_err(|error| error.to_string())?;
-    Ok(click_recognized_window_text_with_session(&session, selector, query, index, options).await?)
+    let session = auv::local::open().map_err(crate::InvokeFailure::from)?;
+    click_recognized_window_text_with_session(&session, selector, query, index, options).await
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (selector, query, index, options);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.clickText is only available on macOS and Windows"))
   }
 }
 
@@ -471,24 +466,28 @@ pub fn selected_window_text_match<'a>(
     .ok_or_else(|| format!("window.clickText --index {index} is out of range for {} text match(es)", matches.matches.len()))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn click_recognized_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
   query: String,
   index: usize,
   options: auv_driver::ClickOptions,
-) -> Result<WindowTextClick, String> {
-  let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
-  let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+) -> Result<WindowTextClick, crate::InvokeFailure> {
+  let window = session.window().resolve(selector).map_err(crate::InvokeFailure::from)?;
+  let capture = session.window().capture(&window).map_err(crate::InvokeFailure::from)?;
   let matches = session
     .vision()
     .find_text_in_capture(&capture, &query, auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
-    .map_err(|error| error.to_string())?;
-  let matched = selected_window_text_match(&matches, &query, index)?;
+    .map_err(crate::InvokeFailure::from)?;
+  if matches.matches.is_empty() {
+    return Err(crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("window.clickText did not find text {query:?}")));
+  }
+  let matched = selected_window_text_match(&matches, &query, index)
+    .map_err(|error| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, error))?;
   let point = auv_driver::geometry::ScreenPoint::from(matched.action_point());
-  let window_point = session.window().to_window_point(&window, point).map_err(|error| error.to_string())?;
-  let action = session.window().click(&window, window_point, options.clone()).map_err(|error| error.to_string())?;
+  let window_point = session.window().to_window_point(&window, point).map_err(crate::InvokeFailure::from)?;
+  let action = session.window().click(&window, window_point, options.clone()).map_err(crate::InvokeFailure::from)?;
   emit_capture("auv.driver.window_ocr_source", &capture);
   Ok(WindowTextClick {
     window,

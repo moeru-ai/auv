@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **74**
+Count: **75**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -92,6 +92,7 @@ Count: **74**
 - [`2026-10-12-windows-scroll-until-background.md`](2026-10-12-windows-scroll-until-background.md): Posted-wheel `scroll_until` on the user's QQ Music through `auv invoke` (text 4 of 4, head and tail end stops, four timed motions), the `measure-settle` bench and why the 400 ms settle default stays, the `--region` requirement for multi-pane windows, and why the uncontrolled no-motion runs on Edge, Claude, NTQQ, Steam and VirtualBox carry no claim.
 - [`2026-10-12-windows-targeted-keyboard-probe.md`](2026-10-12-windows-targeted-keyboard-probe.md): Raw posted-keyboard probe, not command evidence: `WM_CHAR` reaches a classic `Edit` child but not its top-level window, posted modifiers leave `GetKeyState` unchanged, the records' contradictions, and what a targeted route would need; the keyboard cells stay foreground-only.
 - [`2026-10-13-windows-app-activation-probe.md`](2026-10-13-windows-app-activation-probe.md): Driver trials of window activation and the permission probe on two test-owned windows, why `app.activate` and `app.probePermissions` stay `Unsupported`, and corrections to the original document (the foreground-lock claim, `skipped_minimized`, "Resolution B adopted").
+- [`2026-10-14-windows-window-clicktext.md`](2026-10-14-windows-window-clicktext.md): Direct invoke route for `window.clickText` on Windows under `InputPolicy::BackgroundOnly`, button OCR sizing fixes, coordinate translation verification (PR #323), typed `NotFound` negative path, and test-owned Win32 receiver evidence.
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 

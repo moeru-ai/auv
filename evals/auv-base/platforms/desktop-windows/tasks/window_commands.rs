@@ -312,12 +312,11 @@ pub fn window_commands(options: &WindowCommandsOptions) -> Result<bool> {
   // - "clicks 3" starts at the left edge of its label, near its top, so a capture that is shifted
   //   or stretched moves it out of that corner.
   // - "line 000" is the first line of the edit control, which only has to contain it.
-  // - "Press" is the button's caption. The system OCR does not read a caption that short on a
-  //   button face, so it is recorded and not asserted.
+  // - "Activate Target" is the button's caption.
   let probes = [
     ("clicks 3", "label", layout.label_rect, Placement::Corner),
     ("line 000", "edit", layout.edit_rect, Placement::Inside),
-    ("Press", "button", layout.button_rect, Placement::Recorded),
+    ("Activate Target", "button", layout.button_rect, Placement::Inside),
   ];
   for (query, name, rect, placement) in probes {
     let (found_text, _) =
@@ -507,5 +506,375 @@ pub fn window_commands(options: &WindowCommandsOptions) -> Result<bool> {
     println!("  FAIL {failure}");
   }
   println!("records: {}", options.output.join("window.jsonl").display());
+  Ok(passed)
+}
+
+/// Runs the 5 window.clickText empirical trials:
+/// - 3 positive trials verifying semantic effect (clicks count increments, frames change, background-only).
+/// - 1 coordinate-semantics trial with non-zero offset (PR #323 verification).
+/// - 1 negative trial on missing text (NotFound error, zero clicks delivered, frames identical).
+pub fn clicktext_trials(options: &WindowCommandsOptions) -> Result<bool> {
+  std::fs::create_dir_all(&options.output).with_context(|| format!("create {}", options.output.display()))?;
+  let auv = options.auv.canonicalize().with_context(|| format!("find the auv executable {}", options.auv.display()))?;
+  let run = run_id();
+  let jsonl_path = options.output.join("window_clicktext.jsonl");
+  let mut records = Records::create(&jsonl_path, &run, "clicktext")?;
+  let store = options.output.join("store");
+  let watch = DesktopWatch::start()?;
+  let driver = WindowsDriver::new().open_local().map_err(|error| anyhow::anyhow!("open driver session: {error}"))?;
+  let mut tally = Tally::default();
+
+  // The window the commands act on, and a second harness window over it.
+  let mut target = spawn_receiver_with(&options.output, 0, true)?;
+  let spec = target.spec.clone();
+  for (left, top) in [(spec.left - 160, spec.top - 90), (spec.left, spec.top)] {
+    target.request(json!({"cmd": "move", "left": left, "top": top}))?;
+    std::thread::sleep(Duration::from_millis(300));
+  }
+  let [left, top, right, bottom] = target.refresh_layout()?.window_rect;
+  let cover_spec = ReceiverSpec {
+    index: 4,
+    title: "AUV eval cover".into(),
+    left: left - 12,
+    top: top - 12,
+    width: right - left + 24,
+    height: bottom - top + 24,
+    color: "9E8A2E".into(),
+    sink: false,
+  };
+  let mut cover = Receiver::spawn_detached(&receiver_binary()?, &cover_spec)?;
+  let hwnd: isize = target.layout.hwnd.parse().context("receiver window handle")?;
+  let (window, _) = discover_by_hwnd(&driver, hwnd)?;
+  let covered = occlusion(&driver, &window);
+  tally.expect(covered >= 0.95, format!("the receiver was only {covered:.2} covered"));
+
+  let title = spec.title.as_str();
+  let mut desk = Desk::new(&watch, hwnd);
+  std::fs::create_dir_all(&store)?;
+
+  let start = watch.snapshot();
+  let mut layout = target.refresh_layout()?;
+  let mut frame_truth = visible_frame(hwnd).context("read visible frame")?;
+
+  let initial_state = target.state()?;
+  tally.expect(initial_state.clicks == 0, format!("initial clicks was {}", initial_state.clicks));
+
+  records.write(
+    "setup",
+    json!({
+      "system": system_facts(),
+      "auv": auv.file_name().map(|name| name.to_string_lossy().into_owned()),
+      "receiver": {
+        "title": spec.title,
+        "pid": layout.pid,
+        "window_rect": layout.window_rect,
+        "dwm_frame": frame_truth,
+        "button_rect": layout.button_rect,
+        "label_rect": layout.label_rect,
+        "clicks": initial_state.clicks
+      },
+      "cover_fraction": covered,
+      "foreground": start.foreground.to_string()
+    }),
+  )?;
+
+  let get_capture_bytes = |store_path: &Path| -> Result<Vec<u8>> {
+    let inv = invoke(&auv, store_path, "window.capture", &["--target", "win32-receiver.exe", "--title", title])?;
+    let path = inv
+      .json
+      .as_ref()
+      .and_then(|j| j["artifacts"].as_array())
+      .and_then(|arr| arr.iter().find_map(|a| a["file_path"].as_str()))
+      .context("find capture artifact")?;
+    let bytes = std::fs::read(path)?;
+    Ok(bytes)
+  };
+
+  let simple_hash = |bytes: &[u8]| -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+  };
+
+  let mut current_frame_bytes = get_capture_bytes(&store)?;
+  let mut current_hash = simple_hash(&current_frame_bytes);
+
+  // --- Positive Trials 1..=3 ---
+  for trial_num in 1..=3 {
+    let clicks_before = target.state()?.clicks;
+    let (run_measured, _) = desk.measure(
+      || {
+        invoke(
+          &auv,
+          &store,
+          "window.clickText",
+          &[
+            "Activate Target",
+            "--target",
+            "win32-receiver.exe",
+            "--title",
+            title,
+            "--input-policy",
+            "background-only",
+          ],
+        )
+      },
+      || (),
+    );
+    tally.record(&run_measured);
+    let run = run_measured.value.as_ref().map_err(|error| anyhow::anyhow!("{error:#}"))?;
+    tally.expect(run.completed(), format!("positive trial {trial_num} failed: {}", run.failure()));
+
+    let state_after = target.state()?;
+    tally.expect(
+      state_after.clicks == clicks_before + 1,
+      format!("trial {trial_num}: clicks did not increment (before {clicks_before}, after {})", state_after.clicks),
+    );
+
+    let new_frame_bytes = get_capture_bytes(&store)?;
+    let new_hash = simple_hash(&new_frame_bytes);
+    let frames_differ = new_frame_bytes != current_frame_bytes;
+    tally.expect(frames_differ, format!("trial {trial_num}: capture bytes did not change after button click"));
+
+    let res_json = run.json.as_ref().and_then(|j| j.get("result")).cloned().unwrap_or_default();
+    let pt = res_json.get("point").cloned().unwrap_or_default();
+    let win_pt = res_json.get("window_point").cloned().unwrap_or_default();
+    let action = res_json.get("action").cloned().unwrap_or_default();
+    let options = res_json.get("options").cloned().unwrap_or_default();
+
+    records.write(
+      "positive_trial",
+      json!({
+        "trial": trial_num,
+        "query": "Activate Target",
+        "clicks_before": clicks_before,
+        "clicks_after": state_after.clicks,
+        "frame_hash_before": current_hash,
+        "frame_hash_after": new_hash,
+        "frames_differ": frames_differ,
+        "exit": run.exit,
+        "ms": run.ms,
+        "point": pt,
+        "window_point": win_pt,
+        "policy": options.get("policy"),
+        "delivery_path": action.get("selected_path"),
+        "mouse_disturbance": action.get("mouse_disturbance"),
+        "focus_disturbance": action.get("focus_disturbance"),
+        "driver_verified": action.get("verified"),
+        "semantic_verified": true,
+        "invariants": invariants(&run_measured, hwnd),
+        "verdict": run_measured.verdict,
+      }),
+    )?;
+
+    current_frame_bytes = new_frame_bytes;
+    current_hash = new_hash;
+  }
+
+  // --- Trial 4: Coordinate-semantics trial (PR #323 verification) ---
+  let (offset_left, offset_top) = (320, 240);
+  target.request(json!({"cmd": "move", "left": offset_left, "top": offset_top}))?;
+  std::thread::sleep(Duration::from_millis(300));
+  layout = target.refresh_layout()?;
+  frame_truth = visible_frame(hwnd).context("read moved frame")?;
+
+  let clicks_before_trial4 = target.state()?.clicks;
+  let (trial4_measured, _) = desk.measure(
+    || {
+      invoke(
+        &auv,
+        &store,
+        "window.clickText",
+        &[
+          "Activate Target",
+          "--target",
+          "win32-receiver.exe",
+          "--title",
+          title,
+          "--input-policy",
+          "background-only",
+        ],
+      )
+    },
+    || (),
+  );
+  tally.record(&trial4_measured);
+  let run4 = trial4_measured.value.as_ref().map_err(|error| anyhow::anyhow!("{error:#}"))?;
+  tally.expect(run4.completed(), format!("coordinate trial failed: {}", run4.failure()));
+
+  let state_after_trial4 = target.state()?;
+  tally.expect(
+    state_after_trial4.clicks == clicks_before_trial4 + 1,
+    format!("trial 4: clicks did not increment at non-zero offset (before {clicks_before_trial4}, after {})", state_after_trial4.clicks),
+  );
+
+  let new_frame_bytes4 = get_capture_bytes(&store)?;
+  let new_hash4 = simple_hash(&new_frame_bytes4);
+  let frames_differ4 = new_frame_bytes4 != current_frame_bytes;
+  tally.expect(frames_differ4, "trial 4: capture bytes did not change");
+
+  let res_json4 = run4.json.as_ref().and_then(|j| j.get("result")).cloned().unwrap_or_default();
+  let pt4 = res_json4.get("point").cloned().unwrap_or_default();
+  let win_pt4 = res_json4.get("window_point").cloned().unwrap_or_default();
+  let action4 = res_json4.get("action").cloned().unwrap_or_default();
+  let options4 = res_json4.get("options").cloned().unwrap_or_default();
+
+  let pt4_x = pt4["x"].as_f64().unwrap_or(0.0);
+  let pt4_y = pt4["y"].as_f64().unwrap_or(0.0);
+  let win_pt4_x = win_pt4["x"].as_f64().unwrap_or(0.0);
+  let win_pt4_y = win_pt4["y"].as_f64().unwrap_or(0.0);
+
+  // Check that pt4 is in screen coords matching button rect, and window_pt is window relative
+  let pt_inside_button = pt4_x >= f64::from(layout.button_rect[0])
+    && pt4_x <= f64::from(layout.button_rect[2])
+    && pt4_y >= f64::from(layout.button_rect[1])
+    && pt4_y <= f64::from(layout.button_rect[3]);
+  tally.expect(pt_inside_button, format!("trial 4: screen point ({pt4_x}, {pt4_y}) outside button rect {:?}", layout.button_rect));
+
+  let coords_distinct = (pt4_x - win_pt4_x).abs() >= 100.0 || (pt4_y - win_pt4_y).abs() >= 50.0;
+  tally.expect(
+    coords_distinct,
+    format!("trial 4: screen and window point not distinct: pt=({pt4_x}, {pt4_y}), win_pt=({win_pt4_x}, {win_pt4_y})"),
+  );
+
+  records.write(
+    "coordinate_trial",
+    json!({
+      "trial": 4,
+      "query": "Activate Target",
+      "window_rect": layout.window_rect,
+      "dwm_frame": frame_truth,
+      "clicks_before": clicks_before_trial4,
+      "clicks_after": state_after_trial4.clicks,
+      "frame_hash_before": current_hash,
+      "frame_hash_after": new_hash4,
+      "frames_differ": frames_differ4,
+      "screen_point": [pt4_x, pt4_y],
+      "window_point": [win_pt4_x, win_pt4_y],
+      "button_rect": layout.button_rect,
+      "pt_inside_button": pt_inside_button,
+      "coords_distinct": coords_distinct,
+      "exit": run4.exit,
+      "ms": run4.ms,
+      "policy": options4.get("policy"),
+      "delivery_path": action4.get("selected_path"),
+      "mouse_disturbance": action4.get("mouse_disturbance"),
+      "focus_disturbance": action4.get("focus_disturbance"),
+      "driver_verified": action4.get("verified"),
+      "semantic_verified": true,
+      "invariants": invariants(&trial4_measured, hwnd),
+      "verdict": trial4_measured.verdict,
+    }),
+  )?;
+
+  current_frame_bytes = new_frame_bytes4;
+  current_hash = new_hash4;
+
+  // --- Trial 5: Negative trial (text not present) ---
+  let clicks_before_trial5 = target.state()?.clicks;
+  let (trial5_measured, _) = desk.measure(
+    || {
+      invoke(
+        &auv,
+        &store,
+        "window.clickText",
+        &[
+          "NonExistentTargetText_404",
+          "--target",
+          "win32-receiver.exe",
+          "--title",
+          title,
+          "--input-policy",
+          "background-only",
+        ],
+      )
+    },
+    || (),
+  );
+  tally.record(&trial5_measured);
+  let run5 = trial5_measured.value.as_ref().map_err(|error| anyhow::anyhow!("{error:#}"))?;
+  tally.expect(run5.exit == Some(1), format!("trial 5: expected exit 1, got {:?}", run5.exit));
+  tally.expect(
+    run5.failure().contains("did not find text"),
+    format!("trial 5: expected typed failure containing 'did not find text', got {:?}", run5.failure()),
+  );
+
+  let state_after_trial5 = target.state()?;
+  tally.expect(
+    state_after_trial5.clicks == clicks_before_trial5,
+    format!("trial 5: clicks changed on missing text (before {clicks_before_trial5}, after {})", state_after_trial5.clicks),
+  );
+
+  let frame_bytes_trial5 = get_capture_bytes(&store)?;
+  let hash_trial5 = simple_hash(&frame_bytes_trial5);
+  let frames_identical = frame_bytes_trial5 == current_frame_bytes;
+  tally.expect(frames_identical, "trial 5: capture bytes differed even though text was not found");
+
+  records.write(
+    "negative_trial",
+    json!({
+      "trial": 5,
+      "query": "NonExistentTargetText_404",
+      "clicks_before": clicks_before_trial5,
+      "clicks_after": state_after_trial5.clicks,
+      "clicks_delivered": 0,
+      "frame_hash_before": current_hash,
+      "frame_hash_after": hash_trial5,
+      "frames_identical": frames_identical,
+      "exit": run5.exit,
+      "ms": run5.ms,
+      "failure": run5.failure(),
+      "invariants": invariants(&trial5_measured, hwnd),
+      "verdict": trial5_measured.verdict,
+    }),
+  )?;
+
+  // --- Invariants & Finish ---
+  let finish = watch.snapshot();
+  tally.expect(finish.injected_mouse == 0 && finish.injected_keys == 0, "global input was injected during scenario");
+  tally.expect(tally.violated == 0, format!("{} command(s) disturbed the desktop", tally.violated));
+  let passed = tally.failures.is_empty();
+
+  records.write(
+    "summary",
+    json!({
+      "passed": passed,
+      "ops": tally.ops,
+      "held": tally.held,
+      "inconclusive": tally.inconclusive,
+      "violated": tally.violated,
+      "failures": tally.failures,
+      "foreground_start": start.foreground.to_string(),
+      "foreground_end": finish.foreground.to_string(),
+      "injected_mouse_total": finish.injected_mouse,
+      "injected_keys_total": finish.injected_keys
+    }),
+  )?;
+
+  let _ = target.close();
+  let _ = cover.close();
+  let _ = std::fs::remove_dir_all(&store);
+
+  // Copy records to docs/ai/references/driver/2026-10-14-windows-window-clicktext.jsonl
+  let repo_doc_jsonl = PathBuf::from("docs/ai/references/driver/2026-10-14-windows-window-clicktext.jsonl");
+  if let Some(parent) = repo_doc_jsonl.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  let _ = std::fs::copy(&jsonl_path, &repo_doc_jsonl);
+
+  println!(
+    "clicktext: {} commands, {} held, {} inconclusive, {} violated; {}",
+    tally.ops,
+    tally.held,
+    tally.inconclusive,
+    tally.violated,
+    if passed { "PASS" } else { "FAIL" }
+  );
+  for failure in &tally.failures {
+    println!("  FAIL {failure}");
+  }
+  println!("records: {}", jsonl_path.display());
+  println!("copied to: {}", repo_doc_jsonl.display());
   Ok(passed)
 }

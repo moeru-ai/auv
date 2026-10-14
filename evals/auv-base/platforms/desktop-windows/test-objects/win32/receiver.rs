@@ -128,6 +128,9 @@ mod native {
     /// Background color as RRGGBB, so a capture can tell which receiver it shows.
     #[arg(long, default_value = "2E6F9E")]
     color: String,
+    /// Caption for the push button.
+    #[arg(long, default_value = "Activate Target")]
+    button_caption: String,
     /// Shown in the edit text so each receiver's content differs.
     #[arg(long, default_value_t = 0)]
     index: u32,
@@ -230,6 +233,7 @@ mod native {
   static PAD: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
   static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  static BUTTON_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   /// Where replies go: stdout, or the socket to the parent. Written from the window thread only.
   static OUT: std::sync::Mutex<Option<Box<dyn std::io::Write + Send>>> = std::sync::Mutex::new(None);
 
@@ -258,6 +262,7 @@ mod native {
   }
 
   pub fn run() {
+    auv_driver_windows::desktop::ensure_input_desktop();
     let options = Options::parse();
     // SAFETY: process-wide setting made once before any window exists.
     unsafe {
@@ -271,6 +276,7 @@ mod native {
     KEEP_IME.store(options.keep_ime, Relaxed);
     let _ = STARTED.set(std::time::Instant::now());
     let _ = BASE_TITLE.set(options.title.clone());
+    let _ = BUTTON_CAPTION.set(options.button_caption.clone());
     let reader: Box<dyn BufRead + Send> = match &options.connect {
       Some(address) => {
         let stream = std::net::TcpStream::connect(address).expect("connect to the parent");
@@ -411,7 +417,9 @@ mod native {
       }
       .expect("create child window")
     };
-    let button = child(w!("BUTTON"), w!("Press"), WINDOW_STYLE(BS_PUSHBUTTON as u32), ID_BUTTON);
+    let button_caption = BUTTON_CAPTION.get().map(String::as_str).unwrap_or("Activate Target");
+    let button_caption_hstring = HSTRING::from(button_caption);
+    let button = child(w!("BUTTON"), PCWSTR(button_caption_hstring.as_ptr()), WINDOW_STYLE(BS_PUSHBUTTON as u32), ID_BUTTON);
     let label = child(w!("STATIC"), w!("clicks 0"), WINDOW_STYLE(0), ID_LABEL);
     let edit =
       child(w!("EDIT"), w!(""), WS_VSCROLL | WS_BORDER | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY) as u32), ID_EDIT);
@@ -447,8 +455,8 @@ mod native {
     unsafe {
       let _ = GetClientRect(frame, &mut client);
       let (width, height) = (client.right - client.left, client.bottom - client.top);
-      let _ = MoveWindow(handle(&BUTTON), 16, 16, 110, 32, true);
-      let _ = MoveWindow(handle(&LABEL), 140, 22, (width - 156).max(40), 24, true);
+      let _ = MoveWindow(handle(&BUTTON), 16, 16, 180, 32, true);
+      let _ = MoveWindow(handle(&LABEL), 206, 22, (width - 222).max(40), 24, true);
       if FOREGROUND_INPUT.load(Relaxed) {
         // Text box, a shorter scrolling edit, then the pad down to the strip.
         let _ = MoveWindow(handle(&TYPING), 16, 60, (width - 32).max(40), 26, true);

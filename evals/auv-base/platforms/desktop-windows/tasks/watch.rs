@@ -364,6 +364,7 @@ impl DesktopWatch {
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
     let thread = std::thread::Builder::new().name("desktop-watch".into()).spawn(move || {
+      auv_driver_windows::desktop::ensure_input_desktop();
       // SAFETY: hooks are installed and removed on this thread, which pumps messages.
       unsafe {
         let module: HMODULE = GetModuleHandleW(None).unwrap_or_default();

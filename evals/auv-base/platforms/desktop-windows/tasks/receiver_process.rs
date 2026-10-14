@@ -224,6 +224,7 @@ pub(super) fn quote(argument: &str) -> String {
 /// Starts `command_line` with the shell as its parent process, so the new process holds no
 /// right to take the foreground, as an application the user launched earlier would not.
 pub(super) fn create_with_shell_parent(command_line: &str) -> Result<OwnedProcess> {
+  auv_driver_windows::desktop::ensure_input_desktop();
   // SAFETY: plain Win32 process creation; every handle and buffer outlives the calls that use
   // it, and the attribute list and parent handle are released before returning.
   unsafe {
