@@ -168,7 +168,9 @@ pub fn split_key_combination(combination: &str) -> Vec<String> {
 ///
 /// VTE terminals (GNOME Terminal, Console, Ptyxis, Tilix, Terminator,
 /// xfce4-terminal), Konsole, kitty, Alacritty and WezTerm paste on
-/// Ctrl+Shift+V. xterm and urxvt bind neither shortcut by default.
+/// Ctrl+Shift+V. xterm and urxvt bind neither shortcut by default. A driver
+/// can only apply this to terminals it can identify: on Wayland that is
+/// through AT-SPI, which kitty, Alacritty and WezTerm do not expose.
 // NOTICE(terminal-paste): matched by application id/name substrings, as
 // cua-driver's `terminal.rs` does; extend the list with evidence from a
 // terminal that pastes on Ctrl+Shift+V but is not recognized.

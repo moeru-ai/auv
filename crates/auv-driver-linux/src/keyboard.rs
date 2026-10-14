@@ -106,6 +106,8 @@ impl InputApi<'_> {
         match input {
           KeyboardInput::PressKeys { options, .. } => combination(options).map(KeyboardPlan::chord),
           KeyboardInput::TypeText { text, options } => KeyboardPlan::type_text(text, *options),
+          // NOTICE: the paste shortcut follows the window focused while the batch
+          // is planned, before earlier steps (such as an app switch) run.
           KeyboardInput::PasteText { options, .. } => Ok(KeyboardPlan::paste_text(options, crate::input::focused_terminal())),
         }
         .map_err(|cause| failure(cause, index, vec![], 0))

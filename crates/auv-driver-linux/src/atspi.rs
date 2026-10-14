@@ -135,11 +135,17 @@ pub fn active_window() -> DriverResult<Option<Window>> {
     path: ROOT_PATH.to_string(),
   };
   for reference in children(&connection, &root)? {
-    let Some(app) = application(&connection, reference)? else {
+    // One stale or unresponsive application must not hide the active window.
+    let Ok(Some(app)) = application(&connection, reference) else {
       continue;
     };
-    for child in children(&connection, &app.reference)? {
-      let proxy = accessible_proxy(&connection, &child)?;
+    let Ok(windows) = children(&connection, &app.reference) else {
+      continue;
+    };
+    for child in windows {
+      let Ok(proxy) = accessible_proxy(&connection, &child) else {
+        continue;
+      };
       let active = state_contains(&proxy, STATE_ACTIVE).unwrap_or(false);
       drop(proxy);
       if active {
