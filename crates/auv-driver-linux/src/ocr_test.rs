@@ -2,6 +2,25 @@ use auv_driver_common::geometry::Rect;
 
 use super::*;
 
+// ROOT CAUSE:
+//
+// If Tesseract ran on a 1x capture, small UI text was often not recognized at
+// all (OSWorld X11 captures; GNOME Text Editor body text on Wayland).
+// Recognition now runs on a 2x image, and TSV coordinates are scaled back so
+// bounds stay in input-image pixels.
+#[test]
+fn upscaled_tsv_coordinates_map_back_to_input_pixels() {
+  let tsv = "\
+level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext
+5\t1\t1\t1\t1\t1\t200\t100\t60\t30\t96.0\tCart
+";
+
+  let matches = text_matches_from_tsv(tsv, "cart", 0.5);
+
+  assert_eq!(matches.matches[0].bounds, Rect::new(100.0, 50.0, 30.0, 15.0));
+  assert_eq!(text_recognition_from_tsv(tsv, 0.5).regions[0].bounds, Rect::new(100.0, 50.0, 30.0, 15.0));
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn rejects_buffer_with_mismatched_length() {
@@ -25,7 +44,7 @@ level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theigh
 5\t1\t1\t1\t2\t1\t8\t42\t15\t9\t-1\tIgnoredConfidence
 ";
 
-  let recognition = text_recognition_from_tsv(tsv);
+  let recognition = text_recognition_from_tsv(tsv, 1.0);
 
   assert_eq!(recognition.text, "Hello World\nIgnoredConfidence");
   assert_eq!(recognition.regions.len(), 2);
@@ -52,7 +71,7 @@ level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theigh
 5\t1\t1\t1\t1\t3\t400\t705\t2160\t33\t80.0\tREADME-content
 ";
 
-  let matches = text_matches_from_tsv(tsv, "AGENTS.md");
+  let matches = text_matches_from_tsv(tsv, "AGENTS.md", 1.0);
 
   assert_eq!(matches.matches.len(), 1);
   assert_eq!(matches.matches[0].text, "AGENTS.md");
