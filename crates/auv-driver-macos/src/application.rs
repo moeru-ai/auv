@@ -25,7 +25,18 @@ impl ApplicationControl for MacosDriverSession {
   fn activate_bundle_id(&self, bundle_id: &str, settle: Duration) -> DriverResult<ApplicationActivationResult> {
     let _ = self;
     let script = activation_script(bundle_id)?;
-    run_activation_script(&script)?;
+    if let Err(error) = run_activation_script(&script) {
+      // NOTICE: some applications cannot be launched by an AppleEvent: on macOS
+      // 26, `tell application id "com.apple.calculator" to activate` (and
+      // `launch`) fails with "Application isn't running. (-600)" while
+      // Calculator is not running, though `open -b` starts it. Launch through
+      // LaunchServices instead; the frontmost check below waits for it.
+      // A launch that hangs past the script's timeout (-1712) gets the same fallback.
+      if !["(-600)", "(-1712)"].iter().any(|code| error.to_string().contains(code)) {
+        return Err(error);
+      }
+      launch_with_launch_services(bundle_id.trim())?;
+    }
 
     let _ = settle;
     #[cfg(target_os = "macos")]
@@ -34,13 +45,41 @@ impl ApplicationControl for MacosDriverSession {
     }
 
     let requested_bundle_id = bundle_id.trim().to_string();
-    let observation = crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
-      .map(|snapshot| snapshot.frontmost_app_bundle_id)
-      .map_err(|error| format!("frontmost application observation failed: {error}"));
+    let verification = wait_for_foreground(&requested_bundle_id, ACTIVATION_VERIFY_TIMEOUT, || {
+      crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
+        .map(|snapshot| snapshot.frontmost_app_bundle_id)
+        .map_err(|error| format!("frontmost application observation failed: {error}"))
+    });
     Ok(ApplicationActivationResult {
-      verification: activation_verification(&requested_bundle_id, observation),
+      verification,
       requested_bundle_id,
     })
+  }
+}
+
+/// How long activation keeps checking the frontmost application after `settle`.
+///
+/// NOTICE: `open -b` returns before a launched application reaches the
+/// front, so one check right after the 150 ms `app.activate` settle reported
+/// `foreground_mismatch` for an activation that succeeded. Only a mismatch
+/// waits this long; a verified foreground returns at once.
+const ACTIVATION_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const ACTIVATION_VERIFY_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Re-observes the frontmost application until it is the requested one or
+/// `timeout` runs out, and returns the last verification.
+fn wait_for_foreground(
+  requested_bundle_id: &str,
+  timeout: Duration,
+  mut observe: impl FnMut() -> Result<String, String>,
+) -> ApplicationActivationVerification {
+  let deadline = std::time::Instant::now() + timeout;
+  loop {
+    let verification = activation_verification(requested_bundle_id, observe());
+    if matches!(verification, ApplicationActivationVerification::VerifiedForeground { .. }) || std::time::Instant::now() >= deadline {
+      return verification;
+    }
+    std::thread::sleep(ACTIVATION_VERIFY_INTERVAL);
   }
 }
 
@@ -65,7 +104,9 @@ fn activation_script(bundle_id: &str) -> DriverResult<String> {
     });
   }
 
-  Ok(format!("tell application id \"{}\" to activate", escape_applescript(bundle_id)))
+  // Bound the AppleEvent: the default two-minute timeout stalled app.activate
+  // when the application did not answer while launching.
+  Ok(format!("with timeout of 10 seconds\ntell application id \"{}\" to activate\nend timeout", escape_applescript(bundle_id)))
 }
 
 fn escape_applescript(value: &str) -> String {
@@ -90,6 +131,33 @@ fn run_activation_script(script: &str) -> DriverResult<()> {
       format!("osascript application activation failed: {stderr}")
     },
   })
+}
+
+/// Launches (or brings forward) an application through LaunchServices.
+#[cfg(target_os = "macos")]
+fn launch_with_launch_services(bundle_id: &str) -> DriverResult<()> {
+  let output = Command::new("open").arg("-b").arg(bundle_id).output().map_err(|error| DriverError::Backend {
+    message: format!("failed to launch open for application activation: {error}"),
+  })?;
+  if output.status.success() {
+    return Ok(());
+  }
+  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+  Err(DriverError::NotFound {
+    target: format!(
+      "application {bundle_id:?} ({})",
+      if stderr.is_empty() {
+        output.status.to_string()
+      } else {
+        stderr
+      }
+    ),
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_with_launch_services(_bundle_id: &str) -> DriverResult<()> {
+  Err(DriverError::unsupported("application.activate_bundle_id"))
 }
 
 #[cfg(not(target_os = "macos"))]
