@@ -176,7 +176,10 @@ fn terminal_paste_uses_ctrl_shift_v() {
   assert!(auv_driver_common::is_terminal_emulator("org.gnome.Terminal"));
   assert!(auv_driver_common::is_terminal_emulator("org.gnome.Console"));
   assert!(!auv_driver_common::is_terminal_emulator("org.gnome.TextEditor"));
+}
 
+// ROOT CAUSE:
+//
 // If typeText received non-ASCII text on Linux (CJK, accents), keysym typing
 // failed with "only supports ASCII text" and nothing was typed. The fix pastes
 // such text, keeping replace/submit/settle, and records the keysym attempt.
