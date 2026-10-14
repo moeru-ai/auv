@@ -27,7 +27,7 @@ const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 // the reader finished made the portal reject the pending SelectionWrite
 // ("Transfer serial 1 doesn't match any transfer request") and nothing was
 // pasted. One second to start, then until reads stop for 200 ms, at most five
-// seconds, mirrors the X11 driver.
+// seconds, mirrors the X11 driver work (#361).
 const PASTE_READ_START: Duration = Duration::from_secs(1);
 const PASTE_READ_QUIET: Duration = Duration::from_millis(200);
 const PASTE_READ_LIMIT: Duration = Duration::from_secs(5);
@@ -123,6 +123,10 @@ impl ClipboardSession {
       Some(owner) if !owner.mime_types.iter().any(|mime_type| mime_type == TEXT_MIME) => return Ok(String::new()),
       Some(_) => {}
       None if self.owns_selection => return Ok(self.text.lock().expect("clipboard owner text lock poisoned").clone()),
+      // TODO(linux-portal-clipboard-announce): a portal backend that never
+      // announces the current owner after Start makes every snapshot empty, so
+      // the restore clears the user's clipboard. Verified only on GNOME 48,
+      // which announces; revisit with evidence from KDE or wlroots portals.
       None => return Ok(String::new()),
     }
     let fd = match run("read portal clipboard", self.clipboard.selection_read(&self.session, TEXT_MIME)) {
@@ -292,7 +296,8 @@ fn spawn_transfer_thread(
           }
           continue;
         }
-        Event::Owner(None) => continue,
+        // Both signal streams end together when the connection closes.
+        Event::Owner(None) => break,
         Event::Transfer(transfer) => transfer,
       };
       let Some((session, mime_type, serial)) = transfer else {
