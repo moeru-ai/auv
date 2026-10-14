@@ -30,14 +30,15 @@ An `app:` target, and a bare `--target`, is the **executable file name** shown a
 the same program is `Notepad.exe` on disk and `notepad.exe` to the person typing it. The `.exe`
 suffix may be left out (`notepad`). Titles stay case-sensitive, as on macOS.
 
-Windows has no bundle id (`Window.app_bundle_id` is always `None`). The local invoke path selects
-an application by name and a Runner client sends an application id (`WindowSelector.application_bundle_id`);
+Windows reports no application id yet (`Window.application_id` is always `None`). The local invoke
+path selects an application by name and a Runner client sends an application id
+(`WindowSelector.application_id`);
 since #366 the Windows driver matches both against the executable name, so the two paths agree.
 `--title` works as on the other platforms. A selector that names nothing is an error, not another
 window; when no visible window belongs to the requested application, the error lists the visible
 applications (`application "x" (visible applications: …) was not found`).
 
-The shared target help says `app:<bundle-id>`. The Windows meaning is stated in the command help
+The shared target help says `app:<application-id>`. The Windows meaning is stated in the command help
 of the four commands, as the Linux slice did, instead of rewriting the shared text.
 
 ## Defects the live check found

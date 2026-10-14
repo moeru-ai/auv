@@ -370,9 +370,10 @@ mod native {
       },
       title: window_title(hwnd),
       app_name: process_name(pid),
-      // TODO(windows-application-id): the process image name in app_name is
-      // the id app.activate accepts. Reporting it here too would change
-      // window.resolve matching, so it waits for an owner-approved slice.
+      // TODO(windows-application-id): selectors already match an application
+      // id against the executable name in app_name. Reporting it here too
+      // changes what readers of application_id see (window.list, missing
+      // window hints, readiness), so it waits for an owner-approved slice.
       application_id: None,
       process_id: (pid != 0).then_some(pid),
       frame,

@@ -333,8 +333,8 @@ fn window_text_commands_refuse_as_unsupported_on_linux() {
   }
 }
 
-// On Windows an application is its executable file name: `application_id` is always `None`
-// (TODO(windows-application-id)), so an id selector could never match.
+// On Windows an application is its executable file name, the `app_name` of `window.list`;
+// `application_id` is always `None` (TODO(windows-application-id)).
 #[cfg(target_os = "windows")]
 #[test]
 fn window_selector_names_the_executable_on_windows() {

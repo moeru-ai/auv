@@ -620,10 +620,10 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<au
     ..WindowSelector::default()
   };
   if let Some(target) = input.application_target()? {
-    // NOTICE: Windows reports no application id yet (TODO(windows-application-id)),
-    // so an id selector can never match there. Its application identifier is the
-    // executable file name, the `app_name` of `window.list`, which the driver
-    // matches ignoring case.
+    // NOTICE: Windows reports no application id yet (TODO(windows-application-id)).
+    // Its application identifier is the executable file name, the `app_name` of
+    // `window.list`, which the driver matches ignoring case for both name and id
+    // selectors.
     #[cfg(target_os = "windows")]
     {
       selector.app = Some(App::name(target));
