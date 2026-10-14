@@ -294,7 +294,7 @@ details for reruns:
 - The `xdg-desktop-portal` user service keeps the environment it started
   with. After a GNOME login it must be restarted to expose GNOME's
   RemoteDesktop.
-- Portal consent has a fixed 10 s response deadline.
+- Portal consent waits up to 60 s for the person to answer the permission dialog; other portal calls have a 10 s deadline (#375).
 
 ## Open Items
 
