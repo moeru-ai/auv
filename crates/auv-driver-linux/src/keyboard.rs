@@ -105,6 +105,9 @@ impl InputApi<'_> {
         }
         match input {
           KeyboardInput::PressKeys { options, .. } => combination(options).map(KeyboardPlan::chord),
+          KeyboardInput::TypeText { text, options } if !crate::input::keysym_typeable(text) => {
+            Ok(KeyboardPlan::paste_text(&crate::input::paste_options_for_text(text, *options), crate::input::focused_terminal()))
+          }
           KeyboardInput::TypeText { text, options } => KeyboardPlan::type_text(text, *options),
           // NOTICE: the paste shortcut follows the window focused while the batch
           // is planned, before earlier steps (such as an app switch) run.
@@ -141,6 +144,10 @@ impl InputApi<'_> {
           std::thread::sleep(interval);
         }
         let outcome = match &input {
+          KeyboardInput::TypeText { text, options } if !crate::input::keysym_typeable(text) => {
+            crate::input::paste_prepared(&self.session.state, crate::input::paste_options_for_text(text, *options), &layout, &plan)
+              .map(crate::input::typed_through_paste)
+          }
           KeyboardInput::PressKeys { .. } | KeyboardInput::TypeText { .. } => {
             with_input_session(&self.session.state, |session| session.deliver_keyboard(&layout, &plan))
               .map(|()| crate::input::keyboard_result())

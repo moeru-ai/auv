@@ -208,6 +208,16 @@ pub(crate) fn type_text(
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
     return Err(invalid_input("linux type_text cannot use background_only input policy"));
   }
+  if !keysym_typeable(text) {
+    let paste = paste_options_for_text(text, options);
+    let plan = KeyboardPlan::paste_text(&paste, focused_terminal());
+    let layout = with_input_session(state, |session| {
+      let layout = session.keyboard_layout()?;
+      session.validate_keyboard(&layout, &plan)?;
+      Ok(layout)
+    })?;
+    return paste_prepared(state, paste, &layout, &plan).map(typed_through_paste);
+  }
   let plan = KeyboardPlan::type_text(text, options)?;
   with_input_session(state, |session| {
     let layout = session.keyboard_layout()?;
@@ -355,6 +365,38 @@ fn deliver_input<T>(
       state.input_session = None;
     }
   }
+  result
+}
+
+/// Whether keysym typing can deliver `text`. The portal and uinput backends
+/// type ASCII through the keyboard layout; other characters have no key.
+pub(crate) fn keysym_typeable(text: &str) -> bool {
+  text.chars().all(|character| character.is_ascii())
+}
+
+/// The paste that delivers `text` when keysym typing cannot.
+///
+/// NOTICE: Linux keysym typing covers ASCII only, so non-ASCII text (CJK,
+/// accents, emoji) failed with "only supports ASCII text". Pasting is the only
+/// delivery for it on Wayland; the clipboard is restored afterwards, as for
+/// `input.pasteText`. This happens without `allow_clipboard_fallback` because
+/// there is no keyboard path to fall back from.
+pub(crate) fn paste_options_for_text(text: &str, options: TypeTextOptions) -> PasteTextOptions {
+  PasteTextOptions {
+    text: text.to_string(),
+    replace_existing: options.replace_existing,
+    submit: options.submit,
+    settle: options.settle,
+  }
+}
+
+/// Records that typed text went through the clipboard because keysym typing
+/// could not deliver it.
+pub(crate) fn typed_through_paste(mut result: InputActionResult) -> InputActionResult {
+  result.attempts.insert(
+    0,
+    InputAttempt::failure(InputDeliveryPath::ForegroundSystemEvents, "keysym typing supports ASCII only; pasted the text instead"),
+  );
   result
 }
 

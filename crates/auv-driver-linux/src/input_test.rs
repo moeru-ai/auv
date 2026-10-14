@@ -72,6 +72,8 @@ fn click_modifiers_map_to_standard_platform_keys() {
 // ROOT CAUSE: direct type_text used to resolve characters after emitting the
 // replace shortcut and preceding characters. Reject the whole request before
 // contacting a backend, using the same prepared plan as batch delivery.
+// (Non-ASCII text now pastes instead; an ASCII control character still has
+// no key.)
 #[test]
 fn direct_type_text_rejects_invalid_tail_before_opening_backend() {
   use auv_driver_common::Driver;
@@ -79,7 +81,7 @@ fn direct_type_text_rejects_invalid_tail_before_opening_backend() {
   let error = session
     .input()
     .type_text(
-      "prefix漢",
+      "prefix\u{7}",
       TypeTextOptions {
         replace_existing: true,
         ..Default::default()
@@ -174,4 +176,27 @@ fn terminal_paste_uses_ctrl_shift_v() {
   assert!(auv_driver_common::is_terminal_emulator("org.gnome.Terminal"));
   assert!(auv_driver_common::is_terminal_emulator("org.gnome.Console"));
   assert!(!auv_driver_common::is_terminal_emulator("org.gnome.TextEditor"));
+
+// If typeText received non-ASCII text on Linux (CJK, accents), keysym typing
+// failed with "only supports ASCII text" and nothing was typed. The fix pastes
+// such text, keeping replace/submit/settle, and records the keysym attempt.
+#[test]
+fn non_ascii_text_is_typed_through_the_clipboard() {
+  assert!(keysym_typeable("hello, world\n"));
+  assert!(!keysym_typeable("中文 café"));
+  let paste = paste_options_for_text(
+    "中文",
+    TypeTextOptions {
+      replace_existing: true,
+      submit: TextSubmit::Return,
+      settle: Duration::from_millis(5),
+      ..Default::default()
+    },
+  );
+  assert_eq!(paste.text, "中文");
+  assert!(paste.replace_existing);
+  assert_eq!(paste.submit, TextSubmit::Return);
+  assert_eq!(paste.settle, Duration::from_millis(5));
+  let result = typed_through_paste(keyboard_result());
+  assert!(!result.attempts[0].succeeded);
 }
