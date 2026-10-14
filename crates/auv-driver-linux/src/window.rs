@@ -99,7 +99,9 @@ fn missing_window(windows: &[Window], selector: &WindowSelector, target: &str) -
       if owned {
         not_found(target)
       } else {
-        auv_driver_common::window::application_not_found(app, windows)
+        // The desktop shell's own surfaces are never resolved for an app target.
+        let applications = windows.iter().filter(|window| !is_desktop_shell_surface(window)).cloned().collect::<Vec<_>>();
+        auv_driver_common::window::application_not_found(app, &applications)
       }
     }
     _ => not_found(target),
