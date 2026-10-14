@@ -15,6 +15,7 @@ const ACCESSIBLE_IFACE: &str = "org.a11y.atspi.Accessible";
 const ACTION_IFACE: &str = "org.a11y.atspi.Action";
 const COMPONENT_IFACE: &str = "org.a11y.atspi.Component";
 const SELECTION_IFACE: &str = "org.a11y.atspi.Selection";
+const STATE_ACTIVE: u32 = 1;
 const STATE_FOCUSED: u32 = 12;
 const COORD_TYPE_SCREEN: u32 = 0;
 const COORD_TYPE_WINDOW: u32 = 1;
@@ -123,6 +124,31 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
   apply_shell_stage_window_origins(&connection, &applications, &mut windows);
 
   Ok(windows)
+}
+
+/// The top-level window AT-SPI marks active (the one with keyboard focus), if
+/// any application exposes one.
+pub fn active_window() -> DriverResult<Option<Window>> {
+  let connection = connect()?;
+  let root = ObjectRef {
+    dest: REGISTRY_DEST.to_string(),
+    path: ROOT_PATH.to_string(),
+  };
+  for reference in children(&connection, &root)? {
+    let Some(app) = application(&connection, reference)? else {
+      continue;
+    };
+    for child in children(&connection, &app.reference)? {
+      let proxy = accessible_proxy(&connection, &child)?;
+      let active = state_contains(&proxy, STATE_ACTIVE).unwrap_or(false);
+      drop(proxy);
+      if active {
+        let accessible = accessible(&connection, child)?;
+        return Ok(Some(window_from_accessible(&app, &accessible, true)));
+      }
+    }
+  }
+  Ok(None)
 }
 
 pub fn snapshot_window(window: &Window) -> DriverResult<TreeSnapshot> {

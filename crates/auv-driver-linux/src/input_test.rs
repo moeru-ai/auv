@@ -114,11 +114,14 @@ fn prepared_text_retains_replace_submit_and_per_character_timing() {
       (&[][..], keysym::RETURN, Duration::ZERO),
     ]
   );
-  let paste = KeyboardPlan::paste_text(&PasteTextOptions {
-    replace_existing: true,
-    submit: TextSubmit::Return,
-    ..Default::default()
-  });
+  let paste = KeyboardPlan::paste_text(
+    &PasteTextOptions {
+      replace_existing: true,
+      submit: TextSubmit::Return,
+      ..Default::default()
+    },
+    false,
+  );
   assert_eq!(
     paste.steps.iter().map(|(chord, _)| (chord.modifiers.as_slice(), chord.key)).collect::<Vec<_>>(),
     vec![
@@ -152,4 +155,23 @@ fn shared_key_symbols_preserve_linux_named_key_behavior() {
   assert!(keysym::named_or_char("F13").is_err());
   assert!(keysym::named_or_char("forward_delete").is_err());
   assert!(keysym::named_or_char("play_pause").is_err());
+}
+
+// ROOT CAUSE:
+//
+// If input.pasteText targeted GNOME Terminal on Wayland, the driver sent
+// Ctrl+V, which bash reads as quoted-insert, so the pasted command never
+// appeared even though the clipboard was read.
+//
+// The fix sends Ctrl+Shift+V when the focused window is a terminal emulator.
+#[test]
+fn terminal_paste_uses_ctrl_shift_v() {
+  let paste = KeyboardPlan::paste_text(&PasteTextOptions::default(), true);
+  assert_eq!(
+    paste.steps.iter().map(|(chord, _)| (chord.modifiers.as_slice(), chord.key)).collect::<Vec<_>>(),
+    vec![(&[keysym::CONTROL_L, keysym::SHIFT_L][..], 'v' as i32)]
+  );
+  assert!(auv_driver_common::is_terminal_emulator("org.gnome.Terminal"));
+  assert!(auv_driver_common::is_terminal_emulator("org.gnome.Console"));
+  assert!(!auv_driver_common::is_terminal_emulator("org.gnome.TextEditor"));
 }

@@ -31,6 +31,10 @@ pub struct FocusResult {
   pub fallback_reason: Option<String>,
 }
 
+pub fn active_window() -> DriverResult<Option<Window>> {
+  Ok(None)
+}
+
 pub fn snapshot_window(_window: &Window) -> DriverResult<TreeSnapshot> {
   Err(DriverError::unsupported("window.capture_ax_tree"))
 }

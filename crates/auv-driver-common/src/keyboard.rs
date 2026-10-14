@@ -162,6 +162,34 @@ pub fn split_key_combination(combination: &str) -> Vec<String> {
   keys
 }
 
+/// Whether an application id or name belongs to a terminal emulator that
+/// pastes on Ctrl+Shift+V. In those terminals Ctrl+V is the shell's
+/// quoted-insert, so a Ctrl+V paste inserts nothing.
+///
+/// VTE terminals (GNOME Terminal, Console, Ptyxis, Tilix, Terminator,
+/// xfce4-terminal), Konsole, kitty, Alacritty and WezTerm paste on
+/// Ctrl+Shift+V. xterm and urxvt bind neither shortcut by default.
+// NOTICE(terminal-paste): matched by application id/name substrings, as
+// cua-driver's `terminal.rs` does; extend the list with evidence from a
+// terminal that pastes on Ctrl+Shift+V but is not recognized.
+pub fn is_terminal_emulator(application: &str) -> bool {
+  let application = application.to_ascii_lowercase();
+  [
+    "terminal",
+    "org.gnome.console",
+    "kgx",
+    "ptyxis",
+    "tilix",
+    "terminator",
+    "konsole",
+    "kitty",
+    "alacritty",
+    "wezterm",
+  ]
+  .iter()
+  .any(|name| application.contains(name))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

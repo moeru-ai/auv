@@ -245,13 +245,21 @@ pub(crate) fn paste(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult
 }
 
 pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: PasteTextOptions) -> DriverResult<InputActionResult> {
-  let plan = KeyboardPlan::paste_text(&options);
+  let plan = KeyboardPlan::paste_text(&options, focused_terminal());
   let layout = with_input_session(state, |session| {
     let layout = session.keyboard_layout()?;
     session.validate_keyboard(&layout, &plan)?;
     Ok(layout)
   })?;
   paste_prepared(state, options, &layout, &plan)
+}
+
+/// Whether the focused window belongs to a terminal emulator. An unknown
+/// focus keeps the ordinary Ctrl+V.
+pub(crate) fn focused_terminal() -> bool {
+  crate::atspi::active_window().ok().flatten().is_some_and(|window| {
+    [window.app_bundle_id.as_deref(), window.app_name.as_deref()].into_iter().flatten().any(auv_driver_common::is_terminal_emulator)
+  })
 }
 
 pub(crate) fn paste_prepared(
@@ -432,12 +440,19 @@ impl KeyboardPlan {
     Ok(Self { steps })
   }
 
-  pub(crate) fn paste_text(options: &PasteTextOptions) -> Self {
+  /// `terminal` selects Ctrl+Shift+V, the paste shortcut of terminal
+  /// emulators; see `auv_driver_common::is_terminal_emulator`.
+  pub(crate) fn paste_text(options: &PasteTextOptions, terminal: bool) -> Self {
     let mut steps = Vec::new();
     if options.replace_existing {
       steps.extend(Self::chord(vec![keysym::CONTROL_L, 'a' as i32]).steps);
     }
-    steps.extend(Self::chord(vec![keysym::CONTROL_L, 'v' as i32]).steps);
+    let paste = if terminal {
+      vec![keysym::CONTROL_L, keysym::SHIFT_L, 'v' as i32]
+    } else {
+      vec![keysym::CONTROL_L, 'v' as i32]
+    };
+    steps.extend(Self::chord(paste).steps);
     if options.submit != TextSubmit::No {
       steps.extend(Self::chord(vec![keysym::RETURN]).steps);
     }
