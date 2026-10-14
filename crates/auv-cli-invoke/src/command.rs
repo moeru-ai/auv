@@ -360,11 +360,6 @@ impl TargetPolicy {
   }
 
   pub fn help(self) -> &'static str {
-    // TODO(application-id-rename): only `RequiredApplication` (app.activate,
-    // input.focusText) spells the neutral `app:<application-id>` so far. The
-    // other variants keep `app:<bundle-id>` until the owner-approved slice that
-    // renames `Window.app_bundle_id`, `InputTarget::Application { bundle_id }`,
-    // and `App::bundle_id` to application ids.
     match self {
       Self::Forbidden => "Target forbidden; this command operates without target selection.",
       Self::OptionalApplication => "Optional app:<application-id> (bare ids accepted); window and display targets are unsupported.",

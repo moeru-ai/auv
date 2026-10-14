@@ -975,9 +975,9 @@ example `notepad.exe`, matched ignoring ASCII case), each as `window.list` shows
 [Windows window commands reference](ai/references/invoke-cli/2026-10-11-windows-window-commands.md).
 
 `app.activate` reports the kind of id it activated: `bundle_id` on macOS and
-`process_name` (the executable name) on Windows. Linux kinds are defined but
-not yet produced: `desktop_app_id` (the AT-SPI application id) on Wayland and
-`wm_class` on X11.
+`process_name` (the executable name) on Windows. The Linux Wayland kind
+`desktop_app_id` (the AT-SPI application id) is defined, but Wayland activation
+is not implemented yet.
 
 Each command definition declares whether a target is forbidden, optional, or
 required and which resource types it accepts. CLI help and MCP metadata derive
@@ -1733,8 +1733,7 @@ One result type serves every platform. It records:
   platform identity it names. The kind is part of the wire contract.
 - `method`: how the platform delivered the request. macOS uses
   `apple_script_activate`. Windows uses `foreground_window`, which foregrounds
-  the application's main visible window. `ewmh_active_window` is reserved for
-  X11.
+  the application's main visible window.
 - `activated_window`: the window reference the platform foregrounded, when
   activation went through one window (Windows). It is absent on macOS.
 - `verification`: the status above, with `observed_application_id` when a

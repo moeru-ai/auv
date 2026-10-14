@@ -113,12 +113,9 @@ fn permission_probe_mapper_preserves_every_status() {
 
 #[test]
 fn linux_application_activation_is_unimplemented_not_activation_only() {
-  // The Linux facade returns these errors for Wayland and X11 sessions; the
+  // The Linux facade returns these errors for Wayland sessions; the
   // Runner must surface them as UNIMPLEMENTED, never as a response.
-  for kind in [
-    auv_driver::ApplicationIdKind::DesktopAppId,
-    auv_driver::ApplicationIdKind::WmClass,
-  ] {
+  for kind in [auv_driver::ApplicationIdKind::DesktopAppId] {
     let status = driver_status(auv_driver::application::unsupported_activation(kind));
     assert_eq!(status.code(), tonic::Code::Unimplemented);
     assert!(status.message().contains("Linux"), "{}", status.message());

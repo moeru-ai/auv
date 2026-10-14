@@ -1,5 +1,11 @@
 # Windows parity consolidation review (#211)
 
+> Migration notice: Windows `app.activate` has since been wired through the
+> shared `ApplicationActivationResult` and
+> `auv.api.driver.v1.ApplicationService/ActivateApplication`;
+> `ApplicationControl::activate_process_name` and `ProcessActivationResult` no
+> longer exist. The text below records the state when it was written.
+
 Status: adopted by the owner on 2026-10-13. The owner accepted the verdict, the blocking items
 (section 3.8, P0) and the three missing pieces this review ranks first: typed refusal, Runner
 support cells, and `scroll_until` telling "never moved" from "stopped moving". The owner left the

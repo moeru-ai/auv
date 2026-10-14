@@ -17,7 +17,8 @@ platform except macOS.
 Platform-native names stay intact where they name the platform concept: the
 macOS driver's native snapshot fields (`owner_bundle_id`,
 `frontmost_app_bundle_id`) and the macOS media `source_bundle_id`. The macOS
-`ActivateBundleId` RPC also keeps its name: it accepts only bundle ids.
+`ActivateBundleId` RPC was later replaced by the cross-platform
+`auv.api.driver.v1.ApplicationService/ActivateApplication`.
 
 ## Source and API mapping
 

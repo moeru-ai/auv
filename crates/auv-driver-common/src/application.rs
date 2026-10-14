@@ -23,9 +23,8 @@ pub enum ApplicationIdKind {
   /// Linux Wayland desktop application id (the AT-SPI `AccessibleId` of the
   /// application). Defined for the contract; activation is not implemented.
   DesktopAppId,
-  /// Linux X11 `WM_CLASS`. Defined for the contract; activation is not
-  /// implemented.
-  WmClass,
+  // TODO(x11-app-activate): an X11 `WM_CLASS` kind is added with the X11
+  // driver, which main does not have yet.
 }
 
 impl ApplicationIdKind {
@@ -35,7 +34,6 @@ impl ApplicationIdKind {
       Self::BundleId => "bundle_id",
       Self::ProcessName => "process_name",
       Self::DesktopAppId => "desktop_app_id",
-      Self::WmClass => "wm_class",
     }
   }
 }
@@ -49,10 +47,8 @@ pub enum ApplicationActivationMethod {
   /// Resolve the application's main visible window and foreground it
   /// (Windows `SetForegroundWindow`).
   ForegroundWindow,
-  /// X11 EWMH `_NET_ACTIVE_WINDOW` client message.
-  // TODO(x11-app-activate): no driver produces this yet; the X11 backend adds
-  // it after the X11 window-list slice lands.
-  EwmhActiveWindow,
+  // TODO(x11-app-activate): an EWMH `_NET_ACTIVE_WINDOW` method is added with
+  // the X11 driver, which main does not have yet.
 }
 
 impl ApplicationActivationMethod {
@@ -61,7 +57,6 @@ impl ApplicationActivationMethod {
     match self {
       Self::AppleScriptActivate => "apple_script_activate",
       Self::ForegroundWindow => "foreground_window",
-      Self::EwmhActiveWindow => "ewmh_active_window",
     }
   }
 }
@@ -146,9 +141,6 @@ pub fn unsupported_activation(kind: ApplicationIdKind) -> DriverError {
     // a follow-up slice adds per-desktop backends (GNOME, KDE, wlroots), not a
     // GNOME-only path.
     ApplicationIdKind::DesktopAppId => DriverError::unsupported("application.activate on Linux Wayland (desktop_app_id)"),
-    // TODO(x11-app-activate): a follow-up slice activates through EWMH
-    // `_NET_ACTIVE_WINDOW` after the X11 window-list slice lands.
-    ApplicationIdKind::WmClass => DriverError::unsupported("application.activate on Linux X11 (wm_class)"),
     ApplicationIdKind::BundleId => DriverError::unsupported("application.activate by bundle_id on this platform"),
     ApplicationIdKind::ProcessName => DriverError::unsupported("application.activate by process_name on this platform"),
   }
