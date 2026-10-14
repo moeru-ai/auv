@@ -175,6 +175,11 @@ pub(crate) fn text_wait_options(timeout_ms: Option<u64>, interval_ms: Option<u64
   })
 }
 
+/// The invoke text wait defaults: 10 s, polling every 250 ms.
+pub(crate) fn default_text_wait_options() -> auv_driver::WaitOptions {
+  text_wait_options(None, None).expect("the default text wait budget is in range")
+}
+
 impl WaitForScreenTextArgs {
   fn options(&self) -> Result<auv_driver::WaitOptions, String> {
     text_wait_options(self.timeout_ms, self.interval_ms)
@@ -224,11 +229,12 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.waitForText")?;
+    let options = args.options().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let matches = recognize_screen_text_with_cancellation(args.query.clone(), Some(args.options()?), &input.cancellation).await?;
+    let matches = recognize_screen_text_with_cancellation(args.query.clone(), Some(options), &input.cancellation).await?;
     Ok(screen_text_matches_output(&matches)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -240,7 +246,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, crate::InvokeFailure> {
-  let wait = wait.then(auv_driver::WaitOptions::default);
+  let wait = wait.then(default_text_wait_options);
   Ok(recognize_screen_text_with_cancellation(query, wait, &Default::default()).await?)
 }
 

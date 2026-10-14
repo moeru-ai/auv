@@ -232,7 +232,7 @@ async fn selected_text_wait_preserves_timeout_semantics_after_one_exact_call() {
 
   assert_eq!(
     error,
-    "window.waitForText did not find text \"Ready\" within 0 ms; capture the screen to check what is shown, or raise --timeout-ms"
+    "window.waitForText did not find text \"Ready\" within 0 ms; capture the window to check what is shown, or raise --timeout-ms"
   );
   assert_eq!(calls.get(), 1);
 }

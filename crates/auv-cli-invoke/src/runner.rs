@@ -2,6 +2,12 @@
 
 /// Reuse the existing polling policy for local OCR and selected Runner calls.
 /// Callers own capture and recognition, including cancellation between Driver calls.
+///
+/// NOTICE: The timeout bounds when a poll may start, not when it ends. Capture
+/// and OCR are synchronous Driver calls that cannot be cut short, so a poll
+/// that starts before the deadline runs to completion (one debug-build Wayland
+/// OCR took about 19 s). No poll starts after the deadline, and the sleep
+/// between polls never passes it.
 pub(crate) async fn wait_for_selected_text<R, Call, Future, HasMatches>(
   command_id: &str,
   query: &str,
@@ -22,18 +28,24 @@ where
     if has_matches(&response) {
       return Ok(response);
     }
-    if started.elapsed() >= options.timeout {
+    let remaining = options.timeout.saturating_sub(started.elapsed());
+    if remaining.is_zero() {
       // TODO(text-wait-timeout-evidence): report the recognized lines or the
       // last capture with the failure. OcrMatches carries only matches, so
       // this needs the recognition result to keep all lines first.
+      let scope = if command_id.starts_with("window.") {
+        "window"
+      } else {
+        "screen"
+      };
       return Err(format!(
-        "{command_id} did not find text {query:?} within {} ms; capture the screen to check what is shown, or raise --timeout-ms",
+        "{command_id} did not find text {query:?} within {} ms; capture the {scope} to check what is shown, or raise --timeout-ms",
         options.timeout.as_millis()
       ));
     }
     tokio::select! {
       _ = cancellation.cancelled() => return Err("invoke cancelled".to_string()),
-      _ = tokio::time::sleep(options.poll_interval) => {}
+      _ = tokio::time::sleep(options.poll_interval.min(remaining)) => {}
     }
   }
 }
