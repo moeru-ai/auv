@@ -75,4 +75,11 @@ fn foreground_wait_returns_once_the_launched_application_is_frontmost() {
       observed_bundle_id: "com.apple.finder".to_string(),
     }
   );
+  // An observation that cannot be made does not keep the caller waiting.
+  let started = std::time::Instant::now();
+  assert!(matches!(
+    wait_for_foreground("com.apple.calculator", Duration::from_secs(5), || Err("denied".to_string())),
+    ApplicationActivationVerification::Unavailable { .. }
+  ));
+  assert!(started.elapsed() < Duration::from_secs(1));
 }
