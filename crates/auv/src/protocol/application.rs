@@ -44,10 +44,12 @@ pub fn encode(result: ApplicationActivationResult) -> proto::ActivateApplication
     ApplicationIdKind::BundleId => proto::ApplicationIdKind::BundleId,
     ApplicationIdKind::ProcessName => proto::ApplicationIdKind::ProcessName,
     ApplicationIdKind::DesktopAppId => proto::ApplicationIdKind::DesktopAppId,
+    ApplicationIdKind::WmClass => proto::ApplicationIdKind::WmClass,
   };
   let method = match result.method {
     ApplicationActivationMethod::AppleScriptActivate => proto::ApplicationActivationMethod::AppleScriptActivate,
     ApplicationActivationMethod::ForegroundWindow => proto::ApplicationActivationMethod::ForegroundWindow,
+    ApplicationActivationMethod::EwmhActiveWindow => proto::ApplicationActivationMethod::EwmhActiveWindow,
   };
   proto::ActivateApplicationResponse {
     requested_application_id: result.requested_application_id,
@@ -74,11 +76,13 @@ pub fn decode(response: proto::ActivateApplicationResponse) -> Result<Applicatio
     Ok(proto::ApplicationIdKind::BundleId) => ApplicationIdKind::BundleId,
     Ok(proto::ApplicationIdKind::ProcessName) => ApplicationIdKind::ProcessName,
     Ok(proto::ApplicationIdKind::DesktopAppId) => ApplicationIdKind::DesktopAppId,
+    Ok(proto::ApplicationIdKind::WmClass) => ApplicationIdKind::WmClass,
     Ok(proto::ApplicationIdKind::Unspecified) | Err(_) => return Err(DecodeError::UnknownApplicationIdKind),
   };
   let method = match proto::ApplicationActivationMethod::try_from(response.method) {
     Ok(proto::ApplicationActivationMethod::AppleScriptActivate) => ApplicationActivationMethod::AppleScriptActivate,
     Ok(proto::ApplicationActivationMethod::ForegroundWindow) => ApplicationActivationMethod::ForegroundWindow,
+    Ok(proto::ApplicationActivationMethod::EwmhActiveWindow) => ApplicationActivationMethod::EwmhActiveWindow,
     Ok(proto::ApplicationActivationMethod::Unspecified) | Err(_) => return Err(DecodeError::UnknownMethod),
   };
   let activated_window = match response.activated_window {

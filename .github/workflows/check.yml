@@ -60,6 +60,7 @@ jobs:
             libwayland-dev \
             libxkbcommon-dev \
             libegl-dev \
+            libgbm-dev \
             libleptonica-dev \
             libtesseract-dev
       - uses: dtolnay/rust-toolchain@stable

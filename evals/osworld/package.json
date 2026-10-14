@@ -1,0 +1,29 @@
+{
+  "name": "@auv-js/eval-osworld",
+  "type": "module",
+  "private": true,
+  "description": "OSWorld Kubernetes episodes scheduled and scored by Vieval.",
+  "scripts": {
+    "cases:list": "tsx ./src/listCases.ts",
+    "doctor": "tsx ./src/doctor.ts",
+    "eval:run": "vieval run --config ./vieval.config.ts --project osworld-kubernetes --report-out ./.vieval/reports --with-viewer",
+    "results:summarize": "tsx ./src/summarize.ts",
+    "test:run": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "viewer": "vieval viewer ./.vieval/reports"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "catalog:",
+    "@earendil-works/pi-ai": "catalog:",
+    "@moeru/std": "catalog:",
+    "tinyexec": "catalog:",
+    "vieval": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vieval/ui": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:vitest"
+  }
+}

@@ -733,8 +733,8 @@ mod frontend {
        Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
        command; it is not a claim that the path was run.\n\n\
        Application ids are the ones `window.list` reports on this Device, and they differ by platform: a bundle id \
-       on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
-       application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
+       on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), the AT-SPI \
+       application id on Linux Wayland (org.gnome.TextEditor), and the GTK id or WM_CLASS on X11 (google-chrome). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
        Points: with an app or window `target`, point coordinates are window-local unless `inputs.relative-to` is \
        `screen`. A `display.capture` image is in pixels: divide a pixel by the capture's scale factor and add its \
        capture bounds origin to get a screen point. Send a screen point without `target`, or with `target` and \

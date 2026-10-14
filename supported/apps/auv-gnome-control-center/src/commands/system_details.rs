@@ -41,8 +41,6 @@ pub fn run_copy_system_details(inputs: &CopySystemDetailsInputs) -> Result<CopyS
 mod platform {
   use std::time::Instant;
 
-  use auv_driver_linux::LinuxDriverSession;
-
   use super::*;
   use crate::app::{ABOUT_PAGE, COPY_BUTTON, SYSTEM_DETAILS_PAGE, SYSTEM_PAGE};
   use crate::commands::{click_visible_labeled_node_with_delivery, select_visible_labeled_node};
@@ -81,7 +79,7 @@ mod platform {
     })
   }
 
-  fn wait_for_clipboard_text(session: &LinuxDriverSession, previous: &str, timeout: Duration) -> Result<String, String> {
+  fn wait_for_clipboard_text(session: &auv_driver::LocalDriverSession, previous: &str, timeout: Duration) -> Result<String, String> {
     let deadline = Instant::now() + timeout;
     let mut last_text = String::new();
     while Instant::now() < deadline {

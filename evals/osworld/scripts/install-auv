@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Install, start, and pair a guest AUV daemon in a create-on-k8s OSWorld VM.
+# Idempotent: re-running reuses the saved pairing instead of creating a new one.
+set -euo pipefail
+
+usage() {
+  cat <<'HELP'
+Usage: install-auv RECEIPT.json LINUX_AUV MACOS_AUV PROFILES_FILE
+
+  RECEIPT.json   create-on-k8s OSWorld receipt
+  LINUX_AUV      Linux x86_64 auv built for the guest glibc (Ubuntu 22.04)
+  MACOS_AUV      host auv from the same source commit
+  PROFILES_FILE  host profile store; keep it to reuse the pairing
+
+Environment: KUBECONFIG (same as creation), AUV_LOCAL_SERVER_PORT (15000),
+AUV_LOCAL_PORT (19847; the saved profile endpoint, keep it stable),
+AUV_PROFILE (osworld). Progress goes to stderr; JSON goes to stdout.
+HELP
+}
+fail() { printf 'install-auv: %s\n' "$*" >&2; exit 1; }
+
+[[ ${1:-} == -h || ${1:-} == --help ]] && { usage; exit 0; }
+[[ $# -eq 4 ]] || { usage >&2; exit 1; }
+receipt=$1 linux_auv=$2 macos_auv=$3 profiles=$4
+server_port=${AUV_LOCAL_SERVER_PORT:-15000}
+auv_port=${AUV_LOCAL_PORT:-19847}
+profile=${AUV_PROFILE:-osworld}
+for dependency in curl jq kubectl shasum; do
+  command -v "$dependency" >/dev/null || fail "Missing dependency: $dependency"
+done
+jq -e '.profile == "osworld"' "$receipt" >/dev/null || fail 'Receipt is not an OSWorld receipt'
+kube=(kubectl --context "$(jq -r .context "$receipt")" -n "$(jq -r .namespace "$receipt")")
+pod=$(jq -r .pod "$receipt")
+sha=$(shasum -a 256 "$linux_auv" | cut -d' ' -f1)
+api="http://127.0.0.1:$server_port"
+export AUV_CONFIG_PROFILES_FILE=$profiles
+
+"${kube[@]}" port-forward --address 127.0.0.1 "pod/$pod" "$server_port:5000" >&2 &
+forward=$!
+trap 'kill "$forward" ${auv_forward:-} 2>/dev/null || true' EXIT
+for _ in $(seq 30); do curl -sf -o /dev/null "$api/screenshot" && break; sleep 1; done
+
+# Runs a guest shell command, prints its output, and returns its status.
+guest() {
+  local response
+  response=$(jq -n --arg command "$1" '{command:$command,shell:true}' |
+    curl -sf -H 'content-type: application/json' --data-binary @- "$api/setup/execute") ||
+    fail "Guest API request failed: $1"
+  jq -r .output <<<"$response"
+  jq -j .error <<<"$response" >&2
+  jq -e '.returncode == 0' <<<"$response" >/dev/null
+}
+
+# The guest can run only a binary with the expected digest. Upload once.
+if [[ $(guest "sha256sum /home/user/auv 2>/dev/null | cut -d' ' -f1 || true") != "$sha" ]]; then
+  printf 'Uploading %s (%s)\n' "$linux_auv" "$sha" >&2
+  curl -sf -F file_path=/home/user/auv -F "file_data=@$linux_auv" "$api/setup/upload" >/dev/null ||
+    fail 'Guest upload failed'
+  guest "chmod 0755 /home/user/auv && test \"\$(sha256sum /home/user/auv | cut -d' ' -f1)\" = $sha" >/dev/null ||
+    fail 'Uploaded guest binary has an unexpected digest'
+fi
+# OCR runtime libraries. NOTICE: apt under software emulation outlives the guest
+# API request timeout, so run it detached and poll for its exit status.
+packages='libtesseract4 liblept5 tesseract-ocr-eng'
+if ! guest "dpkg -s $packages >/dev/null 2>&1" >/dev/null; then
+  printf 'Installing guest runtime libraries: %s\n' "$packages" >&2
+  guest "rm -f /tmp/auv-apt.rc; nohup sh -c 'while pgrep -x apt-get >/dev/null || pgrep -x dpkg >/dev/null; do sleep 5; done; echo password | sudo -S apt-get update && echo password | sudo -S apt-get install -y --no-install-recommends $packages; echo \$? > /tmp/auv-apt.rc' >/tmp/auv-apt.log 2>&1 &" >/dev/null || fail 'Could not start package installation'
+  for _ in $(seq 360); do guest 'test -f /tmp/auv-apt.rc' >/dev/null && break; sleep 5; done
+  [[ $(guest 'cat /tmp/auv-apt.rc 2>/dev/null || true') == 0 ]] ||
+    fail "Guest package installation failed: $(guest 'tail -5 /tmp/auv-apt.log')"
+fi
+
+# The pairing store is on the guest disk, so a daemon restart keeps pairings.
+if ! guest 'pgrep -f "^/home/user/auv serve" >/dev/null' >/dev/null; then
+  printf 'Starting guest AUV daemon\n' >&2
+  guest 'rm -f /home/user/auv.sock && nohup env DISPLAY=:0 XDG_SESSION_TYPE=x11 /home/user/auv serve --listen unix:///home/user/auv.sock --listen http://0.0.0.0:9847 --pairing-store /home/user/.local/share/auv-osworld/pairings.json --store-root /home/user/.local/share/auv-osworld --no-register </dev/null >>/tmp/auv.log 2>&1 &' >/dev/null ||
+    fail 'Could not start the guest daemon'
+fi
+for _ in $(seq 60); do guest 'test -S /home/user/auv.sock' >/dev/null && break; sleep 1; done
+guest 'test -S /home/user/auv.sock' >/dev/null || fail 'Guest daemon did not create its socket; see /tmp/auv.log in the guest'
+# NOTICE: kubectl port-forward exits on the first connection the guest resets.
+# Forward the AUV port only once the daemon listens, so a host client probing
+# the saved profile endpoint during the slow apt step cannot kill the forward.
+"${kube[@]}" port-forward --address 127.0.0.1 "pod/$pod" "$auv_port:9847" >&2 &
+auv_forward=$!
+for _ in $(seq 30); do curl -s -o /dev/null "http://127.0.0.1:$auv_port/" && break; sleep 1; done
+
+# A fresh VM has no guest pairing store, so a saved profile from an earlier
+# VM can only be rejected as unauthorized. Drop it and pair this VM instead.
+if "$macos_auv" devices profiles get "$profile" --json >/dev/null 2>&1 &&
+  ! guest 'test -s /home/user/.local/share/auv-osworld/pairings.json' >/dev/null; then
+  printf 'Dropping profile %s saved for a different VM\n' "$profile" >&2
+  "$macos_auv" devices profiles delete "$profile" >&2
+fi
+if "$macos_auv" devices profiles get "$profile" --json >/dev/null 2>&1; then
+  printf 'Reusing saved profile %s\n' "$profile" >&2
+  paired=false
+else
+  printf 'Pairing new profile %s\n' "$profile" >&2
+  token=$(guest 'AUV_ENDPOINT=unix:///home/user/auv.sock /home/user/auv devices pair create-token') ||
+    fail "Could not create a pairing token: $token"
+  printf '%s' "$token" |
+    "$macos_auv" devices pair --endpoint "http://127.0.0.1:$auv_port" connect --token-stdin \
+      --label 'OSWorld create-on-k8s' --profile "$profile" --json >&2
+  paired=true
+fi
+device_id=$("$macos_auv" devices profiles get "$profile" --json | jq -r .device_id)
+devices=$("$macos_auv" devices list --json)
+jq -e --arg id "$device_id" 'any(.[]; .device_id == $id and .status == "online")' <<<"$devices" >/dev/null ||
+  fail "Paired Device $device_id is not online: $devices"
+displays=$("$macos_auv" --device-id "$device_id" invoke display.list --no-overlay --json \
+  --store-root "$(dirname "$profiles")/auv-runs")
+# Fingerprints only: the host keeps the bearer credential, and the guest keeps
+# its SHA-256. Equal values across runs show the pairing was reused.
+host_credential_sha256=$(jq -j --arg p "$profile" '.profiles[$p].device_credential' "$profiles" | shasum -a 256 | cut -d' ' -f1)
+guest_pairings=$(guest 'cat /home/user/.local/share/auv-osworld/pairings.json') || fail 'Could not read the guest pairing store'
+jq -n --arg pod "$pod" --arg sha "$sha" --arg profile "$profile" --argjson paired "$paired" \
+  --arg device_id "$device_id" --arg host_credential_sha256 "$host_credential_sha256" \
+  --argjson devices "$devices" --argjson displays "$displays" --argjson guest_pairings "$guest_pairings" \
+  '{pod:$pod,auv_linux_sha256:$sha,profile:$profile,paired_now:$paired,device_id:$device_id,
+    host_credential_sha256:$host_credential_sha256,guest_pairings:$guest_pairings,devices:$devices,
+    display_list:$displays}'

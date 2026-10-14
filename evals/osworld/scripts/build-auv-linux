@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Build the guest Linux x86_64 auv for the OSWorld Ubuntu 22.04 VM in Docker.
+# Usage: build-auv-linux OUTPUT_DIR   (builds the committed HEAD of this repository)
+#
+# Outputs:
+#   auv-linux-x86_64                 the binary, with RUNPATH $ORIGIN/auv-runtime/lib
+#   auv-linux-x86_64.runtime.tar.gz  lib/ (Tesseract, Leptonica) + tessdata/ (eng)
+#
+# The OSWorld image lacks only these three packages' files. Shipping them next
+# to the binary keeps the benchmark image unmodified and removes apt from every
+# episode (lock contention, cache races, dropped requests).
+set -euo pipefail
+[[ $# -eq 1 ]] || { echo 'Usage: build-auv-linux OUTPUT_DIR' >&2; exit 1; }
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+out=$(mkdir -p "$1" && cd "$1" && pwd)
+commit=$(git -C "$root" rev-parse HEAD)
+work=$(mktemp -d "${TMPDIR:-/tmp}/auv-linux-build.XXXXXXXX")
+trap 'rm -rf "$work"' EXIT
+git -C "$root" archive --format=tar.gz -o "$work/source.tar.gz" HEAD
+
+# NOTICE: Ubuntu 22.04 ships PipeWire 0.3.48 headers, which lack fields that
+# libspa 0.8 binds. Compile against Debian's 1.4.2 headers, but link the
+# guest's own libpipewire-0.3.so.0. The X11 guest path does not use PipeWire.
+cat > "$work/build.sh" <<'BUILD'
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+rm -f /etc/apt/apt.conf.d/docker-clean
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl build-essential \
+  pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libpipewire-0.3-dev libwayland-dev libxkbcommon-dev libegl-dev libgbm-dev \
+  libleptonica-dev libtesseract-dev libtesseract4 liblept5 tesseract-ocr-eng
+command -v cargo || curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+. /root/.cargo/env
+pool=https://deb.debian.org/debian/pool/main/p/pipewire
+curl -fsSL -o /tmp/spa.deb "$pool/libspa-0.2-dev_1.4.2-1_amd64.deb"
+curl -fsSL -o /tmp/pw.deb "$pool/libpipewire-0.3-dev_1.4.2-1_amd64.deb"
+echo '7d8d46d5a98a031373d01eb74c2a1e40152294bbcaf6fb9320f88648cfde44bd  /tmp/spa.deb' | sha256sum -c -
+echo '6f7f4c555b6ce362ff556e7f063f92e878510564de434d56a0ded73788e83bd1  /tmp/pw.deb' | sha256sum -c -
+rm -rf /headers && dpkg-deb -x /tmp/spa.deb /headers && dpkg-deb -x /tmp/pw.deb /headers
+pc=/headers/usr/lib/x86_64-linux-gnu/pkgconfig
+sed -i 's#^prefix=/usr#prefix=/headers/usr#' "$pc/libspa-0.2.pc"
+sed -i -e 's#^prefix=/usr#prefix=/headers/usr#' -e 's#^libdir=.*#libdir=/usr/lib/x86_64-linux-gnu#' "$pc/libpipewire-0.3.pc"
+rm -rf /src && mkdir /src && tar -xzf /work/source.tar.gz -C /src
+cd /src
+# '$ORIGIN' must reach the linker literally; the guest extracts the runtime
+# tarball to auv-runtime/ next to the binary.
+PKG_CONFIG_PATH=$pc CARGO_TARGET_DIR=/target \
+  RUSTFLAGS='-C link-arg=-Wl,-rpath,$ORIGIN/auv-runtime/lib' \
+  cargo build --release --locked -p auv-cli --bin auv
+install -m 0755 /target/release/auv /out/auv-linux-x86_64
+ldd --version
+ldd /out/auv-linux-x86_64
+readelf -d /out/auv-linux-x86_64 | grep -E 'RPATH|RUNPATH'
+rm -rf /runtime && mkdir -p /runtime/lib /runtime/tessdata
+# Copy the resolved files under their SONAMEs; ldd names exactly what the
+# binary loads, so the bundle cannot drift from the link line.
+for soname in libtesseract.so.4 liblept.so.5; do
+  cp -L "$(ldd /out/auv-linux-x86_64 | awk -v so="$soname" '$1 == so { print $3 }')" "/runtime/lib/$soname"
+done
+cp /usr/share/tesseract-ocr/4.00/tessdata/eng.traineddata /runtime/tessdata/
+tar -C /runtime -czf /out/auv-linux-x86_64.runtime.tar.gz lib tessdata
+tar -tzvf /out/auv-linux-x86_64.runtime.tar.gz
+BUILD
+
+docker volume create auv-linux-build-cargo >/dev/null
+docker volume create auv-linux-build-target >/dev/null
+docker volume create auv-linux-build-apt >/dev/null
+docker volume create auv-linux-build-rustup >/dev/null
+docker run --rm --platform linux/amd64 -v "$work:/work:ro" -v "$out:/out" \
+  -v auv-linux-build-cargo:/root/.cargo -v auv-linux-build-rustup:/root/.rustup \
+  -v auv-linux-build-target:/target \
+  -v auv-linux-build-apt:/var/cache/apt/archives ubuntu:22.04 bash /work/build.sh
+echo "$commit" > "$out/auv-linux-x86_64.commit"
+shasum -a 256 "$out/auv-linux-x86_64" "$out/auv-linux-x86_64.runtime.tar.gz"

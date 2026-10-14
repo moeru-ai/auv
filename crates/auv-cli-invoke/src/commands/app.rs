@@ -50,10 +50,10 @@ struct ActivateAppArgs {}
 
 #[invoke_command(
   id = "app.activate",
-  support = { macos: Supported, linux: Unsupported("application activation is not implemented on Linux yet"), windows: Supported },
+  support = { macos: Supported, linux: Partial("X11 activates through EWMH; Wayland gives clients no way to activate another application"), windows: Supported },
   target = RequiredApplication,
   group = "app",
-  description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional).",
+  description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional), a WM_CLASS or desktop id on X11.",
   input = ActivateAppArgs,
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> crate::InvokeExecutionResult {

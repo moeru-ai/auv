@@ -1,0 +1,14 @@
+$ pnpm -s doctor
+PASS  OSWORLD_AUV_LINUX_BINARY: /tmp/auv-pr258-22be28be/auv-linux-x86_64 sha256=abd3a262851bce0156a2fdbf69aa89eaaad285551d1c9347a488ea3260b32764
+PASS  OSWORLD_AUV_MACOS_BINARY: /tmp/auv-pr258-22be28be/auv-macos-arm64 sha256=d4777bc8e17844a458c236794186da1535f079a0d1ffe31ad4209b0efa79db3f
+PASS  OSWORLD_KUBECONFIG: /Users/neko/.kube/config.d/ihome.conf sha256=7ee7252cb14b762e6dd2b3b003e47f33d73aa37af01b953c1122751bf19107da
+PASS  host auv runs: auv 0.0.32
+PASS  kubectl can create pods: yes
+PASS  OSWorld-ready KVM node: node/liet-gpu-1
+PASS  base image PVC bound: Bound
+PASS  OSWorld Python bridge: upstream evaluators import from /Users/neko/.cache/auv-osworld/OSWorld
+PASS  model API (OSWORLD_OPENAI_API): responses
+PASS  model list (http://127.0.0.1:8317/v1): gpt-5.5 listed
+PASS  model reply text (responses, gpt-5.5): 1999ms reply="OK"
+PASS  model reply image (responses, gpt-5.5): 2296ms reply="OK"
+12/12 checks passed -> results/doctor.json

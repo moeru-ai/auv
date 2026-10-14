@@ -1,0 +1,26 @@
+/Users/neko/Git/github.com/moeru-ai/auv-pr-258/.pixi/envs/osworld/lib/python3.12/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (2.8.0) or chardet (7.6.0)/charset_normalizer (3.5.2) doesn't match a supported version!
+  warnings.warn(
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+INFO:desktopenv.providers.aws.ProxyPool:Loaded 1 proxies from evaluation_examples/settings/proxy/dataimpulse.json
+INFO:desktopenv.setup:try to connect http://127.0.0.1:61865
+INFO:desktopenv.setup:Executing setup step 1/2: _execute_setup
+INFO:desktopenv.setup:Command executed successfully: echo password | sudo -S mkdir ~/Desktop/todo_list_Jan_1 -> {
+  "error": "[sudo] password for user: ",
+  "output": "",
+  "returncode": 0,
+  "status": "success"
+}
+
+INFO:desktopenv.setup:SETUP COMPLETED: _execute_setup({'command': 'echo {CLIENT_PASSWORD} | sudo -S mkdir ~/Desktop/todo_list_Jan_1', 'shell': True})
+INFO:desktopenv.setup:Executing setup step 2/2: _execute_setup
+INFO:desktopenv.setup:Command executed successfully: python -c import pyautogui; import time; pyautogui.click(960, 540); time.sleep(0.5); -> {
+  "error": "",
+  "output": "",
+  "returncode": 0,
+  "status": "success"
+}
+
+INFO:desktopenv.setup:SETUP COMPLETED: _execute_setup({'command': ['python', '-c', 'import pyautogui; import time; pyautogui.click({SCREEN_WIDTH_HALF}, {SCREEN_HEIGHT_HALF}); time.sleep(0.5);']})
+
+--- stdout (exit 0) ---
+{"ok": true}

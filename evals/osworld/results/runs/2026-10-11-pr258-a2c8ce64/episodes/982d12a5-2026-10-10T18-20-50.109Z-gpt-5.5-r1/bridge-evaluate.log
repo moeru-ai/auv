@@ -1,0 +1,7 @@
+/Users/neko/Git/github.com/moeru-ai/auv-pr-258/.pixi/envs/osworld/lib/python3.12/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (2.8.0) or chardet (7.6.0)/charset_normalizer (3.5.2) doesn't match a supported version!
+  warnings.warn(
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+INFO:desktopenv.providers.aws.ProxyPool:Loaded 1 proxies from evaluation_examples/settings/proxy/dataimpulse.json
+INFO:desktopenv.setup:try to connect http://127.0.0.1:59283
+INFO:desktopenv.pycontroller:File downloaded successfully
+INFO:desktopenv.getter.file:Successfully saved file: /Users/neko/Git/github.com/moeru-ai/auv-pr-258/evals/osworld/.vieval/episodes/982d12a5-beab-424f-8d38-d2a48429e511/2026-10-10T18-20-50.109Z-gpt-5.5-r1/osworld-cache/982d12a5-beab-424f-8d38-d2a48429e511/settings.json (155 bytes)

@@ -1,0 +1,94 @@
+{
+  "id": "7f52cab9-535c-4835-ac8c-391ee64dc930",
+  "snapshot": "chrome",
+  "instruction": "On Google Shopping, search for drip coffee makers and filter the results to show only items that are on sale, priced between $25-60, and have a black finish. Stay on the search results page.",
+  "source": "test_task_1",
+  "config": [
+    {
+      "type": "launch",
+      "parameters": {
+        "command": [
+          "google-chrome",
+          "--remote-debugging-port=1337"
+        ]
+      }
+    },
+    {
+      "type": "launch",
+      "parameters": {
+        "command": [
+          "socat",
+          "tcp-listen:9222,fork",
+          "tcp:localhost:1337"
+        ]
+      }
+    },
+    {
+      "type": "chrome_open_tabs",
+      "parameters": {
+        "urls_to_open": [
+          "https://shopping.google.com/"
+        ]
+      }
+    },
+    {
+      "type": "activate_window",
+      "parameters": {
+        "window_name": "Google Chrome"
+      }
+    }
+  ],
+  "trajectory": "trajectories/",
+  "related_apps": [
+    "chrome"
+  ],
+  "evaluator": {
+    "conj": "and",
+    "func": [
+      "check_direct_json_object",
+      "check_url_and_content_include"
+    ],
+    "result": [
+      {
+        "type": "active_tab_url_parse",
+        "goto_prefix": "https://www.",
+        "parse_keys": [
+          "q"
+        ]
+      },
+      {
+        "type": "active_tab_url_and_body_text",
+        "goto_prefix": "https://www."
+      }
+    ],
+    "expected": [
+      {
+        "type": "rule",
+        "rules": {
+          "expected": {
+            "q": "drip coffee maker"
+          },
+          "expect_in_result": true
+        }
+      },
+      {
+        "type": "rule",
+        "rules": {
+          "url_must_include": [
+            "google"
+          ],
+          "body_must_include": [
+            "Black",
+            "On sale",
+            "$25",
+            "$60"
+          ],
+          "body_must_exclude": []
+        }
+      }
+    ]
+  },
+  "proxy": true,
+  "fixed_ip": false,
+  "possibility_of_env_change": "low"
+}

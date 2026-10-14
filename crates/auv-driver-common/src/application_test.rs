@@ -81,20 +81,26 @@ fn id_kind_and_method_names_match_their_serialized_form() {
     ApplicationIdKind::BundleId,
     ApplicationIdKind::ProcessName,
     ApplicationIdKind::DesktopAppId,
+    ApplicationIdKind::WmClass,
   ] {
     assert_eq!(serde_json::to_value(kind).expect("serialize"), kind.as_str());
   }
   for method in [
     ApplicationActivationMethod::AppleScriptActivate,
     ApplicationActivationMethod::ForegroundWindow,
+    ApplicationActivationMethod::EwmhActiveWindow,
   ] {
     assert_eq!(serde_json::to_value(method).expect("serialize"), method.as_str());
   }
 }
 
 #[test]
-fn wayland_application_id_kind_fails_as_unsupported_naming_the_platform() {
+fn linux_application_id_kinds_fail_as_unsupported_naming_the_platform() {
   let wayland = unsupported_activation(ApplicationIdKind::DesktopAppId);
   assert!(matches!(wayland, DriverError::Unsupported { .. }));
   assert!(wayland.to_string().contains("Linux Wayland"), "{wayland}");
+
+  let x11 = unsupported_activation(ApplicationIdKind::WmClass);
+  assert!(matches!(x11, DriverError::Unsupported { .. }));
+  assert!(x11.to_string().contains("Linux X11"), "{x11}");
 }

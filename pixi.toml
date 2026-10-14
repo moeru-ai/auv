@@ -33,3 +33,20 @@ check = { depends-on = [
   "lint",
   "typecheck"
 ] }
+
+# OSWorld upstream setup/evaluator bridge for `evals/osworld`. Its runtime
+# dependencies live in `evals/osworld/bridge/pyproject.toml`.
+[feature.osworld]
+platforms = [
+  "linux-64",
+  "osx-arm64"
+]
+
+[feature.osworld.dependencies]
+python = "3.12.*"
+
+[feature.osworld.pypi-dependencies]
+osworld-bridge = { path = "evals/osworld/bridge", editable = true }
+
+[environments]
+osworld = { features = [ "osworld" ], no-default-feature = true }

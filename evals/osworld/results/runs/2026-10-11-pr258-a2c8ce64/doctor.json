@@ -1,0 +1,68 @@
+{
+  "checkedAt": "2026-10-10T17:55:07.185Z",
+  "checks": [
+    {
+      "detail": "/tmp/auv-pr258-a2c8ce64/auv-linux-x86_64 sha256=71318ffa3ce484d222e65c44bf83c1f0fc6152d787558384a87da5f6a3e72982",
+      "name": "OSWORLD_AUV_LINUX_BINARY",
+      "ok": true
+    },
+    {
+      "detail": "/tmp/auv-pr258-a2c8ce64/auv-macos-arm64 sha256=aeb078f0b1ea149f62b3cff084e0edcc6c6e6cfade860ffead8d77ac6bc35084",
+      "name": "OSWORLD_AUV_MACOS_BINARY",
+      "ok": true
+    },
+    {
+      "detail": "/Users/neko/.kube/config.d/ihome.conf sha256=7ee7252cb14b762e6dd2b3b003e47f33d73aa37af01b953c1122751bf19107da",
+      "name": "OSWORLD_KUBECONFIG",
+      "ok": true
+    },
+    {
+      "detail": "auv 0.0.32",
+      "name": "host auv runs",
+      "ok": true,
+      "reproduce": "/tmp/auv-pr258-a2c8ce64/auv-macos-arm64 --version"
+    },
+    {
+      "detail": "yes",
+      "name": "kubectl can create pods",
+      "ok": true,
+      "reproduce": "kubectl --kubeconfig /Users/neko/.kube/config.d/ihome.conf --namespace benchmark-osworld-auv auth can-i create pods"
+    },
+    {
+      "detail": "node/liet-gpu-1",
+      "name": "OSWorld-ready KVM node",
+      "ok": true,
+      "reproduce": "kubectl --kubeconfig /Users/neko/.kube/config.d/ihome.conf --namespace benchmark-osworld-auv get nodes -l auv.moeru.ai/osworld-ready=true,feature.node.kubernetes.io/kvm=true -o name"
+    },
+    {
+      "detail": "Bound",
+      "name": "base image PVC bound",
+      "ok": true,
+      "reproduce": "kubectl --kubeconfig /Users/neko/.kube/config.d/ihome.conf --namespace benchmark-osworld-auv get pvc osworld-v1-base -o jsonpath={.status.phase}"
+    },
+    {
+      "detail": "upstream evaluators import from /Users/neko/.cache/auv-osworld/OSWorld",
+      "name": "OSWorld Python bridge",
+      "ok": true,
+      "reproduce": "cd /Users/neko/.cache/auv-osworld/OSWorld && PYTHONPATH=. pixi run --manifest-path /Users/neko/Git/github.com/moeru-ai/auv-pr-258/pixi.toml --environment osworld python -c 'import desktop_env.evaluators.metrics, desktop_env.controllers.setup; print(\"ok\")'  # run scripts/sync-osworld first if the checkout is missing"
+    },
+    {
+      "detail": "gpt-5.5 listed",
+      "name": "model list (http://127.0.0.1:8317/v1)",
+      "ok": true,
+      "reproduce": "curl -s http://127.0.0.1:8317/v1/models -H 'authorization: Bearer $OSWORLD_OPENAI_API_KEY'"
+    },
+    {
+      "detail": "2708ms reply=\"OK\"",
+      "name": "chat completion text (gpt-5.5)",
+      "ok": true,
+      "reproduce": "curl -s http://127.0.0.1:8317/v1/chat/completions -H 'content-type: application/json' -H 'authorization: Bearer $OSWORLD_OPENAI_API_KEY' -d '{\"messages\":[{\"content\":\"Reply with OK.\",\"role\":\"user\"}],\"model\":\"gpt-5.5\"}'"
+    },
+    {
+      "detail": "2238ms reply=\"OK\"",
+      "name": "chat completion image (gpt-5.5)",
+      "ok": true,
+      "reproduce": "curl -s http://127.0.0.1:8317/v1/chat/completions -H 'content-type: application/json' -H 'authorization: Bearer $OSWORLD_OPENAI_API_KEY' -d '<see src/doctor.ts image payload>'"
+    }
+  ]
+}

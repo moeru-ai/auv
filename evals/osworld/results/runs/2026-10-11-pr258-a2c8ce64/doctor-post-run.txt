@@ -1,0 +1,15 @@
+$ git log --oneline -1; pnpm -s doctor
+b6650fbe feat(evals-osworld): record the first cited end-to-end OSWorld x Vieval run
+PASS  OSWORLD_AUV_LINUX_BINARY: /tmp/auv-pr258-a2c8ce64/auv-linux-x86_64 sha256=71318ffa3ce484d222e65c44bf83c1f0fc6152d787558384a87da5f6a3e72982
+PASS  OSWORLD_AUV_MACOS_BINARY: /tmp/auv-pr258-a2c8ce64/auv-macos-arm64 sha256=aeb078f0b1ea149f62b3cff084e0edcc6c6e6cfade860ffead8d77ac6bc35084
+PASS  OSWORLD_KUBECONFIG: /Users/neko/.kube/config.d/ihome.conf sha256=7ee7252cb14b762e6dd2b3b003e47f33d73aa37af01b953c1122751bf19107da
+PASS  host auv runs: auv 0.0.32
+PASS  kubectl can create pods: yes
+PASS  OSWorld-ready KVM node: node/liet-gpu-1
+PASS  base image PVC bound: Bound
+PASS  OSWorld Python bridge: upstream evaluators import from /Users/neko/.cache/auv-osworld/OSWorld
+PASS  model list (http://127.0.0.1:8317/v1): gpt-5.5 listed
+FAIL  chat completion text (gpt-5.5): HTTP 503 {"error":{"message":"upstream connect error or disconnect/reset before headers. reset reason: connection termination","type
+      reproduce: curl -s http://127.0.0.1:8317/v1/chat/completions -H 'content-type: application/json' -H 'authorization: Bearer $OSWORLD_OPENAI_API_KEY' -d '{"messages":
+FAIL  chat completion image (gpt-5.5): HTTP 503 {"error":{"message":"auth_unavailable: no auth available (providers=codex, model=gpt-5.5)","type":"server_error","code":"i
+      reproduce: curl -s http://127.0.0.1:8317/v1/chat/completions -H 'content-type: application/json' -H 'authorization: Bearer $OSWORLD_OPENAI_API_KEY' -d '<see src/doc

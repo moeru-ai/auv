@@ -70,6 +70,59 @@ remain pid-bound even if foreground focus changes between preparation and
 posting. This does not lock user focus or guarantee which control inside that
 application receives an event. Per-control focus leases/selectors are outside
 this slice; reopening that boundary requires an approved driver contract.
+The legacy X11 driver is the one owner-approved exception; see below.
+
+### X11 exception (legacy `linux.x11` driver)
+
+Status: owner-approved on 2026-10-12 for the legacy X11 compatibility driver
+only (`crates/auv-driver-linux-x11`). It does not change the macOS, Windows,
+or Wayland behavior above.
+
+XTEST cannot bind keyboard events to a pid or a window. The X server routes
+them to whichever window holds keyboard focus. A pid-bound target is therefore
+impossible on X11. The X11 driver accepts application and window targets with
+`foreground-preferred` policy through this path instead:
+
+1. **Resolve.** Bind the target once, before any delivery, through EWMH
+   (`_NET_CLIENT_LIST_STACKING`). A window target must still be a managed
+   client with the observed `process_id` (when the observed window had one).
+   An application target matches `_GTK_APPLICATION_ID` or either WM_CLASS
+   string, case-insensitively. Windows from more than one process (or without
+   `_NET_WM_PID`) require an explicit window target. Dry runs stop here.
+2. **Activate.** Send a `_NET_ACTIVE_WINDOW` client message to the root
+   window with source indication 2 (pager) and a real server timestamp.
+3. **Confirm.** Wait, with a bounded poll, until `_NET_ACTIVE_WINDOW` names the
+   target and keyboard focus is the target or one of its descendants. If the
+   window manager does not comply, the action fails before any event is sent.
+4. **Deliver.** Send foreground XTEST events. Before each repetition and after
+   each action, the driver checks again that the target is active. If focus
+   moved, the batch stops with `KeyboardInputProgress`. Events sent after the
+   change may have reached another window. They are not retried.
+
+Steps 2 to 4 run for every action in an `InputKeyboard` batch.
+
+Reporting: every targeted action's `InputActionResult` has
+`selected_path: foreground_system_events`. Its first attempt is a failed
+`window_targeted_keyboard` attempt that names the window and pid. Thus
+`fallback_reason()` reports that X11 has no window-bound keyboard delivery and
+that foreground XTEST delivery was used. `focus_disturbance` is `foreground`
+because the target is activated and the previous window is not restored.
+`verified` stays false.
+
+`background-only` and `background-preferred` remain `unsupported` with a
+target. No X11 route can deliver keyboard input without focus. Held keys
+(`KeyDown`, `HoldKeys`) stay foreground-only (`TODO(x11-targeted-key-hold)`).
+Untargeted X11 input is unchanged.
+
+The same activate-then-deliver path serves window-relative wheel input
+(`window.scroll`). The result records a failed `window_targeted_wheel`
+attempt before the foreground XTEST wheel delivery.
+
+Evidence level: driver unit tests and an ignored Xvfb integration test with
+openbox and two Tk fixtures
+(`ewmh_windows_resolve_activate_and_receive_targeted_input` in
+`crates/auv-driver-linux-x11/tests/xvfb.rs`). It is not a claim for other
+window managers or for Xorg desktops.
 
 ### Linux Wayland exception (2026-10-14, #376)
 

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  annotations:
+    auv.moeru.ai/system-qcow2-sha256: 6bf667a852b3c307f61d9f09c42559351f45e0607e428b4997becf534cf4d313
+  labels:
+    app.kubernetes.io/name: osworld-base-image
+    app.kubernetes.io/part-of: auv-osworld-eval
+  name: osworld-v1-base
+  namespace: benchmark-osworld-auv
+spec:
+  # NOTICE: This claim is writable only so an operator can populate and verify
+  # System.qcow2 once. Episode Pods always mount the claim read-only.
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 32Gi
+  storageClassName: nfs.nas.ihome.cat

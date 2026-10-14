@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pins the upstream OSWorld checkout used by the Python bridge and copies its
+# Ubuntu task JSON into `tasks/<domain>/<id>.json` without modification.
+#
+# Usage: sync-osworld [CHECKOUT_DIR]
+set -euo pipefail
+
+revision=b138d348256078fa634fc3b73567a7337c793e6b
+root=$(cd "$(dirname "$0")/.." && pwd)
+checkout=${1:-$root/.cache/OSWorld}
+
+if [[ ! -d $checkout/.git ]]; then
+  git clone --quiet --filter=blob:none https://github.com/xlang-ai/OSWorld.git "$checkout"
+fi
+git -C "$checkout" fetch --quiet origin "$revision" 2>/dev/null || true
+git -C "$checkout" checkout --quiet --detach "$revision"
+
+examples=$checkout/evaluation_examples
+rm -rf "$root/tasks"
+mkdir -p "$root/tasks"
+cp "$examples/test_all.json" "$examples/test_nogdrive.json" "$examples/test_infeasible.json" "$root/tasks/"
+jq -r 'to_entries[] | .key as $domain | .value[] | "\($domain)/\(.)"' "$examples/test_all.json" \
+  | while read -r entry; do
+      mkdir -p "$root/tasks/${entry%/*}"
+      cp "$examples/examples/$entry.json" "$root/tasks/$entry.json"
+    done
+echo "$revision" >"$root/tasks/REVISION"
+find "$root/tasks" -mindepth 2 -name '*.json' | wc -l | xargs echo "tasks:" >&2

@@ -17,6 +17,8 @@ Create options:
   --image IMAGE        Container runtime image (profile-specific pinned default)
   --vm-image-url URL   OSWorld ZIP containing Ubuntu.qcow2 (requires SHA256)
   --vm-image-sha256 HEX  SHA256 of a custom VM ZIP archive
+  --base-pvc NAME      Existing claim holding a verified System.qcow2; mounted
+                       read-only instead of downloading the VM ZIP
   --kvm-resource NAME Existing Kubernetes device-plugin resource for /dev/kvm
                       Default: software emulation; no privileged host access
   --timeout SECONDS    Startup deadline (default: OSWorld 3600; Selkies 900)
@@ -57,6 +59,7 @@ custom_vm_url=false
 custom_vm_sha=false
 gpu_options=false
 kvm_resource=''
+base_pvc=''
 device_class=hami-core-gpu.project-hami.io
 gpu_cores=25
 gpu_memory=4Gi
@@ -67,13 +70,14 @@ case $action in
     while [[ $# -gt 0 ]]; do
       case $1 in
         -h|--help) usage; exit 0 ;;
-        --node|--namespace|--image|--profile|--vm-image-url|--vm-image-sha256|--kvm-resource|--device-class|--gpu-cores|--gpu-memory|--timeout)
+        --node|--namespace|--image|--profile|--vm-image-url|--vm-image-sha256|--base-pvc|--kvm-resource|--device-class|--gpu-cores|--gpu-memory|--timeout)
           [[ $# -ge 2 && -n $2 ]] || fail "$1 requires a value"
           case $1 in
             --node) node=$2 ;; --namespace) namespace=$2 ;; --image) image=$2 ;;
             --profile) profile=$2 ;;
             --vm-image-url) vm_image_url=$2; custom_vm_url=true ;;
             --vm-image-sha256) vm_image_sha256=$2; custom_vm_sha=true ;;
+            --base-pvc) base_pvc=$2 ;;
             --kvm-resource) kvm_resource=$2 ;;
             --device-class) device_class=$2; gpu_options=true ;;
             --gpu-cores) gpu_cores=$2; gpu_options=true ;;
@@ -89,13 +93,14 @@ case $action in
       osworld)
         [[ $gpu_options == false ]] || fail 'GPU options require --profile selkies; the OSWorld VM does not use HAMi'
         [[ $custom_vm_url == "$custom_vm_sha" ]] || fail '--vm-image-url and --vm-image-sha256 must be supplied together'
+        [[ -z $base_pvc || $custom_vm_url == false ]] || fail '--base-pvc replaces --vm-image-url'
         [[ $vm_image_url == https://* ]] || fail '--vm-image-url must use HTTPS'
         [[ $vm_image_sha256 =~ ^[a-fA-F0-9]{64}$ ]] || fail '--vm-image-sha256 must be a 64-digit SHA256'
         [[ -z $kvm_resource || $kvm_resource =~ ^[a-z0-9][a-z0-9.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail 'Invalid --kvm-resource (expected vendor.example/resource)'
         image=${image:-happysixd/osworld-docker@sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9}
         startup_timeout=${startup_timeout:-3600} ;;
       selkies)
-        [[ $custom_vm_url == false && $custom_vm_sha == false && -z $kvm_resource ]] || fail 'VM options require --profile osworld'
+        [[ $custom_vm_url == false && $custom_vm_sha == false && -z $kvm_resource && -z $base_pvc ]] || fail 'VM options require --profile osworld'
         image=${image:-ghcr.io/selkies-project/selkies-egl-desktop@sha256:2240baf54d6ebfbbbd8c15b9311cb90e90db9f05fe30eaf77b08eea0b09b77a7}
         startup_timeout=${startup_timeout:-900} ;;
       *) fail 'Unknown profile (expected osworld or selkies)' ;;
@@ -191,7 +196,7 @@ if [[ $profile == osworld ]]; then
   # https://gitlab.com/qemu-project/qemu/-/issues/191
   jq --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" \
     --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg kvm "$kvm" \
-    --arg resource "$kvm_resource" --rawfile prepare "$(dirname "$0")/prepare-osworld-image" '
+    --arg resource "$kvm_resource" --arg pvc "$base_pvc" --rawfile prepare "$(dirname "$0")/prepare-osworld-image" '
     .metadata = $meta[0] |
     .spec.nodeSelector["kubernetes.io/hostname"] = $node |
     .spec.initContainers[0] |= (.image = $image | .command[2] = $prepare |
@@ -202,7 +207,14 @@ if [[ $profile == osworld ]]; then
       if $resource == "" then . else
         .env |= map(select(.name != "CPU_MODEL")) |
         .resources.requests[$resource] = "1" | .resources.limits[$resource] = "1"
-      end)
+      end) |
+    # The claim was checksummed when populated; only check that it is a qcow2.
+    if $pvc == "" then . else
+      .spec.volumes |= map(if .name == "base" then
+        {name:"base",persistentVolumeClaim:{claimName:$pvc,readOnly:true}} else . end) |
+      .spec.initContainers[0] |= (.command[2] = "qemu-img info -f qcow2 /image/System.qcow2" |
+        .env = [] | .volumeMounts[0].readOnly = true)
+    end
   ' "$assets/osworld-pod.json" > "$tmp/pod.json"
 else
   # Passwords never enter command arguments or receipts.
@@ -295,9 +307,9 @@ while (( SECONDS < deadline )); do
       if [[ $profile == osworld && $output == OSWORLD_READY ]]; then
         jq -n --arg context "$context" --arg ns "$namespace" --arg pod "$name" \
           --arg uid "$uid" --slurpfile state "$tmp/state.json" --arg image "$image" \
-          --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg acceleration "$acceleration" '
+          --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg acceleration "$acceleration" --arg pvc "$base_pvc" '
           {profile:"osworld",context:$context,namespace:$ns,pod:$pod,uid:$uid,node:$state[0].spec.nodeName,
-            image:$image,vm_image_url:$url,vm_image_sha256:$sha,acceleration:$acceleration,
+            image:$image,vm_image_url:$url,vm_image_sha256:$sha,base_pvc:$pvc,acceleration:$acceleration,
             osworld_ready:true,server_port:5000,desktop_port:8006,chromium_port:9222,vlc_port:8080,auv_port:9847}'
         complete=true
         printf 'OSWorld ready: %s/%s; acceleration: %s\n' "$namespace" "$name" "$acceleration" >&2

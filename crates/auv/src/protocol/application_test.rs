@@ -36,6 +36,7 @@ fn roundtrip_preserves_every_kind_and_method_and_an_absent_window() {
     (ApplicationIdKind::BundleId, ApplicationActivationMethod::AppleScriptActivate),
     (ApplicationIdKind::ProcessName, ApplicationActivationMethod::ForegroundWindow),
     (ApplicationIdKind::DesktopAppId, ApplicationActivationMethod::ForegroundWindow),
+    (ApplicationIdKind::WmClass, ApplicationActivationMethod::EwmhActiveWindow),
   ] {
     let original = ApplicationActivationResult {
       application_id_kind: kind,

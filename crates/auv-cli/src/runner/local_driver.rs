@@ -347,7 +347,7 @@ impl ApplicationService for LocalApplicationService {
     let request = request.into_inner();
     let application_id = requested_application_id(&request.application_id)?;
     let settle = duration_from_proto(request.settle, std::time::Duration::from_millis(150), "settle")?;
-    // Platforms without activation (Linux today) return a typed Unsupported
+    // Platforms without activation (Linux Wayland) return a typed Unsupported
     // error, which `driver_status` maps to UNIMPLEMENTED.
     let result = self.session.applications().activate(application_id, settle).map_err(driver_status)?;
     Ok(Response::new(auv::protocol::application::encode(result)))

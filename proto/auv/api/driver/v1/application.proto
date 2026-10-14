@@ -48,7 +48,8 @@ enum ApplicationIdKind {
   APPLICATION_ID_KIND_PROCESS_NAME = 2;
   // Linux Wayland desktop application id. Activation is not implemented yet.
   APPLICATION_ID_KIND_DESKTOP_APP_ID = 3;
-  // TODO(x11-app-activate): a WM_CLASS kind is added with the X11 driver.
+  // Linux X11 WM_CLASS (or _GTK_APPLICATION_ID); activated through EWMH.
+  APPLICATION_ID_KIND_WM_CLASS = 4;
 }
 
 // Exact wire projection of auv_driver::ApplicationActivationMethod.
@@ -56,7 +57,7 @@ enum ApplicationActivationMethod {
   APPLICATION_ACTIVATION_METHOD_UNSPECIFIED = 0;
   APPLICATION_ACTIVATION_METHOD_APPLE_SCRIPT_ACTIVATE = 1;
   APPLICATION_ACTIVATION_METHOD_FOREGROUND_WINDOW = 2;
-  // TODO(x11-app-activate): an EWMH _NET_ACTIVE_WINDOW method is added with the X11 driver.
+  APPLICATION_ACTIVATION_METHOD_EWMH_ACTIVE_WINDOW = 3;
 }
 
 // Exact wire projection of auv_driver::ApplicationActivationVerification.

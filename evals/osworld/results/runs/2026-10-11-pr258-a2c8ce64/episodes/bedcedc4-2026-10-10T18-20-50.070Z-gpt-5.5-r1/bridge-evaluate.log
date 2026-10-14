@@ -1,0 +1,9 @@
+/Users/neko/Git/github.com/moeru-ai/auv-pr-258/.pixi/envs/osworld/lib/python3.12/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (2.8.0) or chardet (7.6.0)/charset_normalizer (3.5.2) doesn't match a supported version!
+  warnings.warn(
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+INFO:desktopenv.providers.aws.ProxyPool:Loaded 1 proxies from evaluation_examples/settings/proxy/dataimpulse.json
+INFO:desktopenv.setup:try to connect http://127.0.0.1:59276
+{'error': '', 'output': 'uint32 0\n', 'returncode': 0, 'status': 'success'}
+uint32 0
+ uint32 0
+

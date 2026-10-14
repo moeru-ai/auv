@@ -24,6 +24,7 @@ members = [
   "crates/auv-driver",
   "crates/auv-driver-common",
   "crates/auv-driver-linux",
+  "crates/auv-driver-linux-x11",
   "crates/auv-driver-macos",
   "crates/auv-device-helper-macos",
   "crates/auv-device-helper-windows",

@@ -1,0 +1,21 @@
+/Users/neko/Git/github.com/moeru-ai/auv-pr-258/.pixi/envs/osworld/lib/python3.12/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (2.8.0) or chardet (7.6.0)/charset_normalizer (3.5.2) doesn't match a supported version!
+  warnings.warn(
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+INFO:desktopenv.providers.aws.ProxyPool:Loaded 1 proxies from evaluation_examples/settings/proxy/dataimpulse.json
+INFO:desktopenv.setup:try to connect http://127.0.0.1:59283
+INFO:desktopenv.setup:Executing setup step 1/3: _command_setup
+INFO:desktopenv.setup:Command executed successfully: SETTINGS_PATH="$HOME/.config/Code/User/settings.json"; [ ! -f "$SETTINGS_PATH" ] && echo '{"workbench.colorTheme": "Red"}' > "$SETTINGS_PATH" || (grep -q "workbench.colorTheme" "$SETTINGS_PATH" && sed -i 's/"workbench.colorTheme": "[^"]*"/"workbench.colorTheme": "Red"/' "$SETTINGS_PATH" || jq '. + {"workbench.colorTheme": "Red"}' "$SETTINGS_PATH" > temp.json && mv temp.json "$SETTINGS_PATH") -> {
+  "error": "/bin/sh: 1: jq: not found\n",
+  "output": "",
+  "returncode": 127,
+  "status": "success"
+}
+
+INFO:desktopenv.setup:SETUP COMPLETED: _command_setup({'command': 'SETTINGS_PATH="$HOME/.config/Code/User/settings.json"; [ ! -f "$SETTINGS_PATH" ] && echo \'{"workbench.colorTheme": "Red"}\' > "$SETTINGS_PATH" || (grep -q "workbench.colorTheme" "$SETTINGS_PATH" && sed -i \'s/"workbench.colorTheme": "[^"]*"/"workbench.colorTheme": "Red"/\' "$SETTINGS_PATH" || jq \'. + {"workbench.colorTheme": "Red"}\' "$SETTINGS_PATH" > temp.json && mv temp.json "$SETTINGS_PATH")', 'shell': True})
+INFO:desktopenv.setup:Executing setup step 2/3: _launch_setup
+INFO:desktopenv.setup:REQUEST ADDRESS: http://127.0.0.1:59283/setup/launch
+INFO:desktopenv.setup:Command executed successfully: code launched successfully
+INFO:desktopenv.setup:SETUP COMPLETED: _launch_setup({'command': ['code']})
+INFO:desktopenv.setup:Executing setup step 3/3: _activate_window_setup
+INFO:desktopenv.setup:Command executed successfully: Window activated successfully
+INFO:desktopenv.setup:SETUP COMPLETED: _activate_window_setup({'window_name': 'Visual Studio Code'})

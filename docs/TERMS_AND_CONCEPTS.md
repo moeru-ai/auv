@@ -970,12 +970,14 @@ targets instead of carrying an untyped string. The CLI spells these as
 bare `--target` value retains its historical meaning as an application id.
 
 What an application id names depends on the platform. The `window.*` commands match a bundle id
-on macOS, the AT-SPI `AccessibleId` on Linux, and the executable file name on Windows (for
+on macOS, the AT-SPI `AccessibleId` on Linux Wayland, the GTK application id or else the
+WM_CLASS class on X11, and the executable file name on Windows (for
 example `notepad.exe`, matched ignoring ASCII case), each as `window.list` shows it. See the
 [Windows window commands reference](ai/references/invoke-cli/2026-10-11-windows-window-commands.md).
 
 `app.activate` reports the kind of id it activated: `bundle_id` on macOS and
-`process_name` (the executable name) on Windows. The Linux Wayland kind
+`process_name` (the executable name) on Windows, and `wm_class` on X11, which
+activates through EWMH `_NET_ACTIVE_WINDOW`. The Linux Wayland kind
 `desktop_app_id` (the AT-SPI application id) is defined, but Wayland activation
 is not implemented yet.
 
@@ -1733,7 +1735,7 @@ One result type serves every platform. It records:
   platform identity it names. The kind is part of the wire contract.
 - `method`: how the platform delivered the request. macOS uses
   `apple_script_activate`. Windows uses `foreground_window`, which foregrounds
-  the application's main visible window.
+  the application's main visible window. X11 uses `ewmh_active_window`.
 - `activated_window`: the window reference the platform foregrounded, when
   activation went through one window (Windows). It is absent on macOS.
 - `verification`: the status above, with `observed_application_id` when a
