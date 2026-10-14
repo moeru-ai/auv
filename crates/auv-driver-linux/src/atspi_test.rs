@@ -80,6 +80,7 @@ fn window_from_accessible_projects_linux_app_id() {
     role: "window".to_string(),
     child_count: 0,
     focused: true,
+    active: true,
     bounds: Rect::new(1.0, 2.0, 300.0, 400.0),
   };
 

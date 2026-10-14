@@ -98,6 +98,8 @@ struct Accessible {
   role: String,
   child_count: i32,
   focused: bool,
+  /// AT-SPI ACTIVE: the top-level window that has keyboard focus.
+  active: bool,
   bounds: Rect,
 }
 
@@ -117,9 +119,17 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
     for child in children(&connection, &app.reference)? {
       let accessible = accessible(&connection, child)?;
       if matches!(accessible.role.as_str(), "window" | "frame" | "dialog") && rect_has_area(accessible.bounds) {
-        windows.push(window_from_accessible(&app, &accessible, windows.is_empty()));
+        windows.push(window_from_accessible(&app, &accessible, accessible.active));
       }
     }
+  }
+  // The active (keyboard-focused) top-level window is the main one, so a
+  // modal dialog wins over the frame behind it. Without an active window,
+  // keep the first window as before.
+  if !windows.iter().any(|window| window.is_main)
+    && let Some(first) = windows.first_mut()
+  {
+    first.is_main = true;
   }
   apply_shell_stage_window_origins(&connection, &applications, &mut windows);
 
@@ -293,6 +303,7 @@ fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Acc
   let description = property_string(&proxy, "Description").unwrap_or_default();
   let accessible_id = property_string(&proxy, "AccessibleId").unwrap_or_default();
   let focused = state_contains(&proxy, STATE_FOCUSED).unwrap_or(false);
+  let active = state_contains(&proxy, STATE_ACTIVE).unwrap_or(false);
   drop(proxy);
   let bounds = extents(connection, &reference, COORD_TYPE_SCREEN).unwrap_or_default();
   Ok(Accessible {
@@ -302,6 +313,7 @@ fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Acc
     role,
     child_count,
     focused,
+    active,
     bounds,
     reference,
   })
