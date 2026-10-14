@@ -51,3 +51,27 @@ fn clipboard_pipe_transfer_preserves_text_across_partial_io() {
   worker.join().unwrap().unwrap();
   assert_eq!(actual, expected);
 }
+
+// ROOT CAUSE:
+//
+// If GNOME announced the clipboard owner, xdg-desktop-portal 1.20.3 with -gnome
+// 48.0 sent `mime_types` as a struct `(as)`, and ashpd's typed signal dropped
+// it, so a paste never saw the user's clipboard and the restore wiped it.
+//
+// The fix reads the raw options and accepts both shapes.
+#[test]
+fn owner_announcement_accepts_both_mime_type_shapes() {
+  let options = |mime_types: OwnedValue, owner: bool| {
+    HashMap::from([
+      ("mime_types".to_string(), mime_types),
+      ("session_is_owner".to_string(), OwnedValue::from(owner)),
+    ])
+  };
+  let mimes = vec!["text/plain".to_string(), TEXT_MIME.to_string()];
+  let specified = announced_owner_from(&options(OwnedValue::try_from(zbus::zvariant::Value::from(mimes.clone())).unwrap(), false));
+  let gnome = announced_owner_from(&options(OwnedValue::try_from(zbus::zvariant::Value::from((mimes.clone(),))).unwrap(), true));
+  assert_eq!(specified.mime_types, mimes);
+  assert!(!specified.session_is_owner);
+  assert_eq!(gnome.mime_types, mimes);
+  assert!(gnome.session_is_owner);
+}

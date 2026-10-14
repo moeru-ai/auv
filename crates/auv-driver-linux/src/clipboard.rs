@@ -18,8 +18,19 @@ pub fn snapshot(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<Str
 }
 
 /// Writes `snapshot` back to the clipboard as UTF-8 text.
+///
+/// The restored text is served by this process's portal session. GNOME's
+/// clipboard manager copies a new selection right away and keeps serving it
+/// after the owner leaves, so wait for that copy (at most a few hundred ms)
+/// before returning; a short-lived `auv invoke` otherwise left an empty
+/// clipboard behind.
 pub fn restore(state: &Arc<Mutex<LinuxDriverSessionState>>, snapshot: &str) -> DriverResult<()> {
-  with_clipboard_session(state, |session| session.set_text(snapshot))
+  with_clipboard_session(state, |session| {
+    let reads_before = session.served_reads();
+    session.set_text(snapshot)?;
+    session.settle_own_selection(reads_before);
+    Ok(())
+  })
 }
 
 /// Installs `text` as the clipboard's UTF-8 text payload.

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::os::fd::OwnedFd as StdOwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,6 +13,7 @@ use ashpd::desktop::remote_desktop::RemoteDesktop;
 use auv_driver_common::error::DriverResult;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use futures_lite::{StreamExt, future};
+use zbus::zvariant::OwnedValue;
 
 use crate::error::backend;
 
@@ -77,7 +79,7 @@ impl ClipboardSession {
   fn open(app_id: Option<&ashpd::AppID>) -> DriverResult<Self> {
     let connection = session_connection(app_id)?;
     let remote_desktop = run("open clipboard RemoteDesktop", RemoteDesktop::with_connection(connection.clone()))?;
-    let clipboard = Arc::new(run("open Clipboard", Clipboard::with_connection(connection))?);
+    let clipboard = Arc::new(run("open Clipboard", Clipboard::with_connection(connection.clone()))?);
     let session = Arc::new(run("create clipboard session", remote_desktop.create_session(Default::default()))?);
     let mut owner = Self {
       clipboard,
@@ -93,6 +95,7 @@ impl ClipboardSession {
     // Subscribe before Start: mutter announces the current owner once, right
     // after the portal enables the clipboard, and a later subscription misses it.
     owner.transfer_thread = Some(spawn_transfer_thread(
+      connection,
       Arc::clone(&owner.clipboard),
       Arc::clone(&owner.text),
       Arc::clone(&owner.owner),
@@ -223,6 +226,7 @@ impl Drop for ClipboardSession {
 /// Each clipboard owner has a dedicated Portal connection with one session.
 /// Poll the typed signal stream so shutdown does not leave a detached listener.
 fn spawn_transfer_thread(
+  connection: zbus::Connection,
   clipboard: Arc<Clipboard>,
   text: Arc<Mutex<String>>,
   owner: Arc<Mutex<Option<AnnouncedOwner>>>,
@@ -239,7 +243,23 @@ fn spawn_transfer_thread(
         return;
       }
     };
-    let owner_changes = match run("subscribe to clipboard owner changes", clipboard.receive_selection_owner_changed::<RemoteDesktop>()) {
+    // NOTICE: ashpd's typed `receive_selection_owner_changed` drops GNOME's
+    // signal: xdg-desktop-portal 1.20.3 with -gnome 48.0 sends `mime_types` as
+    // a struct `(as)` instead of the specified `as` (seen with `dbus-monitor
+    // --session interface=org.freedesktop.portal.Clipboard`), so deserializing
+    // it fails and the owner announcement never arrived. Read the raw options.
+    // The portal addresses SelectionOwnerChanged to the session's own
+    // connection, and this connection holds exactly one clipboard session.
+    let owner_changes = match run("subscribe to clipboard owner changes", async {
+      let proxy = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Clipboard",
+      )
+      .await?;
+      Ok(proxy.receive_signal("SelectionOwnerChanged").await?)
+    }) {
       Ok(owner_changes) => owner_changes,
       Err(error) => {
         let _ = ready_tx.send(Err(error));
@@ -266,11 +286,10 @@ fn spawn_transfer_thread(
       ));
       let transfer = match event {
         Event::Idle => continue,
-        Event::Owner(Some((_, changed))) => {
-          *owner.lock().expect("clipboard owner lock poisoned") = Some(AnnouncedOwner {
-            mime_types: changed.mime_types().to_vec(),
-            session_is_owner: changed.session_is_owner().unwrap_or(false),
-          });
+        Event::Owner(Some(message)) => {
+          if let Ok((_, options)) = message.body().deserialize::<(zbus::zvariant::OwnedObjectPath, HashMap<String, OwnedValue>)>() {
+            *owner.lock().expect("clipboard owner lock poisoned") = Some(announced_owner_from(&options));
+          }
           continue;
         }
         Event::Owner(None) => continue,
@@ -331,6 +350,24 @@ fn write_fd_all(file: File, payload: &[u8]) -> DriverResult<()> {
       Err(backend("timed out writing portal clipboard payload"))
     },
   ))
+}
+
+/// Reads `SelectionOwnerChanged` options, accepting `mime_types` both as the
+/// specified `as` and as the `(as)` struct GNOME sends.
+fn announced_owner_from(options: &HashMap<String, OwnedValue>) -> AnnouncedOwner {
+  let mime_types = options
+    .get("mime_types")
+    .and_then(|value| {
+      Vec::<String>::try_from(value.try_clone().ok()?)
+        .ok()
+        .or_else(|| <(Vec<String>,)>::try_from(value.try_clone().ok()?).ok().map(|(mime_types,)| mime_types))
+    })
+    .unwrap_or_default();
+  let session_is_owner = options.get("session_is_owner").and_then(|value| bool::try_from(value).ok()).unwrap_or(false);
+  AnnouncedOwner {
+    mime_types,
+    session_is_owner,
+  }
 }
 
 #[cfg(test)]
