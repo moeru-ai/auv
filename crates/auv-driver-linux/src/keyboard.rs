@@ -5,8 +5,8 @@ use crate::{
   input::{KeyboardPlan, keysym, with_input_session},
 };
 use auv_driver_common::{
-  DriverError, DriverResult, InputActionResult, InputPolicy, InputTarget, KeyboardInput, KeyboardInputError, KeyboardInputProgress,
-  PressKeysOptions,
+  DriverError, DriverResult, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, InputTarget, KeyboardInput,
+  KeyboardInputError, KeyboardInputProgress, PressKeysOptions,
 };
 use std::time::Duration;
 
@@ -44,6 +44,31 @@ pub(crate) fn combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> 
   Ok(keys)
 }
 
+/// Fails unless the target window (or a window of the target application) is
+/// the AT-SPI active window.
+///
+/// NOTICE: Wayland gives clients no way to send keys to a chosen window or to
+/// raise one (AT-SPI GrabFocus does not move keyboard focus between top-level
+/// windows on GNOME). A target that is not focused is refused instead of
+/// typing into whatever is in front.
+fn ensure_target_focused(target: &InputTarget) -> DriverResult<()> {
+  let active = crate::atspi::active_window()?;
+  let focused = match (target, &active) {
+    (InputTarget::Window(window), Some(active)) => active.reference == window.reference,
+    (InputTarget::Application { bundle_id }, Some(active)) => {
+      active.app_bundle_id.as_deref() == Some(bundle_id.as_str()) || active.app_name.as_deref() == Some(bundle_id.as_str())
+    }
+    _ => false,
+  };
+  if focused {
+    return Ok(());
+  }
+  let active = active.and_then(|window| window.title.or(window.app_name)).unwrap_or_else(|| "no window".to_string());
+  Err(invalid_input(format!(
+    "the keyboard target does not have keyboard focus and Wayland cannot focus it; focus it first (focused: {active})"
+  )))
+}
+
 impl InputApi<'_> {
   pub fn key_down(
     &self,
@@ -52,6 +77,9 @@ impl InputApi<'_> {
     policy: InputPolicy,
     timeout: Duration,
   ) -> DriverResult<auv_driver_common::KeyboardHold> {
+    // TODO(linux-targeted-held-keys): held keys could use the same focused-target
+    // check as `input_keyboard`, but a hold outlives the check while focus can
+    // move. Enable it with a focus re-check when a workflow needs targeted holds.
     if !matches!(target, InputTarget::Foreground) || policy != InputPolicy::ForegroundPreferred {
       return Err(DriverError::unsupported("Linux targeted keyboard input"));
     }
@@ -91,11 +119,16 @@ impl InputApi<'_> {
     if inputs.is_empty() {
       return Err(failure(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
     }
-    // TODO: targeted Linux keyboard input requires recipient preparation and
-    // identity validation. Enable it when that driver capability is implemented.
-    if !matches!(target, InputTarget::Foreground) {
-      return Err(failure(DriverError::unsupported("Linux targeted keyboard input"), 0, vec![], 0));
-    }
+    // Wayland cannot address keys to one window or raise another one, so a
+    // window or application target is served only when it already has keyboard
+    // focus; every result then records the foreground fallback.
+    let targeted = match target {
+      InputTarget::Foreground => false,
+      target => {
+        ensure_target_focused(target).map_err(|cause| failure(cause, 0, vec![], 0))?;
+        true
+      }
+    };
     let plans = inputs
       .iter()
       .enumerate()
@@ -166,7 +199,17 @@ impl InputApi<'_> {
       if !settle.is_zero() {
         std::thread::sleep(settle);
       }
-      completed.push(combined.expect("positive count"));
+      let mut combined = combined.expect("positive count");
+      if targeted {
+        combined.attempts.insert(
+          0,
+          InputAttempt::failure(
+            InputDeliveryPath::WindowTargetedKeyboard,
+            "Wayland cannot deliver keys to one window; the target has keyboard focus, so keys went to the foreground",
+          ),
+        );
+      }
+      completed.push(combined);
     }
     Ok(Some(completed))
   }
