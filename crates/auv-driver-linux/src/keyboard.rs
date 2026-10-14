@@ -135,6 +135,8 @@ impl InputApi<'_> {
     for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
       let (count, interval, settle) = match &input {
         KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.settle),
+        // The paste path already waits `settle` for non-ASCII text.
+        KeyboardInput::TypeText { text, .. } if !crate::input::keysym_typeable(text) => (1, Duration::ZERO, Duration::ZERO),
         KeyboardInput::TypeText { options, .. } => (1, Duration::ZERO, options.settle),
         KeyboardInput::PasteText { .. } => (1, Duration::ZERO, Duration::ZERO),
       };

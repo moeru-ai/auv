@@ -370,6 +370,11 @@ fn deliver_input<T>(
 
 /// Whether keysym typing can deliver `text`. The portal and uinput backends
 /// type ASCII through the keyboard layout; other characters have no key.
+///
+/// NOTICE: one non-ASCII character sends the whole string through the
+/// clipboard, so `\n`/`\t` in it become pasted characters instead of Return
+/// and Tab presses. Splitting text into typed and pasted runs is a possible
+/// follow-up if a workflow needs both.
 pub(crate) fn keysym_typeable(text: &str) -> bool {
   text.chars().all(|character| character.is_ascii())
 }
@@ -380,7 +385,9 @@ pub(crate) fn keysym_typeable(text: &str) -> bool {
 /// accents, emoji) failed with "only supports ASCII text". Pasting is the only
 /// delivery for it on Wayland; the clipboard is restored afterwards, as for
 /// `input.pasteText`. This happens without `allow_clipboard_fallback` because
-/// there is no keyboard path to fall back from.
+/// there is no keyboard path to fall back from. `inter_char_delay` does not
+/// apply to pasted text, and the paste uses the portal clipboard even when the
+/// keyboard backend is uinput.
 pub(crate) fn paste_options_for_text(text: &str, options: TypeTextOptions) -> PasteTextOptions {
   PasteTextOptions {
     text: text.to_string(),
