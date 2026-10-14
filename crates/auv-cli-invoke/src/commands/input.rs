@@ -783,6 +783,12 @@ pub(crate) fn targets_window(target: Option<&crate::ExecutionTarget>) -> bool {
 
 /// Maps a screen point given with an app or window target into that window,
 /// rejecting points outside its frame.
+///
+/// NOTICE: the check trusts the reported frame. On GNOME Wayland, AT-SPI can
+/// report a top-level window at `0,0` when the shell-stage origin repair finds
+/// no match (`needs_shell_stage_origin` in `auv-driver-linux`), so a correct
+/// screen point is rejected as outside the window. That fails closed; the
+/// window basis in the same case clicks at the wrong place instead.
 pub(crate) fn screen_point_in_window(
   command_id: &str,
   point: auv_driver::Point,
