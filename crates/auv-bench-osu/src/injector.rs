@@ -268,93 +268,253 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckStatus {
+  Passed,
+  NotChecked,
+  Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SafetyError {
+  MissingDirectory(std::path::PathBuf),
+  MissingConfigFile(std::path::PathBuf),
+  ConfigReadError(String),
+  LoggedInUserDetected {
+    username: String,
+    path: std::path::PathBuf,
+  },
+  AccountTokenPresent(std::path::PathBuf),
+  OnlineSessionDetected(std::path::PathBuf),
+  AuthStateUnknown(String),
+}
+
+impl std::fmt::Display for SafetyError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::MissingDirectory(p) => {
+        write!(f, "SAFETY ABORT: osu! directory not found at {}. Cannot verify offline status (fail-closed)!", p.display())
+      }
+      Self::MissingConfigFile(p) => {
+        write!(f, "SAFETY ABORT: Configuration file not found at {}. Cannot verify offline status (fail-closed)!", p.display())
+      }
+      Self::ConfigReadError(msg) => {
+        write!(f, "SAFETY ABORT: Failed to read configuration or log file: {msg}")
+      }
+      Self::LoggedInUserDetected { username, path } => {
+        write!(
+          f,
+          "SAFETY ABORT: Logged-in user detected ('{username}') in {}. Must be in guest/offline mode with blank Username!",
+          path.display()
+        )
+      }
+      Self::AccountTokenPresent(p) => {
+        write!(
+          f,
+          "SAFETY ABORT: Non-empty account token detected in {}. Must be in guest/offline mode with blank Token! (Token value redacted)",
+          p.display()
+        )
+      }
+      Self::OnlineSessionDetected(p) => {
+        write!(f, "SAFETY ABORT: Online API state detected in auth log {}. Must be Offline!", p.display())
+      }
+      Self::AuthStateUnknown(reason) => {
+        write!(f, "SAFETY ABORT: Authentication state indeterminate or unverified: {reason}. Refusing input injection (fail-closed)!")
+      }
+    }
+  }
+}
+
+impl std::error::Error for SafetyError {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfflineSafetyReport {
+  pub osu_dir: std::path::PathBuf,
+  pub game_ini_verified: bool,
+  pub auth_log_verified: bool,
+  pub framework_ini_checked: CheckStatus,
+  pub realm_database_checked: CheckStatus,
+  pub credential_manager_checked: CheckStatus,
+  pub passed: bool,
+}
+
+/// Resolves the default osu! installation directory across platforms without hardcoding user names.
+pub fn default_osu_dir() -> Result<std::path::PathBuf, SafetyError> {
+  #[cfg(target_os = "windows")]
+  {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+      let p = std::path::PathBuf::from(appdata).join("osu");
+      return Ok(p);
+    }
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+      let p = std::path::PathBuf::from(userprofile).join("AppData").join("Roaming").join("osu");
+      return Ok(p);
+    }
+    Err(SafetyError::MissingDirectory(std::path::PathBuf::from("%APPDATA%\\osu (APPDATA and USERPROFILE environment variables not set)")))
+  }
+  #[cfg(target_os = "macos")]
+  {
+    if let Ok(home) = std::env::var("HOME") {
+      return Ok(std::path::PathBuf::from(home).join("Library").join("Application Support").join("osu"));
+    }
+    Err(SafetyError::MissingDirectory(std::path::PathBuf::from("$HOME/Library/Application Support/osu (HOME environment variable not set)")))
+  }
+  #[cfg(target_os = "linux")]
+  {
+    if let Ok(home) = std::env::var("HOME") {
+      return Ok(std::path::PathBuf::from(home).join(".local").join("share").join("osu"));
+    }
+    Err(SafetyError::MissingDirectory(std::path::PathBuf::from("$HOME/.local/share/osu (HOME environment variable not set)")))
+  }
+  #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+  {
+    Err(SafetyError::AuthStateUnknown("Unsupported platform for default osu directory resolution".into()))
+  }
+}
+
 /// Verifies that osu!lazer is in guest/offline mode with no account logged in.
-/// Performs multi-layer verification specifically for osu!lazer:
-/// 1. Verifies `%APPDATA%\osu\game.ini` exists and `Username` and `Token` are strictly empty.
-/// 2. Verifies `%APPDATA%\osu\framework.ini` (osu!framework/lazer config) exists.
-/// 3. Verifies `%APPDATA%\osu\logs\*.auth.log` reports `API state changed to Offline`.
-/// 4. Verifies `%APPDATA%\osu\client.realm` (lazer database) is present.
+/// Performs fail-closed multi-layer verification:
+/// 1. Verifies osu! configuration directory exists and is readable.
+/// 2. Verifies `game.ini` exists and `Username` and `Token` are confirmed blank.
+/// 3. Verifies `logs/*.auth.log` explicitly confirms `API state changed to Offline` with zero online sessions.
+/// 4. Discloses that `framework.ini`, `client.realm`, and Windows Credential Manager are `NotChecked` if not verified.
 ///
-/// Aborts with Err if any user credentials or online states are found.
-pub fn verify_offline_safety_guard() -> Result<(), String> {
-  let appdata = std::env::var("APPDATA").unwrap_or_else(|_| r"C:\Users\Administrator\AppData\Roaming".to_string());
-  let osu_dir = std::path::Path::new(&appdata).join("osu");
+/// Aborts with `Err(SafetyError)` if any credentials, online states, missing files, or unverified states are found.
+pub fn verify_offline_safety_guard() -> Result<OfflineSafetyReport, SafetyError> {
+  let osu_dir = default_osu_dir()?;
   verify_lazer_offline_safety_guard_at_dir(&osu_dir)
 }
 
-pub fn verify_offline_safety_guard_at_path(path: &std::path::Path) -> Result<(), String> {
+pub fn verify_offline_safety_guard_at_path(path: &std::path::Path) -> Result<OfflineSafetyReport, SafetyError> {
+  if !path.exists() {
+    return Err(SafetyError::MissingDirectory(path.to_path_buf()));
+  }
   if path.is_file() {
-    verify_lazer_ini_file(path)
+    verify_lazer_ini_file(path)?;
+    if let Some(parent) = path.parent()
+      && parent.join("logs").exists()
+    {
+      verify_lazer_offline_safety_guard_at_dir(parent)
+    } else {
+      Err(SafetyError::AuthStateUnknown(format!(
+        "Cannot verify offline auth logs for standalone file {} without parent logs directory",
+        path.display()
+      )))
+    }
   } else {
     verify_lazer_offline_safety_guard_at_dir(path)
   }
 }
 
-fn verify_lazer_ini_file(ini_path: &std::path::Path) -> Result<(), String> {
+pub fn verify_lazer_ini_file(ini_path: &std::path::Path) -> Result<(), SafetyError> {
   if !ini_path.exists() {
-    return Ok(());
+    return Err(SafetyError::MissingConfigFile(ini_path.to_path_buf()));
   }
-  let content = std::fs::read_to_string(ini_path).map_err(|e| format!("failed to read {}: {e}", ini_path.display()))?;
+  let content =
+    std::fs::read_to_string(ini_path).map_err(|e| SafetyError::ConfigReadError(format!("failed to read {}: {e}", ini_path.display())))?;
+
+  let mut seen_username = false;
+  let mut seen_token = false;
 
   for line in content.lines() {
     let trimmed = line.trim();
     if let Some(val) = trimmed.strip_prefix("Username") {
       let val = val.trim_start();
       if let Some(v) = val.strip_prefix('=') {
+        seen_username = true;
         let username = v.trim();
         if !username.is_empty() {
-          return Err(format!(
-            "SAFETY ABORT: Logged-in user detected ('{}') in {}. Must be in guest/offline mode with blank Username!",
-            username,
-            ini_path.display()
-          ));
+          return Err(SafetyError::LoggedInUserDetected {
+            username: username.to_string(),
+            path: ini_path.to_path_buf(),
+          });
         }
       }
     }
     if let Some(val) = trimmed.strip_prefix("Token") {
       let val = val.trim_start();
       if let Some(v) = val.strip_prefix('=') {
+        seen_token = true;
         let token = v.trim();
         if !token.is_empty() {
-          return Err(format!(
-            "SAFETY ABORT: Account token detected ('{}') in {}. Must be in guest/offline mode with blank Token!",
-            token,
-            ini_path.display()
-          ));
+          return Err(SafetyError::AccountTokenPresent(ini_path.to_path_buf()));
         }
       }
     }
   }
+
+  if !seen_username || !seen_token {
+    return Err(SafetyError::AuthStateUnknown(format!("missing required 'Username' or 'Token' field in {}", ini_path.display())));
+  }
+
   Ok(())
 }
 
-pub fn verify_lazer_offline_safety_guard_at_dir(dir: &std::path::Path) -> Result<(), String> {
+pub fn verify_lazer_offline_safety_guard_at_dir(dir: &std::path::Path) -> Result<OfflineSafetyReport, SafetyError> {
   if !dir.exists() {
-    return Ok(());
+    return Err(SafetyError::MissingDirectory(dir.to_path_buf()));
   }
 
   let ini_path = dir.join("game.ini");
   verify_lazer_ini_file(&ini_path)?;
 
-  // Inspect auth logs in logs/ to ensure no online session is logged in
+  // Inspect auth logs in logs/ to ensure no online session is logged in and offline state is verified
   let logs_dir = dir.join("logs");
-  if logs_dir.exists()
-    && let Ok(entries) = std::fs::read_dir(&logs_dir)
-  {
-    for entry in entries.flatten() {
-      let log_path = entry.path();
-      let is_auth_log = log_path.file_name().and_then(|n| n.to_str()).map(|name| name.ends_with(".auth.log")).unwrap_or(false);
+  if !logs_dir.exists() {
+    return Err(SafetyError::AuthStateUnknown(format!("logs directory not found at {}", logs_dir.display())));
+  }
 
-      if is_auth_log
-        && let Ok(content) = std::fs::read_to_string(&log_path)
-        && content.contains("API state changed to Online")
-      {
-        return Err(format!("SAFETY ABORT: Online API state detected in auth log {}. Must be Offline!", log_path.display()));
+  let entries = std::fs::read_dir(&logs_dir)
+    .map_err(|e| SafetyError::ConfigReadError(format!("failed to read logs directory {}: {e}", logs_dir.display())))?;
+
+  let mut auth_log_count = 0usize;
+  let mut confirmed_offline = false;
+
+  for entry in entries {
+    let entry = entry.map_err(|e| SafetyError::ConfigReadError(format!("failed to read log entry in {}: {e}", logs_dir.display())))?;
+    let log_path = entry.path();
+    let is_auth_log = log_path.file_name().and_then(|n| n.to_str()).map(|name| name.ends_with(".auth.log")).unwrap_or(false);
+
+    if is_auth_log {
+      auth_log_count += 1;
+      let content = std::fs::read_to_string(&log_path)
+        .map_err(|e| SafetyError::ConfigReadError(format!("failed to read auth log {}: {e}", log_path.display())))?;
+
+      if content.contains("API state changed to Online") {
+        return Err(SafetyError::OnlineSessionDetected(log_path));
+      }
+      if content.contains("API state changed to Offline") {
+        confirmed_offline = true;
       }
     }
   }
 
-  Ok(())
+  if auth_log_count == 0 {
+    return Err(SafetyError::AuthStateUnknown(format!("no *.auth.log files found in {}; cannot confirm offline state", logs_dir.display())));
+  }
+
+  if !confirmed_offline {
+    return Err(SafetyError::AuthStateUnknown(format!(
+      "auth logs in {} do not contain 'API state changed to Offline'; offline state unconfirmed",
+      logs_dir.display()
+    )));
+  }
+
+  let framework_ini_checked = if dir.join("framework.ini").exists() {
+    CheckStatus::Passed
+  } else {
+    CheckStatus::NotChecked
+  };
+
+  Ok(OfflineSafetyReport {
+    osu_dir: dir.to_path_buf(),
+    game_ini_verified: true,
+    auth_log_verified: true,
+    framework_ini_checked,
+    realm_database_checked: CheckStatus::NotChecked,
+    credential_manager_checked: CheckStatus::NotChecked,
+    passed: true,
+  })
 }
 
 /// Linear interpolation percentile (matching numpy default)
@@ -415,26 +575,149 @@ mod tests {
     assert!(report.gate_16_6ms_passed, "compensated P99 must be under 16.6ms gate, got {}ms", report.comp_p99_ms);
   }
 
-  #[test]
-  fn test_offline_safety_guard_passes_on_empty() {
-    let dir = std::env::temp_dir();
-    let temp_file = dir.join("test_game_empty.ini");
-    std::fs::write(&temp_file, "Username = \nToken = \n").unwrap();
-    let res = verify_offline_safety_guard_at_path(&temp_file);
-    let _ = std::fs::remove_file(temp_file);
-    assert!(res.is_ok());
+  struct TestEnvGuard {
+    path: std::path::PathBuf,
+  }
+
+  impl Drop for TestEnvGuard {
+    fn drop(&mut self) {
+      let _ = std::fs::remove_dir_all(&self.path);
+    }
+  }
+
+  fn setup_mock_env(name: &str, username: &str, token: &str, auth_log_content: Option<&str>) -> (TestEnvGuard, std::path::PathBuf) {
+    let base = std::env::temp_dir().join(format!("auv_safety_{name}_{}", std::time::SystemTime::now().elapsed().unwrap().as_nanos()));
+    let osu_dir = base.join("osu");
+    std::fs::create_dir_all(&osu_dir).unwrap();
+
+    let ini_path = osu_dir.join("game.ini");
+    std::fs::write(&ini_path, format!("Username = {username}\nToken = {token}\n")).unwrap();
+
+    if let Some(log_content) = auth_log_content {
+      let logs_dir = osu_dir.join("logs");
+      std::fs::create_dir_all(&logs_dir).unwrap();
+      let auth_log_path = logs_dir.join("runtime.auth.log");
+      std::fs::write(&auth_log_path, log_content).unwrap();
+    }
+
+    (TestEnvGuard { path: base }, osu_dir)
   }
 
   #[test]
-  fn test_offline_safety_guard_aborts_on_credential() {
-    let dir = std::env::temp_dir();
-    let temp_file = dir.join("test_game_logged_in.ini");
-    std::fs::write(&temp_file, "Username = peppy\nToken = secret\n").unwrap();
-    let res = verify_offline_safety_guard_at_path(&temp_file);
-    let _ = std::fs::remove_file(temp_file);
+  fn test_offline_safety_guard_rejects_missing_directory() {
+    let non_existent = std::env::temp_dir().join("non_existent_osu_dir_987654321");
+    let res = verify_lazer_offline_safety_guard_at_dir(&non_existent);
+    assert!(matches!(res, Err(SafetyError::MissingDirectory(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("SAFETY ABORT"));
+    assert!(err_str.contains("directory not found"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_missing_ini() {
+    let base = std::env::temp_dir().join(format!("auv_no_ini_{}", std::time::SystemTime::now().elapsed().unwrap().as_nanos()));
+    let _guard = TestEnvGuard { path: base.clone() };
+    let osu_dir = base.join("osu");
+    std::fs::create_dir_all(&osu_dir).unwrap();
+
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::MissingConfigFile(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("Configuration file not found"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_unreadable_config() {
+    let base = std::env::temp_dir().join(format!("auv_unreadable_{}", std::time::SystemTime::now().elapsed().unwrap().as_nanos()));
+    let _guard = TestEnvGuard { path: base.clone() };
+    let osu_dir = base.join("osu");
+    std::fs::create_dir_all(&osu_dir).unwrap();
+    // Making game.ini a directory causes read_to_string to fail
+    let bad_ini = osu_dir.join("game.ini");
+    std::fs::create_dir_all(&bad_ini).unwrap();
+
+    let res = verify_lazer_ini_file(&bad_ini);
+    assert!(matches!(res, Err(SafetyError::ConfigReadError(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("Failed to read configuration"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_logged_in_user() {
+    let (_guard, osu_dir) = setup_mock_env("logged_in", "peppy", "", Some("API state changed to Offline"));
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::LoggedInUserDetected { .. })));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("peppy"));
+    assert!(err_str.contains("Logged-in user detected"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_non_empty_token_without_leaking() {
+    let secret = "super_secret_bancho_auth_token_987654321";
+    let (_guard, osu_dir) = setup_mock_env("secret_token", "", secret, Some("API state changed to Offline"));
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::AccountTokenPresent(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("Non-empty account token detected"));
+    assert!(err_str.contains("Token value redacted"));
+    // Explicit assertion: the actual secret must never appear in the error string!
+    assert!(!err_str.contains(secret), "Secret token leaked in error message!");
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_online_session() {
+    let (_guard, osu_dir) = setup_mock_env("online_log", "", "", Some("API state changed to Offline\nAPI state changed to Online\n"));
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::OnlineSessionDetected(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("Online API state detected in auth log"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_indeterminate_auth_state_missing_logs() {
+    let (_guard, osu_dir) = setup_mock_env("no_logs", "", "", None);
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::AuthStateUnknown(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("logs directory not found"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_rejects_indeterminate_auth_state_no_offline_marker() {
+    let (_guard, osu_dir) = setup_mock_env("no_offline_marker", "", "", Some("Random log line with no state change marker\n"));
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(matches!(res, Err(SafetyError::AuthStateUnknown(_))));
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("offline state unconfirmed"));
+  }
+
+  #[test]
+  fn test_offline_safety_guard_passes_confirmable_offline_environment() {
+    let (_guard, osu_dir) =
+      setup_mock_env("confirmed_offline", "", "", Some("Session initialized.\nAPI state changed to Offline\nLocal play active.\n"));
+    let res = verify_lazer_offline_safety_guard_at_dir(&osu_dir);
+    assert!(res.is_ok(), "Expected valid offline environment to pass: {:?}", res);
+    let report = res.unwrap();
+    assert!(report.passed);
+    assert!(report.game_ini_verified);
+    assert!(report.auth_log_verified);
+    assert_eq!(report.framework_ini_checked, CheckStatus::NotChecked);
+    assert_eq!(report.realm_database_checked, CheckStatus::NotChecked);
+    assert_eq!(report.credential_manager_checked, CheckStatus::NotChecked);
+  }
+
+  #[test]
+  fn test_safety_guard_blocks_input_dispatch_when_unverified() {
+    let non_existent = std::env::temp_dir().join("non_existent_dir_safety_gate");
+    let mut inputs_dispatched = false;
+
+    let res = verify_lazer_offline_safety_guard_at_dir(&non_existent);
+    if res.is_ok() {
+      inputs_dispatched = true;
+    }
+
     assert!(res.is_err());
-    let err = res.unwrap_err();
-    assert!(err.contains("SAFETY ABORT"));
-    assert!(err.contains("peppy"));
+    assert!(!inputs_dispatched, "Inputs must not be dispatched when safety pre-check fails!");
   }
 }

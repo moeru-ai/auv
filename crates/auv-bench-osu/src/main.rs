@@ -153,8 +153,13 @@ fn main() -> Result<()> {
     Commands::VerifySafety => {
       println!("Checking Bancho / guest mode offline safety guard...");
       match verify_offline_safety_guard() {
-        Ok(()) => {
-          println!("SAFETY GUARD PASSED: Guest/offline mode confirmed (Username and Token are blank). Zero risk of Bancho pollution.");
+        Ok(report) => {
+          println!("SAFETY GUARD PASSED: Confirmed offline mode at {}", report.osu_dir.display());
+          println!("- Lazer Config (game.ini): VERIFIED (blank Username and Token)");
+          println!("- Auth Log Audit: VERIFIED ('API state changed to Offline', zero online sessions)");
+          println!("- Framework Config (framework.ini): {:?}", report.framework_ini_checked);
+          println!("- Realm Database (client.realm): {:?}", report.realm_database_checked);
+          println!("- Windows Credential Manager: {:?}", report.credential_manager_checked);
         }
         Err(e) => {
           eprintln!("{e}");
@@ -217,6 +222,10 @@ fn main() -> Result<()> {
       println!("Status: {}", if calib.passed { "PASSED" } else { "FAILED" });
     }
     Commands::SmokeInjector { edges, interval_ms } => {
+      println!("Checking Bancho / guest mode offline safety guard before input injection...");
+      let safety = verify_offline_safety_guard().map_err(|e| anyhow::anyhow!("{e}"))?;
+      println!("Offline safety verified at {}. Proceeding with actuator smoke...", safety.osu_dir.display());
+
       println!("Running Phase 0 actuator smoke benchmark: {} edges @ {:.1}ms interval...", edges, interval_ms);
       let report = run_actuator_smoke_bench(edges, interval_ms);
       println!("=== Actuator Benchmark Summary ===");
@@ -242,6 +251,10 @@ fn main() -> Result<()> {
       );
     }
     Commands::LoopbackBench { edges, interval_ms } => {
+      println!("Checking Bancho / guest mode offline safety guard before loopback benchmark...");
+      let safety = verify_offline_safety_guard().map_err(|e| anyhow::anyhow!("{e}"))?;
+      println!("Offline safety verified at {}. Proceeding with loopback bench...", safety.osu_dir.display());
+
       println!("Running Round-2 sustained loopback receiver benchmark: {} edges @ {:.1}ms interval...", edges, interval_ms);
       let report = run_loopback_receiver_bench(edges, interval_ms).map_err(|e| anyhow::anyhow!("loopback bench failed: {e}"))?;
       println!("=== Round-2 Loopback Receiver Benchmark Summary ===");
@@ -267,11 +280,14 @@ fn main() -> Result<()> {
       );
     }
     Commands::Report => {
+      println!("Checking Bancho / guest mode offline safety guard before running benchmarks for Report...");
+      let safety_report = verify_offline_safety_guard()
+        .map_err(|e| anyhow::anyhow!("Offline safety guard failed: {e}. Refusing to run benchmarks for report!"))?;
+
       let rec = reconcile_tear_rain_fixture()?;
       let bench = run_actuator_smoke_bench(50, 16.0);
       std::thread::sleep(std::time::Duration::from_millis(200));
       let loopback = run_loopback_receiver_bench(1000, 4.0).map_err(|e| anyhow::anyhow!("loopback bench failed: {e}"))?;
-      let safety_ok = verify_offline_safety_guard().is_ok();
 
       let fixture_path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/351190-cYsmix-Tear-Rain-Normal.osu"));
       let model = parse_beatmap_file(&fixture_path)?;
@@ -356,20 +372,14 @@ fn main() -> Result<()> {
       );
 
       println!("## 5. osu!lazer Offline & Guest Mode Multi-Layer Guard Verification");
-      println!("- Target Client: osu!lazer (Version 2026.1005.0-lazer, .NET 10.0.12)");
-      println!("- Lazer Config: %APPDATA%\\osu\\game.ini (Username='', Token='')");
-      println!("- Framework Config: %APPDATA%\\osu\\framework.ini (confirmed present, local offline mode)");
-      println!("- Auth Log Audit: %APPDATA%\\osu\\logs\\*.auth.log ('API state changed to Offline', 0 online tokens)");
-      println!("- Realm Database: %APPDATA%\\osu\\client.realm (zero user accounts)");
-      println!("- Windows Credential Manager: 0 osu credentials");
-      println!(
-        "- Safety Status: {}\n",
-        if safety_ok {
-          "PASSED (Multi-layer guard confirmed guest/offline mode; zero risk of Bancho pollution)"
-        } else {
-          "FAILED (Logged-in user detected!)"
-        }
-      );
+      println!("- Target Client: osu!lazer");
+      println!("- Target Directory: {}", safety_report.osu_dir.display());
+      println!("- Lazer Config: game.ini (Username='', Token='') [VERIFIED]");
+      println!("- Auth Log Audit: logs/*.auth.log ('API state changed to Offline', zero online sessions) [VERIFIED]");
+      println!("- Framework Config: framework.ini [{:?}]", safety_report.framework_ini_checked);
+      println!("- Realm Database: client.realm [{:?}]", safety_report.realm_database_checked);
+      println!("- Windows Credential Manager: [{:?}]", safety_report.credential_manager_checked);
+      println!("- Safety Status: PASSED (Local file-based offline guard verified; realm/credentials not checked)\n");
 
       println!("## 6. Phase 0 Dispatch-Side Smoke Benchmark (50 edges @ 16.0ms, SendInput + QPC)");
       println!(

@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "auv-bench-osu"
-version = "0.0.34"
+version = "0.0.35"
 dependencies = [
  "anyhow",
  "clap",

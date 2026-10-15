@@ -18,7 +18,8 @@ pub mod synthesizer;
 
 pub use curve::SliderCurve;
 pub use injector::{
-  ActuatorBenchmarkReport, BenchmarkEdgeRecord, PrecisionClock, TimePeriodGuard, Win32InputActuator, run_actuator_smoke_bench,
+  ActuatorBenchmarkReport, BenchmarkEdgeRecord, CheckStatus, OfflineSafetyReport, PrecisionClock, SafetyError, TimePeriodGuard,
+  Win32InputActuator, default_osu_dir, run_actuator_smoke_bench, verify_lazer_ini_file, verify_lazer_offline_safety_guard_at_dir,
   verify_offline_safety_guard, verify_offline_safety_guard_at_path,
 };
 pub use loopback::{LoopbackBenchmarkReport, run_loopback_receiver_bench};
