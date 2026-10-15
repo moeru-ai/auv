@@ -247,10 +247,7 @@ mod tests {
   #[cfg(not(target_os = "windows"))]
   #[test]
   fn test_loopback_receiver_reports_unsupported_platform() {
-    assert_eq!(
-      run_loopback_receiver_bench(50, 4.0).unwrap_err(),
-      "Loopback receiver bench is only supported on Windows"
-    );
+    assert_eq!(run_loopback_receiver_bench(50, 4.0).unwrap_err(), "Loopback receiver bench is only supported on Windows");
   }
 
   #[cfg(target_os = "windows")]
