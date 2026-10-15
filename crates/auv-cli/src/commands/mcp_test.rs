@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use auv_auto_loop::runtime::FakeOperationExecutor;
 use rmcp::{
-  ClientHandler, ServiceExt,
+  ClientHandler, ServerHandler, ServiceExt,
   model::{CallToolRequestParam, ClientInfo, ErrorCode},
 };
 
@@ -13,6 +13,15 @@ use crate::commands::op::ExecutionModeArg;
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
+}
+
+#[test]
+fn mcp_handshake_names_the_auv_build_rather_than_the_transport_crate() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let info = server.get_info();
+
+  assert_eq!(info.server_info.name, "auv");
+  assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
 }
 
 #[test]
