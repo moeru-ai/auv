@@ -619,6 +619,7 @@ mod tests {
     assert!((percentile_linear(&vals, 1.0) - 50.0).abs() < 1e-6);
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn test_actuator_smoke_10_edges() {
     let report = run_actuator_smoke_bench(10, 5.0);
@@ -634,6 +635,18 @@ mod tests {
     // CI runners are shared and have no reliable upper bound on scheduling jitter.
     // Keep the latency gate in the explicit Windows-only benchmark below.
     assert_eq!(report.gate_16_6ms_passed, report.comp_p99_ms <= 16.6);
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  #[test]
+  fn test_actuator_smoke_on_non_windows_records_zero_accepted() {
+    let report = run_actuator_smoke_bench(10, 5.0);
+    assert_eq!(report.planned_edges, 10);
+    assert_eq!(report.attempted_edges, 10);
+    assert_eq!(report.os_accepted_edges, 0);
+    assert_eq!(report.actual_edges, 0);
+    assert!(!report.count_reconciled);
+    assert_eq!(report.records.len(), 10);
   }
 
   #[cfg(target_os = "windows")]
