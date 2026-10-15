@@ -34,4 +34,6 @@ pub use reconciliation::{
   GroundTruthStats, ReconciliationResult, official_tear_rain_normal_ground_truth, reconcile_beatmap, reconcile_tear_rain_fixture,
 };
 pub use simulator::{Judgement, ObjectJudgement, SimulationReport, simulate_plan_offline};
-pub use synthesizer::{ActionPlan, CursorTrajectoryPoint, KeyCode, KeyEventType, PlanHeader, ScheduledKeyEvent, synthesize_plan};
+pub use synthesizer::{
+  ActionPlan, CursorTrajectoryPoint, KeyCode, KeyEventType, PlanHeader, PlanValidationError, ScheduledKeyEvent, synthesize_plan,
+};

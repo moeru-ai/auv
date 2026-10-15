@@ -59,11 +59,158 @@ pub struct PlanHeader {
   pub trajectory_sample_interval_ms: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlanValidationError {
+  EmptyTrajectory,
+  NonFiniteTrajectoryCoordinate {
+    index: usize,
+    time_ms: f64,
+    x: f64,
+    y: f64,
+  },
+  NonMonotonicTrajectory {
+    index: usize,
+    prev_ms: f64,
+    curr_ms: f64,
+  },
+  NonFiniteKeyTimestamp {
+    index: usize,
+    time_ms: f64,
+  },
+  NonMonotonicKeySchedule {
+    index: usize,
+    prev_ms: f64,
+    curr_ms: f64,
+  },
+  InvalidKeyStateTransition {
+    key: KeyCode,
+    time_ms: f64,
+    event_type: KeyEventType,
+  },
+}
+
+impl std::fmt::Display for PlanValidationError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::EmptyTrajectory => write!(f, "trajectory is empty"),
+      Self::NonFiniteTrajectoryCoordinate {
+        index,
+        time_ms,
+        x,
+        y,
+      } => {
+        write!(f, "trajectory coordinate at index {index} is non-finite (t={time_ms}, x={x}, y={y})")
+      }
+      Self::NonMonotonicTrajectory {
+        index,
+        prev_ms,
+        curr_ms,
+      } => {
+        write!(f, "trajectory timestamp at index {index} is non-monotonic ({prev_ms} > {curr_ms})")
+      }
+      Self::NonFiniteKeyTimestamp { index, time_ms } => {
+        write!(f, "key schedule timestamp at index {index} is non-finite ({time_ms})")
+      }
+      Self::NonMonotonicKeySchedule {
+        index,
+        prev_ms,
+        curr_ms,
+      } => {
+        write!(f, "key schedule timestamp at index {index} is non-monotonic ({prev_ms} > {curr_ms})")
+      }
+      Self::InvalidKeyStateTransition {
+        key,
+        time_ms,
+        event_type,
+      } => {
+        write!(f, "invalid key state transition: {key:?} at {time_ms} ms received {event_type:?} while already in that state")
+      }
+    }
+  }
+}
+
+impl std::error::Error for PlanValidationError {}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActionPlan {
   pub header: PlanHeader,
   pub trajectory: Vec<CursorTrajectoryPoint>,
   pub key_schedule: Vec<ScheduledKeyEvent>,
+}
+
+impl ActionPlan {
+  pub fn validate_plan(&self) -> Result<(), PlanValidationError> {
+    if self.trajectory.is_empty() {
+      return Err(PlanValidationError::EmptyTrajectory);
+    }
+
+    for (i, p) in self.trajectory.iter().enumerate() {
+      if !p.time_ms.is_finite() || !p.x.is_finite() || !p.y.is_finite() {
+        return Err(PlanValidationError::NonFiniteTrajectoryCoordinate {
+          index: i,
+          time_ms: p.time_ms,
+          x: p.x,
+          y: p.y,
+        });
+      }
+      if i > 0 && p.time_ms < self.trajectory[i - 1].time_ms {
+        return Err(PlanValidationError::NonMonotonicTrajectory {
+          index: i,
+          prev_ms: self.trajectory[i - 1].time_ms,
+          curr_ms: p.time_ms,
+        });
+      }
+    }
+
+    let mut k1_down = false;
+    let mut k2_down = false;
+
+    for (i, e) in self.key_schedule.iter().enumerate() {
+      if !e.time_ms.is_finite() {
+        return Err(PlanValidationError::NonFiniteKeyTimestamp {
+          index: i,
+          time_ms: e.time_ms,
+        });
+      }
+      if i > 0 && e.time_ms < self.key_schedule[i - 1].time_ms {
+        return Err(PlanValidationError::NonMonotonicKeySchedule {
+          index: i,
+          prev_ms: self.key_schedule[i - 1].time_ms,
+          curr_ms: e.time_ms,
+        });
+      }
+
+      let is_down = match e.key {
+        KeyCode::K1 => &mut k1_down,
+        KeyCode::K2 => &mut k2_down,
+      };
+
+      match e.event_type {
+        KeyEventType::Down => {
+          if *is_down {
+            return Err(PlanValidationError::InvalidKeyStateTransition {
+              key: e.key,
+              time_ms: e.time_ms,
+              event_type: KeyEventType::Down,
+            });
+          }
+          *is_down = true;
+        }
+        KeyEventType::Up => {
+          if !*is_down {
+            return Err(PlanValidationError::InvalidKeyStateTransition {
+              key: e.key,
+              time_ms: e.time_ms,
+              event_type: KeyEventType::Up,
+            });
+          }
+          *is_down = false;
+        }
+      }
+    }
+
+    Ok(())
+  }
 }
 
 pub fn synthesize_plan(beatmap: &BeatmapModel) -> ActionPlan {
@@ -93,23 +240,47 @@ pub fn synthesize_plan(beatmap: &BeatmapModel) -> ActionPlan {
 }
 
 fn synthesize_key_schedule(objects: &[HitObject]) -> Vec<ScheduledKeyEvent> {
+  if objects.is_empty() {
+    return Vec::new();
+  }
+
   let mut events = Vec::new();
   let mut last_hit_time: Option<f64> = None;
   let mut active_key = KeyCode::K1;
   let mut prev_was_slider = false;
   let mut slider_key = KeyCode::K1;
+  let mut k1_held_until = f64::NEG_INFINITY;
+  let mut k2_held_until = f64::NEG_INFINITY;
 
-  for obj in objects {
+  for (i, obj) in objects.iter().enumerate() {
     let hit_time = obj.start_time_ms();
+    let k1_avail = hit_time >= k1_held_until;
+    let k2_avail = hit_time >= k2_held_until;
 
     // Forced key alternation rules:
     // 1. Forced key switch for the first note after a slider hold
-    // 2. Consecutive notes closer than STREAM_ALT_THRESHOLD_MS alternate K1/K2
+    // 2. Key occupancy constraint (cannot press already held key)
+    // 3. Consecutive notes closer than STREAM_ALT_THRESHOLD_MS alternate K1/K2
     let key = if prev_was_slider {
-      match slider_key {
+      let alt_key = match slider_key {
         KeyCode::K1 => KeyCode::K2,
         KeyCode::K2 => KeyCode::K1,
+      };
+      let alt_avail = match alt_key {
+        KeyCode::K1 => k1_avail,
+        KeyCode::K2 => k2_avail,
+      };
+      if alt_avail {
+        alt_key
+      } else if k1_avail {
+        KeyCode::K1
+      } else {
+        KeyCode::K2
       }
+    } else if k1_avail && !k2_avail {
+      KeyCode::K1
+    } else if !k1_avail && k2_avail {
+      KeyCode::K2
     } else if let Some(last_time) = last_hit_time {
       if (hit_time - last_time) <= STREAM_ALT_THRESHOLD_MS {
         match active_key {
@@ -129,48 +300,86 @@ fn synthesize_key_schedule(objects: &[HitObject]) -> Vec<ScheduledKeyEvent> {
     match obj {
       HitObject::Circle { .. } => {
         prev_was_slider = false;
+        let raw_release = hit_time + POST_HIT_DWELL_MS;
+        let release_time = if let Some(next_obj) = objects.get(i + 1) {
+          let next_hit = next_obj.start_time_ms();
+          if raw_release >= next_hit {
+            (next_hit - 1.0).max(hit_time + 1.0)
+          } else {
+            raw_release
+          }
+        } else {
+          raw_release
+        };
+
         events.push(ScheduledKeyEvent {
           time_ms: hit_time,
           key,
           event_type: KeyEventType::Down,
         });
         events.push(ScheduledKeyEvent {
-          time_ms: hit_time + POST_HIT_DWELL_MS,
+          time_ms: release_time,
           key,
           event_type: KeyEventType::Up,
         });
+
+        match key {
+          KeyCode::K1 => k1_held_until = release_time,
+          KeyCode::K2 => k2_held_until = release_time,
+        }
       }
       HitObject::Slider { duration_ms, .. } => {
         prev_was_slider = true;
         slider_key = key;
+        let release_time = hit_time + duration_ms + SLIDER_HOLD_TAIL_PAD_MS;
+
         events.push(ScheduledKeyEvent {
           time_ms: hit_time,
           key,
           event_type: KeyEventType::Down,
         });
         events.push(ScheduledKeyEvent {
-          time_ms: hit_time + duration_ms + SLIDER_HOLD_TAIL_PAD_MS,
+          time_ms: release_time,
           key,
           event_type: KeyEventType::Up,
         });
+
+        match key {
+          KeyCode::K1 => k1_held_until = release_time,
+          KeyCode::K2 => k2_held_until = release_time,
+        }
       }
       HitObject::Spinner { end_time_ms, .. } => {
         prev_was_slider = false;
+        let release_time = *end_time_ms;
+
         events.push(ScheduledKeyEvent {
           time_ms: hit_time,
           key,
           event_type: KeyEventType::Down,
         });
         events.push(ScheduledKeyEvent {
-          time_ms: *end_time_ms,
+          time_ms: release_time,
           key,
           event_type: KeyEventType::Up,
         });
+
+        match key {
+          KeyCode::K1 => k1_held_until = release_time,
+          KeyCode::K2 => k2_held_until = release_time,
+        }
       }
     }
   }
 
-  events.sort_by(|a, b| a.time_ms.partial_cmp(&b.time_ms).unwrap_or(std::cmp::Ordering::Equal));
+  events.sort_by(|a, b| {
+    a.time_ms.partial_cmp(&b.time_ms).unwrap_or(std::cmp::Ordering::Equal).then_with(|| match (a.event_type, b.event_type) {
+      (KeyEventType::Up, KeyEventType::Down) => std::cmp::Ordering::Less,
+      (KeyEventType::Down, KeyEventType::Up) => std::cmp::Ordering::Greater,
+      _ => std::cmp::Ordering::Equal,
+    })
+  });
+
   events
 }
 
@@ -195,16 +404,21 @@ fn synthesize_trajectory(objects: &[HitObject]) -> Vec<CursorTrajectoryPoint> {
     y: current_pos.1,
   });
 
-  for obj in objects.iter() {
-    // 1. Move to object start pos (arriving ARRIVAL_LEAD_MS early)
-    let target_arrival_time = (obj.start_time_ms() - ARRIVAL_LEAD_MS).max(current_time);
+  for (i, obj) in objects.iter().enumerate() {
     let target_pos = obj.start_pos();
+    let hit_time = obj.start_time_ms();
+
+    // 1. Move to object start pos
+    let target_arrival_time = if hit_time - ARRIVAL_LEAD_MS > current_time {
+      hit_time - ARRIVAL_LEAD_MS
+    } else {
+      hit_time.max(current_time)
+    };
 
     if target_arrival_time > current_time {
       let duration = target_arrival_time - current_time;
-      let steps = (duration / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil() as usize;
+      let steps = (duration / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil().max(1.0) as usize;
 
-      // Degenerates to direct straight lines when consecutive gap < STRAIGHT_LINE_THRESHOLD_MS
       for step in 1..=steps {
         let t = (step as f64) / (steps as f64);
         let sample_time = current_time + t * duration;
@@ -218,13 +432,25 @@ fn synthesize_trajectory(objects: &[HitObject]) -> Vec<CursorTrajectoryPoint> {
       }
       current_time = target_arrival_time;
       current_pos = target_pos;
+    } else if (current_pos.0 - target_pos.0).hypot(current_pos.1 - target_pos.1) > 1e-4 {
+      trajectory.push(CursorTrajectoryPoint {
+        time_ms: current_time,
+        x: target_pos.0,
+        y: target_pos.1,
+      });
+      current_pos = target_pos;
     }
 
     // 2. Handle object-specific trajectory
     match obj {
       HitObject::Circle { x, y, time_ms } => {
-        // Hold on circle until hit time + dwell
-        let dwell_time = *time_ms + POST_HIT_DWELL_MS;
+        let next_start = objects.get(i + 1).map(|o| o.start_time_ms());
+        let raw_dwell = *time_ms + POST_HIT_DWELL_MS;
+        let dwell_time = match next_start {
+          Some(next_t) => raw_dwell.min(next_t - 1.0).max(*time_ms),
+          None => raw_dwell,
+        };
+
         if dwell_time > current_time {
           current_time = dwell_time;
           current_pos = (*x, *y);
@@ -248,7 +474,7 @@ fn synthesize_trajectory(objects: &[HitObject]) -> Vec<CursorTrajectoryPoint> {
         ..
       } => {
         let curve = SliderCurve::new(*curve_type, (*x, *y), control_points, *pixel_length);
-        let steps = (duration_ms / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil() as usize;
+        let steps = (duration_ms / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil().max(1.0) as usize;
 
         for step in 1..=steps {
           let elapsed = (step as f64) * TRAJECTORY_SAMPLE_INTERVAL_MS;
@@ -259,7 +485,6 @@ fn synthesize_trajectory(objects: &[HitObject]) -> Vec<CursorTrajectoryPoint> {
             1.0
           };
 
-          // Target is ball center (0 px offset)
           let pos = curve.position_at_slide_progress(progress, *repeat_count, *pixel_length);
           trajectory.push(CursorTrajectoryPoint {
             time_ms: sample_time,
@@ -277,8 +502,7 @@ fn synthesize_trajectory(objects: &[HitObject]) -> Vec<CursorTrajectoryPoint> {
         end_time_ms,
         duration_ms,
       } => {
-        // Orbit center at SPINNER_RADIUS_OSUPX, rate SPINNER_RPS
-        let steps = (duration_ms / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil() as usize;
+        let steps = (duration_ms / TRAJECTORY_SAMPLE_INTERVAL_MS).ceil().max(1.0) as usize;
         let rev_speed = 2.0 * PI * SPINNER_RPS;
 
         for step in 1..=steps {

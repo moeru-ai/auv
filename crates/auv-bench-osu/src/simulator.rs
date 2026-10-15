@@ -1,7 +1,11 @@
+use std::collections::HashSet;
+use std::f64::consts::PI;
+
 use serde::{Deserialize, Serialize};
 
+use crate::curve::SliderCurve;
 use crate::model::{BeatmapModel, HitObject};
-use crate::synthesizer::ActionPlan;
+use crate::synthesizer::{ActionPlan, CursorTrajectoryPoint, KeyCode, KeyEventType, ScheduledKeyEvent};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,56 +51,188 @@ pub fn simulate_plan_offline(model: &BeatmapModel, plan: &ActionPlan) -> Simulat
   let mut total_timing_err = 0.0;
   let mut hit_count = 0;
   let mut max_timing_err = 0.0f64;
+  let mut consumed_keys: HashSet<usize> = HashSet::new();
 
   for (idx, obj) in model.hit_objects.iter().enumerate() {
     let target_time = obj.start_time_ms();
     let target_pos = obj.start_pos();
 
-    // Find the closest key down event within the outer hit window (hit_window_50)
-    let candidate_key = plan.key_schedule.iter().filter(|e| e.event_type == crate::synthesizer::KeyEventType::Down).min_by(|a, b| {
-      let diff_a = (a.time_ms - target_time).abs();
-      let diff_b = (b.time_ms - target_time).abs();
-      diff_a.partial_cmp(&diff_b).unwrap()
-    });
+    // Find the closest unconsumed key down event within the outer hit window (hit_window_50)
+    let candidate_key = plan
+      .key_schedule
+      .iter()
+      .enumerate()
+      .filter(|(k_idx, e)| e.event_type == KeyEventType::Down && !consumed_keys.contains(k_idx))
+      .filter(|(_, e)| (e.time_ms - target_time).abs() <= hit_window_50)
+      .min_by(|(_, a), (_, b)| {
+        let diff_a = (a.time_ms - target_time).abs();
+        let diff_b = (b.time_ms - target_time).abs();
+        diff_a.partial_cmp(&diff_b).unwrap_or(std::cmp::Ordering::Equal)
+      });
 
     let mut object_judgement = Judgement::Miss;
     let mut actual_hit_time = None;
     let mut timing_error = None;
     let mut spatial_error = None;
 
-    if let Some(key_event) = candidate_key {
+    if let Some((key_idx, key_event)) = candidate_key {
+      // Consume key event so it cannot be matched by any subsequent object
+      consumed_keys.insert(key_idx);
+
       let dt = (key_event.time_ms - target_time).abs();
-      if dt <= hit_window_50 {
-        // Find cursor position at keypress time
-        let cursor_pos = sample_trajectory_at(&plan.trajectory, key_event.time_ms).unwrap_or(target_pos);
-        let dist = (cursor_pos.0 - target_pos.0).hypot(cursor_pos.1 - target_pos.1);
+      let err = key_event.time_ms - target_time;
+      actual_hit_time = Some(key_event.time_ms);
+      timing_error = Some(err);
 
-        spatial_error = Some(dist);
-        actual_hit_time = Some(key_event.time_ms);
-        let err = key_event.time_ms - target_time;
-        timing_error = Some(err);
+      // Trajectory sampling: must exist, no silent fallback to target_pos
+      let cursor_pos_opt = sample_trajectory_at(&plan.trajectory, key_event.time_ms);
 
-        // Under osu! rules: hit must land within circle radius for circles and sliders;
-        // spinners cover the entire playfield so any click during spinner is spatially valid.
-        let is_spatial_valid = match obj {
-          HitObject::Spinner { .. } => true,
-          _ => dist <= hit_radius,
-        };
+      match obj {
+        HitObject::Circle { .. } => {
+          if let Some(cursor_pos) = cursor_pos_opt {
+            let dist = (cursor_pos.0 - target_pos.0).hypot(cursor_pos.1 - target_pos.1);
+            spatial_error = Some(dist);
 
-        if is_spatial_valid {
-          if dt <= hit_window_300 {
+            if dist <= hit_radius {
+              if dt <= hit_window_300 {
+                object_judgement = Judgement::Hit300;
+              } else if dt <= hit_window_100 {
+                object_judgement = Judgement::Hit100;
+              } else {
+                object_judgement = Judgement::Hit50;
+              }
+            }
+          }
+        }
+        HitObject::Slider {
+          x,
+          y,
+          time_ms,
+          curve_type,
+          control_points,
+          repeat_count,
+          pixel_length,
+          duration_ms,
+          end_time_ms,
+          ..
+        } => {
+          if let Some(cursor_pos) = cursor_pos_opt {
+            let dist = (cursor_pos.0 - target_pos.0).hypot(cursor_pos.1 - target_pos.1);
+            spatial_error = Some(dist);
+
+            if dist <= hit_radius {
+              let head_score = if dt <= hit_window_300 {
+                Judgement::Hit300
+              } else if dt <= hit_window_100 {
+                Judgement::Hit100
+              } else {
+                Judgement::Hit50
+              };
+
+              let curve = SliderCurve::new(*curve_type, (*x, *y), control_points, *pixel_length);
+              let follow_radius = hit_radius * 2.4;
+
+              // Sample tracking checkpoints across slider duration
+              let mut checkpoints = Vec::new();
+              let step_ms = 20.0f64;
+              let mut cp_t = *time_ms + step_ms;
+              while cp_t < *end_time_ms {
+                checkpoints.push(cp_t);
+                cp_t += step_ms;
+              }
+              checkpoints.push(*end_time_ms);
+
+              let mut passed = 0;
+              for &t in &checkpoints {
+                let key_held = is_key_held_at(&plan.key_schedule, key_event.key, key_event.time_ms, t);
+                let progress = if *duration_ms > 0.0 {
+                  ((t - *time_ms) / *duration_ms).clamp(0.0, 1.0)
+                } else {
+                  1.0
+                };
+                let ball_pos = curve.position_at_slide_progress(progress, *repeat_count, *pixel_length);
+                let cursor_at_cp = sample_trajectory_at(&plan.trajectory, t);
+                let on_slider = match cursor_at_cp {
+                  Some((cx, cy)) => (cx - ball_pos.0).hypot(cy - ball_pos.1) <= follow_radius,
+                  None => false,
+                };
+
+                if key_held && on_slider {
+                  passed += 1;
+                }
+              }
+
+              let tracking_ratio = (passed as f64) / (checkpoints.len() as f64);
+              if tracking_ratio >= 0.999 {
+                object_judgement = head_score;
+              } else if tracking_ratio >= 0.75 {
+                object_judgement = match head_score {
+                  Judgement::Hit300 => Judgement::Hit100,
+                  other => other,
+                };
+              } else if tracking_ratio >= 0.50 {
+                object_judgement = Judgement::Hit50;
+              } else {
+                object_judgement = Judgement::Miss;
+              }
+            }
+          }
+        }
+        HitObject::Spinner {
+          x,
+          y,
+          time_ms,
+          end_time_ms,
+          duration_ms,
+        } => {
+          let key_held = is_key_held_at(&plan.key_schedule, key_event.key, key_event.time_ms, *end_time_ms - 5.0);
+
+          let center = (*x, *y);
+          let mut total_rotation = 0.0f64;
+          let mut prev_angle: Option<f64> = None;
+
+          let mut t = *time_ms;
+          let step = 8.0f64;
+          while t <= *end_time_ms {
+            if let Some((cx, cy)) = sample_trajectory_at(&plan.trajectory, t) {
+              let dx = cx - center.0;
+              let dy = cy - center.1;
+              let angle = dy.atan2(dx);
+              if let Some(prev) = prev_angle {
+                let mut d = angle - prev;
+                while d > PI {
+                  d -= 2.0 * PI;
+                }
+                while d < -PI {
+                  d += 2.0 * PI;
+                }
+                total_rotation += d.abs();
+              }
+              prev_angle = Some(angle);
+            }
+            t += step;
+          }
+
+          let rotations = total_rotation / (2.0 * PI);
+          let required_rotations = (*duration_ms / 1000.0) * 3.0;
+
+          if key_held && rotations >= required_rotations {
             object_judgement = Judgement::Hit300;
-          } else if dt <= hit_window_100 {
+          } else if key_held && rotations >= 0.5 * required_rotations {
             object_judgement = Judgement::Hit100;
-          } else {
+          } else if key_held && rotations > 0.1 * required_rotations {
             object_judgement = Judgement::Hit50;
+          } else {
+            object_judgement = Judgement::Miss;
           }
+        }
+      }
 
-          total_timing_err += err.abs();
-          hit_count += 1;
-          if err.abs() > max_timing_err {
-            max_timing_err = err.abs();
-          }
+      if object_judgement != Judgement::Miss {
+        total_timing_err += err.abs();
+        hit_count += 1;
+        if err.abs() > max_timing_err {
+          max_timing_err = err.abs();
         }
       }
     }
@@ -144,19 +280,31 @@ pub fn simulate_plan_offline(model: &BeatmapModel, plan: &ActionPlan) -> Simulat
   }
 }
 
-fn sample_trajectory_at(trajectory: &[crate::synthesizer::CursorTrajectoryPoint], time_ms: f64) -> Option<(f64, f64)> {
+fn is_key_held_at(schedule: &[ScheduledKeyEvent], key: KeyCode, down_time: f64, check_time: f64) -> bool {
+  let has_released =
+    schedule.iter().any(|e| e.key == key && e.event_type == KeyEventType::Up && e.time_ms >= down_time && e.time_ms < check_time - 1e-4);
+  !has_released
+}
+
+pub fn sample_trajectory_at(trajectory: &[CursorTrajectoryPoint], time_ms: f64) -> Option<(f64, f64)> {
   if trajectory.is_empty() {
     return None;
   }
-  if time_ms <= trajectory[0].time_ms {
+  let first_t = trajectory[0].time_ms;
+  let last_t = trajectory.last().unwrap().time_ms;
+
+  if time_ms < first_t - 50.0 || time_ms > last_t + 50.0 {
+    return None;
+  }
+  if time_ms <= first_t {
     return Some((trajectory[0].x, trajectory[0].y));
   }
-  if time_ms >= trajectory.last().unwrap().time_ms {
+  if time_ms >= last_t {
     let p = trajectory.last().unwrap();
     return Some((p.x, p.y));
   }
 
-  let idx = match trajectory.binary_search_by(|p| p.time_ms.partial_cmp(&time_ms).unwrap()) {
+  let idx = match trajectory.binary_search_by(|p| p.time_ms.partial_cmp(&time_ms).unwrap_or(std::cmp::Ordering::Equal)) {
     Ok(i) => return Some((trajectory[i].x, trajectory[i].y)),
     Err(i) => i.saturating_sub(1),
   };
@@ -188,6 +336,9 @@ mod tests {
     let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
     let plan = synthesize_plan(&model);
 
+    // Plan itself must be strictly valid
+    plan.validate_plan().expect("synthesized plan must be valid");
+
     let report = simulate_plan_offline(&model, &plan);
 
     assert_eq!(report.total_objects, 12);
@@ -204,11 +355,155 @@ mod tests {
     let model = parse_beatmap_file(fixture_path).expect("parse real tear rain beatmap");
     let plan = synthesize_plan(&model);
 
+    plan.validate_plan().expect("tear rain plan must be valid");
+
     let report = simulate_plan_offline(&model, &plan);
 
     assert_eq!(report.total_objects, 295);
     assert_eq!(report.count_300, 295, "all 295 objects must hit 300 on synthetic plan");
     assert_eq!(report.count_miss, 0);
     assert!((report.accuracy - 1.0).abs() < 1e-6);
+  }
+
+  #[test]
+  fn test_negative_missing_trajectory_fails_all_objects() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Delete all mouse trajectory points
+    plan.trajectory.clear();
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert_eq!(report.count_300, 0, "no 300s allowed without mouse movement");
+    assert_eq!(report.count_miss, model.total_objects(), "all objects must miss without trajectory");
+    assert_eq!(report.accuracy, 0.0);
+  }
+
+  #[test]
+  fn test_negative_missing_keydowns_causes_misses() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Remove the first 2 KeyDown events
+    let mut removed = 0;
+    plan.key_schedule.retain(|e| {
+      if e.event_type == KeyEventType::Down && removed < 2 {
+        removed += 1;
+        false
+      } else {
+        true
+      }
+    });
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert_eq!(report.count_miss, 2, "2 removed keydowns must result in exactly 2 misses");
+    assert_eq!(report.count_300, 10);
+    assert!(report.accuracy < 1.0);
+  }
+
+  #[test]
+  fn test_negative_single_keydown_cannot_score_multiple_objects() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Keep only 1 KeyDown in the entire schedule
+    let first_down = plan.key_schedule.iter().find(|e| e.event_type == KeyEventType::Down).cloned().unwrap();
+    plan.key_schedule.retain(|e| e.event_type != KeyEventType::Down);
+    plan.key_schedule.push(first_down);
+    plan.key_schedule.sort_by(|a, b| a.time_ms.partial_cmp(&b.time_ms).unwrap());
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert_eq!(report.count_300, 1, "single keydown can score at most 1 object");
+    assert_eq!(report.count_miss, 11);
+  }
+
+  #[test]
+  fn test_negative_slider_off_track_loses_tracking() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Slider 1 is at 729ms - 1081ms. Move cursor far away during its body:
+    for pt in &mut plan.trajectory {
+      if pt.time_ms > 750.0 && pt.time_ms < 1050.0 {
+        pt.x += 1000.0;
+        pt.y += 1000.0;
+      }
+    }
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert!(report.count_300 < 12, "slider deviating off track cannot score 300");
+    assert!(report.count_miss > 0 || report.count_100 > 0 || report.count_50 > 0);
+  }
+
+  #[test]
+  fn test_negative_slider_premature_release_loses_tracking() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Release the key prematurely right after head hit (729ms -> release at 740ms, slider ends at ~1081ms)
+    for e in &mut plan.key_schedule {
+      if e.event_type == KeyEventType::Up && e.time_ms > 729.0 && e.time_ms < 1150.0 {
+        e.time_ms = 735.0;
+      }
+    }
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert!(report.count_300 < 12, "slider released prematurely cannot score 300");
+  }
+
+  #[test]
+  fn test_negative_spinner_no_rotation_misses() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Spinner is at index 8 (3553ms -> 4259ms). Keep cursor completely still:
+    for pt in &mut plan.trajectory {
+      if pt.time_ms >= 3550.0 && pt.time_ms <= 4260.0 {
+        pt.x = 256.0;
+        pt.y = 192.0;
+      }
+    }
+
+    let report = simulate_plan_offline(&model, &plan);
+    let spinner_j = report.judgements.iter().find(|j| j.kind == "spinner").unwrap();
+    assert_eq!(spinner_j.judgement, Judgement::Miss, "spinner without rotation must miss");
+  }
+
+  #[test]
+  fn test_negative_non_monotonic_trajectory_fails_validation() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Swap two trajectory timestamps to create a non-monotonic ordering
+    if plan.trajectory.len() > 10 {
+      plan.trajectory[5].time_ms = plan.trajectory[6].time_ms + 10.0;
+    }
+
+    let val = plan.validate_plan();
+    assert!(val.is_err(), "non-monotonic trajectory must fail validation");
+  }
+
+  #[test]
+  fn test_negative_100ms_latency_degrades_score() {
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample-beatmap-osu.osu");
+    let model = parse_beatmap_file(fixture_path).expect("parse sample beatmap");
+    let mut plan = synthesize_plan(&model);
+
+    // Artificially inject 100ms latency to all key presses
+    for e in &mut plan.key_schedule {
+      e.time_ms += 100.0;
+    }
+
+    let report = simulate_plan_offline(&model, &plan);
+    assert_eq!(report.count_300, 1, "only spinner without strict spatial constraint can hit");
+    assert_eq!(report.count_miss, 11, "100ms key delay causes all circles and sliders to miss");
+    assert!(report.accuracy < 0.15, "accuracy degrades to ~8%: got {}", report.accuracy);
   }
 }

@@ -10,7 +10,9 @@ pub struct SliderCurve {
 impl SliderCurve {
   pub fn new(curve_type: CurveType, start_pos: (f64, f64), control_points: &[(f64, f64)], expected_length: f64) -> Self {
     let mut all_points = Vec::with_capacity(control_points.len() + 1);
-    all_points.push(start_pos);
+    if control_points.is_empty() || (control_points[0].0 - start_pos.0).hypot(control_points[0].1 - start_pos.1) > 1e-4 {
+      all_points.push(start_pos);
+    }
     all_points.extend_from_slice(control_points);
 
     let polyline = match curve_type {
@@ -254,4 +256,50 @@ fn build_catmull_polyline(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
 
   result.dedup();
   result
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_slider_curve_with_absolute_control_points_does_not_duplicate_start() {
+    // 3 points describing a circular arc: start (100, 100), mid (200, 150), end (300, 100)
+    let start_pos = (100.0, 100.0);
+    let control_points = vec![(100.0, 100.0), (200.0, 150.0), (300.0, 100.0)];
+    let curve = SliderCurve::new(CurveType::PerfectCircle, start_pos, &control_points, 200.0);
+
+    // Initial position at d=0 must be start_pos
+    let p0 = curve.position_at_distance(0.0);
+    assert!((p0.0 - 100.0).abs() < 1e-3);
+    assert!((p0.1 - 100.0).abs() < 1e-3);
+
+    // Arc midpoint must have y > 100.0 (bowing upward toward 150.0)
+    let p_mid = curve.position_at_distance(100.0);
+    assert!(p_mid.1 > 120.0, "arc midpoint y should be curved up: got {}", p_mid.1);
+  }
+
+  #[test]
+  fn test_slider_curve_with_stacked_offset_translates_identically() {
+    let start_pos1 = (100.0, 100.0);
+    let control_points1 = vec![(100.0, 100.0), (200.0, 150.0), (300.0, 100.0)];
+    let curve1 = SliderCurve::new(CurveType::PerfectCircle, start_pos1, &control_points1, 200.0);
+
+    // Shift everything by (-10.0, -10.0)
+    let dx = -10.0;
+    let dy = -10.0;
+    let start_pos2 = (100.0 + dx, 100.0 + dy);
+    let control_points2 = vec![
+      (100.0 + dx, 100.0 + dy),
+      (200.0 + dx, 150.0 + dy),
+      (300.0 + dx, 100.0 + dy),
+    ];
+    let curve2 = SliderCurve::new(CurveType::PerfectCircle, start_pos2, &control_points2, 200.0);
+
+    let p1 = curve1.position_at_distance(100.0);
+    let p2 = curve2.position_at_distance(100.0);
+
+    assert!((p2.0 - (p1.0 + dx)).abs() < 1e-3);
+    assert!((p2.1 - (p1.1 + dy)).abs() < 1e-3);
+  }
 }

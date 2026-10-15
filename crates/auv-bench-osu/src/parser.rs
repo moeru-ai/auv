@@ -108,7 +108,7 @@ pub fn parse_beatmap_str(content: &str) -> Result<BeatmapModel> {
         };
 
         let control_points: Vec<(f64, f64)> =
-          slider.path.control_points().iter().map(|p| (f64::from(p.pos.x), f64::from(p.pos.y))).collect();
+          slider.path.control_points().iter().map(|p| (f64::from(slider.pos.x + p.pos.x), f64::from(slider.pos.y + p.pos.y))).collect();
 
         hit_objects.push(HitObject::Slider {
           x: f64::from(slider.pos.x),
