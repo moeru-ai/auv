@@ -4,4 +4,5 @@
 //! Keeping these conversions here leaves generated protobuf types independent
 //! of the driver domain and shares validation without new crate dependencies.
 
+pub mod application;
 pub mod position;

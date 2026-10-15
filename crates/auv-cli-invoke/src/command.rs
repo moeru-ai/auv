@@ -363,7 +363,9 @@ impl TargetPolicy {
     match self {
       Self::Forbidden => "Target forbidden; this command operates without target selection.",
       Self::OptionalApplication => "Optional app:<application-id> (bare ids accepted); window and display targets are unsupported.",
-      Self::RequiredApplication => "Required app:<application-id> (bare ids accepted); window and display targets are unsupported.",
+      Self::RequiredApplication => {
+        "Required app:<application-id> (the id window.list reports: a bundle id on macOS, an executable name on Windows; bare ids accepted); window and display targets are unsupported."
+      }
       Self::OptionalKeyboard => {
         "Optional app:<application-id> (bare ids accepted) or window:<window-id>. Default foreground-preferred activates the app; a window target also requires exact window focus. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
       }

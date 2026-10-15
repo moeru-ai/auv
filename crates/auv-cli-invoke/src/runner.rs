@@ -105,6 +105,18 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     .await
     .map_err(|error| format!("route core Runner for {command_id} failed: {error}"))?;
 
+  if command_id == "app.activate" {
+    let target = input.application_target()?.expect("validated target");
+    // Keep the typed failure: a Runner without activation (Linux) answers
+    // UNIMPLEMENTED, which must reach the caller as `unsupported`.
+    let result = runner.applications().activate(target, crate::commands::app::ACTIVATION_SETTLE).await.map_err(|error| {
+      let mut failure = crate::InvokeFailure::from(error);
+      failure.message = format!("ApplicationService/ActivateApplication failed: {}", failure.message);
+      failure
+    })?;
+    return crate::commands::app::activation_output(&result).map_err(Into::into);
+  }
+
   let result = match command_id {
     "input.pointerPosition" => runner
       .input()
@@ -112,21 +124,6 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       .await
       .map_err(|status| format!("InputService/GetPointerPosition failed: {status}"))
       .and_then(|point| crate::commands::input::pointer_position_output(point.point())),
-    "app.activate" => {
-      let target = input.application_target()?.expect("validated target").trim();
-      runner
-        .macos()
-        .applications()
-        .activate_bundle_id(target, std::time::Duration::from_millis(150))
-        .await
-        .map_err(|status| format!("ApplicationService/ActivateBundleId failed: {status}"))
-        .and_then(|result| {
-          if result.requested_bundle_id != target {
-            return Err("ActivateBundleId response changed the requested bundle id".to_string());
-          }
-          crate::commands::app::activation_output(&result)
-        })
-    }
     "app.probePermissions" => runner
       .macos()
       .permissions()

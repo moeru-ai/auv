@@ -1,5 +1,11 @@
 # Invoke platform coverage audit
 
+> Migration notice: Windows `app.activate` has since been wired through the
+> shared `ApplicationActivationResult` and
+> `auv.api.driver.v1.ApplicationService/ActivateApplication`;
+> `ApplicationControl::activate_process_name` and `ProcessActivationResult` no
+> longer exist. The text below records the state when it was written.
+
 Status: dated snapshot of [#211](https://github.com/moeru-ai/auv/issues/211) against the source at
 `c24b8222` (2026-10-11). The live registry is the current answer: `auv invoke --help` and
 `auv invoke <COMMAND> --help` show each command's cells, and MCP `x-auv-commands[].support` carries

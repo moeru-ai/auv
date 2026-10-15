@@ -60,7 +60,7 @@ mod macos {
 
   use auv_driver::LocalDriverSession;
   use auv_driver::{PasteTextOptions, TextSubmit};
-  use auv_driver_macos::{ApplicationControl, AxTextRead, MacosDriverSession};
+  use auv_driver_macos::{AxTextRead, MacosDriverSession};
 
   use super::{DriverResult, MatchedAxNode, TextEditAction, TextEditActionResult, TextEditDriver, VerificationOutcome};
 
@@ -97,7 +97,7 @@ mod macos {
 
   impl TextEditDriver for MacosTextEditDriver {
     fn activate_app(&mut self, app_id: &str, settle: Duration) -> DriverResult<TextEditActionResult> {
-      self.session.activate_bundle_id(app_id, settle)?;
+      self.session.applications().activate(app_id, settle)?;
       Ok(TextEditActionResult {
         action: TextEditAction::Activate,
         input_action_result: None,

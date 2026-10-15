@@ -36,7 +36,7 @@ pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_dr
 pub use driver::{InputBackend, LinuxDriver, LinuxDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{LinuxPortalProbe, PortalInterfaceProbe, probe_portals};
-pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
+pub use session::{AccessibilityApi, ApplicationApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
 
 #[cfg(target_os = "linux")]
 pub use permission::{kde_authorization, set_kde_authorization, verify_portal_identity};

@@ -481,6 +481,13 @@ impl RunnerClient {
     }
   }
 
+  /// Returns application activation capabilities.
+  pub fn applications(&self) -> ApplicationClient {
+    ApplicationClient {
+      runner: self.clone(),
+    }
+  }
+
   /// Returns macOS-specific capabilities.
   pub fn macos(&self) -> MacosClient {
     MacosClient {
@@ -1228,13 +1235,6 @@ impl MacosClient {
     }
   }
 
-  /// Returns application activation operations.
-  pub fn applications(&self) -> ApplicationClient {
-    ApplicationClient {
-      runner: self.runner.clone(),
-    }
-  }
-
   /// Returns accessibility operations.
   pub fn accessibility(&self) -> AccessibilityClient {
     AccessibilityClient {
@@ -1255,7 +1255,8 @@ pub struct MediaControlClient {
   runner: RunnerClient,
 }
 
-/// macOS application lifecycle operations.
+/// Application activation operations, addressed by the application id that
+/// `windows().list()` reports on the Runner's platform.
 #[derive(Clone, Debug)]
 pub struct ApplicationClient {
   runner: RunnerClient,
@@ -1408,56 +1409,36 @@ pub fn input_action_result_to_proto(action: auv_driver::InputActionResult) -> Re
 }
 
 impl ApplicationClient {
-  /// Activates one application and returns explicit foreground verification.
-  pub async fn activate_bundle_id(
+  /// Activates one application by the application id that `windows().list()`
+  /// reports on this Runner's platform, and returns explicit foreground
+  /// verification. Platforms without activation fail with UNIMPLEMENTED.
+  pub async fn activate(
     &self,
-    bundle_id: impl Into<String>,
+    application_id: impl Into<String>,
     settle: std::time::Duration,
   ) -> Result<auv_driver::ApplicationActivationResult, CapabilityError> {
-    let response = macos_proto::application_service_client::ApplicationServiceClient::new(self.runner.transport()?)
-      .activate_bundle_id(macos_proto::ActivateBundleIdRequest {
-        bundle_id: bundle_id.into(),
+    let application_id = application_id.into();
+    let response = proto::application_service_client::ApplicationServiceClient::new(self.runner.transport()?)
+      .activate_application(proto::ActivateApplicationRequest {
+        application_id: application_id.clone(),
         settle: Some(duration_to_proto(settle)?),
       })
       .await
       .map_err(capability_status)?
       .into_inner();
-    activation_result_from_proto(response)
+    activation_result_from_proto(&application_id, response)
   }
 }
 
 fn activation_result_from_proto(
-  response: macos_proto::ActivateBundleIdResponse,
+  requested_application_id: &str,
+  response: proto::ActivateApplicationResponse,
 ) -> Result<auv_driver::ApplicationActivationResult, CapabilityError> {
-  use macos_proto::application_activation_verification::Verification;
-
-  if response.requested_bundle_id.trim().is_empty() {
-    return Err(CapabilityError::InvalidResponse("ActivateBundleId response omitted requested_bundle_id".to_string()));
+  let result = crate::protocol::application::decode(response).map_err(|error| CapabilityError::InvalidResponse(error.to_string()))?;
+  if result.requested_application_id != requested_application_id.trim() {
+    return Err(CapabilityError::InvalidResponse("ActivateApplication response changed the requested application id".to_string()));
   }
-  let verification = response
-    .verification
-    .and_then(|verification| verification.verification)
-    .ok_or_else(|| CapabilityError::InvalidResponse("ActivateBundleId response omitted verification".to_string()))?;
-  let verification = match verification {
-    Verification::VerifiedForeground(value) if !value.observed_bundle_id.trim().is_empty() => {
-      auv_driver::ApplicationActivationVerification::VerifiedForeground {
-        observed_bundle_id: value.observed_bundle_id,
-      }
-    }
-    Verification::ForegroundMismatch(value) if !value.observed_bundle_id.trim().is_empty() => {
-      auv_driver::ApplicationActivationVerification::ForegroundMismatch {
-        observed_bundle_id: value.observed_bundle_id,
-      }
-    }
-    Verification::Unavailable(value) if !value.reason.trim().is_empty() => auv_driver::ApplicationActivationVerification::Unavailable {
-      reason: value.reason,
-    },
-    _ => return Err(CapabilityError::InvalidResponse("ActivateBundleId response contained empty verification evidence".to_string())),
-  };
-  Ok(auv_driver::ApplicationActivationResult {
-    requested_bundle_id: response.requested_bundle_id,
-    verification,
-  })
+  Ok(result)
 }
 
 impl MediaControlClient {

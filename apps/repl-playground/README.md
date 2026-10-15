@@ -157,7 +157,7 @@ the image; match bounds stay in screen space.
 const sidebar = area(music).region({ width: '30%' })
 const hits = await music.findText('Remember', { screenRegion: sidebar })
 const ocr = await auv.recognizeText((await music.capture()).capture!, { screenRegion: sidebar })
-await auv.macos.applications.activateBundleId({ bundleId: 'com.netease.163music' })
+await auv.applications.activate({ applicationId: 'com.netease.163music' })
 ```
 
 `focus(target, { zoom = true, autoZoomOut = true })` eases the desktop canvas

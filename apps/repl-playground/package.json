@@ -1,7 +1,7 @@
 {
   "name": "@auv-js/repl-playground",
   "type": "module",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "private": true,
   "description": "Interactive, steppable TypeScript REPL for scripting AUV, with a desktop canvas",
   "scripts": {

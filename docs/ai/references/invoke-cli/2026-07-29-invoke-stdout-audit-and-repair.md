@@ -124,6 +124,9 @@ Input and activation commands now expose the evidence boundary directly:
 - `app.activate` returns a shared `ApplicationActivationResult` and compares
   the requested bundle identifier with the post-settle foreground observation.
   Human, JSON, and MCP output use the same canonical verification status.
+  (Migration notice, 2026-10-12: the result is now keyed by
+  `requested_application_id` with an `application_id_kind`, and the observed
+  field is `observed_application_id`; the status strings are unchanged.)
 
 ## Live verification
 

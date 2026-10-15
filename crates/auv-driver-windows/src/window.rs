@@ -186,7 +186,7 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
 /// Matches an executable file name. Windows file names are case-insensitive
 /// (the same program is `Notepad.exe` on disk and `notepad.exe` to the person
 /// typing it), and an exact name may leave out `.exe` (`notepad`).
-fn matches_executable(app_name: &str, matcher: &TextMatcher) -> bool {
+pub(crate) fn matches_executable(app_name: &str, matcher: &TextMatcher) -> bool {
   match matcher {
     TextMatcher::Exact(expected) => {
       app_name.eq_ignore_ascii_case(expected) || without_exe_suffix(app_name).eq_ignore_ascii_case(without_exe_suffix(expected))

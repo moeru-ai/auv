@@ -34,9 +34,11 @@ pub mod wgc;
 pub mod window;
 
 pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapshot_window};
-pub use application::ApplicationControl;
+pub use application::ApplicationApi;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
-pub use auv_driver_common::{ProcessActivationResult, ProcessActivationVerification};
+pub use auv_driver_common::{
+  ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind,
+};
 pub use background_session::{
   AttachError, BackgroundSession, ClickRequest, Delivery, FrameChange, FrameRead, LostReason, MAX_TARGETS, Outcome, SessionStats, TargetId,
   TargetInfo, TargetState,

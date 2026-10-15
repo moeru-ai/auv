@@ -622,47 +622,47 @@ fn accessibility_mapper_rejects_missing_result_before_rendering() {
   assert!(matches!(error, CapabilityError::InvalidResponse(_)));
 }
 
+fn activation_response(requested_application_id: &str) -> proto::ActivateApplicationResponse {
+  crate::protocol::application::encode(auv_driver::ApplicationActivationResult {
+    requested_application_id: requested_application_id.to_string(),
+    application_id_kind: auv_driver::ApplicationIdKind::BundleId,
+    method: auv_driver::ApplicationActivationMethod::AppleScriptActivate,
+    activated_window: None,
+    verification: auv_driver::ApplicationActivationVerification::ForegroundMismatch {
+      observed_application_id: "com.example.Other".to_string(),
+    },
+  })
+}
+
 #[test]
 fn application_activation_mapper_preserves_typed_verification() {
-  use macos_proto::application_activation_verification::Verification;
-
-  let result = activation_result_from_proto(macos_proto::ActivateBundleIdResponse {
-    requested_bundle_id: "com.example.Requested".to_string(),
-    verification: Some(macos_proto::ApplicationActivationVerification {
-      verification: Some(Verification::ForegroundMismatch(macos_proto::ForegroundMismatch {
-        observed_bundle_id: "com.example.Other".to_string(),
-      })),
-    }),
-  })
-  .expect("typed activation result");
-  assert_eq!(result.requested_bundle_id, "com.example.Requested");
+  let result =
+    activation_result_from_proto(" com.example.Requested ", activation_response("com.example.Requested")).expect("typed activation result");
+  assert_eq!(result.requested_application_id, "com.example.Requested");
+  assert_eq!(result.application_id_kind, auv_driver::ApplicationIdKind::BundleId);
   assert_eq!(
     result.verification,
     auv_driver::ApplicationActivationVerification::ForegroundMismatch {
-      observed_bundle_id: "com.example.Other".to_string(),
+      observed_application_id: "com.example.Other".to_string(),
     }
   );
 }
 
 #[test]
-fn application_activation_mapper_rejects_missing_or_empty_evidence() {
-  let missing = activation_result_from_proto(macos_proto::ActivateBundleIdResponse {
-    requested_bundle_id: "com.example.Requested".to_string(),
-    verification: None,
-  })
+fn application_activation_mapper_rejects_missing_evidence_or_a_changed_request() {
+  let missing = activation_result_from_proto(
+    "com.example.Requested",
+    proto::ActivateApplicationResponse {
+      verification: None,
+      ..activation_response("com.example.Requested")
+    },
+  )
   .expect_err("missing verification must fail closed");
   assert!(matches!(missing, CapabilityError::InvalidResponse(_)));
 
-  let empty = activation_result_from_proto(macos_proto::ActivateBundleIdResponse {
-    requested_bundle_id: "com.example.Requested".to_string(),
-    verification: Some(macos_proto::ApplicationActivationVerification {
-      verification: Some(macos_proto::application_activation_verification::Verification::Unavailable(
-        macos_proto::VerificationUnavailable::default(),
-      )),
-    }),
-  })
-  .expect_err("empty reason must fail closed");
-  assert!(matches!(empty, CapabilityError::InvalidResponse(_)));
+  let changed = activation_result_from_proto("com.example.Requested", activation_response("com.example.Other"))
+    .expect_err("a response for another application must fail closed");
+  assert!(matches!(changed, CapabilityError::InvalidResponse(_)));
 }
 
 #[tokio::test]
