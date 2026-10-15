@@ -244,15 +244,27 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
 mod tests {
   use super::*;
 
+  #[cfg(not(target_os = "windows"))]
   #[test]
+  fn test_loopback_receiver_reports_unsupported_platform() {
+    assert_eq!(
+      run_loopback_receiver_bench(50, 4.0).unwrap_err(),
+      "Loopback receiver bench is only supported on Windows"
+    );
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  #[ignore = "requires an interactive, low-load Windows runner with a keyboard hook"]
   fn test_loopback_receiver_smoke_50_edges() {
     let report = run_loopback_receiver_bench(50, 4.0).expect("loopback bench");
     assert!(report.count_reconciled, "50 edges must reconcile in receiver window, got {}/{}", report.received_edges, report.planned_edges);
     assert!(report.comp_p99_ms <= 2.0, "receiver compensated P99 must be <= 2.0ms, got {}ms", report.comp_p99_ms);
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
-  #[ignore = "5-second live loopback benchmark"]
+  #[ignore = "5-second live loopback benchmark; requires an interactive Windows desktop"]
   fn test_loopback_receiver_bench_1000_edges() {
     let report = run_loopback_receiver_bench(1000, 4.0).expect("loopback bench 1000 edges");
     assert!(report.count_reconciled, "1000 edges must reconcile in receiver window, got {}/{}", report.received_edges, report.planned_edges);
