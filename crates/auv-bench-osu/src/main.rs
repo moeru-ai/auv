@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use auv_bench_osu::{
-  PlayfieldProjection, evaluate_empirical_calibration, official_tear_rain_normal_ground_truth, parse_beatmap_file, reconcile_beatmap,
+  PlayfieldProjection, evaluate_layout_self_check, official_tear_rain_normal_ground_truth, parse_beatmap_file, reconcile_beatmap,
   reconcile_tear_rain_fixture, run_actuator_smoke_bench, run_loopback_receiver_bench, run_projection_dual_candidate_gate,
   simulate_plan_offline, synthesize_plan, verify_offline_safety_guard,
 };
@@ -176,13 +176,15 @@ fn main() -> Result<()> {
         reconcile_tear_rain_fixture()?
       };
 
-      println!("=== Beatmap Reconciliation Report ===");
+      println!("=== Beatmap Metadata Static Reconciliation Report ===");
       println!("Target: {}", report.beatmap_name);
-      println!("Independent Source: {}", report.independent_source);
+      println!("Reference Source: {}", report.reference_source);
+      println!("Evidence Level: [{}]", report.evidence_level);
+      println!("Disclosure: {}", report.disclosure);
       println!(
         "Verdict: {}",
         if report.matched {
-          "PASSED (100% Exact Match)"
+          "PASSED (Exact Metadata Match against Reference Constant)"
         } else {
           "FAILED"
         }
@@ -203,23 +205,17 @@ fn main() -> Result<()> {
       circle_size,
     } => {
       let proj = PlayfieldProjection::for_capture(width, height, circle_size).map_err(|e| anyhow::anyhow!("projection error: {e}"))?;
-      println!("=== PlayfieldProjection (LayoutRule) ===");
+      let self_check = evaluate_layout_self_check(&proj, width, height);
+
+      println!("=== Playfield Projection Layout Hypothesis Check ===");
       println!("Capture Size: {:.1}x{:.1}, CircleSize: {:.1}", width, height, circle_size);
+      println!("Evidence Level: [{}]", self_check.evidence_level);
+      println!("Calibration Status: {:?}", self_check.calibration_status);
       println!("Scale: {:.4} (scale_x={:.4}, scale_y={:.4})", proj.scale_x, proj.scale_x, proj.scale_y);
       println!("Offset: ({:.2}, {:.2})", proj.offset_x, proj.offset_y);
       println!("Hit Object Match Radius: {:.2} px", proj.match_radius_px);
-
-      // Verify 3 known reference points
-      let samples = vec![
-        (0, (0.0, 0.0), proj.to_window_point(0.0, 0.0)),
-        (1, (256.0, 192.0), proj.to_window_point(256.0, 192.0)),
-        (2, (512.0, 384.0), proj.to_window_point(512.0, 384.0)),
-      ];
-      let calib = evaluate_empirical_calibration(&proj, width, height, &samples, 1.0);
-      println!("\n=== Empirical Calibration Verification ===");
-      println!("Sample Points Evaluated: {}", calib.points.len());
-      println!("Max Discrepancy: {:.3} px", calib.max_error_px);
-      println!("Status: {}", if calib.passed { "PASSED" } else { "FAILED" });
+      println!("\nNOTICE: {}", self_check.disclosure);
+      println!("Candidate B 640x480 virtual canvas rule is a layout hypothesis, not an empirically measured screen truth.");
     }
     Commands::SmokeInjector { edges, interval_ms } => {
       println!("Checking Bancho / guest mode offline safety guard before input injection...");
@@ -309,13 +305,13 @@ fn main() -> Result<()> {
       println!("- Total .osr Replays Found: 0");
       println!("- Conclusion: Smoke plan source MUST use chart-file synthesis (`.osu` parser + synthesizer), NOT replay playback.\n");
 
-      println!("## 2. Real Beatmap Independent Reconciliation");
+      println!("## 2. Real Beatmap Metadata Static Reconciliation [EVIDENCE: {}]", rec.evidence_level);
       println!("- Beatmap: {}", rec.beatmap_name);
-      println!("- Independent Ground Truth: {}", rec.independent_source);
+      println!("- Reference Source: {}", rec.reference_source);
       println!(
         "- Reconciliation Verdict: {}",
         if rec.matched {
-          "PASSED (100% Exact Match)"
+          "PASSED (Exact Metadata Match against Reference Constant)"
         } else {
           "FAILED"
         }
@@ -331,26 +327,24 @@ fn main() -> Result<()> {
         rec.actual_total,
         rec.expected_total
       );
-      println!("- First/Last Timestamps: {:.1}ms / {:.1}ms (exact match)\n", rec.actual_first_ms, rec.actual_last_ms);
+      println!("- First/Last Timestamps: {:.1}ms / {:.1}ms (exact match)", rec.actual_first_ms, rec.actual_last_ms);
+      println!("- Disclosure: {}\n", rec.disclosure);
 
-      println!("## 3. Dual-Candidate Playfield Projection Gate");
+      println!("## 3. Dual-Candidate Playfield Projection Hypothesis [EVIDENCE: {}]", gate_report.evidence_level);
       println!("- Resolution: 1280x720 (16:9), CS=3.0, Error Threshold: 2.0 px");
-      println!("- Candidate A (Old lane 512x384 direct, 100% height): Max Error={:.1}px -> FALSIFIED", gate_report.candidate_a.max_error_px);
       println!(
-        "- Candidate B (osu!lazer 640x480 virtual canvas rule, 0.8x height): Max Error={:.1}px -> WINNER",
+        "- Candidate A (Old lane 512x384 direct, 100% height): Max Error={:.1}px -> FALSIFIED under 640x480 hypothesis",
+        gate_report.candidate_a.max_error_px
+      );
+      println!(
+        "- Candidate B (osu!lazer 640x480 virtual canvas rule, 0.8x height): Max Error={:.1}px -> WINNER under 640x480 hypothesis",
         gate_report.candidate_b.max_error_px
       );
       println!("- Source Code Authority: `OsuPlayfieldAdjustmentContainer.cs` (playfield_size_adjust = 0.8f, 512/640)");
-      println!(
-        "- Gate Status: {}\n",
-        if gate_report.gate_passed {
-          "PASSED (Candidate B confirmed)"
-        } else {
-          "FAILED"
-        }
-      );
+      println!("- Calibration Status: Uncalibrated (LayoutDerived only)");
+      println!("- Disclosure: {}\n", gate_report.disclosure);
 
-      println!("## 4. Offline Judgement Simulator Validation [SYNTHETIC-ONLY]");
+      println!("## 4. Offline Judgement Simulator Validation [EVIDENCE: SYNTHETIC_PREDICTED]");
       println!("- Target: {}", sim.map_name);
       println!("- Total Objects Evaluated: {}", sim.total_objects);
       println!(
@@ -360,7 +354,7 @@ fn main() -> Result<()> {
       println!("- Accuracy: {:.2}%", sim.accuracy * 100.0);
       println!("- Mean Timing Error: {:.2}ms, Max Timing Error: {:.2}ms", sim.mean_absolute_timing_error_ms, sim.max_timing_error_ms);
       println!(
-        "- Mode: SYNTHETIC-ONLY (Self-consistency check between synthesizer and judgement rules; unvalidated against human replays due to zero local .osr; NOT a live play forecast)"
+        "- Mode: SYNTHETIC_PREDICTED (Pure offline model simulation verifying synthesizer and judgement rules; unvalidated against live gameplay or capture frames)"
       );
       println!(
         "- Pipeline Verification: {}\n",
@@ -381,7 +375,7 @@ fn main() -> Result<()> {
       println!("- Windows Credential Manager: [{:?}]", safety_report.credential_manager_checked);
       println!("- Safety Status: PASSED (Local file-based offline guard verified; realm/credentials not checked)\n");
 
-      println!("## 6. Phase 0 Dispatch-Side Smoke Benchmark (50 edges @ 16.0ms, SendInput + QPC)");
+      println!("## 6. Phase 0 Dispatch-Side Smoke Benchmark (50 edges @ 16.0ms) [EVIDENCE: EMPIRICALLY_MEASURED]");
       println!(
         "- Planned Edges: {}, Actual Dispatched: {} (Reconciled: {})",
         bench.planned_edges, bench.actual_edges, bench.count_reconciled
@@ -404,7 +398,7 @@ fn main() -> Result<()> {
         }
       );
 
-      println!("## 7. Round-2 Sustained Loopback Receiver Benchmark (1000 edges @ 4.0ms, WH_KEYBOARD_LL)");
+      println!("## 7. Round-2 Sustained Loopback Receiver Benchmark (1000 edges @ 4.0ms) [EVIDENCE: EMPIRICALLY_MEASURED]");
       println!(
         "- Planned Edges: {}, Actual Received: {} (Reconciled: {})",
         loopback.planned_edges, loopback.received_edges, loopback.count_reconciled

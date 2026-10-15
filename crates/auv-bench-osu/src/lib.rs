@@ -23,15 +23,16 @@ pub use injector::{
   verify_offline_safety_guard, verify_offline_safety_guard_at_path,
 };
 pub use loopback::{LoopbackBenchmarkReport, run_loopback_receiver_bench};
-pub use model::{BeatmapModel, CurveType, Difficulty, HitObject, TimingPoint};
+pub use model::{BeatmapModel, CurveType, Difficulty, EvidenceLevel, HitObject, TimingPoint};
 pub use parser::{parse_beatmap_file, parse_beatmap_str};
 pub use projection::{
-  CalibrationPoint, DualCandidateGateReport, EmpiricalSample, PlayfieldProjection, ProjectionBounds, ProjectionCalibrationReport,
-  ProjectionDerivationMethod, ProjectionStrategy, circle_radius_playfield, evaluate_empirical_calibration,
-  run_projection_dual_candidate_gate,
+  CalibrationPoint, CalibrationStatus, DualCandidateGateReport, EmpiricalSample, PlayfieldProjection, ProjectionBounds,
+  ProjectionCalibrationReport, ProjectionDerivationMethod, ProjectionStrategy, circle_radius_playfield, evaluate_empirical_calibration,
+  evaluate_layout_self_check, run_projection_dual_candidate_gate,
 };
 pub use reconciliation::{
-  GroundTruthStats, ReconciliationResult, official_tear_rain_normal_ground_truth, reconcile_beatmap, reconcile_tear_rain_fixture,
+  GroundTruthStats, MetadataReconciliationReport, ReconciliationResult, official_tear_rain_normal_ground_truth, reconcile_beatmap,
+  reconcile_tear_rain_fixture,
 };
 pub use simulator::{Judgement, ObjectJudgement, SimulationReport, simulate_plan_offline};
 pub use synthesizer::{

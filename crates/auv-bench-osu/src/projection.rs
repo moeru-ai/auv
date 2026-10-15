@@ -134,6 +134,19 @@ impl PlayfieldProjection {
   }
 }
 
+use crate::model::EvidenceLevel;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationStatus {
+  /// Pure geometric derivation from layout rules without empirical screen sampling
+  LayoutDerived,
+  /// Empirically verified against external screen pixel coordinates
+  Calibrated,
+  /// Uncalibrated or missing required empirical measurement data
+  Uncalibrated,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CalibrationPoint {
   pub object_index: usize,
@@ -147,6 +160,8 @@ pub struct CalibrationPoint {
 pub struct ProjectionCalibrationReport {
   pub strategy: ProjectionStrategy,
   pub derivation_method: ProjectionDerivationMethod,
+  pub calibration_status: CalibrationStatus,
+  pub evidence_level: EvidenceLevel,
   pub capture_dimensions: (f64, f64),
   pub scale: f64,
   pub offsets: (f64, f64),
@@ -154,6 +169,7 @@ pub struct ProjectionCalibrationReport {
   pub max_error_px: f64,
   pub mean_error_px: f64,
   pub passed: bool,
+  pub disclosure: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -164,6 +180,8 @@ pub struct DualCandidateGateReport {
   pub winner: Option<ProjectionStrategy>,
   pub falsified: Option<ProjectionStrategy>,
   pub gate_passed: bool,
+  pub evidence_level: EvidenceLevel,
+  pub disclosure: String,
 }
 
 pub type EmpiricalSample = (usize, (f64, f64), (f64, f64));
@@ -206,11 +224,33 @@ pub fn evaluate_empirical_calibration(
     0.0
   };
 
-  let passed = max_error <= max_allowed_error_px;
+  let passed = !samples.is_empty() && max_error <= max_allowed_error_px;
+
+  let (calibration_status, evidence_level, disclosure) = if samples.is_empty() {
+    (
+      CalibrationStatus::Uncalibrated,
+      EvidenceLevel::LayoutDerived,
+      "No empirical samples provided; projection is uncalibrated against real screen pixels.".to_string(),
+    )
+  } else if passed {
+    (
+      CalibrationStatus::Calibrated,
+      EvidenceLevel::EmpiricallyMeasured,
+      "Empirically calibrated against external screen measurement points.".to_string(),
+    )
+  } else {
+    (
+      CalibrationStatus::Uncalibrated,
+      EvidenceLevel::EmpiricallyMeasured,
+      "Calibration failed: maximum pixel discrepancy exceeded threshold.".to_string(),
+    )
+  };
 
   ProjectionCalibrationReport {
     strategy: projection.strategy,
     derivation_method: ProjectionDerivationMethod::EmpiricalCalibration,
+    calibration_status,
+    evidence_level,
     capture_dimensions: (capture_width, capture_height),
     scale: projection.scale_x,
     offsets: (projection.offset_x, projection.offset_y),
@@ -218,10 +258,29 @@ pub fn evaluate_empirical_calibration(
     max_error_px: max_error,
     mean_error_px: mean_error,
     passed,
+    disclosure,
   }
 }
 
-/// Runs the projection gate comparing Candidate A and Candidate B against empirical screen measurements.
+/// Evaluates a pure theoretical layout self-check without empirical screen sampling.
+pub fn evaluate_layout_self_check(projection: &PlayfieldProjection, capture_width: f64, capture_height: f64) -> ProjectionCalibrationReport {
+  ProjectionCalibrationReport {
+    strategy: projection.strategy,
+    derivation_method: ProjectionDerivationMethod::LayoutRule,
+    calibration_status: CalibrationStatus::LayoutDerived,
+    evidence_level: EvidenceLevel::LayoutDerived,
+    capture_dimensions: (capture_width, capture_height),
+    scale: projection.scale_x,
+    offsets: (projection.offset_x, projection.offset_y),
+    points: Vec::new(),
+    max_error_px: 0.0,
+    mean_error_px: 0.0,
+    passed: true,
+    disclosure: "Theoretical layout self-consistency check only; uncalibrated against real screen pixels.".to_string(),
+  }
+}
+
+/// Runs the projection gate comparing Candidate A and Candidate B against layout/empirical measurements.
 pub fn run_projection_dual_candidate_gate(
   capture_width: f64,
   capture_height: f64,
@@ -262,6 +321,8 @@ pub fn run_projection_dual_candidate_gate(
     winner,
     falsified,
     gate_passed,
+    evidence_level: EvidenceLevel::LayoutDerived,
+    disclosure: "Layout hypothesis competition between Candidate A and Candidate B. Uncalibrated against real screen pixels.".to_string(),
   })
 }
 

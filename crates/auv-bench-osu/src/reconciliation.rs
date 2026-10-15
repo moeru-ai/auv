@@ -24,10 +24,14 @@ pub struct GroundTruthStats {
   pub last_object_time_ms: f64,
 }
 
+use crate::model::EvidenceLevel;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReconciliationResult {
+pub struct MetadataReconciliationReport {
   pub beatmap_name: String,
+  pub reference_source: String,
   pub independent_source: String,
+  pub evidence_level: EvidenceLevel,
   pub matched: bool,
   pub expected_circles: usize,
   pub actual_circles: usize,
@@ -42,7 +46,10 @@ pub struct ReconciliationResult {
   pub expected_last_ms: f64,
   pub actual_last_ms: f64,
   pub diff_notes: Vec<String>,
+  pub disclosure: String,
 }
+
+pub type ReconciliationResult = MetadataReconciliationReport;
 
 pub fn official_tear_rain_normal_ground_truth() -> GroundTruthStats {
   GroundTruthStats {
@@ -65,7 +72,7 @@ pub fn official_tear_rain_normal_ground_truth() -> GroundTruthStats {
   }
 }
 
-pub fn reconcile_beatmap(model: &BeatmapModel, expected: &GroundTruthStats) -> ReconciliationResult {
+pub fn reconcile_beatmap(model: &BeatmapModel, expected: &GroundTruthStats) -> MetadataReconciliationReport {
   let mut diff_notes = Vec::new();
 
   let actual_circles = model.circle_count();
@@ -96,9 +103,11 @@ pub fn reconcile_beatmap(model: &BeatmapModel, expected: &GroundTruthStats) -> R
 
   let matched = diff_notes.is_empty();
 
-  ReconciliationResult {
+  MetadataReconciliationReport {
     beatmap_name: format!("{} - {} [{}]", model.artist, model.title, model.version),
+    reference_source: expected.source.clone(),
     independent_source: expected.source.clone(),
+    evidence_level: EvidenceLevel::StaticReferenceChecked,
     matched,
     expected_circles: expected.count_circles,
     actual_circles,
@@ -113,6 +122,7 @@ pub fn reconcile_beatmap(model: &BeatmapModel, expected: &GroundTruthStats) -> R
     expected_last_ms: expected.last_object_time_ms,
     actual_last_ms,
     diff_notes,
+    disclosure: "Static metadata comparison against known map constants, NOT Bancho live run alignment.".to_string(),
   }
 }
 

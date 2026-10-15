@@ -2,6 +2,30 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum EvidenceLevel {
+  /// Pure synthetic/offline model simulation without external hardware or capture
+  SyntheticPredicted,
+  /// Geometric derivation from layout rules without empirical screen sampling
+  LayoutDerived,
+  /// Static reconciliation against known map reference metadata
+  StaticReferenceChecked,
+  /// Verified empirical measurement from hardware or real screen capture
+  EmpiricallyMeasured,
+}
+
+impl std::fmt::Display for EvidenceLevel {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::SyntheticPredicted => write!(f, "SYNTHETIC_PREDICTED"),
+      Self::LayoutDerived => write!(f, "LAYOUT_DERIVED"),
+      Self::StaticReferenceChecked => write!(f, "STATIC_REFERENCE_CHECKED"),
+      Self::EmpiricallyMeasured => write!(f, "EMPIRICALLY_MEASURED"),
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CurveType {
   Linear,
   PerfectCircle,
