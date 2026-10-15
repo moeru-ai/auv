@@ -8,8 +8,8 @@ use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-  INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
-  VK_X, VK_Z,
+  INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
+  MOUSEINPUT, SendInput, VK_X, VK_Z,
 };
 
 pub struct TimePeriodGuard {
@@ -120,14 +120,59 @@ impl Default for PrecisionClock {
   }
 }
 
+pub const AUV_OSU_INJECT_SIGNATURE: usize = 0x41555630; // 'AUV0'
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GameVerificationStatus {
+  NotApplicable,
+  NotObserved,
+  Verified,
+}
+
+impl std::fmt::Display for GameVerificationStatus {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::NotApplicable => write!(f, "NOT_APPLICABLE"),
+      Self::NotObserved => write!(f, "NOT_OBSERVED"),
+      Self::Verified => write!(f, "VERIFIED"),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputDeliveryAccounting {
+  pub planned: usize,
+  pub attempted: usize,
+  pub os_accepted: usize,
+  pub hook_received: usize,
+  pub game_verified: GameVerificationStatus,
+}
+
+#[cfg(target_os = "windows")]
+fn attach_thread_to_input_desktop() {
+  use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop, SetThreadDesktop};
+  unsafe {
+    if let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) {
+      let _ = SetThreadDesktop(desktop);
+    }
+  }
+}
+
 /// Win32 SendInput wrapper for osu! actuator
 pub struct Win32InputActuator;
 
 impl Win32InputActuator {
-  /// Send keyboard key event (VK_Z or VK_X)
-  pub fn send_key(key: crate::synthesizer::KeyCode, is_down: bool) {
+  /// Send keyboard key event (VK_Z or VK_X) with benchmark signature
+  pub fn send_key(key: crate::synthesizer::KeyCode, is_down: bool) -> bool {
+    Self::send_key_with_signature(key, is_down, AUV_OSU_INJECT_SIGNATURE)
+  }
+
+  /// Send keyboard key event with explicit extraInfo signature
+  pub fn send_key_with_signature(key: crate::synthesizer::KeyCode, is_down: bool, signature: usize) -> bool {
     #[cfg(target_os = "windows")]
     unsafe {
+      attach_thread_to_input_desktop();
       let vk = match key {
         crate::synthesizer::KeyCode::K1 => VK_Z,
         crate::synthesizer::KeyCode::K2 => VK_X,
@@ -141,22 +186,26 @@ impl Win32InputActuator {
             wScan: 0,
             dwFlags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(flags),
             time: 0,
-            dwExtraInfo: 0,
+            dwExtraInfo: signature,
           },
         },
       };
-      let _ = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+
+      let accepted = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+      accepted == 1
     }
     #[cfg(not(target_os = "windows"))]
     {
-      let _ = (key, is_down);
+      let _ = (key, is_down, signature);
+      false
     }
   }
 
-  /// Send mouse position normalized to desktop [0, 65535]
-  pub fn send_mouse_absolute(norm_x: u16, norm_y: u16) {
+  /// Send mouse position normalized to desktop [0, 65535] across virtual desktop
+  pub fn send_mouse_absolute(norm_x: u16, norm_y: u16) -> bool {
     #[cfg(target_os = "windows")]
     unsafe {
+      attach_thread_to_input_desktop();
       let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -164,17 +213,19 @@ impl Win32InputActuator {
             dx: norm_x as i32,
             dy: norm_y as i32,
             mouseData: 0,
-            dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+            dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
             time: 0,
-            dwExtraInfo: 0,
+            dwExtraInfo: AUV_OSU_INJECT_SIGNATURE,
           },
         },
       };
-      let _ = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+      let accepted = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+      accepted == 1
     }
     #[cfg(not(target_os = "windows"))]
     {
       let _ = (norm_x, norm_y);
+      false
     }
   }
 }
@@ -190,8 +241,11 @@ pub struct BenchmarkEdgeRecord {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActuatorBenchmarkReport {
   pub planned_edges: usize,
+  pub attempted_edges: usize,
+  pub os_accepted_edges: usize,
   pub actual_edges: usize,
   pub count_reconciled: bool,
+  pub delivery: InputDeliveryAccounting,
   pub raw_p50_ms: f64,
   pub raw_p95_ms: f64,
   pub raw_p99_ms: f64,
@@ -209,6 +263,7 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
   let clock = PrecisionClock::new();
   let start_offset_ms = 10.0;
   let mut records = Vec::with_capacity(num_edges);
+  let mut os_accepted_edges = 0;
 
   for i in 0..num_edges {
     let planned_time = start_offset_ms + (i as f64) * interval_ms;
@@ -216,8 +271,11 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
     let actual_time = clock.elapsed_ms();
 
     // Fire simulated actuator signal
-    Win32InputActuator::send_key(crate::synthesizer::KeyCode::K1, true);
-    Win32InputActuator::send_key(crate::synthesizer::KeyCode::K1, false);
+    let is_down = (i % 2) == 0;
+    let accepted = Win32InputActuator::send_key(crate::synthesizer::KeyCode::K1, is_down);
+    if accepted {
+      os_accepted_edges += 1;
+    }
 
     records.push(BenchmarkEdgeRecord {
       edge_index: i,
@@ -228,11 +286,20 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
   }
 
   let planned_edges = num_edges;
-  let actual_edges = records.len();
-  let count_reconciled = planned_edges == actual_edges;
+  let attempted_edges = num_edges;
+  let actual_edges = os_accepted_edges;
+  let count_reconciled = planned_edges == os_accepted_edges;
+
+  let delivery = InputDeliveryAccounting {
+    planned: planned_edges,
+    attempted: attempted_edges,
+    os_accepted: os_accepted_edges,
+    hook_received: 0,
+    game_verified: GameVerificationStatus::NotApplicable,
+  };
 
   let mut raw_devs: Vec<f64> = records.iter().map(|r| r.raw_deviation_ms).collect();
-  raw_devs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+  raw_devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
   let raw_p50 = percentile_linear(&raw_devs, 0.50);
   let raw_p95 = percentile_linear(&raw_devs, 0.95);
@@ -241,7 +308,7 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
 
   let median = raw_p50;
   let mut comp_devs: Vec<f64> = raw_devs.iter().map(|x| (x - median).abs()).collect();
-  comp_devs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+  comp_devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
   let comp_p50 = percentile_linear(&comp_devs, 0.50);
   let comp_p95 = percentile_linear(&comp_devs, 0.95);
@@ -252,8 +319,11 @@ pub fn run_actuator_smoke_bench(num_edges: usize, interval_ms: f64) -> ActuatorB
 
   ActuatorBenchmarkReport {
     planned_edges,
+    attempted_edges,
+    os_accepted_edges,
     actual_edges,
     count_reconciled,
+    delivery,
     raw_p50_ms: raw_p50,
     raw_p95_ms: raw_p95,
     raw_p99_ms: raw_p99,
@@ -719,5 +789,30 @@ mod tests {
 
     assert!(res.is_err());
     assert!(!inputs_dispatched, "Inputs must not be dispatched when safety pre-check fails!");
+  }
+
+  #[test]
+  fn test_input_delivery_accounting_five_stages() {
+    let accounting = InputDeliveryAccounting {
+      planned: 50,
+      attempted: 50,
+      os_accepted: 50,
+      hook_received: 0,
+      game_verified: GameVerificationStatus::NotApplicable,
+    };
+
+    assert_eq!(accounting.planned, 50);
+    assert_eq!(accounting.attempted, 50);
+    assert_eq!(accounting.os_accepted, 50);
+    assert_eq!(accounting.hook_received, 0);
+    assert_eq!(accounting.game_verified, GameVerificationStatus::NotApplicable);
+    assert_eq!(accounting.game_verified.to_string(), "NOT_APPLICABLE");
+    assert_eq!(GameVerificationStatus::NotObserved.to_string(), "NOT_OBSERVED");
+    assert_eq!(GameVerificationStatus::Verified.to_string(), "VERIFIED");
+
+    // Serialization check
+    let serialized = serde_json::to_string(&accounting).expect("serialize accounting");
+    let deserialized: InputDeliveryAccounting = serde_json::from_str(&serialized).expect("deserialize accounting");
+    assert_eq!(accounting, deserialized);
   }
 }

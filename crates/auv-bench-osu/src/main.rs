@@ -225,20 +225,23 @@ fn main() -> Result<()> {
       println!("Running Phase 0 actuator smoke benchmark: {} edges @ {:.1}ms interval...", edges, interval_ms);
       let report = run_actuator_smoke_bench(edges, interval_ms);
       println!("=== Actuator Benchmark Summary ===");
+      println!("Delivery Accounting (5 stages):");
+      println!("  1. Planned: {}", report.delivery.planned);
+      println!("  2. Attempted: {}", report.delivery.attempted);
+      println!("  3. OS Accepted (SendInput == 1): {}", report.delivery.os_accepted);
+      println!("  4. Hook Received: {} (not monitored in smoke bench)", report.delivery.hook_received);
+      println!("  5. Game Verified: {}", report.delivery.game_verified);
+      println!("Count Reconciled: {}", report.count_reconciled);
       println!(
-        "Planned Edges: {}, Actual Dispatched: {} (Reconciled: {})",
-        report.planned_edges, report.actual_edges, report.count_reconciled
-      );
-      println!(
-        "Raw Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "Absolute Dispatch Latency (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         report.raw_p50_ms, report.raw_p95_ms, report.raw_p99_ms, report.raw_max_ms
       );
       println!(
-        "Compensated |x - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "Jitter |latency - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         report.comp_p50_ms, report.comp_p95_ms, report.comp_p99_ms, report.comp_max_ms
       );
       println!(
-        "Gate (Compensated P99 <= 16.6 ms): {}",
+        "Gate (Jitter P99 <= 16.6 ms): {}",
         if report.gate_16_6ms_passed {
           "PASSED"
         } else {
@@ -254,20 +257,24 @@ fn main() -> Result<()> {
       println!("Running Round-2 sustained loopback receiver benchmark: {} edges @ {:.1}ms interval...", edges, interval_ms);
       let report = run_loopback_receiver_bench(edges, interval_ms).map_err(|e| anyhow::anyhow!("loopback bench failed: {e}"))?;
       println!("=== Round-2 Loopback Receiver Benchmark Summary ===");
+      println!("Delivery Accounting (5 stages):");
+      println!("  1. Planned: {}", report.delivery.planned);
+      println!("  2. Attempted: {}", report.delivery.attempted);
+      println!("  3. OS Accepted (SendInput == 1): {}", report.delivery.os_accepted);
+      println!("  4. Hook Received (AUV signature matched): {}", report.delivery.hook_received);
+      println!("  5. Game Verified: {}", report.delivery.game_verified);
+      println!("Count Reconciled: {}", report.count_reconciled);
+      println!("Duration: {:.2}s, Dispatched Interval: {:.1}ms", report.duration_seconds, report.interval_ms);
       println!(
-        "Planned Edges: {}, Actual Received: {} (Reconciled: {})",
-        report.planned_edges, report.received_edges, report.count_reconciled
-      );
-      println!(
-        "Raw Arrival Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "Absolute Arrival Latency (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         report.raw_p50_ms, report.raw_p95_ms, report.raw_p99_ms, report.raw_max_ms
       );
       println!(
-        "Compensated |x - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "Jitter |latency - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         report.comp_p50_ms, report.comp_p95_ms, report.comp_p99_ms, report.comp_max_ms
       );
       println!(
-        "Gate (Compensated P99 <= 2.0 ms): {}",
+        "Gate (Receiver Jitter P99 <= 2.0 ms): {}",
         if report.gate_2_0ms_passed {
           "PASSED"
         } else {
@@ -376,20 +383,23 @@ fn main() -> Result<()> {
       println!("- Safety Status: PASSED (Local file-based offline guard verified; realm/credentials not checked)\n");
 
       println!("## 6. Phase 0 Dispatch-Side Smoke Benchmark (50 edges @ 16.0ms) [EVIDENCE: EMPIRICALLY_MEASURED]");
+      println!("- Delivery Accounting (5 stages):");
+      println!("  - 1. Planned: {}", bench.delivery.planned);
+      println!("  - 2. Attempted: {}", bench.delivery.attempted);
+      println!("  - 3. OS Accepted (SendInput == 1): {}", bench.delivery.os_accepted);
+      println!("  - 4. Hook Received: {} (not monitored in smoke bench)", bench.delivery.hook_received);
+      println!("  - 5. Game Verified: {}", bench.delivery.game_verified);
+      println!("- Count Reconciled: {}", bench.count_reconciled);
       println!(
-        "- Planned Edges: {}, Actual Dispatched: {} (Reconciled: {})",
-        bench.planned_edges, bench.actual_edges, bench.count_reconciled
-      );
-      println!(
-        "- Raw Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "- Absolute Dispatch Latency (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         bench.raw_p50_ms, bench.raw_p95_ms, bench.raw_p99_ms, bench.raw_max_ms
       );
       println!(
-        "- Compensated Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "- Jitter |latency - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         bench.comp_p50_ms, bench.comp_p95_ms, bench.comp_p99_ms, bench.comp_max_ms
       );
       println!(
-        "- Gate Metric: Compensated P99 = {:.3} ms <= 16.6 ms -> {}\n",
+        "- Gate Metric: Jitter P99 = {:.3} ms <= 16.6 ms -> {}\n",
         bench.comp_p99_ms,
         if bench.gate_16_6ms_passed {
           "PASSED"
@@ -399,21 +409,24 @@ fn main() -> Result<()> {
       );
 
       println!("## 7. Round-2 Sustained Loopback Receiver Benchmark (1000 edges @ 4.0ms) [EVIDENCE: EMPIRICALLY_MEASURED]");
-      println!(
-        "- Planned Edges: {}, Actual Received: {} (Reconciled: {})",
-        loopback.planned_edges, loopback.received_edges, loopback.count_reconciled
-      );
+      println!("- Delivery Accounting (5 stages):");
+      println!("  - 1. Planned: {}", loopback.delivery.planned);
+      println!("  - 2. Attempted: {}", loopback.delivery.attempted);
+      println!("  - 3. OS Accepted (SendInput == 1): {}", loopback.delivery.os_accepted);
+      println!("  - 4. Hook Received (AUV signature matched): {}", loopback.delivery.hook_received);
+      println!("  - 5. Game Verified: {}", loopback.delivery.game_verified);
+      println!("- Count Reconciled: {}", loopback.count_reconciled);
       println!("- Duration: {:.2}s, Dispatched Interval: {:.1}ms", loopback.duration_seconds, loopback.interval_ms);
       println!(
-        "- Raw Arrival Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "- Absolute Arrival Latency (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         loopback.raw_p50_ms, loopback.raw_p95_ms, loopback.raw_p99_ms, loopback.raw_max_ms
       );
       println!(
-        "- Compensated Deviation (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
+        "- Jitter |latency - median| (ms): P50={:.3}, P95={:.3}, P99={:.3}, Max={:.3}",
         loopback.comp_p50_ms, loopback.comp_p95_ms, loopback.comp_p99_ms, loopback.comp_max_ms
       );
       println!(
-        "- Gate Metric: Receiver Compensated P99 = {:.3} ms <= 2.0 ms -> {}\n",
+        "- Gate Metric: Receiver Jitter P99 = {:.3} ms <= 2.0 ms -> {}\n",
         loopback.comp_p99_ms,
         if loopback.gate_2_0ms_passed {
           "PASSED"

@@ -24,14 +24,24 @@ use windows::Win32::UI::WindowsAndMessaging::{
   UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_QUIT,
 };
 
-use crate::injector::{PrecisionClock, Win32InputActuator, percentile_linear};
+use crate::injector::{
+  AUV_OSU_INJECT_SIGNATURE, GameVerificationStatus, InputDeliveryAccounting, PrecisionClock, Win32InputActuator, percentile_linear,
+};
 use crate::synthesizer::KeyCode;
+
+/// Pure predicate to filter hook events: only accepts VK_Z (0x5A) carrying the benchmark extraInfo signature
+pub fn should_accept_hook_event(vk_code: u32, extra_info: usize) -> bool {
+  vk_code == 0x5A && extra_info == AUV_OSU_INJECT_SIGNATURE
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LoopbackBenchmarkReport {
   pub planned_edges: usize,
+  pub attempted_edges: usize,
+  pub os_accepted_edges: usize,
   pub received_edges: usize,
   pub count_reconciled: bool,
+  pub delivery: InputDeliveryAccounting,
   pub duration_seconds: f64,
   pub interval_ms: f64,
   pub raw_p50_ms: f64,
@@ -54,8 +64,7 @@ static GLOBAL_CLOCK: RwLock<Option<Arc<PrecisionClock>>> = RwLock::new(None);
 unsafe extern "system" fn low_level_keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
   if code >= 0 {
     let kb = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-    // 0x5A is VK_Z (K1)
-    if kb.vkCode == 0x5A
+    if should_accept_hook_event(kb.vkCode, kb.dwExtraInfo)
       && let Ok(clock_guard) = GLOBAL_CLOCK.read()
       && let Some(ref clock) = *clock_guard
     {
@@ -153,6 +162,7 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
     // Planned schedule: dispatch num_edges at interval_ms
     let start_time_ms = clock.elapsed_ms() + 20.0;
     let mut planned_times = Vec::with_capacity(num_edges);
+    let mut os_accepted_edges = 0;
 
     for i in 0..num_edges {
       let t_plan = start_time_ms + (i as f64) * interval_ms;
@@ -162,7 +172,10 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
 
       // Alternate down / up on each edge (each constitutes one edge)
       let is_down = (i % 2) == 0;
-      Win32InputActuator::send_key(KeyCode::K1, is_down);
+      let accepted = Win32InputActuator::send_key_with_signature(KeyCode::K1, is_down, AUV_OSU_INJECT_SIGNATURE);
+      if accepted {
+        os_accepted_edges += 1;
+      }
     }
 
     // Drain period: wait for OS message queue to settle
@@ -192,8 +205,17 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
     };
 
     let received_edges = timestamps.len();
-    let count_reconciled = received_edges == num_edges;
+    let attempted_edges = num_edges;
+    let count_reconciled = received_edges == num_edges && os_accepted_edges == num_edges;
     let duration_seconds = (num_edges as f64) * interval_ms / 1000.0;
+
+    let delivery = InputDeliveryAccounting {
+      planned: num_edges,
+      attempted: attempted_edges,
+      os_accepted: os_accepted_edges,
+      hook_received: received_edges,
+      game_verified: GameVerificationStatus::NotApplicable,
+    };
 
     let eval_count = num_edges.min(received_edges);
     let mut raw_deviations: Vec<f64> = (0..eval_count).map(|i| timestamps[i] - planned_times[i]).collect();
@@ -202,7 +224,7 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
       return Err(format!("No edges received in loopback receiver window (expected {num_edges})"));
     }
 
-    raw_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    raw_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let raw_p50 = percentile_linear(&raw_deviations, 0.50);
     let raw_p95 = percentile_linear(&raw_deviations, 0.95);
@@ -211,7 +233,7 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
 
     let median = raw_p50;
     let mut comp_deviations: Vec<f64> = raw_deviations.iter().map(|x| (x - median).abs()).collect();
-    comp_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    comp_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let comp_p50 = percentile_linear(&comp_deviations, 0.50);
     let comp_p95 = percentile_linear(&comp_deviations, 0.95);
@@ -222,8 +244,11 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
 
     Ok(LoopbackBenchmarkReport {
       planned_edges: num_edges,
+      attempted_edges,
+      os_accepted_edges,
       received_edges,
       count_reconciled,
+      delivery,
       duration_seconds,
       interval_ms,
       raw_p50_ms: raw_p50,
@@ -243,6 +268,22 @@ pub fn run_loopback_receiver_bench(num_edges: usize, interval_ms: f64) -> Result
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_should_accept_hook_event_filters_foreign_or_unsigned_events() {
+    // Correct key, matching signature -> accepted
+    assert!(should_accept_hook_event(0x5A, AUV_OSU_INJECT_SIGNATURE));
+
+    // Correct key, missing signature (user typing Z) -> rejected
+    assert!(!should_accept_hook_event(0x5A, 0));
+
+    // Correct key, wrong signature -> rejected
+    assert!(!should_accept_hook_event(0x5A, 0x1234_5678));
+
+    // Wrong key, matching signature -> rejected
+    assert!(!should_accept_hook_event(0x58, AUV_OSU_INJECT_SIGNATURE)); // VK_X
+    assert!(!should_accept_hook_event(0x41, AUV_OSU_INJECT_SIGNATURE)); // VK_A
+  }
 
   #[cfg(not(target_os = "windows"))]
   #[test]
