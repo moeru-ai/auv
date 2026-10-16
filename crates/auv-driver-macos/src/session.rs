@@ -223,17 +223,10 @@ impl DisplayApi<'_> {
     let height = u32::try_from(pixels.image_height).map_err(|error| backend(error.to_string()))?;
     let image = RgbaImage::from_raw(width, height, pixels.rgba_bytes).ok_or_else(|| backend("invalid native display RGBA image"))?;
     let scale_factor = f64::from(width) / target.display.frame.size.width;
-    let capture = Capture {
-      origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
-      image,
-      bounds: target.display.frame,
-      scale_factor,
-      backend: "macos.screencapturekit.excluding_self".into(),
-      fallback_reason: None,
-    };
+    let captured = display_capture(target.display, image, scale_factor, "macos.screencapturekit.excluding_self");
     Ok(DisplayCapture {
-      display: target.display,
-      capture: capture.at_resolution(options.resolution),
+      capture: captured.capture.at_resolution(options.resolution),
+      ..captured
     })
   }
 }
@@ -1964,6 +1957,21 @@ fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
 }
 
 #[cfg(target_os = "macos")]
+fn display_capture(display: Display, image: RgbaImage, scale_factor: f64, backend: &str) -> DisplayCapture {
+  DisplayCapture {
+    capture: Capture {
+      origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(display.frame.origin))),
+      image,
+      bounds: display.frame,
+      scale_factor,
+      backend: backend.into(),
+      fallback_reason: None,
+    },
+    display,
+  }
+}
+
+#[cfg(target_os = "macos")]
 fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> {
   let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
@@ -1972,18 +1980,8 @@ fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> 
   let image = monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}")))?;
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
-  let capture = Capture {
-    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
-    image,
-    bounds: target.display.frame,
-    scale_factor: target.display.scale_factor,
-    backend: "xcap.macos".to_string(),
-    fallback_reason: None,
-  };
-  Ok(DisplayCapture {
-    display: target.display,
-    capture,
-  })
+  let scale_factor = target.display.scale_factor;
+  Ok(display_capture(target.display, image, scale_factor, "xcap.macos"))
 }
 
 #[cfg(not(target_os = "macos"))]
