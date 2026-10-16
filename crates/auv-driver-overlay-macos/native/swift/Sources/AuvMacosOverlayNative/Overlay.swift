@@ -671,11 +671,6 @@ final class NativeOverlayController {
       for layer in self.statuses.values {
         layer.window.orderOut(nil)
       }
-      // NOTICE: A Rust capture can run before AppKit's next event-loop turn.
-      // Sleeping on the main thread does not commit pending window updates;
-      // flush the hide before returning to the capture caller.
-      NSApplication.shared.updateWindows()
-      CATransaction.flush()
     }
   }
 

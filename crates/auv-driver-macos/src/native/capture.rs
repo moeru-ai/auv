@@ -9,6 +9,7 @@ pub struct NativeImageCapture {
   pub image_width: i64,
   pub image_height: i64,
   /// Window frame in points at capture time, as ScreenCaptureKit saw it.
+  /// Zero for display captures; their bounds are resolved by DisplayApi.
   pub window_frame: auv_driver_common::Rect,
   pub rgba_bytes: Vec<u8>,
 }
