@@ -103,6 +103,17 @@ fn build_macos_native() {
 
   let mut command = Command::new("swiftc");
   configure_swift_target(&mut command);
+  // Match Cargo's optimization level: --release must optimize the Swift half
+  // too, while ordinary dev builds retain debuggable Swift code.
+  match env::var("OPT_LEVEL").as_deref() {
+    Ok("0") | Err(_) => {}
+    Ok("s" | "z") => {
+      command.arg("-Osize");
+    }
+    Ok(_) => {
+      command.arg("-O");
+    }
+  }
   command
     .arg("-emit-library")
     .arg("-static")
