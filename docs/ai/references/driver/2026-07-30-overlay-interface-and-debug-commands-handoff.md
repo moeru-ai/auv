@@ -96,37 +96,25 @@ component constructors as production invoke commands.
 - live `overlay.captureFrame`: shown 1 layer
 - live `overlay.clickTarget`: shown 3 layers
 
-Per-layer update/remove handles remain intentionally deferred. Showing reuses
-adapter-owned kind-relative identities; add an opaque handle only when a
-concrete consumer needs caller-owned per-layer updates/removal.
+Per-layer update/remove handles remain intentionally deferred. The current
+show interface is one-shot; add an opaque handle only when a concrete
+runtime consumer needs in-process incremental updates.
 
-## Retained overlays and clean display capture (2026-10-16)
+## Clean display capture (2026-10-16)
 
 Continuous capture consumers need to keep their previous status visible while
 capturing the underlying application. Hiding and restoring every layer between
 frames causes flicker and requires waiting for pending AppKit window changes.
-These local Rust capabilities support that lifecycle independently of any
-particular game or application:
+`DisplayApi::capture_excluding_self(CaptureOptions)` uses macOS 14+
+ScreenCaptureKit screenshots to exclude all windows owned by the capturing
+process while leaving them visible on the desktop. Exclusion failures return
+an error and never fall back to an unfiltered screenshot. The requested
+Native/Logical resolution, logical bounds, screen origin and pixel scale are
+preserved. Other processes' overlays are not excluded; same-process ordinary
+windows are excluded too. This is a local Rust driver capability independent of
+any game or application; it does not add an invoke/MCP/Runner operation or
+overlay lifecycle API.
 
-- `DisplayApi::capture_excluding_self(CaptureOptions)`: macOS 14+
-  ScreenCaptureKit screenshots exclude all windows owned by the capturing
-  process while leaving them visible on the desktop. Exclusion failures return
-  an error and never fall back to an unfiltered screenshot. The requested
-  Native/Logical resolution, logical bounds, screen origin and pixel scale are
-  preserved. Other processes' overlays are not excluded; same-process ordinary
-  windows are excluded too. This does not add an invoke/MCP/Runner operation.
-- `auv_driver_overlay::pump_events(Duration)`: service a manually retained
-  overlay on the rendering main thread. macOS pumps AppKit; the Windows branch
-  retains its existing immediate bitmap while waiting. Other configurations
-  return an unsupported-adapter error.
-- `auv_driver_overlay::remove_obsolete(&Overlay)`: after showing an updated
-  overlay, hide only managed layers beyond its current per-kind counts. The
-  macOS adapter reuses existing kind-relative identities and does not hide
-  retained windows. Other adapters return an explicit error. Callers must keep
-  stable per-kind ordering, placing persistent status cards before variable
-  diagnostic labels. Use zero-duration motion for continuously opaque cards.
-
-macOS overlay windows remain visible when their application deactivates.
 Explicit removal flushes AppKit/Core Animation updates before returning so an
 immediate screenshot does not see pending hidden windows. That flush is separate
 from capture exclusion and does not exclude another process's windows.
@@ -159,8 +147,8 @@ cargo run --release -p auv-driver-macos --example measure_capture -- 1 5
 ```
 
 The visibility probe checks that the status marker is visible in ordinary
-capture, absent from self-excluding capture, retained after obsolete-outline
-cleanup, and absent immediately after removal without a sleep or event pump.
+capture, absent from self-excluding capture, still visible after filtered
+capture, and absent immediately after removal without a sleep or event pump.
 It compares marker counts with a baseline and uses display-relative regions so
 nonzero display origins are supported. The unit tests cover pixel ownership,
 null/empty input, image-envelope validation and native error propagation. The
@@ -171,11 +159,11 @@ timing budgets are not portable performance guarantees.
 ### Local evidence (2026-10-16)
 
 On the available 3024x1964 Retina display (1512x982 logical points), the probe
-reported `baseline=0 visible=27009 excluded=0 retained=27009 hidden=0`, with
-outline marker counts falling from 2304 to 0 after cleanup. The opt-in Logical
-resolution regression passed through the public driver API. No screenshots
-were saved. This verifies capture exclusion, retained-card cleanup and the hide
-flush on this display; it does not establish coverage of every OS or Space
+the simplified visibility probe reported
+`baseline=0 visible=27019 excluded=0 after_capture=27019 hidden=0` using the
+existing timed-show interface. The opt-in Logical resolution regression
+passed through the public driver API. No screenshots were saved. This verifies
+behavior on this display; it does not establish coverage of every OS or Space
 transition.
 
 Five release timing samples (one cold, four warm) measured self-excluding

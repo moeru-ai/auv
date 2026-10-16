@@ -1,14 +1,14 @@
-//! Opt-in macOS probe for retained overlays, clean screenshots and removal.
+//! Opt-in macOS probe for clean screenshots while an overlay is visible.
 //! Run with `--features overlay --example verify_overlay_capture -- <display-id>`.
 //! Pixels are counted in memory; no screenshots are saved and no input is sent.
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  use auv_driver_common::{CaptureOptions, DisplayCapture, Driver, Rect, ScreenPoint};
+  use auv_driver_common::{CaptureOptions, DisplayCapture, Driver, DriverError, Rect, ScreenPoint};
   use auv_driver_macos::MacosDriver;
   use auv_driver_overlay::{
-    Easing, LifecycleOptions, Overlay, OverlayTheme, ShowOptions,
-    layers::{Outline, Status},
-    style::{Color, OutlineStyle, StatusStyle, Stroke},
+    Easing, Overlay, OverlayTheme, ShowOptions,
+    layers::Status,
+    style::{Color, StatusStyle},
   };
   use std::time::Duration;
 
@@ -24,15 +24,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let displays = session.display().list()?.displays;
   let display = displays.iter().find(|display| display.id == display_id).ok_or("display not found")?;
   let bounds = display.frame;
-  if bounds.size.width < 340. || bounds.size.height < 180. {
-    return Err("probe requires a display of at least 340x180 logical points".into());
+  if bounds.size.width < 280. || bounds.size.height < 180. {
+    return Err("probe requires a display of at least 280x180 logical points".into());
   }
   let options = || CaptureOptions {
     display: Some(display_id.clone()),
     ..Default::default()
   };
-  let show_options =
-    || ShowOptions::new().with_motion_ease(Duration::ZERO, Easing::EaseInOutExpo).with_lifecycle_options(LifecycleOptions::manual());
   let count = |capture: &DisplayCapture, region: Rect| {
     // Regions are relative to this display, independent of desktop origin.
     let image = &capture.capture.image;
@@ -52,50 +50,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .count()
   };
   let card_region = Rect::new(10., 30., 260., 100.);
-  let outline_region = Rect::new(276., 32., 48., 48.);
   let baseline = session.display().capture(options())?;
   let baseline_card = count(&baseline, card_region);
-  let baseline_outline = count(&baseline, outline_region);
   let _cleanup = Cleanup;
   let marker = Color::rgb(243. / 255., 8. / 255., 162. / 255.);
-  let card_only = Overlay::new().with_layer(
+  let overlay = Overlay::new().with_layer(
     Status::new(ScreenPoint::new(bounds.origin.x + 16., bounds.origin.y + 36.), "overlay capture probe\npersistent status")
       .with_style(StatusStyle::new().with_background(marker)),
   );
-  let with_extra = card_only.clone().with_layer(
-    Outline::new(Rect::new(bounds.origin.x + 280., bounds.origin.y + 36., 40., 40.))
-      .with_style(OutlineStyle::new().with_corner_radius(0.).with_stroke(Stroke::new(marker, 4.))),
-  );
-  auv_driver_overlay::show_with_theme(&with_extra, show_options(), &OverlayTheme::default())?;
-  auv_driver_overlay::pump_events(Duration::from_millis(100))?;
-  let visible = session.display().capture(options())?;
-  let excluded = session.display().capture_excluding_self(options())?;
-  auv_driver_overlay::show_with_theme(&card_only, show_options(), &OverlayTheme::default())?;
-  auv_driver_overlay::remove_obsolete(&card_only)?;
-  auv_driver_overlay::pump_events(Duration::from_millis(50))?;
-  let after = session.display().capture(options())?;
-  // No sleep or event pumping between removal and capture: hide must be flushed.
-  auv_driver_overlay::remove()?;
+  let (visible, excluded, after) = std::thread::scope(|scope| -> Result<_, Box<dyn std::error::Error>> {
+    let worker = scope.spawn(|| -> Result<_, DriverError> {
+      // Let the existing timed-show interface service the first AppKit turn.
+      std::thread::sleep(Duration::from_millis(100));
+      let visible = session.display().capture(options())?;
+      let excluded = session.display().capture_excluding_self(options())?;
+      let after = session.display().capture(options())?;
+      Ok((visible, excluded, after))
+    });
+    let shown = auv_driver_overlay::show_with_theme(
+      &overlay,
+      ShowOptions::new().with_motion_ease(Duration::ZERO, Easing::EaseInOutExpo).with_auto_removal_after(Duration::from_secs(3)),
+      &OverlayTheme::default(),
+    );
+    let captured = worker.join().map_err(|_| "capture worker panicked")?;
+    shown?;
+    Ok(captured?)
+  })?;
+  // Timed show removes the overlay before returning; capture immediately.
   let hidden = session.display().capture(options())?;
   let before_count = count(&visible, card_region);
   let excluded_count = count(&excluded, card_region);
   let after_count = count(&after, card_region);
   let hidden_count = count(&hidden, card_region);
-  let outline_before = count(&visible, outline_region);
-  let outline_after = count(&after, outline_region);
   println!(
-    "baseline={baseline_card} visible={before_count} excluded={excluded_count} retained={after_count} hidden={hidden_count} outline_before={outline_before} outline_after={outline_after} image={}x{}",
+    "baseline={baseline_card} visible={before_count} excluded={excluded_count} after_capture={after_count} hidden={hidden_count} image={}x{}",
     excluded.capture.image.width(),
     excluded.capture.image.height()
   );
   if before_count < baseline_card + 500
     || excluded_count > baseline_card + 100
-    || after_count < before_count * 9 / 10
+    || after_count < baseline_card + 500
     || hidden_count > baseline_card + 100
-    || outline_before < baseline_outline + 100
-    || outline_after > baseline_outline + 100
   {
-    return Err("overlay retention, capture exclusion, pruning or hide flush failed".into());
+    return Err("capture exclusion, overlay visibility or hide flush failed".into());
   }
   Ok(())
 }

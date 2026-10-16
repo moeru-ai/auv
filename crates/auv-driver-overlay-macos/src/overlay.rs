@@ -67,20 +67,6 @@ pub fn render(overlay: &Overlay, options: ShowOptions) -> AuvResult<()> {
   Ok(())
 }
 
-/// Hide adapter-owned layers beyond the current per-kind counts, without
-/// rendering or hiding retained windows. Call after render with stable order.
-pub fn remove_obsolete(overlay: &Overlay) -> AuvResult<()> {
-  let mut counts = [0; 3];
-  for layer in overlay.layers() {
-    counts[match layer {
-      Layer::Cursor(_) => 0,
-      Layer::Outline(_) => 1,
-      Layer::Status(_) => 2,
-    }] += 1;
-  }
-  crate::native::overlay::prune(counts[0], counts[1], counts[2])
-}
-
 /// Resolves built-in AUV artwork and native defaults before crossing FFI.
 /// Custom SVGs and the user cursor retain their supplied image and shadow policy.
 fn cursor_for_rendering(cursor: &auv_driver_overlay_common::layers::Cursor) -> auv_driver_overlay_common::layers::Cursor {
@@ -97,12 +83,6 @@ fn cursor_for_rendering(cursor: &auv_driver_overlay_common::layers::Cursor) -> a
 
 pub fn remove() -> AuvResult<()> {
   crate::native::overlay::hide_all()
-}
-
-/// Keep AppKit responsive without hiding or replacing the current presentation.
-/// Call on the main thread, as with render/remove.
-pub fn pump_events(duration: std::time::Duration) -> AuvResult<()> {
-  crate::native::overlay::pump_events(duration_millis(duration)?)
 }
 
 fn duration_millis(duration: std::time::Duration) -> AuvResult<u64> {
