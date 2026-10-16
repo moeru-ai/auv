@@ -317,6 +317,7 @@ pub(crate) mod ffi {
     image_width: i64,
     image_height: i64,
     // Window frame in points that ScreenCaptureKit captured (`SCWindow.frame`).
+    // Display captures leave these zero; DisplayApi supplies their bounds.
     window_x: f64,
     window_y: f64,
     window_width: f64,

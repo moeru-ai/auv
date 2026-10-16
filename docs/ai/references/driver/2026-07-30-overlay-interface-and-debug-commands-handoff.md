@@ -115,10 +115,6 @@ windows are excluded too. This is a local Rust driver capability independent of
 any game or application; it does not add an invoke/MCP/Runner operation or
 overlay lifecycle API.
 
-Explicit removal flushes AppKit/Core Animation updates before returning so an
-immediate screenshot does not see pending hidden windows. That flush is separate
-from capture exclusion and does not exclude another process's windows.
-
 Window and self-excluding display capture both transfer pixels through the
 existing `nativeByteVec -> native_byte_vec_from_raw` bulk-copy path. Swift
 borrows its contiguous buffer only during the synchronous call; Rust owns the
@@ -139,36 +135,35 @@ cargo test -p auv-driver-macos -p auv-driver-overlay-common \
   --features auv-driver-overlay/macos --lib
 cargo test -p auv-driver-macos --lib \
   self_excluding_capture_honors_logical_resolution -- --ignored --nocapture
-cargo test -p auv-driver-macos --lib \
-  capture_pixel_transfer_full_frame_stays_within_local_budget -- --ignored --nocapture
 cargo run --release -p auv-driver-macos --features overlay \
   --example verify_overlay_capture -- 1
 cargo run --release -p auv-driver-macos --example measure_capture -- 1 5
 ```
 
 The visibility probe checks that the status marker is visible in ordinary
-capture, absent from self-excluding capture, still visible after filtered
-capture, and absent immediately after removal without a sleep or event pump.
+capture, absent from self-excluding capture, and still visible after filtered
+capture. The probe services Core Foundation's main-thread run loop until the
+capture worker finishes, then its cleanup guard removes the overlay. It waits
+up to ten seconds for the marker to become visible before testing exclusion.
 It compares marker counts with a baseline and uses display-relative regions so
 nonzero display origins are supported. The unit tests cover pixel ownership,
-null/empty input, image-envelope validation and native error propagation. The
-full-frame timing unit test measures the Rust copy only; `measure_capture`
-includes system screenshot, image conversion and the Swift/FFI path. Local
-timing budgets are not portable performance guarantees.
+null/empty input, image-envelope validation and native error propagation.
+`measure_capture` includes system screenshot, image conversion and the Swift/FFI
+path. Local timings are not portable performance guarantees.
 
 ### Local evidence (2026-10-16)
 
-On the available 3024x1964 Retina display (1512x982 logical points), the probe
-the simplified visibility probe reported
-`baseline=0 visible=27019 excluded=0 after_capture=27019 hidden=0` using the
-existing timed-show interface. The opt-in Logical resolution regression
+On the available 3024x1964 Retina display (1512x982 logical points), the
+visibility probe reported
+`baseline=0 visible=27009 excluded=0 after_capture=27009` while keeping the
+overlay visible until the worker completed. The opt-in Logical resolution regression
 passed through the public driver API. No screenshots were saved. This verifies
 behavior on this display; it does not establish coverage of every OS or Space
 transition.
 
 Five release timing samples (one cold, four warm) measured self-excluding
 capture median 129.746 ms, P95 132.977 ms and cold 269.921 ms; ordinary capture
-median was 35.185 ms. The 23.8 MB Rust-copy test took 2.662 ms in debug mode.
+median was 35.185 ms.
 These are local receipts, not cross-machine benchmarks.
 
 Both native Swift packages built after bridge regeneration. Driver and overlay

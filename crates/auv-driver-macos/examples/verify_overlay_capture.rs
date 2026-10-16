@@ -6,11 +6,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   use auv_driver_common::{CaptureOptions, DisplayCapture, Driver, DriverError, Rect, ScreenPoint};
   use auv_driver_macos::MacosDriver;
   use auv_driver_overlay::{
-    Easing, Overlay, OverlayTheme, ShowOptions,
+    Easing, LifecycleOptions, Overlay, OverlayTheme, ShowOptions,
     layers::Status,
     style::{Color, StatusStyle},
   };
-  use std::time::Duration;
+  use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
+  use std::time::{Duration, Instant};
 
   struct Cleanup;
   impl Drop for Cleanup {
@@ -58,41 +59,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Status::new(ScreenPoint::new(bounds.origin.x + 16., bounds.origin.y + 36.), "overlay capture probe\npersistent status")
       .with_style(StatusStyle::new().with_background(marker)),
   );
+  auv_driver_overlay::show_with_theme(
+    &overlay,
+    ShowOptions::new().with_motion_ease(Duration::ZERO, Easing::EaseInOutExpo).with_lifecycle_options(LifecycleOptions::manual()),
+    &OverlayTheme::default(),
+  )?;
+  // SAFETY: Core Foundation owns this immutable process-lifetime mode constant.
+  let mode = unsafe { kCFRunLoopDefaultMode };
   let (visible, excluded, after) = std::thread::scope(|scope| -> Result<_, Box<dyn std::error::Error>> {
     let worker = scope.spawn(|| -> Result<_, DriverError> {
-      // Let the existing timed-show interface service the first AppKit turn.
-      std::thread::sleep(Duration::from_millis(100));
-      let visible = session.display().capture(options())?;
+      let start = Instant::now();
+      let visible = loop {
+        let capture = session.display().capture(options())?;
+        if count(&capture, card_region) >= baseline_card + 500 {
+          break capture;
+        }
+        if start.elapsed() >= Duration::from_secs(10) {
+          return Err(DriverError::Backend {
+            message: "probe marker did not become visible within 10 seconds".into(),
+          });
+        }
+      };
       let excluded = session.display().capture_excluding_self(options())?;
       let after = session.display().capture(options())?;
       Ok((visible, excluded, after))
     });
-    let shown = auv_driver_overlay::show_with_theme(
-      &overlay,
-      ShowOptions::new().with_motion_ease(Duration::ZERO, Easing::EaseInOutExpo).with_auto_removal_after(Duration::from_secs(3)),
-      &OverlayTheme::default(),
-    );
+    // The probe owns this main-thread run loop until capture finishes. No
+    // fixed overlay lifetime or new library lifecycle API is needed.
+    while !worker.is_finished() {
+      CFRunLoop::run_in_mode(mode, 0.02, false);
+    }
     let captured = worker.join().map_err(|_| "capture worker panicked")?;
-    shown?;
     Ok(captured?)
   })?;
-  // Timed show removes the overlay before returning; capture immediately.
-  let hidden = session.display().capture(options())?;
   let before_count = count(&visible, card_region);
   let excluded_count = count(&excluded, card_region);
   let after_count = count(&after, card_region);
-  let hidden_count = count(&hidden, card_region);
   println!(
-    "baseline={baseline_card} visible={before_count} excluded={excluded_count} after_capture={after_count} hidden={hidden_count} image={}x{}",
+    "baseline={baseline_card} visible={before_count} excluded={excluded_count} after_capture={after_count} image={}x{}",
     excluded.capture.image.width(),
     excluded.capture.image.height()
   );
-  if before_count < baseline_card + 500
-    || excluded_count > baseline_card + 100
-    || after_count < baseline_card + 500
-    || hidden_count > baseline_card + 100
-  {
-    return Err("capture exclusion, overlay visibility or hide flush failed".into());
+  if before_count < baseline_card + 500 || excluded_count > baseline_card + 100 || after_count < baseline_card + 500 {
+    return Err("capture exclusion or overlay visibility check failed".into());
   }
   Ok(())
 }

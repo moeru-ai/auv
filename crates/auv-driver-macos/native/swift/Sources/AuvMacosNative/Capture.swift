@@ -5,7 +5,7 @@ import CoreVideo
 import Foundation
 import ScreenCaptureKit
 
-private func emptyWindowCaptureResponse(
+private func emptyImageCaptureResponse(
   message: String,
   recovery: String
 ) -> NativeImageCaptureResponse {
@@ -32,25 +32,25 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeImageCap
     captureError = error
   }
   if status == .timedOut {
-    return emptyWindowCaptureResponse(
+    return emptyImageCaptureResponse(
       message: "ScreenCaptureKit window capture timed out after 10s",
       recovery: "verify Screen Recording permission and retry"
     )
   }
   if let captureError {
-    return emptyWindowCaptureResponse(
+    return emptyImageCaptureResponse(
       message: "ScreenCaptureKit window capture failed: \(captureError)",
       recovery: "verify the target window is capturable and retry"
     )
   }
   guard let image = capturedImage else {
-    return emptyWindowCaptureResponse(
+    return emptyImageCaptureResponse(
       message: "ScreenCaptureKit returned no window image",
       recovery: "retry capture or use a fallback capture method"
     )
   }
   guard let rgba = nativeRgbaBytes(from: image) else {
-    return emptyWindowCaptureResponse(
+    return emptyImageCaptureResponse(
       message: "failed to extract RGBA bytes from captured window",
       recovery: "retry capture or use a fallback capture method"
     )
@@ -72,7 +72,7 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeImageCap
 // Exclusion belongs to the content filter; NSWindow sharingType is not relied on.
 func capture_display_without_self(display_id: UInt32) -> NativeImageCaptureResponse {
   guard #available(macOS 14.0, *) else {
-    return emptyWindowCaptureResponse(message: "display capture exclusion requires macOS 14.0 or newer", recovery: "use a supported macOS version")
+    return emptyImageCaptureResponse(message: "display capture exclusion requires macOS 14.0 or newer", recovery: "use a supported macOS version")
   }
   let semaphore = DispatchSemaphore(value: 0)
   var capturedImage: CGImage?
@@ -100,13 +100,13 @@ func capture_display_without_self(display_id: UInt32) -> NativeImageCaptureRespo
     }
   }
   guard semaphore.wait(timeout: .now() + .seconds(10)) == .success else {
-    return emptyWindowCaptureResponse(message: "ScreenCaptureKit display capture timed out after 10s", recovery: "verify Screen Recording permission and retry")
+    return emptyImageCaptureResponse(message: "ScreenCaptureKit display capture timed out after 10s", recovery: "verify Screen Recording permission and retry")
   }
   if let captureError {
-    return emptyWindowCaptureResponse(message: "ScreenCaptureKit display capture failed: \(captureError)", recovery: "verify Screen Recording permission and retry")
+    return emptyImageCaptureResponse(message: "ScreenCaptureKit display capture failed: \(captureError)", recovery: "verify Screen Recording permission and retry")
   }
   guard let image = capturedImage, let rgba = nativeRgbaBytes(from: image) else {
-    return emptyWindowCaptureResponse(message: "ScreenCaptureKit returned no display image", recovery: "verify Screen Recording permission and retry")
+    return emptyImageCaptureResponse(message: "ScreenCaptureKit returned no display image", recovery: "verify Screen Recording permission and retry")
   }
   return NativeImageCaptureResponse(image_width: Int64(image.width), image_height: Int64(image.height), window_x: 0, window_y: 0, window_width: 0, window_height: 0, rgba_bytes: nativeByteVec(rgba), error_message: nil, recovery_hint: nil)
 }
