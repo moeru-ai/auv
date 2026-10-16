@@ -19,7 +19,7 @@ fn bulk_bytes_from_an_empty_or_null_buffer_are_empty() {
 #[ignore = "opt-in local timing budget for a full-resolution pixel copy"]
 fn capture_pixel_transfer_full_frame_stays_within_local_budget() {
   // Per-byte FFI pushes took seconds for a Retina frame. Exercise the shared
-  // Rust copy here; the measure_capture example covers the full Swift path.
+  // Rust copy here; this crate's measure_capture example covers the full Swift path.
   let source: Vec<u8> = (0..3024 * 1964 * 4).map(|index| (index % 256) as u8).collect();
   let start = std::time::Instant::now();
   let result = native_byte_vec_from_raw(source.as_ptr(), source.len());
