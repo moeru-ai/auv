@@ -193,16 +193,6 @@ pub(crate) fn hide_all() -> AuvResult<()> {
   with_controller("hide_overlay_cursor", |controller| controller.hide_overlay_cursor())
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn prune(cursor_count: u64, outline_count: u64, status_count: u64) -> AuvResult<()> {
-  with_controller("prune_overlay_layers", |controller| controller.prune_overlay_layers(cursor_count, outline_count, status_count))
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn prune(_cursor_count: u64, _outline_count: u64, _status_count: u64) -> AuvResult<()> {
-  unsupported()
-}
-
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn hide_all() -> AuvResult<()> {
   unsupported()

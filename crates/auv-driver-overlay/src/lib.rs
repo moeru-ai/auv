@@ -56,26 +56,7 @@ fn render(overlay: &Overlay, options: ShowOptions) -> OverlayResult<()> {
   }
 }
 
-/// Hide obsolete layers after showing a retained presentation with stable
-/// per-kind layer order. Does not render or hide the remaining windows.
-/// Currently supported by the macOS adapter only.
-pub fn remove_obsolete(overlay: &Overlay) -> OverlayResult<()> {
-  #[cfg(all(target_os = "macos", feature = "macos"))]
-  {
-    auv_driver_overlay_macos::remove_obsolete(overlay).map_err(OverlayError::backend)
-  }
-  #[cfg(not(all(target_os = "macos", feature = "macos")))]
-  {
-    let _ = overlay;
-    Err(OverlayError::Unavailable {
-      reason: "obsolete-layer cleanup requires the macOS adapter".into(),
-    })
-  }
-}
-
 /// Removes all layers owned by the enabled platform adapter.
-///
-/// Manual presentations can be kept responsive with [`pump_events`].
 pub fn remove() -> OverlayResult<()> {
   #[cfg(all(target_os = "macos", feature = "macos"))]
   {
@@ -174,31 +155,5 @@ impl LiveOverlay {
 fn unavailable() -> OverlayError {
   OverlayError::Unavailable {
     reason: "no live overlay adapter is enabled for this target".to_string(),
-  }
-}
-
-/// Service a manually retained presentation without removing it. On macOS this
-/// runs the AppKit event loop and must be called on the rendering main thread.
-pub fn pump_events(duration: std::time::Duration) -> OverlayResult<()> {
-  #[cfg(all(target_os = "macos", feature = "macos"))]
-  {
-    auv_driver_overlay_macos::pump_events(duration).map_err(OverlayError::backend)
-  }
-  #[cfg(all(target_os = "windows", feature = "windows"))]
-  {
-    // Win32's existing overlay renderer retains its immediate layered bitmap
-    // while sleeping; match that lifecycle rather than introducing another loop.
-    std::thread::sleep(duration);
-    Ok(())
-  }
-  #[cfg(not(any(
-    all(target_os = "macos", feature = "macos"),
-    all(target_os = "windows", feature = "windows")
-  )))]
-  {
-    let _ = duration;
-    Err(OverlayError::Unavailable {
-      reason: "no overlay platform adapter is enabled for this target".to_string(),
-    })
   }
 }
