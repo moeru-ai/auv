@@ -671,6 +671,28 @@ final class NativeOverlayController {
       for layer in self.statuses.values {
         layer.window.orderOut(nil)
       }
+      // NOTICE: A Rust capture can run before AppKit's next event-loop turn.
+      // Sleeping on the main thread does not commit pending window updates;
+      // flush the hide before returning to the capture caller.
+      NSApplication.shared.updateWindows()
+      CATransaction.flush()
+    }
+  }
+
+  // Replacement updates surviving windows in place, then hides only obsolete
+  // adapter-owned ids. It must never orderOut a surviving status card.
+  func prune_overlay_layers(cursor_count: UInt64, outline_count: UInt64, status_count: UInt64) -> NativeActionResponse {
+    runOnMain {
+      func obsolete(_ id: String, _ kind: String, _ count: UInt64) -> Bool {
+        let prefix = "auv-\(kind)-"
+        guard id.hasPrefix(prefix), let index = UInt64(id.dropFirst(prefix.count)) else { return false }
+        return index >= count
+      }
+      for (id, state) in self.cursors where obsolete(id, "cursor", cursor_count) { state.window.orderOut(nil) }
+      for (id, layer) in self.outlines where obsolete(id, "outline", outline_count) { layer.window.orderOut(nil) }
+      for (id, layer) in self.statuses where obsolete(id, "status", status_count) { layer.window.orderOut(nil) }
+      NSApplication.shared.updateWindows()
+      CATransaction.flush()
     }
   }
 
@@ -726,6 +748,7 @@ final class NativeOverlayController {
     window.isOpaque = false
     window.backgroundColor = .clear
     window.ignoresMouseEvents = true
+    window.hidesOnDeactivate = false
     window.hasShadow = false
     window.level = .screenSaver
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -765,6 +788,7 @@ final class NativeOverlayController {
     window.isOpaque = false
     window.backgroundColor = .clear
     window.ignoresMouseEvents = true
+    window.hidesOnDeactivate = false
     window.hasShadow = false
     window.level = .screenSaver
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
