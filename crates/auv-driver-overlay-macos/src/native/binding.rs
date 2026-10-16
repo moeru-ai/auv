@@ -1,3 +1,6 @@
+// The generated C ABI flattens native style parameters; keep this exemption at
+// the binding boundary rather than weakening checks on renderer policy code.
+#![allow(clippy::too_many_arguments)]
 #[swift_bridge::bridge]
 pub(crate) mod ffi {
   #[swift_bridge(swift_repr = "struct")]
@@ -114,6 +117,12 @@ pub(crate) mod ffi {
       duration_ms: u64,
     ) -> NativeActionResponse;
     fn hide_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
+    fn prune_overlay_layers(
+      self: &NativeOverlayController,
+      cursor_count: u64,
+      outline_count: u64,
+      status_count: u64,
+    ) -> NativeActionResponse;
     fn shutdown_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
     fn pump_overlay_events(duration_ms: u64) -> NativeActionResponse;
   }
