@@ -890,6 +890,7 @@ mod frontend {
   }
 
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
   struct InvokeToolRequest {
     command_id: String,
     /// Exact configured Device name; omit to use the server's root selection or run locally.
