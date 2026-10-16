@@ -206,6 +206,36 @@ impl DisplayApi<'_> {
       ..captured
     })
   }
+
+  /// Capture a display without windows owned by this process, leaving those
+  /// windows visible. Requires ScreenCaptureKit screenshots (macOS 14+).
+  /// Applies the requested resolution after capturing native pixels.
+  /// Never falls back to an unfiltered screenshot if exclusion fails.
+  #[cfg(target_os = "macos")]
+  pub fn capture_excluding_self(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
+    if options.window.is_some() || options.region.is_some() || matches!(options.activation, Activation::ActivateFirst { .. }) {
+      return Err(invalid_input("display.capture_excluding_self accepts only display selection and resolution"));
+    }
+    let target = resolve_display_target(&list_display_targets()?, options.display.as_deref())?;
+    let id = target.display.id.parse::<u32>().map_err(|error| invalid_input(format!("invalid native display id: {error}")))?;
+    let pixels = crate::native::capture::capture_display_rgba_without_self(id).map_err(backend)?;
+    let width = u32::try_from(pixels.image_width).map_err(|error| backend(error.to_string()))?;
+    let height = u32::try_from(pixels.image_height).map_err(|error| backend(error.to_string()))?;
+    let image = RgbaImage::from_raw(width, height, pixels.rgba_bytes).ok_or_else(|| backend("invalid native display RGBA image"))?;
+    let scale_factor = f64::from(width) / target.display.frame.size.width;
+    let capture = Capture {
+      origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
+      image,
+      bounds: target.display.frame,
+      scale_factor,
+      backend: "macos.screencapturekit.excluding_self".into(),
+      fallback_reason: None,
+    };
+    Ok(DisplayCapture {
+      display: target.display,
+      capture: capture.at_resolution(options.resolution),
+    })
+  }
 }
 
 impl WindowApi<'_> {

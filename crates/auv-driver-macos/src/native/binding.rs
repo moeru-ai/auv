@@ -313,7 +313,7 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
-  struct NativeWindowCaptureResponse {
+  struct NativeImageCaptureResponse {
     image_width: i64,
     image_height: i64,
     // Window frame in points that ScreenCaptureKit captured (`SCWindow.frame`).
@@ -432,8 +432,9 @@ pub(crate) mod ffi {
     fn inspect_ax_node(request: NativeAxNodeInspectionRequest) -> NativeAxNodeInspectionResponse;
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
     fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
-    fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;
+    fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeImageCaptureResponse;
     fn window_ax_size(pid: i64, window_number: i64) -> NativeWindowAxSizeResponse;
+    fn capture_display_without_self(display_id: u32) -> NativeImageCaptureResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
     fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64, modifier_flags: u64) -> NativeActionResponse;
     fn window_pointer_event(

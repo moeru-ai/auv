@@ -80,6 +80,33 @@ fn display_region_resolution_requires_contained_global_region() {
   assert!(matches!(outside, Err(DriverError::NotFound { .. })));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires macOS 14+, an awake Retina display and Screen Recording permission"]
+fn self_excluding_capture_honors_logical_resolution() {
+  // Regression: this path accepted Logical but returned native Retina pixels.
+  let session = MacosDriverSession { _private: () };
+  let native = session.display().capture_excluding_self(CaptureOptions::default()).unwrap();
+  assert!(native.capture.scale_factor > 1.0, "this regression requires a Retina display");
+  let logical = session
+    .display()
+    .capture_excluding_self(CaptureOptions {
+      display: Some(native.display.id.clone()),
+      resolution: CaptureResolution::Logical,
+      ..CaptureOptions::default()
+    })
+    .unwrap();
+
+  assert_eq!(logical.capture.image.width(), native.capture.bounds.size.width.round() as u32);
+  assert_eq!(logical.capture.image.height(), native.capture.bounds.size.height.round() as u32);
+  assert_eq!(logical.capture.scale_factor, 1.0);
+  assert_eq!(logical.capture.bounds, native.capture.bounds);
+  assert_eq!(logical.capture.origin, native.capture.origin);
+  assert_eq!(logical.display, native.display);
+  assert_eq!(logical.capture.backend, native.capture.backend);
+  assert_eq!(logical.capture.fallback_reason, None);
+}
+
 fn observed_windows(windows: Vec<ObservedWindow>) -> ObservedWindowSnapshot {
   ObservedWindowSnapshot {
     frontmost_app_name: String::new(),
