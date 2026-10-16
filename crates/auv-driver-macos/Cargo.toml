@@ -16,6 +16,10 @@ repository.workspace = true
 default = []
 overlay = ["dep:auv-driver-overlay"]
 
+[[example]]
+name = "verify_overlay_capture"
+required-features = ["overlay"]
+
 [dependencies]
 auv-driver-common = { version = "0.0.35", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.35", path = "../auv-driver-overlay", features = ["macos"], optional = true }

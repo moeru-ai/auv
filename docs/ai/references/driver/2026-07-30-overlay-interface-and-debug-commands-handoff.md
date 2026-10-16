@@ -99,3 +99,76 @@ component constructors as production invoke commands.
 Per-layer update/remove handles remain intentionally deferred. The current
 show interface is one-shot; add an opaque handle only when a concrete
 runtime consumer needs in-process incremental updates.
+
+## Clean display capture (2026-10-16)
+
+Continuous capture consumers need to keep their previous status visible while
+capturing the underlying application. Hiding and restoring every layer between
+frames causes flicker and requires waiting for pending AppKit window changes.
+`DisplayApi::capture_excluding_self(CaptureOptions)` uses macOS 14+
+ScreenCaptureKit screenshots to exclude all windows owned by the capturing
+process while leaving them visible on the desktop. Exclusion failures return
+an error and never fall back to an unfiltered screenshot. The requested
+Native/Logical resolution, logical bounds, screen origin and pixel scale are
+preserved. Other processes' overlays are not excluded; same-process ordinary
+windows are excluded too. This is a local Rust driver capability independent of
+any game or application; it does not add an invoke/MCP/Runner operation or
+overlay lifecycle API.
+
+Window and self-excluding display capture both transfer pixels through the
+existing `nativeByteVec -> native_byte_vec_from_raw` bulk-copy path. Swift
+borrows its contiguous buffer only during the synchronous call; Rust owns the
+returned copy. No extra transfer helper or retained pointer is introduced.
+Swift compilation follows Cargo `OPT_LEVEL` (`-O` for optimized builds,
+`-Osize` for size profiles, unoptimized for the default development profile).
+
+### Reproducible checks
+
+Opt-in probes live in the driver crate and keep all screenshots in memory.
+They require an awake desktop, Screen Recording permission, and a display id
+from `session.display().list()`. The Logical-resolution regression additionally
+requires a Retina primary display.
+
+```sh
+cargo test -p auv-driver-macos -p auv-driver-overlay-common \
+  -p auv-driver-overlay-macos -p auv-driver-overlay \
+  --features auv-driver-overlay/macos --lib
+cargo test -p auv-driver-macos --lib \
+  self_excluding_capture_honors_logical_resolution -- --ignored --nocapture
+cargo run --release -p auv-driver-macos --features overlay \
+  --example verify_overlay_capture -- 1
+cargo run --release -p auv-driver-macos --example measure_capture -- 1 5
+```
+
+The visibility probe checks that the status marker is visible in ordinary
+capture, absent from self-excluding capture, and still visible after filtered
+capture. The probe services Core Foundation's main-thread run loop until the
+capture worker finishes, then its cleanup guard removes the overlay. It waits
+up to ten seconds for the marker to become visible before testing exclusion.
+It compares marker counts with a baseline and uses display-relative regions so
+nonzero display origins are supported. The unit tests cover pixel ownership,
+null/empty input, image-envelope validation and native error propagation.
+`measure_capture` includes system screenshot, image conversion and the Swift/FFI
+path. Local timings are not portable performance guarantees.
+
+### Local evidence (2026-10-16)
+
+On the available 3024x1964 Retina display (1512x982 logical points), the
+visibility probe reported
+`baseline=0 visible=27009 excluded=0 after_capture=27009` while keeping the
+overlay visible until the worker completed. The opt-in Logical resolution regression
+passed through the public driver API. No screenshots were saved. This verifies
+behavior on this display; it does not establish coverage of every OS or Space
+transition.
+
+Five release timing samples (one cold, four warm) measured self-excluding
+capture median 129.746 ms, P95 132.977 ms and cold 269.921 ms; ordinary capture
+median was 35.185 ms.
+These are local receipts, not cross-machine benchmarks.
+
+Both native Swift packages built after bridge regeneration. Driver and overlay
+unit tests, example compilation, workspace formatting and diff checks passed.
+The stricter `clippy -- -D warnings` check encounters existing upstream lints
+(`collapsible_if` in `auv-driver-common/src/mouse_input.rs` and `needless_return`
+in the existing overlay render/remove branches). Those unrelated paths are
+unchanged by this slice.
