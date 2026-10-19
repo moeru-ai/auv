@@ -450,7 +450,7 @@ fn run_worker_inner(
   let context = ei::Context::new(UnixStream::from(fd)).map_err(|error| backend(format!("open EIS socket: {error}")))?;
   let response = handshake(&context, wake_read)?;
   let mut converter = EiEventConverter::new(&context, response);
-  let mut state = State::new(worker);
+  let mut state = State::new(Arc::clone(&worker));
 
   // The compositor sends seats and devices immediately after the handshake.
   let deadline = Instant::now() + OPEN_TIMEOUT;
@@ -484,7 +484,7 @@ fn run_worker_inner(
           return Ok(());
         }
         while let Ok(command) = commands.try_recv() {
-          handle_command(&mut state, &mut converter, command);
+          handle_command(&mut state, &mut converter, command)?;
         }
       }
       PollResult::Timeout | PollResult::Interrupted => {}
@@ -548,7 +548,7 @@ fn read_context(context: &ei::Context) -> DriverResult<()> {
   }
 }
 
-fn handle_command(state: &mut State, converter: &mut EiEventConverter, command: Command) {
+fn handle_command(state: &mut State, converter: &mut EiEventConverter, command: Command) -> DriverResult<()> {
   let (reply, result) = match command {
     Command::Move { point, reply } => (reply, state.move_to(point, converter)),
     Command::Button {
@@ -564,8 +564,24 @@ fn handle_command(state: &mut State, converter: &mut EiEventConverter, command: 
     } => (reply, state.scroll(point, notches, converter)),
     Command::Key { key, down, reply } => (reply, state.key(key, down, converter)),
   };
-  let _ = reply.send(result);
-  let _ = converter.connection().flush();
+  match result {
+    Ok(()) => {
+      if let Err(error) = flush_command(converter) {
+        let _ = reply.send(Err(backend(error.to_string())));
+        return Err(error);
+      }
+      let _ = reply.send(Ok(()));
+      Ok(())
+    }
+    Err(error) => {
+      let _ = reply.send(Err(error));
+      Ok(())
+    }
+  }
+}
+
+fn flush_command(converter: &EiEventConverter) -> DriverResult<()> {
+  converter.connection().flush().map_err(|error| backend(format!("flush EIS command: {error}")))
 }
 
 fn frame(device: &Device, converter: &EiEventConverter) {
@@ -730,5 +746,55 @@ mod tests {
     let after = now_micros();
     assert!(after > before);
     assert!(after - before >= 1_000);
+  }
+
+  fn handshake_converter() -> (ei::Context, EiEventConverter) {
+    let (client, server) = UnixStream::pair().unwrap();
+    let client_context = ei::Context::new(client).unwrap();
+    let server_context = reis::eis::Context::new(server).unwrap();
+    let server_thread = thread::spawn(move || {
+      let mut handshaker = reis::handshake::EisHandshaker::new(&server_context, 1);
+      let deadline = Instant::now() + Duration::from_secs(2);
+      loop {
+        match server_context.read() {
+          Ok(_) => {}
+          Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            assert!(Instant::now() < deadline, "test EIS handshake timed out");
+            thread::sleep(Duration::from_millis(1));
+            continue;
+          }
+          Err(error) => panic!("test EIS server read failed: {error}"),
+        }
+        while let Some(pending) = server_context.pending_request() {
+          let request = match pending {
+            reis::PendingRequestResult::Request(request) => request,
+            _ => panic!("test EIS server received an invalid handshake request"),
+          };
+          if handshaker.handle_request(request).unwrap().is_some() {
+            server_context.flush().unwrap();
+            return;
+          }
+        }
+      }
+    });
+    let response = reis::handshake::ei_handshake_blocking(&client_context, "test", ei::handshake::ContextType::Sender).unwrap();
+    server_thread.join().unwrap();
+    let converter = EiEventConverter::new(&client_context, response);
+    (client_context, converter)
+  }
+
+  // ROOT CAUSE:
+  //
+  // The worker replied before flushing the EIS command. A flush failure was
+  // lost, so the caller could treat an uncommitted event as delivered.
+  //
+  // Before the fix, the command reply path ignored `flush()`.
+  // The fix flushes first and reports the transport error to the caller.
+  #[test]
+  fn flush_failure_is_backend_error() {
+    let (_context, converter) = handshake_converter();
+    converter.connection().connection().sync(1);
+    let message = flush_command(&converter).unwrap_err().to_string();
+    assert!(message.contains("flush EIS command"), "{message}");
   }
 }

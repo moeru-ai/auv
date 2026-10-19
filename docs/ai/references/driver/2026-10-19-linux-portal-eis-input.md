@@ -127,7 +127,7 @@ converter.
 Callers send commands through a channel. A nonblocking wake pipe interrupts
 `poll` when a command arrives. Each command has a synchronous reply channel.
 The caller does not return until the worker has queued the EIS request and
-flushed it.
+flushed it. A flush failure returns a backend error and ends the worker.
 
 The worker handles these events:
 
@@ -148,6 +148,7 @@ These conditions return a backend error:
 - Missing selected device.
 - Server disconnect.
 - Closed EIS socket.
+- EIS command flush failure.
 - Keyboard or pointer use after pause.
 
 The portal input session treats these errors as session failures. It does not
@@ -240,6 +241,8 @@ Until the fix lands, the held mouse and drag live test is blocked.
 
 ## Validation Procedure
 
+Automated tests cover a command flush failure.
+
 Run these commands on a live GNOME Wayland desktop:
 
 ```text
@@ -266,8 +269,8 @@ These items are outside this slice:
   cross-region drag also needs a multi-monitor test.
 - High-resolution continuous scrolling. The current contract uses discrete
   notches.
-- A focused fake EIS server test. The current coverage uses unit tests,
-  compilation checks, and live validation.
+- A focused fake EIS input server test. Current tests cover the handshake and
+  a command flush failure, but not full device input.
 - uinput layout-group tracking. uinput still uses only mappings that agree in
   every layout. EIS uses the compositor group event.
 - Live multi-layout keyboard validation. Unit tests cover US and German
