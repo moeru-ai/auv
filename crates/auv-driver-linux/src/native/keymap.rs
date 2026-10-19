@@ -1,6 +1,8 @@
 //! Resolve requested keysyms using the compositor's actual keyboard layout.
 use std::collections::HashMap;
 use std::fs::File;
+use std::io;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::fs::FileExt;
 
 use auv_driver_common::error::DriverResult;
@@ -20,7 +22,7 @@ pub(crate) struct Stroke {
   pub shift: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Keymap(HashMap<i32, Stroke>);
 
 impl Keymap {
@@ -39,10 +41,74 @@ impl Keymap {
       seat.release();
     }
     let text = state.keymap.ok_or_else(|| backend("compositor did not provide an XKB keymap"))??;
+    Self::from_xkb_text(&text)
+  }
+
+  pub(crate) fn from_xkb_text(text: &str) -> DriverResult<Self> {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_string(&context, text, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS)
+    let keymap = xkb::Keymap::new_from_string(&context, text.to_owned(), xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS)
       .ok_or_else(|| backend("compositor returned an invalid XKB keymap"))?;
     Self::from_xkb(&keymap)
+  }
+
+  /// Reads the XKB text from the EIS keymap descriptor. EIS descriptors can
+  /// share a file offset with the compositor, so use positional reads.
+  pub(crate) fn from_fd(fd: BorrowedFd<'_>, size: u32) -> DriverResult<Self> {
+    if size > 4 * 1024 * 1024 {
+      return Err(backend("EIS XKB keymap is larger than 4 MiB"));
+    }
+    let mut bytes = vec![0; size as usize];
+    let mut offset = 0;
+    while offset < bytes.len() {
+      // SAFETY: `bytes[offset..]` is writable and `fd` is a borrowed descriptor.
+      let read = unsafe { libc::pread(fd.as_raw_fd(), bytes[offset..].as_mut_ptr().cast(), bytes.len() - offset, offset as libc::off_t) };
+      if read < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+          continue;
+        }
+        return Err(backend(format!("read EIS XKB keymap fd: {error}")));
+      }
+      if read == 0 {
+        break;
+      }
+      offset += read as usize;
+    }
+    bytes.truncate(offset);
+    let text = String::from_utf8(bytes).map_err(|error| backend(format!("decode EIS XKB keymap: {error}")))?;
+    Self::from_xkb_text(text.trim_end_matches('\0'))
+  }
+
+  /// Resolve held modifier keysyms and add Shift when a stroke needs it.
+  pub(crate) fn held_keys(&self, symbols: &[i32]) -> DriverResult<Vec<KeyCode>> {
+    let strokes = symbols.iter().map(|symbol| self.stroke(*symbol)).collect::<DriverResult<Vec<_>>>()?;
+    let mut keys = strokes.iter().map(|stroke| stroke.key).collect::<Vec<_>>();
+    if strokes.iter().any(|stroke| stroke.shift) {
+      let shift = self.stroke(crate::input::keysym::SHIFT_L)?.key;
+      if !keys.contains(&shift) {
+        keys.insert(0, shift);
+      }
+    }
+    Ok(keys)
+  }
+
+  /// Resolve a chord into the keys to hold. Release them in reverse order so
+  /// the action key goes up before its modifiers.
+  pub(crate) fn chord_keys(&self, modifiers: &[i32], key: i32) -> DriverResult<Vec<KeyCode>> {
+    let stroke = self.stroke(key)?;
+    let held = modifiers.iter().map(|key| self.stroke(*key)).collect::<DriverResult<Vec<_>>>()?;
+    let needs_shift = stroke.shift || held.iter().any(|stroke| stroke.shift);
+    let mut presses = held.iter().map(|stroke| stroke.key).collect::<Vec<_>>();
+    if needs_shift {
+      let shift = self.stroke(crate::input::keysym::SHIFT_L)?.key;
+      if !presses.contains(&shift) {
+        presses.insert(0, shift);
+      }
+    }
+    if !presses.contains(&stroke.key) {
+      presses.push(stroke.key);
+    }
+    Ok(presses)
   }
 
   fn from_xkb(map: &xkb::Keymap) -> DriverResult<Self> {
@@ -205,6 +271,46 @@ mod tests {
     assert!(map.validate_keys(&['A' as i32], &supported).is_err());
     let supported = [KeyCode::KEY_A, KeyCode::KEY_B, KeyCode::KEY_LEFTSHIFT].into_iter().collect();
     assert!(map.validate_keys(&['a' as i32, 'A' as i32], &supported).is_ok());
+  }
+
+  #[test]
+  fn chords_add_shift_once_and_release_order_is_reverse_of_presses() {
+    let map = Keymap(HashMap::from([
+      (
+        'a' as i32,
+        Stroke {
+          key: KeyCode::KEY_A,
+          shift: false,
+        },
+      ),
+      (
+        'A' as i32,
+        Stroke {
+          key: KeyCode::KEY_A,
+          shift: true,
+        },
+      ),
+      (
+        crate::input::keysym::SHIFT_L,
+        Stroke {
+          key: KeyCode::KEY_LEFTSHIFT,
+          shift: false,
+        },
+      ),
+      (
+        crate::input::keysym::CONTROL_L,
+        Stroke {
+          key: KeyCode::KEY_LEFTCTRL,
+          shift: false,
+        },
+      ),
+    ]));
+    assert_eq!(map.chord_keys(&[], 'a' as i32).unwrap(), [KeyCode::KEY_A]);
+    assert_eq!(map.chord_keys(&[], 'A' as i32).unwrap(), [KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_A]);
+    assert_eq!(map.chord_keys(&[crate::input::keysym::SHIFT_L], 'A' as i32).unwrap(), [KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_A]);
+    assert_eq!(map.chord_keys(&[crate::input::keysym::CONTROL_L], 'a' as i32).unwrap(), [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_A]);
+    assert_eq!(map.held_keys(&['A' as i32]).unwrap(), [KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_A]);
+    assert_eq!(map.held_keys(&[crate::input::keysym::CONTROL_L]).unwrap(), [KeyCode::KEY_LEFTCTRL]);
   }
 
   #[test]

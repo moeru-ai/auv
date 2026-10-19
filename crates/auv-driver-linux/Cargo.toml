@@ -39,6 +39,7 @@ futures-lite = "2"
 leptess = "0.14"
 libc = "0.2"
 pipewire = "0.8"
+reis = "0.7.1"
 url = "2"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }

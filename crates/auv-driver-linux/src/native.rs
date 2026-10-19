@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+pub(crate) mod eis;
+#[cfg(target_os = "linux")]
 pub(crate) mod keymap;
 #[cfg(target_os = "linux")]
 pub(crate) mod uinput;
@@ -10,12 +12,13 @@ use auv_driver_common::error::DriverResult;
 use auv_driver_common::input::Scroll;
 
 // NOTICE(scroll-pixels-per-wheel-notch): one wheel notch (uinput REL_WHEEL or
-// portal NotifyPointerAxisDiscrete) scrolled Chromium by 120 CSS px on GNOME
+// EIS ei_scroll.scroll_discrete) scrolled Chromium by 120 CSS px on GNOME
 // Wayland (`neko-gpu-1`, 2026-10-06), so AUV maps 120 logical pixels to one
 // notch. See `docs/ai/references/driver/2026-10-06-scroll-delta-contract.md`.
-// TODO(linux-portal-hi-res-wheel): the RemoteDesktop portal (v2) has no
-// high-resolution discrete axis, so portal deltas below one notch accumulate
-// within one input session. uinput uses REL_WHEEL_HI_RES instead.
+// TODO(linux-portal-hi-res-wheel): the current shared scroll contract commits
+// to discrete EIS notches, so deltas below one notch accumulate within one
+// input session. EIS also exposes continuous `ei_scroll.scroll`; uinput uses
+// REL_WHEEL_HI_RES. Revisit continuous scrolling only with an approved contract.
 pub(crate) const SCROLL_PIXELS_PER_WHEEL_NOTCH: f64 = 120.0;
 
 /// High-resolution wheel units per notch (`REL_WHEEL_HI_RES`, kernel convention).
@@ -124,15 +127,6 @@ pub mod portal {
     }
   }
 
-  #[derive(Debug, Default)]
-  pub struct PortalInput;
-
-  impl PortalInput {
-    pub fn open(_restore_tokens: Option<&RestoreTokenStore>, _app_id: Option<&String>) -> DriverResult<InputSession> {
-      Err(DriverError::unsupported("linux.portal.input"))
-    }
-  }
-
   #[derive(Clone, Debug, Default)]
   pub struct RestoreTokenStore;
 
@@ -146,7 +140,11 @@ pub mod portal {
   pub struct InputSession;
 
   impl InputSession {
-    pub fn button(&mut self, _button: auv_driver_common::MouseButton, _down: bool) -> DriverResult<()> {
+    pub fn open(_restore_tokens: Option<&RestoreTokenStore>, _app_id: Option<&String>) -> DriverResult<InputSession> {
+      Err(DriverError::unsupported("linux.portal.input"))
+    }
+
+    pub fn button(&mut self, _point: Point, _button: auv_driver_common::MouseButton, _down: bool) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
@@ -164,15 +162,7 @@ pub mod portal {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
-    pub fn scroll(&mut self, _scroll: Scroll) -> DriverResult<()> {
-      Err(DriverError::unsupported("linux.portal.input"))
-    }
-
     pub fn scroll_at(&mut self, _point: Point, _scroll: Scroll) -> DriverResult<()> {
-      Err(DriverError::unsupported("linux.portal.input"))
-    }
-
-    pub fn key_press(&mut self, _keysym: i32) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 

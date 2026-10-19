@@ -117,7 +117,7 @@ impl PermissionApi<'_> {
   pub fn authorize_portals(&self) -> DriverResult<()> {
     let mut state = self.session.state.lock().expect("linux driver session state poisoned");
     let authorization = if state.input_session.is_none() || state.input_backend == crate::InputBackend::Uinput {
-      Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_ref())?)
+      Some(crate::native::portal::InputSession::open(state.restore_tokens.as_ref(), state.portal_app_id.as_ref())?)
     } else {
       None
     };

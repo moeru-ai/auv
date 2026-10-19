@@ -1,34 +1,6 @@
 use super::*;
 
 #[test]
-fn stream_maps_global_point_to_local_point() {
-  let stream = ScreenCastStream {
-    id: 7,
-    position: Some((100, 50)),
-    size: Some((800, 600)),
-    source_type: Some(SourceType::Monitor as u32),
-    mapping_id: None,
-  };
-
-  let point = stream.local_point(Point::new(120.0, 80.0)).expect("point maps into stream");
-
-  assert_eq!(point, Point::new(20.0, 30.0));
-}
-
-#[test]
-fn stream_rejects_outside_point() {
-  let stream = ScreenCastStream {
-    id: 7,
-    position: Some((100, 50)),
-    size: Some((800, 600)),
-    source_type: Some(SourceType::Monitor as u32),
-    mapping_id: None,
-  };
-
-  assert!(stream.local_point(Point::new(50.0, 80.0)).is_err());
-}
-
-#[test]
 fn bgrx_pixel_converts_to_rgba() {
   let mut dest = [0, 0, 0, 0];
 

@@ -28,6 +28,7 @@
 //!   type-text <text>               type text through RemoteDesktop portal
 //!   press <key>                    press a key or shortcut through the portal
 //!   scroll <x> <y> <delta-y>       scroll logical pixels through the portal (positive = down)
+//!   move <x> <y>                   move the pointer through the portal
 //!   click <x> <y>                  click through the portal
 //!   window-click <substr> <x> <y>  click window-local point
 //!   window-scroll <substr> <x> <y> <delta-y>
@@ -118,6 +119,7 @@ fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run 
     "type-text" => type_text(session, arg(rest, 0, "text")?),
     "press" => press(session, arg(rest, 0, "key")?),
     "scroll" => scroll(session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
+    "move" => move_pointer(session, parse(rest, 0)?, parse(rest, 1)?),
     "click" => click(session, parse(rest, 0)?, parse(rest, 1)?),
     "window-click" => window_click(session, arg(rest, 0, "title-substr")?, parse(rest, 1)?, parse(rest, 2)?),
     "window-scroll" => window_scroll(session, arg(rest, 0, "title-substr")?, parse(rest, 1)?, parse(rest, 2)?, parse(rest, 3)?),
@@ -177,6 +179,7 @@ fn command_arity(command: &str) -> Option<(usize, usize)> {
     "capture-screen" => Some((0, 1)),
     "resolve" | "ocr" | "ax" | "coords" | "paste-text" | "type-text" | "press" => Some((1, 1)),
     "focus-node" | "select-node" | "find-window-text" | "wait-window-text" => Some((2, 2)),
+    "move" => Some((2, 2)),
     "capture-window" => Some((1, 2)),
     "click" => Some((2, 2)),
     "scroll" | "window-click" => Some((3, 3)),
@@ -421,6 +424,12 @@ fn scroll(session: &LinuxDriverSession, x: f64, y: f64, delta_y: f64) -> Run {
   Ok(())
 }
 
+fn move_pointer(session: &LinuxDriverSession, x: f64, y: f64) -> Run {
+  let result = session.input().move_to(Point::new(x, y))?;
+  println!("move result: {result:?}");
+  Ok(())
+}
+
 fn click(session: &LinuxDriverSession, x: f64, y: f64) -> Run {
   let result = session.input().click_at(Point::new(x, y), auv_driver_common::MouseButton::Left, Click::Single, Default::default())?;
   println!("click result: {result:?}");
@@ -444,8 +453,13 @@ fn window_scroll(session: &LinuxDriverSession, substr: &str, x: f64, y: f64, del
 fn input_boundary(session: &LinuxDriverSession) -> Run {
   let probe = session.permission().probe_linux();
   println!("RemoteDesktop portal: {:?}", probe.remote_desktop);
-  println!("input delivery uses the RemoteDesktop portal Notify* path; absolute pointer motion must succeed before click buttons are sent");
-  println!("reserved result shape: {:?}", auv_driver_linux::input::reserved_input_result("portal/libei session not wired"));
+  println!("input delivery uses the RemoteDesktop portal EIS path; absolute pointer motion must succeed before click buttons are sent");
+  println!(
+    "reserved result shape: {:?}",
+    auv_driver_linux::input::reserved_input_result(
+      "input-boundary probe reports readiness only; use click, scroll, or press to deliver input"
+    )
+  );
   Ok(())
 }
 
@@ -485,7 +499,7 @@ where
 fn print_usage() {
   eprintln!(
     "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
-commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|find-window-text|wait-window-text|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|window-click|window-scroll|input-boundary"
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|find-window-text|wait-window-text|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|move|click|window-click|window-scroll|input-boundary"
   );
 }
 

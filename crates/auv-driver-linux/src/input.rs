@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::driver::InputBackend;
 use crate::driver::LinuxDriverSessionState;
 use crate::error::{backend, invalid_input};
-use crate::native::portal::{InputSession as PortalSession, PortalInput};
+use crate::native::portal::InputSession as PortalSession;
 use auv_driver_common::KeyboardBackend;
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
@@ -28,55 +28,72 @@ pub(crate) enum InputSession {
 impl InputSession {
   fn held_keys(&self, symbols: &[i32]) -> DriverResult<Vec<HeldKey>> {
     match self {
-      Self::Portal(_) => Ok(symbols.iter().copied().map(HeldKey::Portal).collect()),
+      Self::Portal(session) => {
+        #[cfg(target_os = "linux")]
+        {
+          session.keymap()?.held_keys(symbols).map(|keys| keys.into_iter().map(HeldKey::Key).collect())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+          let _ = session;
+          Ok(symbols.iter().copied().map(HeldKey::Portal).collect())
+        }
+      }
       #[cfg(target_os = "linux")]
       Self::Uinput(session) => {
         let layout = crate::native::keymap::Keymap::load()?;
         session.validate_keys(&layout, symbols)?;
-        let strokes = symbols.iter().map(|symbol| layout.stroke(*symbol)).collect::<DriverResult<Vec<_>>>()?;
-        let mut keys = strokes.iter().map(|stroke| HeldKey::Uinput(stroke.key)).collect::<Vec<_>>();
-        if strokes.iter().any(|stroke| stroke.shift) {
-          let shift = layout.stroke(keysym::SHIFT_L)?.key;
-          if !keys.contains(&HeldKey::Uinput(shift)) {
-            keys.insert(0, HeldKey::Uinput(shift));
-          }
-        }
-        Ok(keys)
+        Ok(layout.held_keys(symbols)?.into_iter().map(HeldKey::Key).collect())
       }
     }
   }
 
   fn key_transition(&mut self, key: &HeldKey, down: bool) -> DriverResult<()> {
+    #[cfg(target_os = "linux")]
+    match (self, key) {
+      (Self::Portal(session), HeldKey::Key(code)) => session.key_transition(*code, down),
+      (Self::Uinput(session), HeldKey::Key(code)) => session.key_transition(*code, down),
+    }
+    #[cfg(not(target_os = "linux"))]
     match (self, key) {
       (Self::Portal(session), HeldKey::Portal(symbol)) => session.key_transition(*symbol, down),
-      #[cfg(target_os = "linux")]
-      (Self::Uinput(session), HeldKey::Uinput(code)) => session.key_transition(*code, down),
-      #[cfg(target_os = "linux")]
-      _ => Err(backend("held keyboard backend changed")),
     }
   }
 
   pub(crate) fn keyboard_layout(&self) -> DriverResult<KeyboardLayout> {
     match self {
-      Self::Portal(_) => Ok(KeyboardLayout::Portal),
+      Self::Portal(session) => {
+        #[cfg(target_os = "linux")]
+        let result = session.keymap().map(KeyboardLayout::Keymap);
+        #[cfg(not(target_os = "linux"))]
+        let result = {
+          let _ = session;
+          Ok(KeyboardLayout::Portal)
+        };
+        result
+      }
       #[cfg(target_os = "linux")]
-      Self::Uinput(_) => crate::native::keymap::Keymap::load().map(KeyboardLayout::Uinput),
+      Self::Uinput(_) => crate::native::keymap::Keymap::load().map(KeyboardLayout::Keymap),
     }
   }
 
   pub(crate) fn validate_keyboard(&self, layout: &KeyboardLayout, plan: &KeyboardPlan) -> DriverResult<()> {
     match (self, layout) {
-      (Self::Portal(_), KeyboardLayout::Portal) => {
-        let _ = plan;
-        Ok(())
-      }
       #[cfg(target_os = "linux")]
-      (Self::Uinput(session), KeyboardLayout::Uinput(layout)) => {
+      (Self::Portal(session), KeyboardLayout::Keymap(layout)) => {
         let keys = plan.steps.iter().flat_map(|(chord, _)| chord.modifiers.iter().copied().chain([chord.key])).collect::<Vec<_>>();
         session.validate_keys(layout, &keys)
       }
       #[cfg(target_os = "linux")]
-      _ => Err(backend("keyboard backend changed after preparation")),
+      (Self::Uinput(session), KeyboardLayout::Keymap(layout)) => {
+        let keys = plan.steps.iter().flat_map(|(chord, _)| chord.modifiers.iter().copied().chain([chord.key])).collect::<Vec<_>>();
+        session.validate_keys(layout, &keys)
+      }
+      #[cfg(not(target_os = "linux"))]
+      (Self::Portal(_), KeyboardLayout::Portal) => {
+        let _ = plan;
+        Ok(())
+      }
     }
   }
 
@@ -84,20 +101,21 @@ impl InputSession {
     self.validate_keyboard(layout, plan)?;
     for (chord, delay) in &plan.steps {
       match (&mut *self, layout) {
+        #[cfg(target_os = "linux")]
+        (Self::Portal(session), KeyboardLayout::Keymap(layout)) => session.key_chord(layout, &chord.modifiers, chord.key)?,
+        #[cfg(target_os = "linux")]
+        (Self::Uinput(session), KeyboardLayout::Keymap(layout)) => session.key_chord(layout, &chord.modifiers, chord.key)?,
+        #[cfg(not(target_os = "linux"))]
         (Self::Portal(session), KeyboardLayout::Portal) => session.key_chord(&chord.modifiers, chord.key)?,
-        #[cfg(target_os = "linux")]
-        (Self::Uinput(session), KeyboardLayout::Uinput(layout)) => session.key_chord(layout, &chord.modifiers, chord.key)?,
-        #[cfg(target_os = "linux")]
-        _ => return Err(backend("keyboard backend changed after preparation")),
       }
       sleep_if_nonzero(*delay);
     }
     Ok(())
   }
 
-  fn button(&mut self, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
+  fn button(&mut self, point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
     match self {
-      Self::Portal(session) => session.button(button, down),
+      Self::Portal(session) => session.button(point, button, down),
       #[cfg(target_os = "linux")]
       Self::Uinput(session) => session.button(button, down),
     }
@@ -128,9 +146,10 @@ impl InputSession {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HeldKey {
+  #[cfg(not(target_os = "linux"))]
   Portal(i32),
   #[cfg(target_os = "linux")]
-  Uinput(evdev::KeyCode),
+  Key(evdev::KeyCode),
 }
 
 struct HeldKeyboardBackend {
@@ -330,7 +349,7 @@ fn input_session(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<Ar
   if state.input_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
     let input = match state.input_backend {
-      InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_ref())?),
+      InputBackend::Portal => InputSession::Portal(PortalSession::open(restore_tokens.as_ref(), state.portal_app_id.as_ref())?),
       #[cfg(target_os = "linux")]
       InputBackend::Uinput => InputSession::Uinput(crate::native::uinput::InputSession::open()?),
       #[cfg(not(target_os = "linux"))]
@@ -376,7 +395,7 @@ fn deliver_input<T>(
 /// and Tab presses. Splitting text into typed and pasted runs is a possible
 /// follow-up if a workflow needs both.
 pub(crate) fn keysym_typeable(text: &str) -> bool {
-  text.chars().all(|character| character.is_ascii())
+  text.is_ascii()
 }
 
 /// The paste that delivers `text` when keysym typing cannot.
@@ -443,9 +462,10 @@ fn sleep_if_nonzero(duration: Duration) {
 /// A layout change during delivery is observed by the next operation; semantic
 /// verification remains separate from submitted key events.
 pub(crate) enum KeyboardLayout {
+  #[cfg(not(target_os = "linux"))]
   Portal,
   #[cfg(target_os = "linux")]
-  Uinput(crate::native::keymap::Keymap),
+  Keymap(crate::native::keymap::Keymap),
 }
 
 /// Prepared chords are both the validation input and the delivered event plan.
@@ -683,8 +703,8 @@ impl auv_driver_common::mouse_input::MouseBackend for MouseBackend {
     deliver_input(&self.state, &self.session()?, |session| session.move_to(point))?;
     Ok(pointer_result())
   }
-  fn button(&self, _point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
-    deliver_input(&self.state, &self.session()?, |session| session.button(button, down))?;
+  fn button(&self, point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    deliver_input(&self.state, &self.session()?, |session| session.button(point, button, down))?;
     Ok(pointer_result())
   }
 }
