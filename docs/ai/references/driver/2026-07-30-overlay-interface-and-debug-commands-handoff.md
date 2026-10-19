@@ -119,8 +119,6 @@ Window and self-excluding display capture both transfer pixels through the
 existing `nativeByteVec -> native_byte_vec_from_raw` bulk-copy path. Swift
 borrows its contiguous buffer only during the synchronous call; Rust owns the
 returned copy. No extra transfer helper or retained pointer is introduced.
-Swift compilation follows Cargo `OPT_LEVEL` (`-O` for optimized builds,
-`-Osize` for size profiles, unoptimized for the default development profile).
 
 ### Reproducible checks
 
@@ -161,10 +159,12 @@ passed through the public driver API. No screenshots were saved. This verifies
 behavior on this display; it does not establish coverage of every OS or Space
 transition.
 
-Five release timing samples (one cold, four warm) measured self-excluding
+Before the Swift optimization change was split into a separate PR, five
+release timing samples (one cold, four warm) measured self-excluding
 capture median 129.746 ms, P95 132.977 ms and cold 269.921 ms; ordinary capture
 median was 35.185 ms.
-These are local receipts, not cross-machine benchmarks.
+These historical timings used optimized Swift code and do not describe this
+capture-only branch after the split. They are not cross-machine benchmarks.
 
 Both native Swift packages built after bridge regeneration. Driver and overlay
 unit tests, example compilation, workspace formatting and diff checks passed.
