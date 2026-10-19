@@ -76,9 +76,14 @@ The button mapping is:
 - Right: `BTN_RIGHT` (`0x111`).
 - Middle: `BTN_MIDDLE` (`0x112`).
 
-`EisInput::button` selects the absolute pointer by the supplied point. The
-button down and button up calls use the same point unless the caller moved the
-pointer between them.
+`EisInput::button` selects the absolute pointer by the supplied point for a
+button press. It records that pointer device. A button release goes to the
+same device, even when the pointer moved into another region during a drag.
+This keeps the press and release route stable.
+
+Absolute motion still selects the device by point. A cross-region drag can
+therefore send motion through a different device than the held button. This
+device split is not fully validated.
 
 Scroll uses `ei_scroll.scroll_discrete`. One logical scroll notch maps to 120
 discrete units. A positive `y` value scrolls down, which matches the existing
@@ -251,8 +256,9 @@ These items are outside this slice:
 
 - Relative pointer delivery. The current backend binds only
   `PointerAbsolute`.
-- Button affinity across multiple standalone absolute pointer devices. The
-  current backend selects a device for each command point.
+- Live multi-monitor drag validation. The code keeps a button release on the
+  press device, but this host has one output. The motion route during a
+  cross-region drag also needs a multi-monitor test.
 - High-resolution continuous scrolling. The current contract uses discrete
   notches.
 - A focused fake EIS server test. The current coverage uses unit tests,

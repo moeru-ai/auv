@@ -219,6 +219,10 @@ struct KeyboardDevice {
 struct State {
   pointers: Vec<PointerDevice>,
   keyboards: Vec<KeyboardDevice>,
+  // TODO(eis-multi-monitor-drag): this host has one output, so the press/release
+  // route is not live-tested across two absolute devices. Add a fake-EIS or
+  // multi-monitor regression when that setup is available.
+  button_device: Option<ei::Device>,
   started: HashSet<ei::Device>,
   sequence: u32,
   worker: Arc<WorkerState>,
@@ -229,6 +233,7 @@ impl State {
     Self {
       pointers: Vec::new(),
       keyboards: Vec::new(),
+      button_device: None,
       started: HashSet::new(),
       sequence: 0,
       worker,
@@ -310,6 +315,9 @@ impl State {
   }
 
   fn remove_device(&mut self, device: &Device) {
+    if self.button_device.as_ref() == Some(device.device()) {
+      self.button_device = None;
+    }
     self.keyboards.retain(|keyboard| &keyboard.device != device);
     self.pointers.retain(|pointer| &pointer.device != device);
     self.started.remove(device.device());
@@ -328,29 +336,43 @@ impl State {
     }
   }
 
-  fn pointer_for_point(&mut self, point: Point) -> DriverResult<&mut PointerDevice> {
+  fn pointer_index_for_point(&self, point: Point) -> DriverResult<usize> {
     if !point.x.is_finite() || !point.y.is_finite() {
       return Err(invalid_input("EIS pointer target must be finite"));
     }
-    let Some(index) = self
+    self
       .pointers
       .iter()
       .position(|pointer| !pointer.paused && pointer.device.regions().iter().any(|region| region_contains(region, point)))
-    else {
-      return Err(invalid_input(format!("no EIS pointer region contains point {point:?}")));
-    };
-    Ok(&mut self.pointers[index])
+      .ok_or_else(|| invalid_input(format!("no EIS pointer region contains point {point:?}")))
   }
 
   fn move_to(&mut self, point: Point, converter: &EiEventConverter) -> DriverResult<()> {
-    let pointer = self.pointer_for_point(point)?;
+    let index = self.pointer_index_for_point(point)?;
+    let pointer = &mut self.pointers[index];
     pointer.absolute.motion_absolute(point.x as f32, point.y as f32);
     frame(&pointer.device, converter);
     Ok(())
   }
 
   fn button(&mut self, point: Point, button: u32, down: bool, converter: &EiEventConverter) -> DriverResult<()> {
-    let pointer = self.pointer_for_point(point)?;
+    let index = if down {
+      if self.button_device.is_some() {
+        return Err(backend("EIS pointer already has a pressed button"));
+      }
+      self.pointer_index_for_point(point)?
+    } else if let Some(device) = self.button_device.as_ref() {
+      // Keep the release on the device that received the press, even when the
+      // pointer moved into another region during the drag.
+      self
+        .pointers
+        .iter()
+        .position(|pointer| pointer.device.device() == device)
+        .ok_or_else(|| backend("EIS button device is no longer available"))?
+    } else {
+      self.pointer_index_for_point(point)?
+    };
+    let pointer = &mut self.pointers[index];
     let interface = pointer.button.as_ref().ok_or_else(|| backend("EIS pointer has no button capability"))?;
     interface.button(
       button,
@@ -361,11 +383,13 @@ impl State {
       },
     );
     frame(&pointer.device, converter);
+    self.button_device = down.then(|| pointer.device.device().clone());
     Ok(())
   }
 
   fn scroll(&mut self, point: Point, notches: (i32, i32), converter: &EiEventConverter) -> DriverResult<()> {
-    let pointer = self.pointer_for_point(point)?;
+    let index = self.pointer_index_for_point(point)?;
+    let pointer = &mut self.pointers[index];
     let interface = pointer.scroll.as_ref().ok_or_else(|| backend("EIS pointer has no scroll capability"))?;
     interface.scroll_discrete(notches.0.saturating_mul(120), notches.1.saturating_mul(120));
     frame(&pointer.device, converter);
