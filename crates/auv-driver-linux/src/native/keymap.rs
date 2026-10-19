@@ -23,7 +23,10 @@ pub(crate) struct Stroke {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Keymap(HashMap<i32, Stroke>);
+pub(crate) struct Keymap {
+  layouts: Vec<HashMap<i32, Stroke>>,
+  group: usize,
+}
 
 impl Keymap {
   pub fn load() -> DriverResult<Self> {
@@ -45,10 +48,13 @@ impl Keymap {
   }
 
   pub(crate) fn from_xkb_text(text: &str) -> DriverResult<Self> {
+    Self::from_xkb(&Self::parse_xkb(text)?)
+  }
+
+  fn parse_xkb(text: &str) -> DriverResult<xkb::Keymap> {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_string(&context, text.to_owned(), xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS)
-      .ok_or_else(|| backend("compositor returned an invalid XKB keymap"))?;
-    Self::from_xkb(&keymap)
+    xkb::Keymap::new_from_string(&context, text.to_owned(), xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS)
+      .ok_or_else(|| backend("compositor returned an invalid XKB keymap"))
   }
 
   /// Reads the XKB text from the EIS keymap descriptor. EIS descriptors can
@@ -76,7 +82,7 @@ impl Keymap {
     }
     bytes.truncate(offset);
     let text = String::from_utf8(bytes).map_err(|error| backend(format!("decode EIS XKB keymap: {error}")))?;
-    Self::from_xkb_text(text.trim_end_matches('\0'))
+    Self::from_xkb_grouped(&Self::parse_xkb(text.trim_end_matches('\0'))?)
   }
 
   /// Resolve held modifier keysyms and add Shift when a stroke needs it.
@@ -112,17 +118,36 @@ impl Keymap {
   }
 
   fn from_xkb(map: &xkb::Keymap) -> DriverResult<Self> {
-    // TODO: Without focused-seat group state, only mappings identical in every
-    // layout are safe. Group-specific keys await a layout tracking contract.
-    let mut shared = Self::for_layout(map, 0);
-    for layout in 1..map.num_layouts() {
-      let other = Self::for_layout(map, layout);
-      shared.0.retain(|symbol, stroke| other.0.get(symbol) == Some(stroke));
+    // TODO(uinput-layout-group): uinput has no focused-seat group source, so
+    // keep only mappings that are identical in every layout. EIS uses
+    // from_xkb_grouped with its group event.
+    let layouts = Self::layouts(map);
+    let Some(first) = layouts.first() else {
+      return Err(backend("compositor returned an empty XKB keymap"));
+    };
+    let mut shared = first.clone();
+    for other in &layouts[1..] {
+      shared.retain(|symbol, stroke| other.get(symbol) == Some(stroke));
     }
-    Ok(shared)
+    Ok(Self {
+      layouts: vec![shared],
+      group: 0,
+    })
   }
 
-  fn for_layout(map: &xkb::Keymap, layout: u32) -> Self {
+  fn from_xkb_grouped(map: &xkb::Keymap) -> DriverResult<Self> {
+    let layouts = Self::layouts(map);
+    if layouts.is_empty() {
+      return Err(backend("compositor returned an empty XKB keymap"));
+    }
+    Ok(Self { layouts, group: 0 })
+  }
+
+  fn layouts(map: &xkb::Keymap) -> Vec<HashMap<i32, Stroke>> {
+    (0..map.num_layouts()).map(|layout| Self::for_layout(map, layout)).collect()
+  }
+
+  fn for_layout(map: &xkb::Keymap, layout: u32) -> HashMap<i32, Stroke> {
     let shift = map.mod_get_index(xkb::MOD_NAME_SHIFT);
     let shift_mask = 1_u32.checked_shl(shift).unwrap_or(0);
     let mut strokes = HashMap::new();
@@ -155,12 +180,20 @@ impl Keymap {
         }
       }
     }
-    Self(strokes)
+    strokes
+  }
+
+  /// Follow the compositor's effective keyboard group. An out-of-range group
+  /// is ignored so a fallback keymap with one layout remains usable.
+  pub(crate) fn set_group(&mut self, group: u32) {
+    if (group as usize) < self.layouts.len() {
+      self.group = group as usize;
+    }
   }
 
   pub fn stroke(&self, symbol: i32) -> DriverResult<Stroke> {
-    self
-      .0
+    let layout = self.layouts.get(self.group).ok_or_else(|| backend("active XKB group is outside the loaded keymap"))?;
+    layout
       .get(&symbol)
       .copied()
       .ok_or_else(|| invalid_input(format!("keysym {symbol:#x} has no unshifted/Shift mapping in the current XKB layout")))
@@ -186,7 +219,7 @@ impl Keymap {
   }
 
   pub fn keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
-    self.0.values().map(|stroke| stroke.key)
+    self.layouts.iter().flat_map(|layout| layout.values()).map(|stroke| stroke.key)
   }
 }
 
@@ -225,6 +258,14 @@ fn read_keymap(file: &File, size: u32) -> DriverResult<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn test_keymap(strokes: HashMap<i32, Stroke>) -> Keymap {
+    Keymap {
+      layouts: vec![strokes],
+      group: 0,
+    }
+  }
+
   // ROOT CAUSE: GNOME duplicates a keymap FD with a shared offset. Sequential
   // reads exhausted it, so later connections received an empty keymap.
   #[test]
@@ -243,7 +284,7 @@ mod tests {
   // advertised keys. Such events can be silently ignored by the kernel.
   #[test]
   fn changed_mapping_rejects_keys_absent_from_existing_device() {
-    let map = Keymap(HashMap::from([
+    let map = test_keymap(HashMap::from([
       (
         'a' as i32,
         Stroke {
@@ -275,7 +316,7 @@ mod tests {
 
   #[test]
   fn chords_add_shift_once_and_release_order_is_reverse_of_presses() {
-    let map = Keymap(HashMap::from([
+    let map = test_keymap(HashMap::from([
       (
         'a' as i32,
         Stroke {
@@ -314,12 +355,27 @@ mod tests {
   }
 
   #[test]
-  fn multiple_layouts_only_allow_agreed_strokes() {
+  fn shared_layouts_only_allow_agreed_strokes() {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     let map = xkb::Keymap::new_from_names(&context, "", "", "us,de", "", None, xkb::COMPILE_NO_FLAGS).unwrap();
     let map = Keymap::from_xkb(&map).unwrap();
     assert_eq!(map.stroke('a' as i32).unwrap().key, KeyCode::KEY_A);
     assert!(map.stroke('y' as i32).is_err());
+  }
+
+  #[test]
+  fn grouped_layout_uses_the_active_compositor_group() {
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let map = xkb::Keymap::new_from_names(&context, "", "", "us,de", "", None, xkb::COMPILE_NO_FLAGS).unwrap();
+    let mut map = Keymap::from_xkb_grouped(&map).unwrap();
+    assert_eq!(map.stroke('y' as i32).unwrap().key, KeyCode::KEY_Y);
+    assert_eq!(map.held_keys(&['y' as i32]).unwrap(), [KeyCode::KEY_Y]);
+    map.set_group(1);
+    assert_eq!(map.stroke('y' as i32).unwrap().key, KeyCode::KEY_Z);
+    assert_eq!(map.held_keys(&['y' as i32]).unwrap(), [KeyCode::KEY_Z]);
+    assert_eq!(map.chord_keys(&[], 'y' as i32).unwrap(), [KeyCode::KEY_Z]);
+    map.set_group(2);
+    assert_eq!(map.stroke('y' as i32).unwrap().key, KeyCode::KEY_Z);
   }
 
   #[test]

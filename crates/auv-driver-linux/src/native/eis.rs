@@ -262,6 +262,11 @@ impl State {
       EiEvent::DeviceRemoved(removed) => self.remove_device(&removed.device),
       EiEvent::DevicePaused(paused) => self.set_paused(&paused.device, true),
       EiEvent::DeviceResumed(resumed) => self.set_paused(&resumed.device, false),
+      EiEvent::KeyboardModifiers(modifiers) => {
+        if let Some(keymap) = self.worker.keymap.lock().map_err(|_| backend("EIS keymap lock poisoned"))?.as_mut() {
+          keymap.set_group(modifiers.group);
+        }
+      }
       EiEvent::Disconnected(disconnected) => {
         return Err(backend(format!(
           "EIS disconnected ({:?}){}",

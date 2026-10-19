@@ -99,6 +99,11 @@ fallback when the EIS keymap is absent.
 The shared evdev mapping converts keysyms to evdev key codes and Shift needs.
 This mapping is used by EIS and uinput.
 
+The EIS worker tracks `KeyboardModifiers.group` and selects the matching XKB
+layout. A US layout and a German layout can therefore keep different `y` and
+`z` mappings. The local Wayland fallback has no group source. It keeps only
+the mappings that agree in every layout. uinput keeps the same shared mapping.
+
 A key chord is delivered in these steps:
 
 1. Press the modifier keys in order.
@@ -263,5 +268,9 @@ These items are outside this slice:
   notches.
 - A focused fake EIS server test. The current coverage uses unit tests,
   compilation checks, and live validation.
+- uinput layout-group tracking. uinput still uses only mappings that agree in
+  every layout. EIS uses the compositor group event.
+- Live multi-layout keyboard validation. Unit tests cover US and German
+  groups. The live check used one layout.
 - The held-button deadline fix in `auv-driver-common`. See "Known Issue:
   Held-Button Deadline".
