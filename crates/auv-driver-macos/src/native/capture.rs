@@ -39,7 +39,7 @@ fn decode_capture_response(response: NativeImageCaptureResponse) -> AuvResult<Na
     .checked_mul(response.image_height)
     .and_then(|pixels| pixels.checked_mul(4))
     .ok_or_else(|| "native capture dimensions overflowed".to_string())?;
-  if expected_len < 0 || response.rgba_bytes.len() != expected_len as usize {
+  if response.rgba_bytes.len() != expected_len as usize {
     return Err(format!(
       "native capture returned {} RGBA bytes for {}x{} image; expected {}",
       response.rgba_bytes.len(),
