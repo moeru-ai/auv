@@ -586,16 +586,23 @@ fn wake(write: Option<&OwnedFd>) -> DriverResult<()> {
   let Some(write) = write else {
     return Err(backend("EIS input session closed"));
   };
-  // SAFETY: the descriptor is owned by this handle and the byte is initialized.
-  let written = unsafe { libc::write(write.as_raw_fd(), b"x".as_ptr().cast(), 1) };
-  if written == 1 {
-    return Ok(());
+  loop {
+    // SAFETY: the descriptor is owned by this handle and the byte is initialized.
+    let written = unsafe { libc::write(write.as_raw_fd(), b"x".as_ptr().cast(), 1) };
+    if written == 1 {
+      return Ok(());
+    }
+    if written == 0 {
+      return Err(backend("wake EIS input worker wrote no bytes"));
+    }
+    let error = io::Error::last_os_error();
+    match error.kind() {
+      // A full pipe already holds a wake byte for the worker.
+      io::ErrorKind::WouldBlock => return Ok(()),
+      io::ErrorKind::Interrupted => continue,
+      _ => return Err(backend(format!("wake EIS input worker: {error}"))),
+    }
   }
-  let error = io::Error::last_os_error();
-  if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) {
-    return Ok(());
-  }
-  Err(backend(format!("wake EIS input worker: {error}")))
 }
 
 fn drain_wake(read: &OwnedFd) -> DriverResult<bool> {
