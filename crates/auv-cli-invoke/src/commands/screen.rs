@@ -313,7 +313,9 @@ pub fn recorded_screen_text_matches_output(
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke screen.clickText \"Continue\"")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke screen.clickText \"Continue\"\n\nWindows reads the primary display only. This command moves the real pointer and clicks in the foreground."
+)]
 struct ClickScreenTextArgs {
   /// Text anchor to click.
   #[arg(value_name = "TEXT")]
@@ -322,31 +324,28 @@ struct ClickScreenTextArgs {
 
 #[invoke_command(
   id = "screen.clickText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver can click a screen point in the foreground, which this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("primary display only; foreground pointer input") },
   group = "screen",
   description = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. Target activation is not yet available for this command.",
   input = ClickScreenTextArgs,
 )]
 async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs) -> crate::InvokeExecutionResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.clickText")?;
+    input.cancellation.check().map_err(|error| error.to_string())?;
     let query = args.query;
     if input.dry_run {
       return Ok(super::input::validation_only_output());
     }
 
-    let result = click_recognized_screen_text(query).await?;
+    let result = click_recognized_screen_text_with_cancellation(query, &input.cancellation).await?;
     Ok(screen_text_click_output(&result)?)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    // TODO(invoke-screen-click-text-windows): the Windows driver can click a screen point in the
-    // foreground, but this command does not use it. It would move the real cursor, as it does on
-    // macOS. The evals' `foreground` scenario can now take that evidence on its own receiver; wire
-    // the command (primary display only) together with such a run.
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS and Windows"))
   }
 }
 
@@ -377,19 +376,32 @@ pub fn recorded_screen_text_click_output(result: &ScreenTextClick, ocr_source: O
 }
 
 pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, crate::InvokeFailure> {
-  #[cfg(target_os = "macos")]
+  click_recognized_screen_text_with_cancellation(query, &Default::default()).await
+}
+
+async fn click_recognized_screen_text_with_cancellation(
+  query: String,
+  cancellation: &crate::InvokeCancellation,
+) -> Result<ScreenTextClick, crate::InvokeFailure> {
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
-    let session = auv::local::open().map_err(|error| error.to_string())?;
-    let capture = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
+    cancellation.check().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(crate::InvokeFailure::from)?;
+    let capture = session.display().capture(auv_driver::CaptureOptions::default()).map_err(crate::InvokeFailure::from)?;
+    cancellation.check().map_err(|error| error.to_string())?;
     let matches = session
       .vision()
       .find_text_in_capture(&capture.capture, &query, auv_driver::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
-      .map_err(|error| error.to_string())?;
-    let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
+      .map_err(crate::InvokeFailure::from)?;
+    cancellation.check().map_err(|error| error.to_string())?;
+    let point = matches
+      .best_match()
+      .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("screen.clickText did not find text {query:?}")))?
+      .action_point();
     let action = session
       .input()
       .click_at(point, auv_driver::MouseButton::Left, auv_driver::Click::Single, Default::default())
-      .map_err(|error| error.to_string())?;
+      .map_err(crate::InvokeFailure::from)?;
     super::input::emit_input_action_result(&action);
     emit_capture("auv.driver.screen_ocr_source", &capture.capture);
     Ok(ScreenTextClick {
@@ -398,10 +410,10 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
       action,
     })
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    let _ = query;
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS"))
+    let _ = (query, cancellation);
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS and Windows"))
   }
 }
 

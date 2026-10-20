@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **75**
+Count: **76**
+
+- [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)

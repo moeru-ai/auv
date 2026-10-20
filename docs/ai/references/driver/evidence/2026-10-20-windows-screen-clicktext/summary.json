@@ -1,0 +1,79 @@
+{
+  "platform": "Windows",
+  "base_commit": "11d9e256",
+  "auv_binary_sha256": "afd358065286189c9f8b8f064ac14e41cef5b33ce93658947746c2984aa9b1e0",
+  "display_pixels": [
+    2560,
+    1440
+  ],
+  "scope": "owned Win32 receiver, foreground global pointer, primary display only",
+  "aborted_preflights": {
+    "input_command": "screen.clickText was not sent",
+    "count": 2,
+    "cause": "OCR did not match owned caption; exact cause not established"
+  },
+  "runs": [
+    {
+      "run": "1792494934-8168",
+      "source_local": "reports/windows-gui-20261020/p0-foreground-03/foreground.jsonl",
+      "source_sha256": "29e1f2392add7f02666b01c0001075b1e72656ad6929816729fcc02d6809ea6a",
+      "functional_passed": true,
+      "click_latency_ms": 2616.3158,
+      "click_count_before": 7,
+      "click_count_after": 8,
+      "selected_path": "foreground_system_events",
+      "point": [
+        2215,
+        974
+      ],
+      "semantic_verified": true,
+      "missing_latency_ms": 1131.7379999999998,
+      "missing_code": "not_found",
+      "missing_clicks": [
+        8,
+        8
+      ],
+      "missing_injected_mouse": 0,
+      "missing_injected_keys": 0,
+      "quiet_held": 7,
+      "quiet_inconclusive": 0,
+      "quiet_violated": 0,
+      "physical_mouse_events": 0,
+      "pointer_restored": true,
+      "foreground_restored": true,
+      "clipboard_restored": true
+    },
+    {
+      "run": "1792495037-24940",
+      "source_local": "reports/windows-gui-20261020/p0-foreground-04/foreground.jsonl",
+      "source_sha256": "7467e569078e0f4bf6eb3526562432f98e3f6f66f616ee04cfd6e125987def98",
+      "functional_passed": true,
+      "click_latency_ms": 2529.2057999999997,
+      "click_count_before": 7,
+      "click_count_after": 8,
+      "selected_path": "foreground_system_events",
+      "point": [
+        2215,
+        974
+      ],
+      "semantic_verified": true,
+      "missing_latency_ms": 1119.2009,
+      "missing_code": "not_found",
+      "missing_clicks": [
+        8,
+        8
+      ],
+      "missing_injected_mouse": 0,
+      "missing_injected_keys": 0,
+      "quiet_held": 2,
+      "quiet_inconclusive": 5,
+      "quiet_violated": 0,
+      "physical_mouse_events": 296,
+      "pointer_restored": true,
+      "foreground_restored": true,
+      "clipboard_restored": true
+    }
+  ],
+  "raw_desktop_pixels_committed": false,
+  "antigravity_review_used_as_acceptance": false
+}

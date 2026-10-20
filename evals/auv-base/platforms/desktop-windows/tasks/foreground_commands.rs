@@ -285,16 +285,18 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     color: "2E6F9E".into(),
     sink: false,
   };
-  let extra: &[&str] = if options.keep_ime {
-    &["--foreground-input", "--keep-ime"]
-  } else {
-    &["--foreground-input"]
-  };
+  // Natural words avoid O/0 and I/1 ambiguities in an OCR nonce. The preflight
+  // below still refuses a match outside this receiver's button.
+  let caption = "Copper Harbor".to_string();
+  let mut extra = vec!["--foreground-input", "--button-caption", caption.as_str()];
+  if options.keep_ime {
+    extra.push("--keep-ime");
+  }
   // The paste steps put the harness's own text on the clipboard. Keep the user's to give back; its
   // contents are never written down.
   let clipboard_text_at_start = clipboard::snapshot().map_err(|error| anyhow::anyhow!("read the clipboard: {error}"))?;
   let clipboard_at_start = clipboard::snapshot_rich().map_err(|error| anyhow::anyhow!("keep the user's clipboard: {error}"))?;
-  let mut target = spawn_topmost_receiver(&spec, extra)?;
+  let mut target = spawn_topmost_receiver(&spec, &extra)?;
   let hwnd = target.hwnd();
   let mut restore = Restore {
     cursor: start.cursor,
@@ -514,6 +516,78 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     "input.clickPoint.display",
     json!({"exit": clicked.exit, "ms": clicked.ms, "selected_path": selected_path(&clicked), "display": display_id,
       "clicks": [before.clicks, after.clicks], "receiver_is_foreground": watch.snapshot().foreground == hwnd, "watch": facts}),
+  )?;
+
+  // Resolve first without acting: never let an OCR anchor on somebody else's
+  // window become the destination of this foreground-input evaluation.
+  let mut bounds = None;
+  // Observe readiness with a bounded budget. Never retry a delivered click.
+  for attempt in 1..=3 {
+    let (found, _) = scenario.quiet("screen.findText", &[caption.clone()])?;
+    bounds = found.json.as_ref().and_then(|json| rect_of(&json["result"]["matches"][0]["bounds"]));
+    scenario.records.write(
+      "screen.clickText.preflight",
+      json!({"query": caption, "attempt": attempt, "exit": found.exit, "ms": found.ms, "best_bounds": bounds,
+        "matches": found.json.as_ref().and_then(|value| value["result"]["matches"].as_array()).map(Vec::len), "button_rect": layout.button_rect}),
+    )?;
+    if !found.completed() {
+      bail!("screen OCR preflight failed: {}; no screen click sent", found.failure());
+    }
+    if bounds.is_some() {
+      break;
+    }
+    std::thread::sleep(Duration::from_millis(200));
+  }
+  if bounds.is_none() {
+    // Keep only the owned window for diagnosis, never the full desktop OCR
+    // source. A failed preflight must remain inspectable without clicking.
+    let capture = driver.window().capture(&window).map_err(|error| anyhow::anyhow!(error))?;
+    capture.image.save(options.output.join("owned-screen-click-target.png"))?;
+    let recognized = driver
+      .vision()
+      .recognize_text_in_capture(&capture, auv_driver_common::geometry::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
+      .map_err(|error| anyhow::anyhow!(error))?;
+    scenario.records.write("screen.clickText.owned_fixture_ocr", json!({"text": recognized.text, "regions": recognized.regions}))?;
+  }
+  let Some(bounds) = bounds else {
+    bail!("the owned button caption was not recognized; no screen click sent")
+  };
+  let point = [
+    (bounds[0] + bounds[2] / 2.0).round() as i32,
+    (bounds[1] + bounds[3] / 2.0).round() as i32,
+  ];
+  let [left, top, right, bottom] = layout.button_rect;
+  if point[0] < left || point[0] >= right || point[1] < top || point[1] >= bottom {
+    bail!("screen OCR selected a point outside the owned button; no screen click sent");
+  }
+  scenario.pointer_may_go(&[point])?;
+  let before = target.state()?;
+  let (clicked, facts) = scenario.acting("screen.clickText", &[caption.clone()])?;
+  std::thread::sleep(Duration::from_millis(200));
+  let after = target.state()?;
+  scenario.tally.expect(clicked.completed(), format!("screen.clickText failed: {}", clicked.failure()));
+  scenario.tally.expect(after.clicks == before.clicks + 1, "screen.clickText did not increment the owned button's click count once");
+  scenario.tally.expect(selected_path(&clicked) == "foreground_system_events", "screen.clickText did not use foreground input");
+  scenario.records.write(
+    "screen.clickText",
+    json!({"query": caption, "exit": clicked.exit, "ms": clicked.ms, "point": point,
+      "clicks": [before.clicks, after.clicks], "selected_path": selected_path(&clicked), "semantic_verified": after.clicks == before.clicks + 1,
+      "watch": facts}),
+  )?;
+  let missing = format!("MissingAUV{}", std::process::id());
+  let before = target.state()?;
+  let (missed, facts) = scenario.quiet("screen.clickText", &[missing])?;
+  let after = target.state()?;
+  let failure_code = missed.json.as_ref().map(|value| value["failure_details"]["code"].clone());
+  scenario
+    .tally
+    .expect(!missed.completed() && missed.failure().contains("did not find text"), "missing screen text did not fail without clicking");
+  scenario.tally.expect(after.clicks == before.clicks, "missing screen text clicked the receiver");
+  scenario.tally.expect(failure_code == Some(json!("not_found")), "missing screen text did not return typed NotFound");
+  scenario.records.write(
+    "screen.clickText.missing",
+    json!({"exit": missed.exit, "ms": missed.ms, "failure": missed.failure(), "failure_code": failure_code,
+      "clicks": [before.clicks, after.clicks], "watch": facts}),
   )?;
 
   scenario.pointer_may_go(&[from, to])?;
