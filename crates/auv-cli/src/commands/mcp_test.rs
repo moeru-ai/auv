@@ -201,7 +201,7 @@ fn mcp_support_metadata_comes_from_the_executable_definition() {
   let type_text = super::invoke_command_metadata(registry.resolve("input.typeText").unwrap());
   assert_eq!(
     type_text["support"]["linux"],
-    serde_json::json!({ "state": "partial", "note": "foreground delivery only; targeted delivery is unsupported" })
+    serde_json::json!({ "state": "partial", "note": "focused target only; cannot focus or raise a window" })
   );
 
   let press_keys = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
