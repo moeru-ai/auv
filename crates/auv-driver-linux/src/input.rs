@@ -648,7 +648,9 @@ pub(crate) mod keysym {
 mod tests;
 
 /// Hold keys around one input action and attempt every release, including a
-/// press with an uncertain D-Bus reply. The owning API invalidates failed sessions.
+/// press with an uncertain D-Bus reply. A chord with no separate action passes
+/// `|| Ok(())` to hold and release every key. The owning API invalidates
+/// failed sessions.
 pub(crate) fn with_held_keys<K: Copy>(
   modifiers: &[K],
   mut key_event: impl FnMut(K, bool) -> DriverResult<()>,

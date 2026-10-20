@@ -192,6 +192,76 @@ fn complete_hold_returns_release_evidence_after_matching_down_and_up() {
   assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up", "move"]);
 }
 
+#[derive(Default)]
+struct DelayedBackend {
+  move_delay: Duration,
+  press_delay: Duration,
+  pressed_at: Mutex<Option<Instant>>,
+  released_at: Mutex<Option<Instant>>,
+}
+impl DelayedBackend {
+  fn held_duration(&self) -> Duration {
+    let pressed = self.pressed_at.lock().unwrap().expect("press");
+    let released = self.released_at.lock().unwrap().expect("release");
+    released.saturating_duration_since(pressed)
+  }
+}
+impl MouseBackend for DelayedBackend {
+  fn move_to(&self, _: Point, _: Option<MouseButton>) -> DriverResult<InputActionResult> {
+    std::thread::sleep(self.move_delay);
+    Ok(InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents))
+  }
+  fn button(&self, _: Point, _: MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    if down {
+      std::thread::sleep(self.press_delay);
+      *self.pressed_at.lock().unwrap() = Some(Instant::now());
+    } else {
+      *self.released_at.lock().unwrap() = Some(Instant::now());
+    }
+    Ok(InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents))
+  }
+}
+
+// ROOT CAUSE:
+//
+// If the first `move_to` took longer than the hold timeout, the button was
+// released right after the press because `down_admitted` computed the hold
+// deadline before `move_to`. Opening the Linux portal input session happens
+// inside that first `move_to`, so a slow session open consumed the whole hold.
+//
+// Before the fix, a slow `move_to` shortened the hold to almost zero.
+// The fix keeps the deadline measured from the delivered button press.
+//
+// Report: docs/ai/references/driver/2026-10-19-linux-portal-eis-input.md,
+// "Held-Button Deadline".
+#[test]
+fn moving_longer_than_the_timeout_keeps_the_full_hold() {
+  let timeout = Duration::from_millis(120);
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let backend = Arc::new(DelayedBackend {
+    move_delay: Duration::from_millis(240),
+    ..Default::default()
+  });
+  coordinator.hold(0, Point::new(1., 2.), MouseButton::Left, timeout, backend.clone()).unwrap();
+  let held = backend.held_duration();
+  assert!(held >= timeout, "hold lasted {held:?}, expected at least {timeout:?}");
+}
+
+// The delivered press starts the deadline, not the start of `down_admitted`.
+#[test]
+fn press_latency_does_not_count_toward_the_hold_timeout() {
+  let timeout = Duration::from_millis(120);
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let backend = Arc::new(DelayedBackend {
+    press_delay: Duration::from_millis(240),
+    ..Default::default()
+  });
+  coordinator.down(0, Point::new(1., 2.), MouseButton::Left, timeout, backend.clone()).unwrap();
+  wait_for(|| backend.released_at.lock().unwrap().is_some());
+  let held = backend.held_duration();
+  assert!(held >= timeout, "hold lasted {held:?}, expected at least {timeout:?}");
+}
+
 #[test]
 fn unrepresentable_deadline_fails_before_native_delivery() {
   let coordinator = Arc::new(MouseCoordinator::default());

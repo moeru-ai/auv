@@ -467,7 +467,7 @@ fn run_worker_inner(
     match poll(&context, wake_read.as_raw_fd(), Some(deadline - now))? {
       PollResult::Eis => read_context(&context)?,
       PollResult::Wake => return Err(backend("EIS input closed while opening")),
-      PollResult::Timeout | PollResult::Interrupted => {}
+      PollResult::NoEvent => {}
     }
   }
   if let Some(ready) = ready.take() {
@@ -487,7 +487,7 @@ fn run_worker_inner(
           handle_command(&mut state, &mut converter, command)?;
         }
       }
-      PollResult::Timeout | PollResult::Interrupted => {}
+      PollResult::NoEvent => {}
     }
   }
 }
@@ -513,7 +513,7 @@ fn handshake(context: &ei::Context, wake_read: &OwnedFd) -> DriverResult<Handsha
     match poll(context, wake_read.as_raw_fd(), Some(deadline - now))? {
       PollResult::Eis => read_context(context)?,
       PollResult::Wake => return Err(backend("EIS input closed during the handshake")),
-      PollResult::Timeout | PollResult::Interrupted => {}
+      PollResult::NoEvent => {}
     }
   }
 }
@@ -675,8 +675,9 @@ fn drain_wake(read: &OwnedFd) -> DriverResult<bool> {
 enum PollResult {
   Eis,
   Wake,
-  Timeout,
-  Interrupted,
+  /// No descriptor was ready: a poll timeout or an interrupted call. Every
+  /// caller re-drains and recomputes its deadline, so the two are one result.
+  NoEvent,
 }
 
 fn poll(context: &ei::Context, wake: RawFd, timeout: Option<Duration>) -> DriverResult<PollResult> {
@@ -698,12 +699,12 @@ fn poll(context: &ei::Context, wake: RawFd, timeout: Option<Duration>) -> Driver
   if result < 0 {
     let error = io::Error::last_os_error();
     if error.kind() == io::ErrorKind::Interrupted {
-      return Ok(PollResult::Interrupted);
+      return Ok(PollResult::NoEvent);
     }
     return Err(backend(format!("poll EIS input: {error}")));
   }
   if result == 0 {
-    return Ok(PollResult::Timeout);
+    return Ok(PollResult::NoEvent);
   }
   if fds[1].revents != 0 {
     return Ok(PollResult::Wake);

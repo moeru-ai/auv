@@ -56,6 +56,13 @@ fn gtk_receives_held_buttons_and_cleanup() {
     Ok("portal") => InputBackend::Portal,
     _ => panic!("select AUV_HELD_BACKEND=uinput or portal explicitly"),
   };
+  let session = LinuxDriver::new().with_input_backend(backend).open_local().unwrap();
+  let input = session.input();
+  let mouse = input.create_mouse().unwrap();
+  // Open the input session before the receiver. A first-time portal
+  // authorization dialog takes focus; the readiness guard below must only
+  // judge the measurement window. The uinput backend treats this as a warm-up.
+  input.move_mouse_to(mouse, Point::new(10.0, 10.0)).unwrap();
   let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/held_mouse_receiver.py");
   let mut child = Command::new("python3").arg(script).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
   let stdout = child.stdout.take().unwrap();
@@ -78,9 +85,6 @@ fn gtk_receives_held_buttons_and_cleanup() {
   receiver.read_until("ready");
   std::thread::sleep(Duration::from_millis(600));
   receiver.checkpoint();
-  let session = LinuxDriver::new().with_input_backend(backend).open_local().unwrap();
-  let input = session.input();
-  let mouse = input.create_mouse().unwrap();
   let start = Point::new(300.0, 300.0);
   let end = Point::new(380.0, 340.0);
   let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

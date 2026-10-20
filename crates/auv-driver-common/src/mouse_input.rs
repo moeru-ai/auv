@@ -173,6 +173,8 @@ impl MouseCoordinator {
       // TODO: multi-button chords await an approved native receiver contract.
       return Err(invalid("this mouse already holds a button"));
     }
+    // An unrepresentable timeout must fail before moving or pressing. The hold
+    // re-arms this deadline once the press lands.
     let deadline = Instant::now().checked_add(timeout).ok_or_else(|| invalid("mouse timeout exceeds the platform clock range"))?;
     backend.move_to(point, None)?;
     let generation = {
@@ -195,6 +197,21 @@ impl MouseCoordinator {
     if result.is_err() {
       let cleanup = self.release_admitted(id);
       return combine(result, cleanup);
+    }
+    // The bounded hold starts at the delivered press. Opening the native input
+    // session happens in `move_to` and can outlast the timeout; that elapsed
+    // time must not release the button that the press just placed.
+    let deadline = match Instant::now().checked_add(timeout) {
+      Some(deadline) => deadline,
+      None => {
+        let cleanup = self.release_admitted(id);
+        return combine(Err(invalid("mouse timeout exceeds the platform clock range")), cleanup);
+      }
+    };
+    {
+      let mut state = self.state.lock().unwrap();
+      let mouse = state.mice.get_mut(&id).unwrap();
+      mouse.held.as_mut().unwrap().deadline = deadline;
     }
     let coordinator = self.clone();
     let cancellation = current_input_cancellation();
@@ -265,10 +282,10 @@ impl MouseCoordinator {
     let _admission = self.enter(id, false)?;
     if let Some(target) = &request.target {
       let state = self.state.lock().unwrap();
-      if let Some(held) = &state.mice[&id].held {
-        if !same_target(target, &held.backend.target()) {
-          return Err(invalid("cannot change the mouse target while a button is held"));
-        }
+      if let Some(held) = &state.mice[&id].held
+        && !same_target(target, &held.backend.target())
+      {
+        return Err(invalid("cannot change the mouse target while a button is held"));
       }
     }
     let start = match request.start {

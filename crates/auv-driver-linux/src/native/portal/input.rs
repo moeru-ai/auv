@@ -85,19 +85,7 @@ impl InputSession {
   pub fn key_chord(&mut self, layout: &Keymap, modifiers: &[i32], key: i32) -> DriverResult<()> {
     self.require_keyboard()?;
     let presses = layout.chord_keys(modifiers, key)?;
-    let mut attempted = 0;
-    let mut result = Ok(());
-    for key in &presses {
-      attempted += 1;
-      result = self.eis.key_transition(*key, true);
-      if result.is_err() {
-        break;
-      }
-    }
-    for key in presses[..attempted].iter().rev() {
-      result = combine_release(result, self.eis.key_transition(*key, false));
-    }
-    result
+    with_held_keys(&presses, |key, down| self.eis.key_transition(key, down), || Ok(()))
   }
 
   pub fn click_at(&mut self, point: Point, button: MouseButton, click: Click, modifiers: &[i32]) -> DriverResult<()> {
