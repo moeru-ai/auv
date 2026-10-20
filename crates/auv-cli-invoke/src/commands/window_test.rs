@@ -316,12 +316,11 @@ fn window_click_text_refuses_as_unsupported_on_linux() {
   assert!(error.message.contains("only available on macOS and Windows"), "unexpected message: {}", error.message);
 }
 
-// Same root cause as above: on Linux, where their cells are `Unsupported`, `window.findText` and
-// `window.waitForText` refused as `command_failed`. The fix keeps those refusals typed as
-// `unsupported`.
+// Linux resolves and captures through AT-SPI and runs the shared OCR decoder.
+// A dry run validates the arguments and returns before platform access.
 #[cfg(target_os = "linux")]
 #[test]
-fn window_text_commands_refuse_as_unsupported_on_linux() {
+fn window_text_commands_dry_run_on_linux() {
   let commands = [
     (find_window_text_invoke_command(), dry_run_input("window.findText", Some("org.example.App"), Some("Save"))),
     (wait_for_window_text_invoke_command(), dry_run_input("window.waitForText", Some("org.example.App"), Some("Saved"))),
@@ -329,8 +328,8 @@ fn window_text_commands_refuse_as_unsupported_on_linux() {
 
   for (command, input) in commands {
     let id = input.command_id.clone();
-    let error = futures_executor::block_on(command.invoke(input)).expect_err("window text OCR has no Linux path");
-    assert_eq!(error.code, crate::FailureCode::Unsupported, "{id}: {}", error.message);
+    let outcome = futures_executor::block_on(command.invoke(input));
+    assert!(outcome.is_ok(), "{id}: {:?}", outcome.err());
   }
 }
 

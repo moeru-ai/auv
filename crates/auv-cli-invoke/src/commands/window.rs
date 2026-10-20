@@ -208,7 +208,7 @@ async fn capture_selected_window_recorded_with_session(
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke window.findText \"Settings\" --title Preferences\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe). Text comes from the system OCR of a PrintWindow capture of the window itself."
+  after_long_help = "Examples:\n  auv invoke window.findText \"Settings\" --title Preferences\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe). Text comes from the system OCR of a PrintWindow capture of the window itself.\nOn Linux, an app target is the application id shown in window.list (for example org.gnome.TextEditor); text comes from the visible part of the window."
 )]
 struct FindWindowTextArgs {
   /// Text to locate in the selected window.
@@ -221,14 +221,14 @@ struct FindWindowTextArgs {
 
 #[invoke_command(
   id = "window.findText",
-  support = { macos: Supported, linux: Unsupported, windows: Supported },
+  support = { macos: Supported, linux: Supported, windows: Supported },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window and locate OCR text anchors in logical screen coordinates.",
   input = FindWindowTextArgs,
 )]
 async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -> crate::InvokeExecutionResult {
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -242,16 +242,16 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS, Linux and Windows"))
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke window.waitForText \"Ready\" --title Import\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe)."
+  after_long_help = "Examples:\n  auv invoke window.waitForText \"Ready\" --title Import\n\nOn Windows, an app target is the executable file name shown as APP in window.list (for example notepad.exe).\nOn Linux, an app target is the application id shown in window.list (for example org.gnome.TextEditor); text comes from the visible part of the window."
 )]
 pub(crate) struct WaitForWindowTextArgs {
   /// Text to wait for in the selected window.
@@ -285,14 +285,14 @@ impl WaitForWindowTextArgs {
 
 #[invoke_command(
   id = "window.waitForText",
-  support = { macos: Supported, linux: Unsupported, windows: Supported },
+  support = { macos: Supported, linux: Supported, windows: Supported },
   target = OptionalApplication,
   group = "window",
   description = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
   input = WaitForWindowTextArgs,
 )]
 async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowTextArgs) -> crate::InvokeExecutionResult {
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let options = args.options().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
     if input.dry_run {
@@ -312,10 +312,10 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     Ok(window_text_matches_output(&input.command_id, &result, overlay)?)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS, Linux and Windows"))
   }
 }
 
@@ -537,7 +537,7 @@ pub struct WindowTextRecognition {
   pub matches: auv_driver::OcrMatches,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub async fn recognize_window_text(
   selector: auv_driver::WindowSelector,
   query: String,
@@ -548,7 +548,7 @@ pub async fn recognize_window_text(
   Ok(recognize_window_text_with_session(&session, selector, query, wait, &Default::default()).await?)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 async fn recognize_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
@@ -588,13 +588,13 @@ async fn recognize_window_text_with_session(
   Ok(WindowTextRecognition { window, matches })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub async fn recognize_window_text(
   _selector: auv_driver::WindowSelector,
   _query: String,
   _wait: bool,
 ) -> Result<WindowTextRecognition, crate::InvokeFailure> {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS and Windows"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window text OCR is only available on macOS, Linux and Windows"))
 }
 
 fn window_text_matches_output(
