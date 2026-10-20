@@ -117,6 +117,32 @@ fn listed_window(app_name: &str, frame: Rect) -> Window {
 // The fix collects the frames that need repair first and skips the walk when
 // none do; when a repair is needed it walks only the shell's window containers
 // (64 nodes) instead of the whole stage. This test pins the gate.
+// ROOT CAUSE:
+//
+// `find_window_groups` can return a partial list: the search budget can run
+// out, a container can be missing, or a name read can fail. Only a complete
+// pair may narrow the candidate set; a partial one can turn an ambiguous match
+// into a wrong one.
+#[test]
+fn stage_repair_roots_require_both_window_containers() {
+  let stage = ObjectRef {
+    dest: "org.gnome.Shell".to_string(),
+    path: "/stage".to_string(),
+  };
+  let window_group = ObjectRef {
+    dest: "org.gnome.Shell".to_string(),
+    path: "/window-group".to_string(),
+  };
+  let top_group = ObjectRef {
+    dest: "org.gnome.Shell".to_string(),
+    path: "/top-window-group".to_string(),
+  };
+
+  assert_eq!(stage_repair_roots(&stage, Vec::new()), vec![stage.clone()]);
+  assert_eq!(stage_repair_roots(&stage, vec![window_group.clone()]), vec![stage.clone()]);
+  assert_eq!(stage_repair_roots(&stage, vec![window_group.clone(), top_group.clone()]), vec![window_group, top_group]);
+}
+
 #[test]
 fn stage_origin_repair_is_skipped_when_every_window_has_a_usable_origin() {
   let windows = [

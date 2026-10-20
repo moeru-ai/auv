@@ -52,8 +52,10 @@ same `(0, 0)` extents.
    whole stage: "Window group" and "Top window group" (override-redirect
    windows such as popups and menus). `find_window_groups` does a breadth-first
    search with a 3-level depth limit and a 200-node budget, so it normally
-   costs a couple of dozen name reads. A miss, a read error, or a shell that
-   does not expose the containers falls back to the whole-stage walk.
+   costs a couple of dozen name reads. The scoped walk runs only when both
+   containers are found; a miss, a read error, an exhausted search budget, or a
+   shell that exposes one container falls back to the whole-stage walk, because
+   a partial candidate set can change the uniqueness result.
 3. `shell_stage_rects` keeps only rects whose size matches a frame under repair.
    `matching_stage_origin` already ignored every other rect, so this is
    semantically neutral and only shrinks the candidate vector.
@@ -113,10 +115,11 @@ compare call counts first.
   `TODO(linux-shell-stage-walk)` at the call site: a bounds-only traversal must
   reproduce `accessible_in_tree`'s WINDOW-then-SCREEN extents exactly and keep
   the uniqueness check.
-- Both container names are observed on GNOME Shell 50.4. A miss or a read error
-  falls back to the whole-stage walk; re-check the names on GNOME Shell major
-  updates. The driver has no logging channel, so a discovery failure is not
-  reported separately from a missing container.
+- Both container names are observed on GNOME Shell 50.4. Discovery is
+  all-or-nothing: a miss, a read error, a search budget exhaustion, or a shell
+  with one container falls back to the whole-stage walk; re-check the names on
+  GNOME Shell major updates. The driver has no logging channel, so a discovery
+  failure is not reported separately from a missing container.
 - The uniqueness rule is unchanged: two stage rects of the repaired size with
   different origins still produce no repair. The candidate set now covers both
   window containers; shell chrome (top bar, labels, panel items) stays excluded.

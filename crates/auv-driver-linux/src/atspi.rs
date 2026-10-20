@@ -563,12 +563,7 @@ fn shell_stage_rects(connection: &Connection, applications: &[Application], fram
       // The stage tree is mostly shell chrome; the window actors live in the
       // shell's window containers, which is all the repair reads.
       let groups = find_window_groups(connection, &accessible.reference).unwrap_or_default();
-      let roots = if groups.is_empty() {
-        vec![accessible.reference.clone()]
-      } else {
-        groups
-      };
-      for root in roots {
+      for root in stage_repair_roots(&accessible.reference, groups) {
         let mut nodes = Vec::new();
         // TODO(linux-shell-stage-walk): `walk` fetches role, name, state, and
         // attributes (about 8.6 D-Bus calls per node) while the repair only needs
@@ -587,16 +582,29 @@ fn shell_stage_rects(connection: &Connection, applications: &[Application], fram
   Ok(rects)
 }
 
+const STAGE_WINDOW_GROUP_NAMES: [&str; 2] = ["Window group", "Top window group"];
+
+// Both containers must be found before the scoped walk is safe: a partial
+// candidate set can turn an ambiguous match into a wrong one. Budget
+// exhaustion, a read error, and a shell without one container all surface as a
+// short list, so they share the whole-stage fallback.
+fn stage_repair_roots(stage: &ObjectRef, groups: Vec<ObjectRef>) -> Vec<ObjectRef> {
+  if groups.len() == STAGE_WINDOW_GROUP_NAMES.len() {
+    groups
+  } else {
+    vec![stage.clone()]
+  }
+}
+
 // NOTICE(linux-shell-window-group): window actors live in two stage actors:
 // "Window group" and "Top window group" (override-redirect windows such as
-// popups and menus). Both names are observed on GNOME Shell 50.4; a miss or a
-// read error falls back to the whole-stage walk.
+// popups and menus). Both names are observed on GNOME Shell 50.4; a miss, a
+// read error, or an incomplete search falls back to the whole-stage walk.
 fn find_window_groups(connection: &Connection, stage: &ObjectRef) -> DriverResult<Vec<ObjectRef>> {
-  const GROUP_NAMES: [&str; 2] = ["Window group", "Top window group"];
   const MAX_DEPTH: usize = 3;
   const MAX_INSPECTED: usize = 200;
 
-  let mut remaining = GROUP_NAMES.to_vec();
+  let mut remaining = STAGE_WINDOW_GROUP_NAMES.to_vec();
   let mut groups = Vec::new();
   let mut queue = VecDeque::from([(stage.clone(), 0usize)]);
   let mut inspected = 0;
