@@ -39,10 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   for (name, values) in ["normal", "excluding_self"].into_iter().zip(&timings) {
     let mut warm = values[1..].to_vec();
     warm.sort_by(f64::total_cmp);
-    let mean = warm.iter().sum::<f64>() / warm.len() as f64;
     let median = (warm[(warm.len() - 1) / 2] + warm[warm.len() / 2]) / 2.;
-    let p95 = warm[(warm.len() as f64 * 0.95).ceil() as usize - 1];
-    println!("{name}: first={:.3} mean={mean:.3} median={median:.3} p95={p95:.3} max={:.3} ms", values[0], warm[warm.len() - 1]);
+    println!("{name}: first={:.3} median={median:.3} ms", values[0]);
   }
   Ok(())
 }

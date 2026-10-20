@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     layers::Status,
     style::{Color, StatusStyle},
   };
+  use image::GenericImageView;
   use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
   use std::time::{Duration, Instant};
 
@@ -44,15 +45,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       (region.size.width * sx) as u32,
       (region.size.height * sy) as u32,
     )
-    .to_image()
     .pixels()
     // Match hue rather than exact RGB: display profiles can shift the channels.
-    .filter(|p| p[0] > 180 && p[1] < 90 && p[2] > 110 && p[2] < 230)
+    .filter(|(_, _, p)| p[0] > 180 && p[1] < 90 && p[2] > 110 && p[2] < 230)
     .count()
   };
   let card_region = Rect::new(10., 30., 260., 100.);
-  let baseline = session.display().capture(options())?;
-  let baseline_card = count(&baseline, card_region);
+  let baseline_card = count(&session.display().capture(options())?, card_region);
   let _cleanup = Cleanup;
   let marker = Color::rgb(243. / 255., 8. / 255., 162. / 255.);
   let overlay = Overlay::new().with_layer(
@@ -66,13 +65,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   )?;
   // SAFETY: Core Foundation owns this immutable process-lifetime mode constant.
   let mode = unsafe { kCFRunLoopDefaultMode };
-  let (visible, excluded, after) = std::thread::scope(|scope| -> Result<_, Box<dyn std::error::Error>> {
+  let (before_count, excluded_count, after_count, size) = std::thread::scope(|scope| -> Result<_, Box<dyn std::error::Error>> {
     let worker = scope.spawn(|| -> Result<_, DriverError> {
       let start = Instant::now();
       let visible = loop {
         let capture = session.display().capture(options())?;
-        if count(&capture, card_region) >= baseline_card + 500 {
-          break capture;
+        let pixels = count(&capture, card_region);
+        if pixels >= baseline_card + 500 {
+          break pixels;
         }
         if start.elapsed() >= Duration::from_secs(10) {
           return Err(DriverError::Backend {
@@ -81,26 +81,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
       };
       let excluded = session.display().capture_excluding_self(options())?;
-      let after = session.display().capture(options())?;
-      Ok((visible, excluded, after))
+      let size = excluded.capture.image.dimensions();
+      let excluded_count = count(&excluded, card_region);
+      drop(excluded);
+      let after = count(&session.display().capture(options())?, card_region);
+      Ok((visible, excluded_count, after, size))
     });
-    // The probe owns this main-thread run loop until capture finishes. No
-    // fixed overlay lifetime or new library lifecycle API is needed.
+    // Service overlay events on the main thread while the worker captures.
     while !worker.is_finished() {
       CFRunLoop::run_in_mode(mode, 0.02, false);
     }
     let captured = worker.join().map_err(|_| "capture worker panicked")?;
     Ok(captured?)
   })?;
-  let before_count = count(&visible, card_region);
-  let excluded_count = count(&excluded, card_region);
-  let after_count = count(&after, card_region);
   println!(
     "baseline={baseline_card} visible={before_count} excluded={excluded_count} after_capture={after_count} image={}x{}",
-    excluded.capture.image.width(),
-    excluded.capture.image.height()
+    size.0, size.1
   );
-  if before_count < baseline_card + 500 || excluded_count > baseline_card + 100 || after_count < baseline_card + 500 {
+  if excluded_count > baseline_card + 100 || after_count < baseline_card + 500 {
     return Err("capture exclusion or overlay visibility check failed".into());
   }
   Ok(())
