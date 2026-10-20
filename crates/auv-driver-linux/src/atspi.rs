@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{CoordinateSpace, Point, Rect};
@@ -528,24 +528,31 @@ fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: b
 }
 
 fn apply_shell_stage_window_origins(connection: &Connection, applications: &[Application], windows: &mut [Window]) {
-  let Ok(stage_rects) = shell_stage_rects(connection, applications) else {
+  let frames = stage_repair_frames(windows);
+  // Only a window whose AT-SPI origin is (0, 0) can use the stage repair, and
+  // the walk costs far more than the rest of `list_windows`.
+  if frames.is_empty() {
+    return;
+  }
+  let Ok(stage_rects) = shell_stage_rects(connection, applications, &frames) else {
     return;
   };
   if stage_rects.is_empty() {
     return;
   }
 
-  for window in windows {
-    if !needs_shell_stage_origin(window) {
-      continue;
-    }
+  for window in windows.iter_mut().filter(|window| needs_shell_stage_origin(window)) {
     if let Some(origin) = matching_stage_origin(window.frame, &stage_rects) {
       window.frame.origin = origin;
     }
   }
 }
 
-fn shell_stage_rects(connection: &Connection, applications: &[Application]) -> DriverResult<Vec<Rect>> {
+fn stage_repair_frames(windows: &[Window]) -> Vec<Rect> {
+  windows.iter().filter(|window| needs_shell_stage_origin(window)).map(|window| window.frame).collect()
+}
+
+fn shell_stage_rects(connection: &Connection, applications: &[Application], frames: &[Rect]) -> DriverResult<Vec<Rect>> {
   let mut rects = Vec::new();
   for app in applications.iter().filter(|app| app.name == "gnome-shell" || app.accessible_id == "org.gnome.Shell") {
     for child in children(connection, &app.reference)? {
@@ -553,12 +560,72 @@ fn shell_stage_rects(connection: &Connection, applications: &[Application]) -> D
       if accessible.name != "Main stage" {
         continue;
       }
-      let mut nodes = Vec::new();
-      walk(connection, &accessible.reference, 0, "0".to_string(), &mut nodes)?;
-      rects.extend(nodes.into_iter().map(|node| node.bounds).filter(|rect| rect_is_stage_candidate(*rect)));
+      // The stage tree is mostly shell chrome; the window actors live in the
+      // shell's window containers, which is all the repair reads.
+      let groups = find_window_groups(connection, &accessible.reference).unwrap_or_default();
+      let roots = if groups.is_empty() {
+        vec![accessible.reference.clone()]
+      } else {
+        groups
+      };
+      for root in roots {
+        let mut nodes = Vec::new();
+        // TODO(linux-shell-stage-walk): `walk` fetches role, name, state, and
+        // attributes (about 8.6 D-Bus calls per node) while the repair only needs
+        // bounds. A bounds-only traversal must reproduce `accessible_in_tree`'s
+        // WINDOW-then-SCREEN extents and keep the uniqueness check.
+        walk(connection, &root, 0, "0".to_string(), &mut nodes)?;
+        rects.extend(
+          nodes
+            .into_iter()
+            .map(|node| node.bounds)
+            .filter(|rect| rect_is_stage_candidate(*rect) && frames.iter().any(|frame| same_size(*frame, *rect))),
+        );
+      }
     }
   }
   Ok(rects)
+}
+
+// NOTICE(linux-shell-window-group): window actors live in two stage actors:
+// "Window group" and "Top window group" (override-redirect windows such as
+// popups and menus). Both names are observed on GNOME Shell 50.4; a miss or a
+// read error falls back to the whole-stage walk.
+fn find_window_groups(connection: &Connection, stage: &ObjectRef) -> DriverResult<Vec<ObjectRef>> {
+  const GROUP_NAMES: [&str; 2] = ["Window group", "Top window group"];
+  const MAX_DEPTH: usize = 3;
+  const MAX_INSPECTED: usize = 200;
+
+  let mut remaining = GROUP_NAMES.to_vec();
+  let mut groups = Vec::new();
+  let mut queue = VecDeque::from([(stage.clone(), 0usize)]);
+  let mut inspected = 0;
+  // Breadth first: the containers are shallow, and depth first would spend the
+  // budget inside the first window subtree before reaching the sibling group.
+  while let Some((reference, depth)) = queue.pop_front() {
+    if depth >= MAX_DEPTH {
+      continue;
+    }
+    for child in children(connection, &reference)? {
+      if inspected >= MAX_INSPECTED {
+        return Ok(groups);
+      }
+      inspected += 1;
+      let name = {
+        let proxy = accessible_proxy(connection, &child)?;
+        property_string(&proxy, "Name")?
+      };
+      if let Some(index) = remaining.iter().position(|wanted| *wanted == name) {
+        remaining.remove(index);
+        groups.push(child.clone());
+        if remaining.is_empty() {
+          return Ok(groups);
+        }
+      }
+      queue.push_back((child, depth + 1));
+    }
+  }
+  Ok(groups)
 }
 
 fn needs_shell_stage_origin(window: &Window) -> bool {
