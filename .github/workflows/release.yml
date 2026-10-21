@@ -122,6 +122,19 @@ jobs:
           ditto -c -k --keepParent "$output/AUV Helper.app" "$embedded_archive"
           echo "AUV_MACOS_HELPER_APP_ARCHIVE_PATH=$PWD/$embedded_archive" >> "$GITHUB_ENV"
 
+      # NOTICE(windows-static-crt): MSVC targets link the C runtime dynamically
+      # by default, so auv.exe imported VCRUNTIME140.dll, which a fresh Windows
+      # install lacks (the UCRT api-ms-win-crt-* DLLs ship with Windows 10 and
+      # later; VCRUNTIME140.dll only comes with the Visual C++ Redistributable).
+      # Set it for the released binaries only: workspace crates that link the
+      # prebuilt ONNX Runtime (`ort`, built with /MD) fail to link with a static
+      # CRT, so a workspace-wide `.cargo/config.toml` setting breaks `cargo test`.
+      # Every build below passes --target, so build scripts keep the default.
+      - name: Link the MSVC C runtime statically
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"RUSTFLAGS=-C target-feature=+crt-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+
       - name: Build NAPI binding
         working-directory: js/packages/cli
         # The multi-line command uses POSIX line continuations.
@@ -167,6 +180,30 @@ jobs:
           $process = Start-Process -FilePath "target/${{ matrix.target }}/release/auv-helper.exe" -Wait -PassThru
           if ($process.ExitCode -ne 2) {
             throw "auv-helper.exe returned $($process.ExitCode) instead of rejecting direct invocation with exit code 2"
+          }
+
+      # Regression: a dynamically linked CRT made auv.exe need the Visual C++
+      # Redistributable on a fresh Windows install (see NOTICE(windows-static-crt)).
+      - name: Verify Windows binaries need no Visual C++ runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\*\bin\Host*\*\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          $binaries = @(
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}",
+            "target/${{ matrix.target }}/release/auv-helper.exe",
+            "js/packages/cli/${{ matrix.binding }}"
+          )
+          foreach ($binary in $binaries) {
+            $imports = & $dumpbin /nologo /dependents $binary | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $binary" }
+            $runtime = [regex]::Matches($imports, '(?im)^\s*((vcruntime|msvcp)\S*\.dll)\s*$') | ForEach-Object { $_.Groups[1].Value }
+            if ($runtime) {
+              throw "$binary imports the Visual C++ runtime: $($runtime -join ', ')"
+            }
+            Write-Host "$binary imports no Visual C++ runtime DLL"
           }
 
       - name: Create archive
