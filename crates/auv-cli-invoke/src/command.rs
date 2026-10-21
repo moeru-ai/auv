@@ -428,14 +428,19 @@ impl InvokeCommand {
     self
   }
 
+  /// Runs the command on the local driver inside one recorded command span;
+  /// see [`crate::trace`].
   pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
-    if let Err(error) = input.cancellation.check() {
-      return Box::pin(async move { Err(error.to_string().into()) });
-    }
-    if let Err(failure) = self.validate(&input) {
-      return Box::pin(async move { Err(failure) });
-    }
-    (self.handler)(input)
+    let command = self.clone();
+    Box::pin(crate::trace::record_command(input, crate::trace::Execution::Local, move |input| {
+      if let Err(error) = input.cancellation.check() {
+        return Box::pin(async move { Err(error.to_string().into()) }) as InvokeCommandFuture;
+      }
+      if let Err(failure) = command.validate(&input) {
+        return Box::pin(async move { Err(failure) });
+      }
+      (command.handler)(input)
+    }))
   }
 
   /// Checks the target and the protocol input keys before any frontend runs

@@ -50,7 +50,15 @@ where
   }
 }
 
+/// Runs one core command through the selected Runner inside one recorded
+/// command span; see [`crate::trace`].
 pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+  // The selected adapter is a large state machine; keep it boxed so the span
+  // wrapper does not move it onto the caller's stack (Windows main thread).
+  crate::trace::record_command(input, crate::trace::Execution::Runner, move |input| Box::pin(invoke_selected(input, context))).await
+}
+
+async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
   {
     let registry = crate::default_registry();
     // Every adapter arm below is a core command, so anything else has no Runner route.
@@ -483,8 +491,12 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
 /// Fetches a Runner-held capture's pixels for the PNG evidence artifacts these
 /// commands record, or `None` when this call records no artifacts: results
 /// themselves need only the capture's metadata.
-// TODO(runner-side-capture-artifacts): let the Runner persist evidence from the
-// capture reference instead of moving pixels to the invoke frontend; see
+// TODO(runner-side-capture-artifacts): the Runner now records display, region,
+// and window captures itself (`auv-cli` `runner::recording`), so those three
+// commands are recorded twice on this path: once here under the command span
+// and once in the Runner's store under its RPC span. Drop this pull for them
+// once frontends can present Runner-side artifact references, and for text
+// searches once the Runner records their captures; see
 // docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md.
 async fn evidence_pixels(
   runner: &auv::client::runner::RunnerClient,
