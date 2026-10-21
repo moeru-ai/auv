@@ -39,4 +39,13 @@ xnnpack = ["runtime", "ort/xnnpack"]
 [dependencies]
 auv-inference-common = { version = "0.0.36", path = "../auv-inference-common" }
 ndarray = "0.17"
-ort = { version = "2.0.0-rc.12", default-features = false, optional = true }
+# NOTICE: `ort` is pinned because Cargo resolves a `2.0.0-rc.N` requirement to
+# any later release candidate, and later candidates break the API. rc.14 changed
+# `Session::builder()` to take an `&Environment` and allows one Environment per
+# process. ultralytics-inference 0.0.18 does not build against rc.15, and
+# ultralytics-inference 0.0.54 pins `=2.0.0-rc.14`, keeps its Environment
+# private, and needs Rust 1.92. Balatro loads both crates in one process.
+# TODO(ort-rc14): upgrade ort and ultralytics-inference together after
+# ultralytics-inference can accept a caller-supplied Environment, or after the
+# owner approves one shared Environment owner.
+ort = { version = "=2.0.0-rc.13", default-features = false, optional = true }
