@@ -44,6 +44,10 @@ pub struct ServeArgs {
 }
 
 pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32, String> {
+  tracing::info!(version = env!("CARGO_PKG_VERSION"), "auv serve starting");
+  if let Some(directory) = crate::logging::directory() {
+    crate::logging::spawn_expiry(directory.to_path_buf());
+  }
   let listeners = args.listeners.iter().map(|listener| auv_daemon::parse_listener(listener)).collect::<Result<Vec<_>, _>>()?;
   let shutdown = tokio_util::sync::CancellationToken::new();
   let signal = shutdown.clone();
@@ -99,7 +103,13 @@ fn first_party_runner_runtimes(store_root: &std::path::Path) -> Result<auv_daemo
   let runner_state_root = store_root.join("runner-state").join("auv.core.local");
   let runner_state_root =
     runner_state_root.to_str().ok_or_else(|| format!("local Runner state path is not valid UTF-8: {}", runner_state_root.display()))?;
-  let environment = BTreeMap::from([(crate::runner::STATE_ROOT_ENV.to_string(), runner_state_root.to_string())]);
+  let runner_trace_root = store_root.join("runner-traces");
+  let runner_trace_root =
+    runner_trace_root.to_str().ok_or_else(|| format!("Runner trace path is not valid UTF-8: {}", runner_trace_root.display()))?;
+  let environment = BTreeMap::from([
+    (crate::runner::STATE_ROOT_ENV.to_string(), runner_state_root.to_string()),
+    (crate::runner::TRACE_ROOT_ENV.to_string(), runner_trace_root.to_string()),
+  ]);
   Ok(auv_daemon::runner_provider::FirstPartyRunnerRuntimes {
     local_driver: Some(RunnerRuntime::Executable(ExecutableRunnerRuntime {
       executable,

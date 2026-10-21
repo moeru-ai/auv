@@ -13,6 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+tracing = "0.1"
 auv = { package = "auv-core", version = "0.0.36", path = "../auv" }
 auv-api-client = { version = "0.0.36", path = "../auv-api-client" }
 auv-api-proto = { version = "0.0.36", path = "../auv-api-proto" }

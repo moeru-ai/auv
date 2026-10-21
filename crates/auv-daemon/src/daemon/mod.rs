@@ -131,6 +131,7 @@ impl Daemon {
       created_at: Some(timestamp_now()),
       completed_at: None,
     };
+    tracing::info!(run_id = %run_id, devices = run.devices.len(), "Run created");
     runs.insert(
       run_id,
       OwnedRun {
@@ -165,6 +166,7 @@ impl Daemon {
       keys.into_iter().filter_map(|key| affinities.remove(&key)).collect::<Vec<_>>()
     };
     self.runner_affinity_locks.lock().await.retain(|key, _| &key.caller != caller || key.run_id != run_id);
+    tracing::info!(run_id, outcome = ?outcome, released_runners = runner_ids.len(), "Run stopped");
     for runner_id in runner_ids {
       self.runners.release_run_affinity(&runner_id).await?;
     }

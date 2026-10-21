@@ -61,7 +61,7 @@ async fn remote_grpc_runtime_connects_without_owning_the_endpoint_process() {
   .expect("remote provider");
   let provider = registry.get("example.runner.remote").expect("remote provider").clone();
 
-  let ready = spawn_ready(&provider, None).await.expect("connect remote Runner");
+  let ready = spawn_ready(&provider, None, "runner_test").await.expect("connect remote Runner");
   assert_eq!(ready.process_id, 0);
   let operation_channel = ready.channel.clone();
   let operation =

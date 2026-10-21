@@ -122,10 +122,14 @@ impl RunnerSupervisor {
       daemon_proto::RunnerLifecycle::Unspecified => return Err(RunnerError::InvalidArgument("runner lifecycle is required")),
     }
     let runner_id = crate::resource_id::generate().map_err(RunnerError::Start)?;
-    let ready = match spawn_ready(&provider, self.parent_context.as_deref()).await {
+    let ready = match spawn_ready(&provider, self.parent_context.as_deref(), &runner_id).await {
       Ok(ready) => ready,
-      Err(error) => return Err(error),
+      Err(error) => {
+        tracing::warn!(runner_id = %runner_id, runner_class, %error, "Runner failed to start");
+        return Err(error);
+      }
     };
+    tracing::info!(runner_id = %runner_id, runner_class, process_id = ready.process_id, lifecycle = ?lifecycle, "Runner started");
     let mut labels = ready.labels.clone();
     labels.extend(request.labels);
     let record = daemon_proto::Runner {
@@ -442,7 +446,10 @@ fn schedule_idle_stop(
       should_stop.then(|| runners.remove(&runner_id)).flatten()
     };
     if let Some(managed) = managed {
-      let _ = stop_managed(managed).await;
+      tracing::info!(runner_id = %runner_id, idle_seconds = timeout.as_secs(), "stopping idle Runner");
+      if let Err(error) = stop_managed(managed).await {
+        tracing::warn!(runner_id = %runner_id, %error, "idle Runner did not stop cleanly");
+      }
     }
   });
 }
@@ -481,6 +488,7 @@ async fn stop_managed_in_place(managed: &mut ManagedRunner, deadline: Option<tok
     }
   }
   managed.record.phase = daemon_proto::RunnerPhase::Stopped as i32;
+  tracing::info!(runner_id = runner_id(&managed.record), force, "Runner stopped");
   Ok(())
 }
 
@@ -493,9 +501,13 @@ async fn terminate_child(child: &mut Child) -> Result<(), RunnerError> {
 }
 
 #[cfg(unix)]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  parent_context: Option<&str>,
+  runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
-    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context).await,
+    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context, runner_id).await,
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
   }
 }
@@ -505,6 +517,7 @@ async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
   parent_context: Option<&str>,
+  runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   use std::os::fd::AsRawFd;
 
@@ -521,6 +534,7 @@ async fn spawn_executable_ready(
     // The daemon owns this value. Never let a stale context inherited by the
     // daemon or supplied by a provider manifest redirect child delegation.
     .env_remove("AUV_CONTEXT")
+    .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env("AUV_RUNNER_IPC_FD", "3")
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
@@ -588,9 +602,13 @@ async fn spawn_executable_ready(
 }
 
 #[cfg(windows)]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  parent_context: Option<&str>,
+  runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
-    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context).await,
+    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context, runner_id).await,
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
   }
 }
@@ -600,6 +618,7 @@ async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
   parent_context: Option<&str>,
+  runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -616,6 +635,7 @@ async fn spawn_executable_ready(
     // the daemon host while keeping AUV-owned routing values authoritative.
     .envs(&runtime.environment)
     .env_remove("AUV_CONTEXT")
+    .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env(auv_api_server::runner_transport::RUNNER_IPC_PIPE_ENV, &pipe_name)
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
@@ -676,7 +696,11 @@ async fn spawn_executable_ready(
 }
 
 #[cfg(not(any(unix, windows)))]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, _parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  _parent_context: Option<&str>,
+  _runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
     RunnerRuntime::Executable(_) => Err(RunnerError::Start("executable Runner IPC is not supported on this platform".to_string())),
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
@@ -726,9 +750,13 @@ async fn validate_ready(channel: Channel, provider: &RegisteredRunnerProvider) -
 }
 
 fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
-  for managed in runners.values_mut() {
+  for (runner_id, managed) in runners.iter_mut() {
+    let exit_status = match &mut managed.runtime {
+      ManagedRunnerRuntime::Executable { child } => child.try_wait().ok().flatten(),
+      ManagedRunnerRuntime::RemoteGrpc => None,
+    };
     let exited = match &mut managed.runtime {
-      ManagedRunnerRuntime::Executable { child } => child.try_wait().ok().flatten().is_some(),
+      ManagedRunnerRuntime::Executable { .. } => exit_status.is_some(),
       // TODO(remote-runner-watch-status): consume WatchStatus and health
       // transitions once retry/backoff and failure evidence semantics are
       // approved. Ordinary RPCs already surface endpoint unavailability.
@@ -740,6 +768,12 @@ fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
       // Automatic restart/backoff is deferred until the owner approves
       // attempt limits, crash-loop visibility, and Run-affinity reassignment.
       managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
+      tracing::warn!(
+        runner_id = %runner_id,
+        process_id = managed.record.process_id,
+        status = ?exit_status,
+        "Runner exited while ready; see its runner-<id> log"
+      );
     }
   }
 }

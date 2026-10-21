@@ -2421,9 +2421,11 @@ impl CaptureService for LocalCaptureService {
       ..Default::default()
     };
     let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.window_capture");
     Ok(Response::new(proto::CaptureWindowResponse {
       window: Some(window_to_proto(window)),
-      capture: Some(stored_capture_to_proto(&self.captures, capture)),
+      capture: Some(capture),
     }))
   }
 
@@ -2442,9 +2444,11 @@ impl CaptureService for LocalCaptureService {
         ..Default::default()
       })
       .map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, captured.capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.display_capture");
     Ok(Response::new(proto::CaptureDisplayResponse {
       display: Some(display_to_proto(captured.display)),
-      capture: Some(stored_capture_to_proto(&self.captures, captured.capture)),
+      capture: Some(capture),
     }))
   }
 
@@ -2462,9 +2466,11 @@ impl CaptureService for LocalCaptureService {
         ..Default::default()
       })
       .map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, captured.capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.screen_region_capture");
     Ok(Response::new(proto::CaptureRegionResponse {
       display: Some(display_to_proto(captured.display)),
-      capture: Some(stored_capture_to_proto(&self.captures, captured.capture)),
+      capture: Some(capture),
     }))
   }
 }
@@ -2598,6 +2604,17 @@ pub(super) fn image_frame_to_proto(capture: auv_driver::Capture) -> proto::Image
 
 /// Stores a capture and returns its reference and metadata, without pixels
 /// (see "Image Payloads" in AGENTS.md).
+/// Records a capture this Runner just stored as evidence of the current call.
+// TODO(runner-capture-evidence-coverage): captures taken inside text search,
+// scroll-until, and recent-frame streams are not recorded yet; their RPCs
+// still record the returned references. Add them when a reader needs those
+// frames, with a rate bound for streams.
+fn record_stored_capture(captures: &CaptureStore, frame: &proto::CapturedFrame, purpose: &'static str) {
+  if let Some(reference) = &frame.r#ref {
+    super::recording::record_capture(captures, &reference.capture_id, purpose);
+  }
+}
+
 fn stored_capture_to_proto(captures: &CaptureStore, capture: auv_driver::Capture) -> proto::CapturedFrame {
   let mut frame = capture_metadata_to_proto(&capture);
   frame.thumbhash = capture_thumbhash(&capture.image);
@@ -2670,6 +2687,8 @@ impl DisplayService for LocalDisplayService {
 #[cfg(any(unix, windows))]
 pub(super) async fn serve_inherited() -> Result<(), String> {
   let (incoming, shutdown) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
+  super::recording::install()?;
+  let rpc_layer = super::recording::RpcLayer::new()?;
 
   let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
   let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
@@ -2772,6 +2791,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     auv_api_server::reflection::service(&descriptor_set).map_err(|error| format!("failed to build local Runner reflection: {error}"))?;
 
   let serve_result = tonic::transport::Server::builder()
+    .layer(rpc_layer)
     .add_service(health)
     .add_service(reflection)
     .add_service(method_docs)
@@ -2790,6 +2810,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     .await
     .map_err(|error| format!("Runner transport failed: {error}"));
   let shutdown_result = recent_frames_service.shutdown().await.map_err(|error| format!("recent-frame shutdown failed: {error}"));
+  super::recording::finish().await;
   let input_shutdown = tokio::task::spawn_blocking(|| auv_driver::mouse_input::mouse_coordinator().shutdown())
     .await
     .map_err(|error| format!("input shutdown task failed: {error}"))

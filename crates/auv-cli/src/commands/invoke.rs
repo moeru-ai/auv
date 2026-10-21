@@ -158,13 +158,6 @@ pub(crate) fn tracing_run_id(selected: Option<&crate::commands::plugin::Resolved
   let Some(control_run_id) = selected.and_then(|selected| selected.context.run_id.as_deref()) else {
     return Ok(auv_tracing::RunId::new());
   };
-  // TODO(resource-id-migration): Remove the legacy `run_` branch after old
-  // control-plane stores no longer expose prefixed UUID Run identities.
-  let value = control_run_id.strip_prefix("run_").unwrap_or(control_run_id);
-  let uuid = uuid::Uuid::parse_str(value)
-    .map_err(|error| format!("selected Run ID {control_run_id:?} cannot be projected into the tracing Run identity: {error}"))?;
-  uuid
-    .to_string()
-    .parse()
+  auv_tracing::RunId::from_daemon_run_id(control_run_id)
     .map_err(|error| format!("selected Run ID {control_run_id:?} cannot be projected into the tracing Run identity: {error}"))
 }

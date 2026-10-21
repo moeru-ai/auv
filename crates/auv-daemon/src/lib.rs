@@ -179,7 +179,10 @@ impl Server {
       self
         .inner
         .discovery_endpoint()
-        .map(|endpoint| discovery::PublishedDescriptor::publish(path, endpoint.to_string(), &self.store_root))
+        .map(|endpoint| {
+          tracing::info!(endpoint = %endpoint, discovery = %path.display(), "publishing daemon discovery");
+          discovery::PublishedDescriptor::publish(path, endpoint.to_string(), &self.store_root)
+        })
         .transpose()?
     } else {
       None

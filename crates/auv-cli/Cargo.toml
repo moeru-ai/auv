@@ -48,8 +48,15 @@ tokio-stream = "0.1"
 futures-core = "0.3"
 tonic = { version = "0.14", features = ["transport"] }
 tonic-health = "0.14"
+tower = "0.5"
+http-body = "1"
+bytes = "1"
+percent-encoding = "2"
+prost-reflect = { version = "0.16", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+directories = "6"
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 thumbhash = "0.1"
 
@@ -71,6 +78,9 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", 
 zeroize = "1"
 
 [dev-dependencies]
+futures-executor = "0.3"
+futures-util = { version = "0.3", features = ["io"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 auv-api-client = { version = "0.0.36", path = "../auv-api-client" }
 auv-api-proto = { version = "0.0.36", path = "../auv-api-proto" }
 auv-tracing = { version = "0.0.36", path = "../auv-tracing", features = ["file-store", "memory-store"] }

@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 
 pub(super) const LOCAL_RUNNER_CLASS: &str = "auv.core.local";
 
+/// The daemon-assigned Runner id, given to every executable Runner so its own
+/// logs and trace records name the Runner the daemon reports.
+pub const RUNNER_ID_ENV: &str = "AUV_RUNNER_ID";
+
 /// Experimental daemon-side selection of one RunnerClass provider.
 ///
 /// `runner_class` is the stable selector known before connecting. Display
