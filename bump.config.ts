@@ -124,7 +124,17 @@ export default defineConfig({
     // v0.0.36 most likely shipped an old js/packages/cli/Cargo.lock this way,
     // because its `--offline` update failed without notice.
     const options = { nodeOptions: { stdio: 'inherit' }, throwOnError: true } as const
-    await x('pnpm', ['publish', '-r', '--access', 'public', '--no-git-checks', '--dry-run'], options)
+    // `prepack` builds the SDK from the gitignored Protobuf-ES output, so a
+    // stale checkout fails with unresolved `src/gen` imports. Regenerate it
+    // first, as `release-npm-package.yml` does.
+    await x('pnpm', ['generate:proto'], options)
+    // NOTICE: only the pure JS packages are checked here. `@auv-js/cli` runs
+    // `napi prepublish` in `prepublishOnly`, even on `--dry-run`, and that
+    // fails locally because the platform packages have no CI-built binaries
+    // (`missing bin/auv`). `release.yml` checks those packages after it
+    // downloads the artifacts. Keep this list the same as
+    // `release-npm-package.yml`.
+    await x('pnpm', ['-r', '--filter', '@auv-js/api-client', '--filter', '@auv-js/sdk', 'publish', '--access', 'public', '--no-git-checks', '--dry-run'], options)
 
     await syncCargoToml()
     // Refresh only the versions of workspace path packages. Do not use
