@@ -38,11 +38,23 @@ The current store cannot give that:
   routing header, and the Runner proxy strips it before forwarding
   (`crates/auv-api-server/src/server/runner_grpc_proxy.rs`, `ROUTE_RUN_METADATA`).
 
+## No external format in the contract
+
+AUV owns one durable format: the trace store (`records.jsonl` envelope plus
+artifact bodies, read through `FileTracingStore::read_records`). Record names,
+payloads, and attributes describe what AUV did in AUV's own terms. They are
+never shaped to fit a downstream format, and no AUV crate depends on one.
+
+An external format such as Harbor's ATIF is a projection. It lives in a
+standalone tool that reads the store (`auv-trace-atif`). Another format means
+another reader of the same store. Replacing or dropping one does not touch
+AUV.
+
 ## Two kinds of records
 
 | | Trace (run recording) | Operational log |
 |---|---|---|
-| Purpose | replay, inspection, export (ATIF), eval evidence | diagnose why a daemon or Runner failed or was slow |
+| Purpose | replay, inspection, export to external formats, eval evidence | diagnose why a daemon or Runner failed or was slow |
 | Owner | `auv-tracing`: `records.jsonl` and `artifacts/`, keyed by Run | tokio `tracing` macros plus a file subscriber, keyed by process |
 | Reader | inspector, exporters, vieval | developers, bug reports |
 | Stability | versioned schema, public contract | no format promise |
@@ -72,8 +84,8 @@ The main trace producer. Both frontends get it from one place.
 - The command's protocol inputs at start and its direct result or failure at
   the end. For input commands the direct result already carries the resolved
   action (`screen_point`, `screen_start`/`screen_end`, the
-  `InputActionResult`), so no separate input-action schema was added; the
-  ATIF projection normalizes the action kind. Only this layer knows the
+  `InputActionResult`), so no separate input-action schema was added;
+  exporters normalize the action kind. Only this layer knows the
   request; the driver does not need to know that a call is a replayable step.
 - Artifacts it already emits (captures, OCR sources, scan coverage), plus a
   recorded time.

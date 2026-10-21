@@ -29,8 +29,8 @@ pub const COMMAND_FINISHED: &str = "auv.invoke.command_finished";
 ///
 /// NOTICE(invoke-trace-bounds): one input value and one direct result are cut
 /// independently. Typed text longer than this is recorded as a prefix with
-/// its full length, which keeps ATIF steps readable without risking the
-/// whole event.
+/// its full length, so one long input cannot push the whole event past the
+/// limit and lose it.
 const MAX_INPUT_VALUE_BYTES: usize = 4 * 1024;
 const MAX_RESULT_BYTES: usize = 32 * 1024;
 
