@@ -38,6 +38,11 @@ pub struct ServeArgs {
   #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
   pub daemon_idle_timeout: Option<u64>,
 
+  /// Stop the daemon when stdin reaches end of file. An owning process keeps
+  /// the write end open, so the daemon follows it out even when it is killed.
+  #[arg(long)]
+  pub exit_on_stdin_close: bool,
+
   /// Load an operator-trusted custom Runner provider manifest. May be repeated.
   #[arg(long = "runner-provider", value_name = "PATH")]
   pub runner_providers: Vec<PathBuf>,
@@ -55,6 +60,15 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     auv_api_server::termination::requested().await;
     signal.cancel();
   });
+  if args.exit_on_stdin_close {
+    let signal = shutdown.clone();
+    // A blocking stdin read cannot be cancelled, so it runs on a detached
+    // thread that process exit discards instead of a runtime blocking task.
+    std::thread::spawn(move || {
+      let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+      signal.cancel();
+    });
+  }
 
   let store_root = args.store_root.map_or_else(|| project_root.join(".auv").join("store"), |path| resolve_path(project_root, &path));
   let providers = args

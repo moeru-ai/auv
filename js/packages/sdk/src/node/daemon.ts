@@ -266,7 +266,9 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
         ...(overlay?.theme === undefined ? {} : { AUV_OVERLAY_THEME: serializeOverlayTheme(overlay.theme) }),
         ...(platforms?.macos?.helperApp === undefined ? {} : { AUV_MACOS_HELPER_APP: platforms.macos.helperApp }),
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // The daemon exits when this stdin pipe closes, which the OS does for
+      // us even when this process is killed before it can call stop().
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     },
     nodePath: false,
@@ -395,7 +397,7 @@ function serializeOverlayTheme(theme: OverlayTheme): string {
 }
 
 function serveArguments(options: StartAuvOptions & { id: string }): string[] {
-  const args = ['serve', '--id', options.id]
+  const args = ['serve', '--id', options.id, '--exit-on-stdin-close']
   for (const listener of options.listeners ?? [])
     args.push('--listen', listener)
 

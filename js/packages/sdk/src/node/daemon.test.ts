@@ -1,6 +1,12 @@
+import process from 'node:process'
+
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
@@ -241,6 +247,47 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
     finally {
       await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  //
+  // A killed owner never ran stop(), so its daemon was reparented and kept
+  // running for days. The daemon now exits when the OS closes the stdin pipe
+  // that startAuv holds open.
+  it.skipIf(isWindows)('stops the daemon gracefully when its owner process is killed', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-owner-'))
+    const owner = spawn(process.execPath, [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('../tutils/auv-owner.ts', import.meta.url)),
+      join(workspace, 'target', 'debug', 'auv'),
+      workingDirectory,
+    ], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const isAlive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      }
+      catch {
+        return false
+      }
+    }
+
+    try {
+      const [line] = await once(createInterface({ input: owner.stdout }), 'line') as [string]
+      const pid = Number(line)
+      expect(isAlive(pid)).toBe(true)
+
+      owner.kill('SIGKILL')
+
+      await expect.poll(() => isAlive(pid), { timeout: 15_000 }).toBe(false)
+      await expect(access(join(workingDirectory, '.auv', 'store', 'auv.sock'))).rejects.toThrow()
+    }
+    finally {
+      owner.kill('SIGKILL')
       await rm(workingDirectory, { force: true, recursive: true })
     }
   })

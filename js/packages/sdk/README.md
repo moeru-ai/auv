@@ -82,7 +82,8 @@ Yet if needed, gRPC can be connected too through `createGrpcTransport`.
 Call `startAuv()` once for the lifetime of your Node.js or Electron host, then
 reuse its connection and `createAuv(connection)` client. Each `startAuv()` call
 starts a new app-owned process; it does not discover or attach to another daemon.
-Starting on an occupied endpoint fails. To use a daemon owned by another host,
+The daemon also shuts down when the host exits without calling `daemon.stop()`,
+for example after a crash or `kill -9`. Starting on an occupied endpoint fails. To use a daemon owned by another host,
 call `connect({ endpoint, transport, local })` and close only that connection.
 
 `await checkHealth(connection)` and `await auv.health.check()` return
