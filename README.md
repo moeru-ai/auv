@@ -76,6 +76,12 @@ auv --version
 >
 > Set `AUV_VERSION` or `AUV_INSTALL_DIR` to change the release version or the
 > install directory (default: `~/.local/bin`).
+>
+> The glibc Linux release is a full bundle: it includes AUV's private native
+> libraries, the PipeWire client files they need, and the English Tesseract
+> model. It needs glibc 2.36 or newer (for example Debian 12 or Ubuntu 24.04).
+> Additional OCR languages can be supplied through `TESSDATA_PREFIX`. Linux
+> musl is not currently supported.
 
 #### Windows
 
@@ -278,6 +284,7 @@ brew uninstall auv
 
 ```sh
 rm "$HOME/.local/bin/auv"
+rm -rf "$HOME/.local/bin/.auv"
 ```
 
 #### Windows

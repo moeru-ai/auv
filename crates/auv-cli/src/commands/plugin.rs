@@ -66,6 +66,11 @@ fn execute_resolved(
 
   let mut command = Command::new(executable);
   command.args(arguments).env("AUV_CONTEXT", context).env("AUV_PATH", auv_path).env(auv_tracing::STORE_ROOT_ENV, store_root);
+  // A plugin is not this release bundle; it must load its own PipeWire files.
+  #[cfg(target_os = "linux")]
+  for name in auv_driver_linux::bundle::injected_variables() {
+    command.env_remove(name);
+  }
   if replace_process {
     let error = command.exec();
     return Err(format!("failed to execute plugin {}: {error}", executable.display()));

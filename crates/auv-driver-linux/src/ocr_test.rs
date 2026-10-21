@@ -1,4 +1,5 @@
 use auv_driver_common::geometry::Rect;
+use std::ffi::OsString;
 
 use super::*;
 
@@ -85,4 +86,32 @@ fn maps_common_language_tags_to_tesseract_ids() {
   let options = TextRecognitionOptions::default().with_recognition_languages(["en-US", "zh-Hans"]);
 
   assert_eq!(tesseract_language(&options), "eng+chi_sim");
+}
+
+#[test]
+fn explicit_tessdata_prefix_takes_priority_over_bundled_models() {
+  let executable = std::path::Path::new("/opt/auv/auv");
+
+  let resolved = resolve_tessdata_path(executable, Some(OsString::from("/srv/tessdata")), "eng", |_| false);
+
+  assert_eq!(resolved, Some(std::path::PathBuf::from("/srv/tessdata")));
+}
+
+#[test]
+fn discovers_requested_models_beside_the_release_executable() {
+  let executable = std::path::Path::new("/opt/auv/auv");
+
+  let resolved =
+    resolve_tessdata_path(executable, None, "eng", |path| path == std::path::Path::new("/opt/auv/share/auv/tessdata/eng.traineddata"));
+
+  assert_eq!(resolved, Some(std::path::PathBuf::from("/opt/auv/share/auv/tessdata")));
+}
+
+#[test]
+fn falls_back_to_tesseract_defaults_when_bundle_lacks_a_requested_model() {
+  let executable = std::path::Path::new("/opt/auv/auv");
+
+  let resolved = resolve_tessdata_path(executable, None, "eng+chi_sim", |path| path.ends_with("eng.traineddata"));
+
+  assert_eq!(resolved, None);
 }

@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: scripts/tests/render-homebrew-formula
+      - run: scripts/tests/install-linux-bundle
 
   python:
     name: python checks

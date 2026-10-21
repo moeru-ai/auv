@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repository_root="$(cd "$(dirname "$0")/../.." && pwd)"
+test_root="$(mktemp -d)"
+trap 'rm -rf "$test_root"' EXIT
+mkdir -p "$test_root/fake-bin" "$test_root/install" "$test_root/release"
+
+cat > "$test_root/fake-bin/uname" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -s) printf '%s\n' Linux ;;
+  -m) printf '%s\n' aarch64 ;;
+  *) exit 2 ;;
+esac
+EOF
+cat > "$test_root/fake-bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) destination=$2; shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+cp "$FAKE_RELEASE_DIR/${url##*/}" "$destination"
+EOF
+chmod +x "$test_root/fake-bin/uname" "$test_root/fake-bin/curl"
+
+make_release() {
+  version="$1"
+  payload="$test_root/payload"
+  rm -rf "$payload"
+  mkdir -p "$payload/lib/auv" "$payload/share/auv/tessdata" "$payload/licenses/auv" "$payload/licenses/system"
+  cat > "$payload/auv" <<EOF
+#!/bin/sh
+test "\${1:-}" = --version
+printf '%s\n' '$version'
+EOF
+  chmod +x "$payload/auv"
+  printf '%s\n' "$version" > "$payload/lib/auv/release-marker"
+  printf '%s\n' model > "$payload/share/auv/tessdata/eng.traineddata"
+  printf '%s\n' "$version" > "$payload/licenses/auv/release-marker"
+  printf '%s\n' "$version" > "$payload/licenses/system/release-marker.copyright"
+  printf '{"version":"%s"}\n' "$version" > "$payload/manifest.json"
+  tar -czf "$test_root/release/auv-aarch64-unknown-linux-gnu.tar.gz" -C "$payload" .
+  shasum -a 256 "$test_root/release/auv-aarch64-unknown-linux-gnu.tar.gz" \
+    | awk '{ print $1 }' > "$test_root/release/auv-aarch64-unknown-linux-gnu.tar.gz.sha256"
+}
+
+make_release 1.0.0
+PATH="$test_root/fake-bin:$PATH" FAKE_RELEASE_DIR="$test_root/release" AUV_INSTALL_DIR="$test_root/install" \
+  sh "$repository_root/install/install.sh"
+test -L "$test_root/install/auv"
+test "$("$test_root/install/auv" --version)" = 1.0.0
+test "$(cat "$test_root/install/.auv/lib/auv/release-marker")" = 1.0.0
+test "$(cat "$test_root/install/.auv/licenses/auv/release-marker")" = 1.0.0
+test "$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$test_root/install/.auv/manifest.json")" = 1.0.0
+
+make_release 2.0.0
+PATH="$test_root/fake-bin:$PATH" FAKE_RELEASE_DIR="$test_root/release" AUV_INSTALL_DIR="$test_root/install" \
+  sh "$repository_root/install/install.sh"
+test "$("$test_root/install/auv" --version)" = 2.0.0
+test "$(cat "$test_root/install/.auv/lib/auv/release-marker")" = 2.0.0
+test "$(cat "$test_root/install/.auv/licenses/auv/release-marker")" = 2.0.0
+test "$(cat "$test_root/install/.auv/licenses/system/release-marker.copyright")" = 2.0.0
+test "$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$test_root/install/.auv/manifest.json")" = 2.0.0
+test -z "$(find "$test_root/install" -maxdepth 1 \( -name '.auv.new.*' -o -name '.auv.old.*' -o -name '.auv-link.*' \) -print -quit)"

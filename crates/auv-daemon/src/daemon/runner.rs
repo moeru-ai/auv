@@ -561,6 +561,13 @@ async fn spawn_executable_ready(
   parent.set_nonblocking(true).map_err(|error| RunnerError::Start(error.to_string()))?;
   let inherited_fd = child_stream.as_raw_fd();
   let mut command = tokio::process::Command::new(&runtime.executable);
+  // A provider Runner is not necessarily this release bundle, so it must load
+  // its own PipeWire files; AUV's own Runner injects them again in `main`.
+  // Removed before `runtime.environment` so a manifest can still set them.
+  #[cfg(target_os = "linux")]
+  for name in auv_driver_linux::bundle::injected_variables() {
+    command.env_remove(name);
+  }
   command
     .args(&runtime.arguments)
     // Runner children inherit the daemon environment so platform launch

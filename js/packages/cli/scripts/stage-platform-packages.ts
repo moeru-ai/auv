@@ -3,7 +3,7 @@ import type { Buffer } from 'node:buffer'
 import process from 'node:process'
 
 import { execFileSync } from 'node:child_process'
-import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +20,7 @@ interface PackageManifest {
 
 interface Target {
   archive: string
+  bundled?: boolean
   executable: string
   packageDir: string
 }
@@ -37,11 +38,13 @@ const targets: readonly Target[] = [
   },
   {
     archive: 'auv-aarch64-unknown-linux-gnu.tar.gz',
+    bundled: true,
     executable: 'auv',
     packageDir: 'linux-arm64-gnu',
   },
   {
     archive: 'auv-x86_64-unknown-linux-gnu.tar.gz',
+    bundled: true,
     executable: 'auv',
     packageDir: 'linux-x64-gnu',
   },
@@ -58,15 +61,20 @@ const targets: readonly Target[] = [
 ]
 
 const artifactsRoot = resolve(process.argv[2] ?? join(cliRoot, 'artifacts'))
+const requestedPackage = process.argv[3]
 const rootManifest = JSON.parse(await readFile(join(cliRoot, 'package.json'), 'utf8')) as PackageManifest
 
 const artifactFiles = await collectFiles(artifactsRoot)
-for (const target of targets) {
+const selectedTargets = requestedPackage ? targets.filter(target => target.packageDir === requestedPackage) : targets
+if (selectedTargets.length === 0) {
+  throw new Error(`Unknown AUV platform package ${requestedPackage}`)
+}
+for (const target of selectedTargets) {
   await stageTarget(target, artifactFiles, rootManifest.version)
 }
 
 await copyFile(join(await findWorkspaceDir(cliRoot) ?? cliRoot, 'LICENSE'), join(cliRoot, 'LICENSE'))
-console.info(`Staged ${targets.length} AUV executables from ${artifactsRoot}`)
+console.info(`Staged ${selectedTargets.length} AUV platform packages from ${artifactsRoot}`)
 
 async function collectFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
@@ -78,6 +86,10 @@ async function collectFiles(root: string): Promise<string[]> {
   )
 
   return nested.flat()
+}
+
+function extractBundle(archive: string, destination: string): void {
+  execFileSync('tar', ['-xzf', archive, '-C', destination], { stdio: 'inherit' })
 }
 
 function extractExecutable(archive: string, executable: string): Buffer {
@@ -116,23 +128,39 @@ async function stageTarget(
   }
 
   const relativeExecutable = `bin/${target.executable}`
-  if (!manifest.files?.includes(relativeExecutable)) {
-    manifest.files = [...new Set([...(manifest.files ?? []), relativeExecutable])]
+  const packagedPath = target.bundled ? 'bin' : relativeExecutable
+  if (!manifest.files?.includes(packagedPath) || (target.bundled && manifest.files.includes(relativeExecutable))) {
+    manifest.files = [...new Set([...(manifest.files ?? []).filter(file => file !== relativeExecutable), packagedPath])]
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
-  const executable = extractExecutable(archive, target.executable)
-  const destination = join(packageRoot, relativeExecutable)
-  const temporary = `${destination}.tmp`
-  await mkdir(dirname(destination), { recursive: true })
-
-  try {
-    await writeFile(temporary, executable, { mode: 0o755 })
-    await chmod(temporary, 0o755)
-    await rename(temporary, destination)
+  if (target.bundled) {
+    const binRoot = join(packageRoot, 'bin')
+    const temporary = await mkdtemp(join(packageRoot, '.bundle-'))
+    try {
+      extractBundle(archive, temporary)
+      await chmod(join(temporary, target.executable), 0o755)
+      await rm(binRoot, { force: true, recursive: true })
+      await rename(temporary, binRoot)
+    }
+    finally {
+      await rm(temporary, { force: true, recursive: true })
+    }
   }
-  finally {
-    await rm(temporary, { force: true })
+  else {
+    const executable = extractExecutable(archive, target.executable)
+    const destination = join(packageRoot, relativeExecutable)
+    const temporary = `${destination}.tmp`
+    await mkdir(dirname(destination), { recursive: true })
+
+    try {
+      await writeFile(temporary, executable, { mode: 0o755 })
+      await chmod(temporary, 0o755)
+      await rename(temporary, destination)
+    }
+    finally {
+      await rm(temporary, { force: true })
+    }
   }
 
   await copyFile(join(await findWorkspaceDir(cliRoot) ?? cliRoot, 'LICENSE'), join(packageRoot, 'LICENSE'))

@@ -35,7 +35,16 @@ case "$version" in
 esac
 
 work_dir=$(mktemp -d)
-trap 'rm -rf "$work_dir"' EXIT
+staging_dir=
+backup_dir=
+link_tmp=
+cleanup() {
+  rm -rf "$work_dir"
+  [ -z "$staging_dir" ] || rm -rf "$staging_dir"
+  [ -z "$backup_dir" ] || rm -rf "$backup_dir"
+  [ -z "$link_tmp" ] || rm -f "$link_tmp"
+}
+trap cleanup EXIT
 cd "$work_dir"
 
 printf 'Downloading %s\n' "$base_url/$archive" >&2
@@ -50,11 +59,42 @@ else
 fi
 [ "$actual" = "$expected" ] || error "Checksum mismatch for $archive"
 
-tar -xzf "$archive" auv
-./auv --version >/dev/null || error 'The downloaded auv cannot run on this host.'
-
 mkdir -p "$install_dir"
-install -m 0755 auv "$install_dir/auv"
+if [ "$platform" = unknown-linux-gnu ]; then
+  staging_dir=$install_dir/.auv.new.$$
+  backup_dir=$install_dir/.auv.old.$$
+  link_tmp=$install_dir/.auv-link.$$
+  [ ! -e "$staging_dir" ] || error "Temporary install path already exists: $staging_dir"
+  [ ! -e "$backup_dir" ] || error "Temporary backup path already exists: $backup_dir"
+  if [ -d "$install_dir/auv" ] && [ ! -L "$install_dir/auv" ]; then
+    error "Cannot replace directory: $install_dir/auv"
+  fi
+
+  mkdir "$staging_dir"
+  tar -xzf "$archive" -C "$staging_dir"
+  "$staging_dir/auv" --version >/dev/null || error 'The downloaded auv cannot run on this host.'
+  ln -s .auv/auv "$link_tmp"
+
+  if [ -e "$install_dir/.auv" ] || [ -L "$install_dir/.auv" ]; then
+    mv "$install_dir/.auv" "$backup_dir"
+  fi
+  if ! mv "$staging_dir" "$install_dir/.auv" || ! mv -f "$link_tmp" "$install_dir/auv"; then
+    rm -rf "$install_dir/.auv"
+    if [ -e "$backup_dir" ] || [ -L "$backup_dir" ]; then
+      mv "$backup_dir" "$install_dir/.auv"
+      backup_dir=
+    fi
+    error 'Failed to replace the installed Linux bundle.'
+  fi
+  staging_dir=
+  link_tmp=
+  rm -rf "$backup_dir"
+  backup_dir=
+else
+  tar -xzf "$archive" auv
+  ./auv --version >/dev/null || error 'The downloaded auv cannot run on this host.'
+  install -m 0755 auv "$install_dir/auv"
+fi
 printf 'Installed auv to %s\n' "$install_dir/auv" >&2
 
 case ":$PATH:" in
