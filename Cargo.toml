@@ -45,6 +45,7 @@ members = [
   "supported/apps/auv-steam",
   "crates/auv-view",
   "crates/auv-bench-osu",
+  "crates/auv-trace-atif",
   "evals/auv-base",
 ]
 default-members = [ "crates/auv-cli" ]

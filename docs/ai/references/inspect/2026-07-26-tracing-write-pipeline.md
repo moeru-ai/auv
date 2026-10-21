@@ -65,7 +65,7 @@ own ingestion contract over those durable records.
 
 `auv-inspector` is explicitly out of scope. No generic inspection API is
 provided as a compatibility substitute. The file store's sequential reader and
-the `auv export atif` projection (2026-10-21) are the only read paths; they do
+the standalone `auv-trace-atif` projection (2026-10-21) are the only read paths; they do
 not index, cursor, or subscribe. A later owner-approved slice may define
 ingestion, indexing, artifact resolution, and viewer APIs over data written by a
 tracing store.

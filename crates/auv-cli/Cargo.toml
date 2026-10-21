@@ -78,8 +78,6 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", 
 zeroize = "1"
 
 [dev-dependencies]
-futures-executor = "0.3"
-futures-util = { version = "0.3", features = ["io"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 auv-api-client = { version = "0.0.36", path = "../auv-api-client" }
 auv-api-proto = { version = "0.0.36", path = "../auv-api-proto" }

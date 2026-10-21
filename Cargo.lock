@@ -545,8 +545,6 @@ dependencies = [
  "clap",
  "directories",
  "futures-core",
- "futures-executor",
- "futures-util",
  "http-body",
  "image",
  "objc2-core-foundation",
@@ -1094,6 +1092,20 @@ dependencies = [
  "auv-inference-ultralytics",
  "image",
  "serde",
+]
+
+[[package]]
+name = "auv-trace-atif"
+version = "0.0.36"
+dependencies = [
+ "auv-tracing",
+ "chrono",
+ "clap",
+ "futures-executor",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

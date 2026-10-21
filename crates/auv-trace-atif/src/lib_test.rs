@@ -57,17 +57,25 @@ fn rpc(service: &'static str, method: &'static str) -> RpcSpan {
   })
 }
 
-/// A 200x100 logical capture whose top-left sits at screen (1000, 500).
+/// Capture evidence for a 200x100 logical capture at screen (1000, 500), with
+/// the attributes `auv_cli_invoke::artifact::capture_evidence` records. The
+/// body is not an image: the export only copies it.
 fn capture(capture_ref: Option<&str>) -> auv_tracing::NewArtifact<futures_util::io::Cursor<Vec<u8>>> {
-  let capture = auv_driver::Capture {
-    origin: Some(auv_driver::Position::in_screen(auv_driver::ScreenPoint::new(1000.0, 500.0))),
-    image: image::RgbaImage::new(400, 200),
-    bounds: auv_driver::Rect::new(1000.0, 500.0, 200.0, 100.0),
-    scale_factor: 2.0,
-    backend: "fixture".to_string(),
-    fallback_reason: None,
-  };
-  auv_cli_invoke::artifact::capture_evidence("auv.driver.display_capture", &capture, capture_ref).unwrap()
+  let float = |value: f64| AttributeValue::float(value).unwrap();
+  let mut attributes = vec![
+    ("capture.bounds.x".to_string(), float(1000.0)),
+    ("capture.bounds.y".to_string(), float(500.0)),
+    ("capture.bounds.width".to_string(), float(200.0)),
+    ("capture.bounds.height".to_string(), float(100.0)),
+    ("capture.origin.space".to_string(), AttributeValue::string("screen")),
+  ];
+  attributes.extend(capture_ref.map(|id| ("capture.ref_id".to_string(), AttributeValue::string(id))));
+  let options = auv_tracing::EmitBytesOptions::new()
+    .with_purpose("auv.driver.display_capture")
+    .with_content_type("image/webp")
+    .with_file_extension("webp")
+    .with_attributes(Attributes::from_iter(attributes));
+  auv_tracing::NewArtifact::from_bytes(options, b"webp".to_vec()).unwrap()
 }
 
 fn store(path: &Path) -> auv_tracing::Dispatch {
@@ -283,4 +291,26 @@ fn a_drag_records_where_it_started_and_ended_on_the_screenshot() {
   assert_eq!(pointer["kind"], "drag");
   assert_eq!((pointer["x"].as_f64(), pointer["y"].as_f64()), (Some(150.0), Some(90.0)));
   assert_eq!(pointer["start"], json!({ "x": 10.0, "y": 20.0 }));
+}
+
+#[test]
+fn listing_counts_the_steps_an_export_would_write() {
+  // A Runner call nested under a command is part of that command's step, so
+  // the listing must not count it separately.
+  let root = tempfile::tempdir().unwrap();
+  let frontend = store(root.path());
+  let runner = store(&root.path().join("runner-traces").join("runner_1"));
+  let run_id = RunId::new();
+  let command_span =
+    dispatcher::with_default(&frontend, || Context::root(run_id)).in_scope(|| auv_tracing::start_span(command("display.list")));
+  let remote = dispatcher::with_default(&runner, || {
+    Context::from_remote(auv_tracing::RemoteContext::new(run_id, Some(*command_span.id().unwrap()))).unwrap()
+  });
+  drop(remote.in_scope(|| auv_tracing::start_span(rpc("auv.api.driver.v1.DisplayService", "ListDisplays"))));
+  drop(command_span);
+  futures_executor::block_on(frontend.flush()).unwrap();
+  futures_executor::block_on(runner.flush()).unwrap();
+
+  let runs = super::runs(&[root.path().to_path_buf()]).unwrap();
+  assert_eq!(runs.iter().map(|(run, _, steps)| (*run, *steps)).collect::<Vec<_>>(), [(run_id, 1)]);
 }

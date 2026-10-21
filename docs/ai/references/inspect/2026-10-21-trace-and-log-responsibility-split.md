@@ -177,9 +177,12 @@ by length.
   `<daemon store root>/runner-traces/<runner id>/` (one store per Runner
   process, so concurrent Runners never share a file), flushed after every call
   and at shutdown; capture evidence is encoded on the blocking pool.
-- `auv-cli` `atif` + `auv export atif`: reads one or more stores and their
-  `runner-traces/*`, merges any number of Runs, writes ATIF v1.8 with copied
-  images and `tool_calls[].extra.pointer` in screenshot pixels.
+- `auv-trace-atif` (standalone tool crate, `publish = false`, not part of the
+  `auv` CLI, because ATIF belongs to its consumers): reads one or more stores
+  and their `runner-traces/*`, merges any number of Runs, and writes ATIF v1.8
+  with copied images and `tool_calls[].extra.pointer` (and `start` for drags)
+  in screenshot pixels. It depends only on `auv-tracing` and reads the record
+  names as a contract (`NOTICE(atif-record-names)`).
 
 ### Operational logs
 
@@ -257,7 +260,7 @@ Linux (neko-gpu-1, GNOME 48 Wayland with portal input, 2560×1440 at 1×):
 - `TODO(input-text-redaction)`: typed and pasted text is recorded verbatim, up
   to 4 KiB.
 - Without an explicit Run, each `auv invoke` or MCP call is its own Run. Pass
-  every Run to `auv export atif`, or use `auv run create` with `--run`.
+  every Run to `auv-trace-atif`, or use `auv run create` with `--run`.
 - `encode_args` drops non-finite numbers, so a rejected `nan` input is missing
   from the recorded inputs. This was not changed in this slice.
 - A remote Device's Runner store is on that Device. The export reads only

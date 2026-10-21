@@ -3,7 +3,6 @@
 //! Supported crates own app/game behavior and command frontends. This crate
 //! owns the root executable frontends over `auv-cli-invoke` and `auv-tracing`.
 
-mod atif;
 pub mod cli;
 pub mod commands;
 mod logging;

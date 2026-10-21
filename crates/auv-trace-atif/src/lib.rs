@@ -1,4 +1,6 @@
-//! ATIF projection of one recorded Run.
+//! ATIF projection of recorded AUV Runs: a standalone tool, not part of the
+//! `auv` CLI. ATIF belongs to its consumers (vieval, Harbor); AUV's own
+//! contract is the trace store this crate reads.
 //!
 //! Harbor's Agent Trajectory Interchange Format (ATIF v1.8,
 //! `rfcs/0001-trajectory-format.md` in `github.com/harbor-framework/harbor`)
@@ -16,21 +18,29 @@
 //! The model's message, reasoning, and token usage are not AUV's to know; an
 //! eval merges them into the exported steps by `extra.auv.span_id`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use auv_tracing::{ArtifactMetadata, AttributeValue, FileTracingStore, RunId, SpanId, Timestamp, TraceRecord};
 use serde_json::{Value, json};
 
 const SCHEMA_VERSION: &str = "ATIF-v1.8";
-const COMMAND_SPAN: &str = auv_cli_invoke::trace::COMMAND_SPAN;
+
+// NOTICE(atif-record-names): these are the producers' record names, read as
+// a durable contract: `auv_cli_invoke::trace` (command span and events) and
+// `auv-cli`'s `runner::recording` (Runner RPC span and events). This tool does
+// not depend on those crates, which pull in every platform driver; rename
+// them together.
+const COMMAND_SPAN: &str = "auv.invoke.command";
+const COMMAND_STARTED: &str = "auv.invoke.command_started";
+const COMMAND_FINISHED: &str = "auv.invoke.command_finished";
 const RPC_SPAN: &str = "auv.runner.rpc";
 /// Observation text stays readable; the full result is in the trace store.
 const MAX_OBSERVATION_TEXT: usize = 2000;
 
 /// What one export wrote.
 #[derive(Debug)]
-pub(crate) struct Exported {
+pub struct Exported {
   pub trajectory: PathBuf,
   pub steps: usize,
   pub images: usize,
@@ -47,7 +57,7 @@ pub(crate) struct Exported {
 ///
 /// Each store's `runner-traces/*` sub-stores (written by daemon-owned Runners)
 /// are read too, so the daemon's store root covers SDK-driven Runs.
-pub(crate) fn export(stores: &[PathBuf], run_ids: &[RunId], out: &Path) -> Result<Exported, String> {
+pub fn export(stores: &[PathBuf], run_ids: &[RunId], out: &Path) -> Result<Exported, String> {
   let mut loaded = Loaded::default();
   for store in expand_stores(stores)? {
     loaded.read(&store, run_ids)?;
@@ -344,7 +354,7 @@ impl Step<'_> {
 
   fn arguments(&self) -> Value {
     let arguments = if self.is_command() {
-      self.event(auv_cli_invoke::trace::COMMAND_STARTED).and_then(|started| started.get("inputs")).cloned()
+      self.event(COMMAND_STARTED).and_then(|started| started.get("inputs")).cloned()
     } else {
       self.event("auv.runner.rpc_request").and_then(|request| request.get("message")).cloned()
     };
@@ -357,7 +367,7 @@ impl Step<'_> {
   /// The direct result (command) or first response message (Runner call).
   fn result(&self) -> Option<&Value> {
     if self.is_command() {
-      self.event(auv_cli_invoke::trace::COMMAND_FINISHED)?.get("result")
+      self.event(COMMAND_FINISHED)?.get("result")
     } else {
       self.event("auv.runner.rpc_finished")?.get("response")?.get("message")
     }
@@ -365,7 +375,7 @@ impl Step<'_> {
 
   fn status(&self) -> (&'static str, Option<String>) {
     if self.is_command() {
-      return match self.event(auv_cli_invoke::trace::COMMAND_FINISHED) {
+      return match self.event(COMMAND_FINISHED) {
         Some(finished) if finished["status"] == "succeeded" => ("succeeded", None),
         Some(finished) => ("failed", finished["failure"]["message"].as_str().map(str::to_string)),
         None => ("unfinished", None),
@@ -514,31 +524,34 @@ fn milliseconds_between(start: Timestamp, end: Timestamp) -> f64 {
   (nanos(end) - nanos(start)) as f64 / 1_000_000.0
 }
 
-/// Lists the Runs present in `stores`, newest first, for `--run` discovery.
-pub(crate) fn runs(stores: &[PathBuf]) -> Result<Vec<(RunId, Timestamp, usize)>, String> {
-  let mut runs: BTreeMap<RunId, (Timestamp, usize)> = BTreeMap::new();
-  for store in expand_stores(stores)? {
-    let records = FileTracingStore::read_records(&store).map_err(|error| format!("failed to read {}: {error}", store.display()))?;
+/// Lists the Runs present in `stores`, newest first, with the number of steps
+/// [`export`] would write for each, for `--run` discovery.
+pub fn runs(stores: &[PathBuf]) -> Result<Vec<(RunId, Timestamp, usize)>, String> {
+  let stores = expand_stores(stores)?;
+  let mut run_ids = Vec::new();
+  for store in &stores {
+    let records = FileTracingStore::read_records(store).map_err(|error| format!("failed to read {}: {error}", store.display()))?;
     for record in records.filter_map(Result::ok) {
-      if let TraceRecord::SpanStarted {
-        run_id,
-        name,
-        started_at,
-        ..
-      } = record.record
-        && (name.as_str() == COMMAND_SPAN || name.as_str() == RPC_SPAN)
-      {
-        let entry = runs.entry(run_id).or_insert((started_at, 0));
-        entry.0 = entry.0.min(started_at);
-        entry.1 += 1;
+      if !run_ids.contains(&record.record.run_id()) {
+        run_ids.push(record.record.run_id());
       }
     }
   }
-  let mut runs = runs.into_iter().map(|(run, (started, spans))| (run, started, spans)).collect::<Vec<_>>();
+  let mut runs = Vec::new();
+  for run_id in run_ids {
+    let mut loaded = Loaded::default();
+    for store in &stores {
+      loaded.read(store, &[run_id])?;
+    }
+    let steps = loaded.steps();
+    if let Some(first) = steps.first() {
+      runs.push((run_id, first.span.started_at, steps.len()));
+    }
+  }
   runs.sort_by_key(|(_, started, _)| std::cmp::Reverse(*started));
   Ok(runs)
 }
 
 #[cfg(test)]
-#[path = "atif_test.rs"]
+#[path = "lib_test.rs"]
 mod tests;

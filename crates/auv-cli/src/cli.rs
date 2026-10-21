@@ -72,8 +72,6 @@ enum RootCommand {
   Mcp(McpArgs),
   /// Run compiled mode-aware operations.
   Op(OpArgs),
-  /// Export a recorded Run from its trace stores.
-  Export(crate::commands::export::ExportArgs),
   /// Inspect external auv-* command plugins visible on PATH.
   Plugin(PluginArgs),
   #[command(external_subcommand)]
@@ -149,12 +147,6 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Run(args)) => crate::commands::run::run(args, &selection).await,
     Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &selection, &project_root).await,
     Some(RootCommand::Op(args)) => crate::commands::op::run(args).await,
-    Some(RootCommand::Export(args)) => {
-      if selection.device_name.is_some() || selection.device_id.is_some() {
-        return Err("export reads local trace stores and cannot use --device or --device-id".to_string());
-      }
-      crate::commands::export::run(args, selection.run_id.as_deref(), &project_root)
-    }
     Some(RootCommand::Plugin(args)) => crate::commands::plugin::run(args).await,
     Some(RootCommand::External(mut arguments)) => {
       let command_name = arguments.remove(0);
