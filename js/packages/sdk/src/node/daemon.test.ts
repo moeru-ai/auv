@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
-import { checkHealth, createAuv, listDevices } from '../apis'
+import { checkHealth, createAuv, createPairingToken, listDevices } from '../apis'
 import { repositoryRoot } from '../tutils/dir'
 import { unusedLoopbackPort } from '../tutils/port'
 import { connect } from './connect'
@@ -47,8 +47,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
         ? [expect.stringMatching(/^npipe:\/\/\.\/pipe\/auv-/), `http://127.0.0.1:${port}`]
         : [`unix://${join(workingDirectory, 'state', 'auv.sock')}`, `http://127.0.0.1:${port}`])
       expect(daemon.connectionOptions).toEqual(isWindows
-        ? { endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
-        : { endpoint: join(workingDirectory, 'state', 'auv.sock'), local: true, transport: 'unix' })
+        ? { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
+        : { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: join(workingDirectory, 'state', 'auv.sock'), local: true, transport: 'unix' })
       await expect(access(daemon.storeRoot)).resolves.toBeUndefined()
 
       const connection = await daemon.connect()
@@ -200,6 +200,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       expect(daemon.endpoints).toHaveLength(1)
       expect(daemon.endpoints[0]).toMatch(/^npipe:\/\/\.\/pipe\/auv-/)
       expect(daemon.connectionOptions).toEqual({
+        credential: expect.stringMatching(/^[0-9a-f]{64}$/),
         endpoint: daemon.endpoints[0],
         local: true,
         transport: 'npipe',
@@ -213,6 +214,34 @@ describe('startAuv', { timeout: 30_000 }, () => {
       }
     }
     finally {
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  //
+  // Local IPC admitted every process of the daemon's OS user. A process that
+  // read the socket path from `ps` could make the daemon's Runner capture the
+  // screen with the permissions granted to the app that started it, and could
+  // mint a pairing token for a durable bearer. startAuv now requires its
+  // per-launch owner key on every local request.
+  it('rejects a same-user client that knows the endpoint but not the owner key', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-owner-key-'))
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), workingDirectory })
+    const { credential: _, ...withoutKey } = daemon.connectionOptions
+    const stranger = await connect(withoutKey)
+    const owner = await daemon.connect()
+    try {
+      await expect(listDevices(stranger)).rejects.toThrow(/owner key/)
+      await expect(createPairingToken(stranger)).rejects.toThrow(/owner key/)
+      await expect(listDevices(await connect({ ...withoutKey, credential: 'f'.repeat(64) }))).rejects.toThrow(/owner key/)
+      expect((await listDevices(owner)).some(device => device.local)).toBe(true)
+      expect((await listDevices(await connect(daemon.connectionOptions))).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await Promise.all([stranger.close(), owner.close()])
       await daemon.stop()
       await rm(workingDirectory, { force: true, recursive: true })
     }

@@ -43,6 +43,13 @@ pub struct ServeArgs {
   #[arg(long)]
   pub exit_on_stdin_close: bool,
 
+  /// Read a 64-character hexadecimal owner key from the first line of stdin.
+  /// Every local-IPC caller must then present it as `authorization: Bearer`.
+  /// The key never appears in argv or the environment, which other processes
+  /// of the same user can read.
+  #[arg(long, requires = "exit_on_stdin_close")]
+  pub owner_key_stdin: bool,
+
   /// Load an operator-trusted custom Runner provider manifest. May be repeated.
   #[arg(long = "runner-provider", value_name = "PATH")]
   pub runner_providers: Vec<PathBuf>,
@@ -60,6 +67,21 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     auv_api_server::termination::requested().await;
     signal.cancel();
   });
+  // Read the key before the lifeline thread takes over stdin.
+  let owner_key = if args.owner_key_stdin {
+    use std::io::BufRead as _;
+    let mut line = zeroize::Zeroizing::new(String::new());
+    std::io::stdin().lock().read_line(&mut line).map_err(|error| format!("failed to read the owner key from stdin: {error}"))?;
+    let owner_key = auv_api_server::OwnerKey::parse(line.trim_end_matches(['\r', '\n']))?;
+    #[cfg(target_os = "linux")]
+    // A non-dumpable process hides its memory and /proc environment from other
+    // processes of the same user, which could otherwise read the key back.
+    rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+      .map_err(|error| format!("failed to protect the owner key in memory: {error}"))?;
+    Some(owner_key)
+  } else {
+    None
+  };
   if args.exit_on_stdin_close {
     let signal = shutdown.clone();
     // A blocking stdin read cannot be cancelled, so it runs on a detached
@@ -89,6 +111,7 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     discovery_file: args.discovery_file,
     register: !args.no_register,
     daemon_idle_timeout: args.daemon_idle_timeout.map(std::time::Duration::from_secs),
+    owner_key,
     runner_providers: providers,
   })
   .await?;

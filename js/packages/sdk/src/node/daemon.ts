@@ -6,7 +6,7 @@ import type { AuvOverlayOptions, OverlayTheme } from './overlay'
 
 import process from 'node:process'
 
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -41,6 +41,12 @@ export interface AuvDaemon {
 
 /** Serializable defaults for connecting to the preferred bound endpoint. */
 export interface AuvDaemonConnectionOptions {
+  /**
+   * Owner key generated for this launch. The daemon rejects local callers
+   * that do not present it, including other processes of the same OS user.
+   * Hand it only to processes that should control this daemon.
+   */
+  readonly credential: DeviceCredential
   readonly endpoint: string
   readonly local: boolean
   readonly transport: 'http' | 'npipe' | 'unix'
@@ -101,8 +107,9 @@ export interface StartAuvOptions extends OperationOptions {
   listeners?: readonly string[]
   /**
    * Keeps this child daemon from registering as the default local daemon: it
-   * publishes no discovery metadata.
-   * @default false
+   * publishes no discovery metadata. A registered daemon still requires this
+   * launch's owner key, so other discovery clients cannot use it.
+   * @default true
    */
   noRegister?: boolean
   /** Overlay presentation defaults for this daemon and its Runner children. */
@@ -208,7 +215,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   } = merge<ResolvedStartAuvOptions, StartAuvOptions>({
     binaryPath: 'auv',
     listeners: [],
-    noRegister: false,
+    noRegister: true,
     runnerProviders: [],
     shutdownTimeoutMs: 5_000,
     startupTimeoutMs: 10_000,
@@ -246,6 +253,9 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   }
 
   const id = randomUUID()
+  // Sent over stdin, never argv or the environment: other processes of the
+  // same user can read both.
+  const ownerKey = randomBytes(32).toString('hex')
   const child = x(binaryPath, serveArguments({
     daemonIdleTimeoutSeconds,
     discoveryFile,
@@ -274,6 +284,10 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     nodePath: false,
     signal,
   })
+  // A daemon that exits early closes this pipe; `exited` reports that, so a
+  // failed write must not become an unhandled stream error in the host.
+  child.process?.stdin?.on('error', () => {})
+  child.process?.stdin?.write(`${ownerKey}\n`)
 
   const startupDeadline = AbortSignal.timeout(startupTimeoutMs)
   const startupSignal = signal === undefined ? startupDeadline : AbortSignal.any([signal, startupDeadline])
@@ -307,14 +321,14 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
       }),
     ])
 
-    const connectionOptions = ownerConnection(ownerEndpoint)
+    const connectionOptions = ownerConnection(ownerEndpoint, ownerKey)
     let stopping: Promise<AuvDaemonExit> | undefined
 
     return {
       binaryPath,
       connect(connectOptions = {}) {
         return connect({
-          credential: connectOptions.credential,
+          credential: connectOptions.credential ?? ownerKey,
           endpoint: connectionOptions.endpoint,
           local: connectionOptions.local,
           signal: connectOptions.signal,
@@ -359,15 +373,17 @@ function isOwnerEndpoint(endpoint: string): boolean {
   return endpoint.startsWith('unix://') || endpoint.startsWith('npipe://')
 }
 
-function ownerConnection(endpoint: string): AuvDaemonConnectionOptions {
+function ownerConnection(endpoint: string, credential: DeviceCredential): AuvDaemonConnectionOptions {
   if (endpoint.startsWith('npipe://')) {
     return {
+      credential,
       endpoint,
       local: true,
       transport: 'npipe',
     }
   }
   return {
+    credential,
     endpoint: endpoint.slice('unix://'.length),
     local: true,
     transport: 'unix',
@@ -397,7 +413,7 @@ function serializeOverlayTheme(theme: OverlayTheme): string {
 }
 
 function serveArguments(options: StartAuvOptions & { id: string }): string[] {
-  const args = ['serve', '--id', options.id, '--exit-on-stdin-close']
+  const args = ['serve', '--id', options.id, '--exit-on-stdin-close', '--owner-key-stdin']
   for (const listener of options.listeners ?? [])
     args.push('--listen', listener)
 

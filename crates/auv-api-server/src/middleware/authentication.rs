@@ -143,6 +143,7 @@ mod tests {
         #[cfg(unix)]
         None,
         None,
+        None,
       ),
       requirements: Arc::new(builder.requirements),
     };

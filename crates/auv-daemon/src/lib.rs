@@ -35,6 +35,9 @@ pub struct Config {
   pub register: bool,
   /// Optional shutdown deadline after all Runners become idle.
   pub daemon_idle_timeout: Option<std::time::Duration>,
+  /// Secret that local-IPC callers must present, supplied by the process that
+  /// launched this daemon. `None` admits every process of the OS user.
+  pub owner_key: Option<auv_api_server::OwnerKey>,
   /// Operator-trusted custom Runner providers.
   pub runner_providers: Vec<runner_provider::RunnerProviderConfig>,
   /// First-party Runner runtime definitions.
@@ -136,6 +139,7 @@ impl Server {
         additional_listeners: listeners.collect(),
         pairing,
         daemon_idle_timeout: config.daemon_idle_timeout,
+        owner_key: config.owner_key,
       },
       move |parent_endpoint| {
         Ok(std::sync::Arc::new(daemon::Daemon::open_with_runner_providers_and_parent_endpoint(

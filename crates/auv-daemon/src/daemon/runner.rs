@@ -540,6 +540,9 @@ async fn spawn_executable_ready(
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
   if let Some(parent_context) = parent_context {
+    // TODO(runner-owner-key): a daemon started with an owner key rejects
+    // Runner callbacks through this context. Delegate a key once Runners have
+    // a channel that, unlike the environment, other processes cannot read.
     command.env("AUV_CONTEXT", parent_context);
   }
   if let Some(working_directory) = &runtime.working_directory {
@@ -641,6 +644,9 @@ async fn spawn_executable_ready(
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
   if let Some(parent_context) = parent_context {
+    // TODO(runner-owner-key): a daemon started with an owner key rejects
+    // Runner callbacks through this context. Delegate a key once Runners have
+    // a channel that, unlike the environment, other processes cannot read.
     command.env("AUV_CONTEXT", parent_context);
   }
   if let Some(working_directory) = &runtime.working_directory {

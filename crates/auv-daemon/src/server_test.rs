@@ -17,6 +17,7 @@ fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
     discovery_file: None,
     register: false,
     daemon_idle_timeout: None,
+    owner_key: None,
     runner_providers: Vec::new(),
     first_party_runners: Default::default(),
   }

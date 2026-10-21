@@ -9,6 +9,7 @@
 //! - `termination`: termination signals that start a graceful shutdown.
 
 mod authentication;
+pub use authentication::OwnerKey;
 pub mod control;
 pub mod device_local;
 pub mod method_docs;

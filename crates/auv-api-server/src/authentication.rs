@@ -7,13 +7,40 @@ use tonic::Status;
 
 use crate::control::{CallerId, Pairing, PairingError};
 
+/// Per-launch secret held by the process that started the daemon.
+///
+/// Local IPC admits every process of the daemon's OS user. When the launching
+/// process supplies an owner key, local callers must also present it as
+/// `authorization: Bearer <key>`, so other processes of the same user cannot
+/// borrow the daemon's desktop and OS permissions.
+#[derive(Clone)]
+pub struct OwnerKey(Arc<zeroize::Zeroizing<String>>);
+
+impl OwnerKey {
+  /// Accepts exactly 64 lowercase hexadecimal characters (32 random bytes).
+  pub fn parse(value: &str) -> Result<Self, String> {
+    if value.len() != 64 || !value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
+      return Err("owner key must be 64 lowercase hexadecimal characters".into());
+    }
+    Ok(Self(Arc::new(zeroize::Zeroizing::new(value.to_owned()))))
+  }
+
+  fn matches(&self, presented: &str) -> bool {
+    use subtle::ConstantTimeEq as _;
+    let expected = self.0.as_bytes();
+    presented.len() == expected.len() && bool::from(presented.as_bytes().ct_eq(expected))
+  }
+}
+
 /// Authentication policy for one listener.
 #[derive(Clone)]
 pub(crate) enum Authenticator {
-  /// Trust the local caller after optional Unix peer validation.
+  /// Trust the local caller after optional Unix peer validation and, when
+  /// configured, the owner key.
   Local {
     #[cfg(unix)]
     allowed_unix_uid: Option<u32>,
+    owner_key: Option<OwnerKey>,
     pairing: Option<Arc<dyn Pairing>>,
   },
   /// Require an active paired Device bearer.
@@ -26,10 +53,11 @@ pub(crate) enum Authenticator {
 pub(crate) struct DeviceEntryAdmission(());
 
 impl Authenticator {
-  pub(crate) fn local(#[cfg(unix)] allowed_unix_uid: Option<u32>, pairing: Option<Arc<dyn Pairing>>) -> Self {
+  pub(crate) fn local(#[cfg(unix)] allowed_unix_uid: Option<u32>, owner_key: Option<OwnerKey>, pairing: Option<Arc<dyn Pairing>>) -> Self {
     Self::Local {
       #[cfg(unix)]
       allowed_unix_uid,
+      owner_key,
       pairing,
     }
   }
@@ -40,7 +68,20 @@ impl Authenticator {
 
   pub(crate) fn authenticate_http<T>(&self, request: &axum::http::Request<T>) -> Result<CallerId, Status> {
     match self {
-      Self::Local { .. } => self.authenticate_extensions(request.extensions()),
+      Self::Local { owner_key, .. } => {
+        let caller = self.authenticate_extensions(request.extensions())?;
+        if let Some(owner_key) = owner_key {
+          let presented = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "));
+          if !presented.is_some_and(|presented| owner_key.matches(presented)) {
+            return Err(Status::unauthenticated("this daemon requires the owner key of the process that started it"));
+          }
+        }
+        Ok(caller)
+      }
       Self::PairedBearer { pairing } => {
         authenticate_bearer(pairing.as_ref(), request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()))
       }
@@ -52,7 +93,7 @@ impl Authenticator {
       Self::Local {
         #[cfg(unix)]
         allowed_unix_uid,
-        pairing: _,
+        ..
       } => {
         #[cfg(unix)]
         if let Some(allowed_uid) = allowed_unix_uid {
@@ -96,7 +137,7 @@ impl Authenticator {
       Self::Local {
         #[cfg(unix)]
         allowed_unix_uid,
-        pairing: _,
+        ..
       } => {
         #[cfg(unix)]
         {
@@ -152,4 +193,58 @@ pub(crate) fn device_entry_caller<T>(request: &tonic::Request<T>) -> Result<&Cal
 /// Returns the authenticated caller inserted by the listener middleware.
 pub(crate) fn http_caller<T>(request: &axum::http::Request<T>) -> Result<&CallerId, Status> {
   request.extensions().get::<CallerId>().ok_or_else(|| Status::internal("authenticated request is missing CallerId"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  fn local(owner_key: Option<OwnerKey>) -> Authenticator {
+    Authenticator::local(
+      #[cfg(unix)]
+      None,
+      owner_key,
+      None,
+    )
+  }
+
+  fn request(authorization: Option<&str>) -> axum::http::Request<()> {
+    let mut builder = axum::http::Request::builder().uri("/");
+    if let Some(authorization) = authorization {
+      builder = builder.header(header::AUTHORIZATION, authorization);
+    }
+    builder.body(()).unwrap()
+  }
+
+  // ROOT CAUSE:
+  //
+  // Local IPC admitted every process of the daemon's OS user as the owner. A
+  // process that only learned the socket path from `ps` could drive the
+  // daemon's Runner with the permissions granted to the app that started it.
+  // With an owner key, local callers must also present that key.
+  #[test]
+  fn owner_key_rejects_local_callers_without_the_key() {
+    let authenticator = local(Some(OwnerKey::parse(KEY).unwrap()));
+    let missing = authenticator.authenticate_http(&request(None)).err().unwrap();
+    assert_eq!(missing.code(), tonic::Code::Unauthenticated);
+    let wrong = format!("Bearer {}", KEY.replace('0', "1"));
+    assert_eq!(authenticator.authenticate_http(&request(Some(&wrong))).err().unwrap().code(), tonic::Code::Unauthenticated);
+    assert_eq!(authenticator.authenticate_http(&request(Some(KEY))).err().unwrap().code(), tonic::Code::Unauthenticated);
+    assert!(authenticator.authenticate_http(&request(Some(&format!("Bearer {KEY}")))).is_ok());
+  }
+
+  #[test]
+  fn local_listeners_without_an_owner_key_keep_admitting_the_os_user() {
+    assert!(local(None).authenticate_http(&request(None)).is_ok());
+  }
+
+  #[test]
+  fn owner_key_requires_32_random_bytes_in_lowercase_hex() {
+    assert!(OwnerKey::parse(KEY).is_ok());
+    assert!(OwnerKey::parse(&KEY[1..]).is_err());
+    assert!(OwnerKey::parse(&KEY.to_uppercase()).is_err());
+    assert!(OwnerKey::parse(&format!("{}g", &KEY[1..])).is_err());
+  }
 }

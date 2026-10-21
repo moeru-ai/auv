@@ -83,8 +83,19 @@ Call `startAuv()` once for the lifetime of your Node.js or Electron host, then
 reuse its connection and `createAuv(connection)` client. Each `startAuv()` call
 starts a new app-owned process; it does not discover or attach to another daemon.
 The daemon also shuts down when the host exits without calling `daemon.stop()`,
-for example after a crash or `kill -9`. Starting on an occupied endpoint fails. To use a daemon owned by another host,
-call `connect({ endpoint, transport, local })` and close only that connection.
+for example after a crash or `kill -9`. Starting on an occupied endpoint fails.
+To use a daemon owned by another host, call
+`connect({ endpoint, transport, local })` and close only that connection.
+
+Each launch generates an owner key and sends it to the daemon over stdin. The
+daemon rejects local callers without it, including other processes of the same
+OS user that find the socket or pipe path in `ps`; without the key, they cannot
+use the screen or input permissions granted to your app. `daemon.connect()`
+presents the key for you, and `daemon.connectionOptions.credential` holds it
+for connections you open yourself. Hand it only to processes that should
+control this daemon, and never through argv or environment variables, which
+other processes of the same user can read. `startAuv()` no longer registers
+the daemon as the default local daemon unless you pass `noRegister: false`.
 
 `await checkHealth(connection)` and `await auv.health.check()` return
 `{ id, status: 'serving' }`. The same daemon reports the same `id` on every
@@ -108,7 +119,6 @@ import { app } from 'electron'
 const daemon = await startAuv({
   binaryPath: join(process.resourcesPath, 'bin', 'auv'),
   listeners: ['http://127.0.0.1:9847'],
-  noRegister: true,
   storeRoot: join(app.getPath('userData'), 'auv'),
 })
 
