@@ -7,12 +7,35 @@ use rmcp::{
   model::{CallToolRequestParam, ClientInfo, ErrorCode},
 };
 
-use super::{McpInvokeInput, McpServer, OpRunToolRequest, core_invoke_adapters, mcp_command_inputs};
+use super::{InvokeToolRequest, McpInvokeInput, McpServer, OpRunToolRequest, core_invoke_adapters, mcp_command_inputs};
 use crate::commands::op::ExecutionModeArg;
 
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
+}
+
+#[test]
+fn invoke_rejects_unknown_top_level_arguments_like_its_sibling_tools() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let tools = server.tool_router.list_all();
+  let invoke = tools.iter().find(|tool| tool.name == "invoke").expect("invoke tool must be registered");
+  let schema = serde_json::to_value(&invoke.input_schema).unwrap();
+
+  assert_eq!(schema["additionalProperties"], false, "invoke must publish a closed argument set like op_run and the Device tools: {schema}");
+
+  assert!(
+    serde_json::from_value::<InvokeToolRequest>(serde_json::json!({ "command_id": "display.list", "dry_run": true })).is_ok(),
+    "the documented spelling must stay accepted"
+  );
+  assert!(
+    serde_json::from_value::<InvokeToolRequest>(serde_json::json!({ "command_id": "display.list", "dry_runs": true })).is_err(),
+    "a misspelled dry_run must not be dropped silently, which runs the command for real"
+  );
+  assert!(
+    serde_json::from_value::<InvokeToolRequest>(serde_json::json!({ "command_id": "display.list", "target": { "bogus": "1" } })).is_err(),
+    "the nested target object already rejects unknown keys; the top level must not be the exception"
+  );
 }
 
 #[test]
