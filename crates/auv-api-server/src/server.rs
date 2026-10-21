@@ -25,7 +25,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(unix)]
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
@@ -374,44 +374,10 @@ async fn bind_listener(
 
 #[cfg(windows)]
 fn create_named_pipe(name: &str, first: bool) -> std::io::Result<NamedPipeServer> {
-  use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
-  use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
-  use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-  use windows::core::w;
-
   if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')) {
     return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "named-pipe name contains unsupported characters"));
   }
-
-  let mut descriptor = PSECURITY_DESCRIPTOR::default();
-  // `OW` is the object-owner SID. The protected DACL grants full access only
-  // to the creating user and LocalSystem; no Everyone or Administrators ACE is
-  // inherited. PIPE_REJECT_REMOTE_CLIENTS independently rejects network opens.
-  // SAFETY: `descriptor` is valid writable output storage, the SDDL literal is
-  // NUL-terminated, and the returned allocation is released with LocalFree
-  // after CreateNamedPipeW has synchronously copied the security descriptor.
-  unsafe {
-    ConvertStringSecurityDescriptorToSecurityDescriptorW(w!("D:P(A;;GA;;;SY)(A;;GA;;;OW)"), SDDL_REVISION_1, &mut descriptor, None)
-      .map_err(std::io::Error::other)?;
-  }
-  let mut attributes = SECURITY_ATTRIBUTES {
-    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-    lpSecurityDescriptor: descriptor.0,
-    bInheritHandle: BOOL(0),
-  };
-  let mut options = ServerOptions::new();
-  options.first_pipe_instance(first).reject_remote_clients(true);
-  let path = format!(r"\\.\pipe\{name}");
-  // SAFETY: `attributes` and its descriptor remain live for this synchronous
-  // call. Tokio only forwards the pointer to CreateNamedPipeW and does not
-  // retain it in the returned server handle.
-  let result = unsafe { options.create_with_security_attributes_raw(&path, (&raw mut attributes).cast()) };
-  // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW returned this
-  // allocation and transfers ownership to the caller, which must use LocalFree.
-  unsafe {
-    let _ = LocalFree(HLOCAL(descriptor.0));
-  }
-  result
+  crate::windows_pipe::create_owner_only(&format!(r"\\.\pipe\{name}"), first)
 }
 
 #[cfg(windows)]

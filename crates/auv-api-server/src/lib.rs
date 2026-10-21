@@ -19,3 +19,5 @@ mod rest;
 pub mod runner_transport;
 pub mod server;
 pub mod termination;
+#[cfg(windows)]
+pub mod windows_pipe;

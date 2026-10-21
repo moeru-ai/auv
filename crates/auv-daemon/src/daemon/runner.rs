@@ -620,13 +620,8 @@ async fn spawn_executable_ready(
   parent_context: Option<&str>,
   runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
-  use tokio::net::windows::named_pipe::ServerOptions;
-
   let pipe_name = format!(r"\\.\pipe\auv-runner-{}", uuid::Uuid::now_v7());
-  let pipe = ServerOptions::new()
-    .first_pipe_instance(true)
-    .reject_remote_clients(true)
-    .create(&pipe_name)
+  let pipe = auv_api_server::windows_pipe::create_owner_only(&pipe_name, true)
     .map_err(|error| RunnerError::Start(format!("failed to create Runner named pipe: {error}")))?;
   let mut command = tokio::process::Command::new(&runtime.executable);
   command
@@ -647,17 +642,26 @@ async fn spawn_executable_ready(
     command.current_dir(working_directory);
   }
   let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  let Some(runner_process_id) = child.id() else {
+    let _ = terminate_child(&mut child).await;
+    return Err(RunnerError::Start("Runner process omitted its PID".to_string()));
+  };
   let connected = tokio::select! {
-    result = pipe.connect() => result.map_err(|error| RunnerError::Start(format!("failed to connect Runner named pipe: {error}"))),
+    result = accept_runner_client(&pipe_name, pipe, runner_process_id) => {
+      result.map_err(|error| RunnerError::Start(format!("failed to connect Runner named pipe: {error}")))
+    }
     result = child.wait() => {
       let status = result.map_err(|error| RunnerError::Start(error.to_string()))?;
       Err(RunnerError::Start(format!("Runner process exited before connecting to its named pipe: {status}")))
     }
   };
-  if let Err(error) = connected {
-    let _ = terminate_child(&mut child).await;
-    return Err(error);
-  }
+  let pipe = match connected {
+    Ok(pipe) => pipe,
+    Err(error) => {
+      let _ = terminate_child(&mut child).await;
+      return Err(error);
+    }
+  };
   let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(pipe)));
   let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
   let connect = endpoint.connect_with_connector(tower::service_fn(move |_: http::Uri| {
@@ -693,6 +697,27 @@ async fn spawn_executable_ready(
     labels: reflected.labels,
     process_id,
   })
+}
+
+/// Waits for the spawned Runner to open its pipe. The owner-only DACL keeps
+/// other users out; a same-user process that connects first is dropped
+/// instead of being adopted as the Runner.
+#[cfg(windows)]
+async fn accept_runner_client(
+  path: &str,
+  mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
+  runner_process_id: u32,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+  loop {
+    pipe.connect().await?;
+    if auv_api_server::windows_pipe::client_process_id(&pipe)? == runner_process_id {
+      return Ok(pipe);
+    }
+    // A fresh instance replaces the impostor's: a disconnected Tokio pipe
+    // keeps the old client's I/O state. Creating it before dropping the old
+    // one keeps the name from becoming free for another process to claim.
+    pipe = auv_api_server::windows_pipe::create_owner_only(path, false)?;
+  }
 }
 
 #[cfg(not(any(unix, windows)))]

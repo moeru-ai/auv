@@ -4,7 +4,6 @@
 //! by impersonating the client after a successful pipe read, never that ACL or
 //! a process ID alone. No DeviceService route is installed on this listener.
 
-use std::ffi::c_void;
 use std::io;
 use std::mem::{align_of, offset_of, size_of};
 use std::os::windows::io::AsRawHandle;
@@ -15,22 +14,18 @@ use std::task::{Context, Poll};
 use auv_api_proto::auv::api::daemon::v1::device_local_service_server::DeviceLocalServiceServer;
 use futures_util::stream;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::NamedPipeServer;
 use tonic::transport::server::Connected;
-use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HLOCAL, LocalFree};
-use windows::Win32::Security::Authorization::{
-  ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::{
-  GetTokenInformation, IsWellKnownSid, PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, TOKEN_GROUPS,
-  TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenUser, WinAnonymousSid, WinBuiltinAdministratorsSid,
+  GetTokenInformation, IsWellKnownSid, RevertToSelf, SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_QUERY, TokenGroups, WinBuiltinAdministratorsSid,
 };
 use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
 use windows::Win32::System::SystemServices::{SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY};
 use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
-use windows::core::{PCWSTR, PWSTR};
 
 use super::{DeviceLocalControl, DeviceLocalGrpc, LocalOsPrincipal};
+use crate::windows_pipe::identity_error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClientIdentity {
@@ -150,29 +145,10 @@ fn create_pipe(name: &str, first: bool) -> io::Result<NamedPipeServer> {
     return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid DeviceLocalService pipe name"));
   }
 
-  // The per-user daemon serves this pipe, so only its own account (OW) and
+  // The per-user daemon serves this pipe, so only its own account and
   // LocalSystem may open it, matching the Unix socket's 0700 directory. SID
   // impersonation and backend policy still authorize every request.
-  let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;OW)".to_string();
-  let sddl = sddl.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-  let mut descriptor = PSECURITY_DESCRIPTOR::default();
-  // SAFETY: The UTF-16 buffer is NUL-terminated and stays live for this call;
-  // descriptor is a live output. Its allocation outlives pipe creation.
-  unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut descriptor, None) }
-    .map_err(|_| identity_error())?;
-
-  let descriptor = SecurityDescriptor(descriptor);
-  let mut attributes = SECURITY_ATTRIBUTES {
-    nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-    lpSecurityDescriptor: descriptor.0.0,
-    bInheritHandle: BOOL(0),
-  };
-  let mut options = ServerOptions::new();
-  options.first_pipe_instance(first).reject_remote_clients(true);
-  let path = format!(r"\\.\pipe\{name}");
-  // SAFETY: Tokio copies SECURITY_ATTRIBUTES during this synchronous call;
-  // the descriptor guard outlives it. The pipe rejects remote clients.
-  unsafe { options.create_with_security_attributes_raw(&path, (&raw mut attributes).cast()) }
+  crate::windows_pipe::create_owner_only(&format!(r"\\.\pipe\{name}"), first)
 }
 
 fn client_identity(pipe: HANDLE) -> io::Result<ClientIdentity> {
@@ -185,53 +161,7 @@ fn client_identity(pipe: HANDLE) -> io::Result<ClientIdentity> {
   // output handle is owned and closed before this function returns.
   unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut raw_token) }.map_err(|_| identity_error())?;
   let token = Token(raw_token);
-  let mut bytes = 0u32;
-  // SAFETY: A null output buffer asks Windows for the required TOKEN_USER size.
-  let _ = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut bytes) };
-
-  if bytes < size_of::<TOKEN_USER>() as u32 || align_of::<TOKEN_USER>() > align_of::<usize>() {
-    return Err(identity_error());
-  }
-
-  let mut data = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
-  // SAFETY: The word buffer is aligned and large enough for TOKEN_USER and its
-  // embedded SID; it stays live through SID conversion below.
-  unsafe { GetTokenInformation(token.0, TokenUser, Some(data.as_mut_ptr().cast()), bytes, &mut bytes) }.map_err(|_| identity_error())?;
-
-  if (bytes as usize) < size_of::<TOKEN_USER>() {
-    return Err(identity_error());
-  }
-
-  // SAFETY: Windows initialized an aligned TOKEN_USER in `data`.
-  let token_user = unsafe { data.as_ptr().cast::<TOKEN_USER>().read() };
-
-  if token_user.User.Sid.0.is_null() {
-    return Err(identity_error());
-  }
-
-  // SAFETY: The SID remains valid in `data`; anonymous identity cannot own an
-  // enrollment even if a client changed its token after opening the pipe.
-  if unsafe { IsWellKnownSid(token_user.User.Sid, WinAnonymousSid) }.as_bool() {
-    return Err(identity_error());
-  }
-
-  let mut raw_sid = PWSTR::null();
-  // SAFETY: The SID remains live in `data`; Windows returns one LocalAlloc
-  // UTF-16 string, which the guard frees after conversion.
-  unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut raw_sid) }.map_err(|_| identity_error())?;
-
-  if raw_sid.is_null() {
-    return Err(identity_error());
-  }
-
-  let sid = LocalString(raw_sid);
-  // SAFETY: ConvertSidToStringSidW returned a NUL-terminated UTF-16 string.
-  let value = unsafe { sid.0.to_string() }.map_err(|_| identity_error())?;
-
-  if !value.starts_with("S-1-") {
-    return Err(identity_error());
-  }
-
+  let value = crate::windows_pipe::token_user_sid(token.0)?;
   let administrator = enabled_administrator(token.0)?;
   Ok(ClientIdentity {
     sid: value,
@@ -309,27 +239,6 @@ impl Drop for Token {
   }
 }
 
-struct LocalString(PWSTR);
-impl Drop for LocalString {
-  fn drop(&mut self) {
-    // SAFETY: ConvertSidToStringSidW returned one LocalAlloc allocation.
-    let _ = unsafe { LocalFree(HLOCAL(self.0.0.cast::<c_void>())) };
-  }
-}
-
-struct SecurityDescriptor(PSECURITY_DESCRIPTOR);
-impl Drop for SecurityDescriptor {
-  fn drop(&mut self) {
-    // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW returned
-    // one LocalAlloc allocation.
-    let _ = unsafe { LocalFree(HLOCAL(self.0.0)) };
-  }
-}
-
-fn identity_error() -> io::Error {
-  io::Error::new(io::ErrorKind::PermissionDenied, "verified named-pipe client SID is required")
-}
-
 #[cfg(test)]
 mod tests {
   use std::os::windows::ffi::OsStrExt;
@@ -339,10 +248,11 @@ mod tests {
   use auv_api_proto::auv::api::daemon::v1 as proto;
   use auv_api_proto::auv::api::daemon::v1::device_local_service_server::DeviceLocalService;
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
-  use tokio::net::windows::named_pipe::ClientOptions;
+  use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
   use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE, OPEN_EXISTING, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
   };
+  use windows::core::PCWSTR;
 
   use super::*;
   use crate::device_local::{AuditPage, EnrollAccount, Enrollment, LocalControlError, LocalOsPrincipal};
