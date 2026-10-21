@@ -15,6 +15,7 @@ repository.workspace = true
 [dependencies]
 auv = { package = "auv-core", version = "0.0.36", path = "../auv" }
 auv-api-proto = { version = "0.0.36", path = "../auv-api-proto" }
+auv-tracing = { version = "0.0.36", path = "../auv-tracing" }
 axum = { version = "0.8", features = ["http2", "ws"] }
 bytes = "1"
 futures-util = "0.3"
@@ -35,6 +36,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 libc = "0.2"
 percent-encoding = "2"
 thiserror = "2"
+tracing = "0.1"
 zeroize = "1"
 
 [dev-dependencies]

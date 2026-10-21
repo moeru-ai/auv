@@ -61,3 +61,23 @@ fn route_interceptor_adds_only_out_of_band_routing_metadata() {
   assert_eq!(request.metadata().get(ROUTE_RUN_METADATA).unwrap(), "run_test");
   assert_eq!(request.metadata().get(ROUTE_RUNNER_CLASS_METADATA).unwrap(), "netease-music.personal");
 }
+
+#[test]
+fn route_interceptor_carries_the_callers_trace_context() {
+  let mut interceptor = RunnerRouteInterceptor::new(RunnerRoute {
+    device_id: None,
+    run_id: None,
+    runner_class: "auv.core.local".to_string(),
+  })
+  .unwrap();
+  let untraced = interceptor.call(tonic::Request::new(())).unwrap();
+  assert!(auv_tracing::propagation::FIELD_NAMES.iter().all(|name| !untraced.metadata().contains_key(*name)));
+
+  let run_id = auv_tracing::RunId::new();
+  let dispatch = auv_tracing::configure().build().unwrap();
+  let request = auv_tracing::dispatcher::with_default(&dispatch, || {
+    auv_tracing::Context::root(run_id).in_scope(|| interceptor.call(tonic::Request::new(())).unwrap())
+  });
+  assert_eq!(request.metadata().get("auv-trace-run-id").unwrap(), run_id.to_string().as_str());
+  assert_eq!(request.metadata().get("auv-trace-version").unwrap(), "1");
+}

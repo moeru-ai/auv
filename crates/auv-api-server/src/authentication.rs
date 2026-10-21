@@ -120,7 +120,11 @@ fn authenticate_bearer(pairing: &dyn Pairing, authorization: Option<&str>) -> Re
     .filter(|value| !value.is_empty())
     .ok_or_else(|| Status::unauthenticated("paired Device bearer required"))?;
 
-  pairing.authenticate_bearer(credential).map_err(map_pairing_auth_error)
+  // Log the outcome only: the bearer value is a credential.
+  pairing.authenticate_bearer(credential).map_err(|error| {
+    tracing::warn!(%error, "paired Device bearer rejected");
+    map_pairing_auth_error(error)
+  })
 }
 
 fn map_pairing_auth_error(error: PairingError) -> Status {

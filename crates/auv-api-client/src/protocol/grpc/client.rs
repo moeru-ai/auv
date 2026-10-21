@@ -84,7 +84,26 @@ impl Interceptor for RunnerRouteInterceptor {
     if let Some(authorization) = &self.authorization {
       request.metadata_mut().insert("authorization", authorization.clone());
     }
+    // Tonic runs interceptors while the caller polls the call, so the current
+    // context is the caller's command span: Runner RPC spans nest under it.
+    auv_tracing::Context::current().inject(&mut TraceMetadata(request.metadata_mut()));
     Ok(request)
+  }
+}
+
+/// gRPC metadata as an `auv-tracing` propagation carrier.
+struct TraceMetadata<'a>(&'a mut tonic::metadata::MetadataMap);
+
+impl auv_tracing::TextMapWriter for TraceMetadata<'_> {
+  fn set(&mut self, name: &'static str, value: &str) {
+    // Trace fields are canonical UUID text, which is always valid ASCII.
+    if let Ok(value) = value.parse::<MetadataValue<Ascii>>() {
+      self.0.insert(name, value);
+    }
+  }
+
+  fn remove(&mut self, name: &'static str) {
+    self.0.remove(name);
   }
 }
 

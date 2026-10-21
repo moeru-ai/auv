@@ -47,7 +47,9 @@ pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authentic
 
     let (input, body) = grpc_input_body();
     let mut input_task = tokio::spawn(forward_input(incoming, input));
-    let request = grpc_request(&open.service, &open.method, body)?;
+    let mut request = grpc_request(&open.service, &open.method, body)?;
+    // A browser Open message carries no trace fields; the routed Run supplies them.
+    crate::server::trace_context::forward(request.headers_mut(), open.run_id.as_deref())?;
     let response = tokio::select! {
       response = operation.channel.oneshot(request) => {
         response.map_err(|error| Status::unavailable(format!("Runner transport failed: {error}")))?

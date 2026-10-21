@@ -1,6 +1,7 @@
 //! AUV daemon API server lifecycle and listener orchestration.
 
 pub(crate) mod runner_grpc_proxy;
+pub(crate) mod trace_context;
 
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
