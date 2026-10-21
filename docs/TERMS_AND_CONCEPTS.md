@@ -65,6 +65,9 @@ enforcing namespaced-name, MIME, count, or encoded-size policies. It continues
 to enforce structural and storage invariants such as identifier shape, finite
 JSON numbers, byte limits, and artifact integrity.
 
+An artifact record carries `occurred_at`: when the evidence was produced (a
+capture's completion), which can precede the record's position in the store.
+
 ## TracingStore
 
 `TracingStore` is the write-only port for full-fidelity trace records and
@@ -72,6 +75,19 @@ artifact bodies. It exposes `write`, `write_artifact`, and `flush`; generic
 lookup, snapshots, pagination, subscriptions, and artifact reads do not belong
 to this producer-side port. Concrete in-memory stores may expose records
 for tests without turning those methods into the generic store contract.
+The file layout has its own sequential reader
+(`FileTracingStore::read_records`), versioned by the `records.jsonl` envelope
+(currently 2). Several processes may append to one file store.
+
+## Trace Context Propagation
+
+A caller's Run and span cross a process boundary as the `auv-trace-version`,
+`auv-trace-run-id`, and `auv-trace-span-id` fields, kept apart from the
+daemon's `auv-run-id` routing header. The daemon forwards trace fields only
+for calls routed to a Run, and only for that Run; a Runner records exactly the
+calls that carry them. A daemon Run id and its trace Run id are the same UUID
+(`RunId::from_daemon_run_id`). See
+[trace and log responsibility split](ai/references/inspect/2026-10-21-trace-and-log-responsibility-split.md).
 
 ## Trace Exporter
 
@@ -79,6 +95,16 @@ for tests without turning those methods into the generic store contract.
 telemetry representation. OpenTelemetry is one exporter. Exporters do not own
 artifact bytes, install application-global providers, or become canonical AUV
 storage.
+
+## Operational Log
+
+An operational log is per-process diagnostic output from the daemon, the
+Runner, or a CLI frontend, written through tokio `tracing` macros. It explains
+why a process failed or was slow. It is not a `TraceRecord`, carries no
+versioned schema, and must never be the only place a replay or inspection fact
+lives. Drivers report recordable facts through typed results and use
+operational logs only for internal detail. See
+[trace and log responsibility split](ai/references/inspect/2026-10-21-trace-and-log-responsibility-split.md).
 
 ## Projection
 

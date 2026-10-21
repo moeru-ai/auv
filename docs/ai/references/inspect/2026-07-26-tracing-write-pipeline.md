@@ -34,8 +34,11 @@ typed result directly; tracing cannot reconstruct or replace it.
   artifact bodies by run/artifact identity. Byte emitters may declare a file
   extension through `EmitBytesOptions`; the file-store adapter appends that
   extension without deriving it from content type. Artifact URIs remain
-  independent from that local layout. The store intentionally exposes no
-  reader.
+  independent from that local layout. The generic port still exposes no
+  reader; since 2026-10-21 the file layout has a sequential reader
+  (`FileTracingStore::read_records`, envelope version 2, artifact
+  `occurred_at`). See
+  [`2026-10-21-trace-and-log-responsibility-split.md`](2026-10-21-trace-and-log-responsibility-split.md).
 - Trace names, error codes, artifact purposes, content types, and attribute
   keys are caller-declared strings. `auv-tracing` preserves them without
   namespaced-name, MIME, count, or encoded-size validation. Structural and
@@ -61,7 +64,9 @@ own ingestion contract over those durable records.
 ## Deferred read side
 
 `auv-inspector` is explicitly out of scope. No generic inspection API is
-provided as a compatibility substitute. A later owner-approved slice may define
+provided as a compatibility substitute. The file store's sequential reader and
+the `auv export atif` projection (2026-10-21) are the only read paths; they do
+not index, cursor, or subscribe. A later owner-approved slice may define
 ingestion, indexing, artifact resolution, and viewer APIs over data written by a
 tracing store.
 
