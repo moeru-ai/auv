@@ -141,7 +141,10 @@ impl Dispatch {
     let Some(sender) = &self.sender else {
       return ArtifactEmission::disabled();
     };
-    let (request, body) = ArtifactRequest::from_detached(run_id, span_id, artifact);
+    let Ok(submitted_at) = timestamp_now() else {
+      return ArtifactEmission::disabled();
+    };
+    let (request, body) = ArtifactRequest::from_detached(run_id, span_id, submitted_at, artifact);
     let (receipt, emission) = ArtifactEmission::pending();
     if sender
       .send(Work::Artifact {
@@ -237,6 +240,7 @@ impl Worker {
         self.record(TraceRecord::Artifact {
           run_id: request.run_id(),
           span_id: request.span_id(),
+          occurred_at: request.occurred_at(),
           metadata: metadata.clone(),
         });
         let _ = receipt.send(Ok(metadata));

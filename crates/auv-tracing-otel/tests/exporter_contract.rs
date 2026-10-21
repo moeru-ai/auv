@@ -59,6 +59,7 @@ fn event_and_artifact_records_export_as_logs_without_history_vocabulary() {
   futures_executor::block_on(exporter.export(TraceRecord::Artifact {
     run_id,
     span_id: None,
+    occurred_at: Timestamp::new(101, 0).unwrap(),
     metadata: ArtifactMetadata::new(
       ArtifactUri::from_ids(run_id, ArtifactId::new()),
       ArtifactPurpose::new("auv.test.output"),

@@ -126,8 +126,15 @@ impl<'de> Deserialize<'de> for JsonPayload {
   where
     D: Deserializer<'de>,
   {
-    let raw = Box::<RawValue>::deserialize(deserializer)?;
-    Self::from_str(raw.get()).map_err(de::Error::custom)
+    // NOTICE(json-payload-tagged-read): `TraceRecord` is an internally tagged
+    // enum, so serde buffers its fields before this runs and a `RawValue`
+    // cannot be recovered from that buffer ("invalid type: newtype struct").
+    // Reading through `Value` works in both cases. It merges duplicate keys
+    // instead of rejecting them, which only matters for JSON that this crate
+    // did not write: `encode` and `from_str` stay strict.
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let text = serde_json::to_string(&value).map_err(de::Error::custom)?;
+    Self::from_str(&text).map_err(de::Error::custom)
   }
 }
 

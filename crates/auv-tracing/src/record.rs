@@ -38,6 +38,9 @@ pub enum TraceRecord {
   Artifact {
     run_id: RunId,
     span_id: Option<SpanId>,
+    /// When the evidence was produced, which can precede the record's
+    /// position in the store: bodies are written before their record.
+    occurred_at: Timestamp,
     metadata: ArtifactMetadata,
   },
 }

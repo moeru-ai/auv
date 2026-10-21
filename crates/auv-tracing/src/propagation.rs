@@ -1,14 +1,44 @@
 use crate::{ErrorCode, RunId, SpanId};
 
-const CONTEXT_VERSION: &str = "auv-context-version";
-const RUN_ID: &str = "auv-run-id";
-const SPAN_ID: &str = "auv-span-id";
-const FIELD_NAMES: [&str; 3] = [CONTEXT_VERSION, RUN_ID, SPAN_ID];
+// NOTICE(trace-propagation-keys): these names stay apart from the daemon's
+// `auv-run-id` routing header. The daemon strips routing headers before it
+// forwards to a Runner, and it validates that trace fields name the routed Run.
+const CONTEXT_VERSION: &str = "auv-trace-version";
+const RUN_ID: &str = "auv-trace-run-id";
+const SPAN_ID: &str = "auv-trace-span-id";
+
+/// Every carrier field name, for transports that must strip or forward them.
+pub const FIELD_NAMES: [&str; 3] = [CONTEXT_VERSION, RUN_ID, SPAN_ID];
 
 /// Extracted cross-process run correlation without any local routing state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteContext {
   pub(crate) run_id: RunId,
   pub(crate) remote_span_id: Option<SpanId>,
+}
+
+impl RemoteContext {
+  /// Correlation a transport supplies on behalf of a caller, such as the
+  /// daemon naming the routed Run for a client that sent no trace context.
+  pub fn new(run_id: RunId, remote_span_id: Option<SpanId>) -> Self {
+    Self {
+      run_id,
+      remote_span_id,
+    }
+  }
+
+  pub fn run_id(&self) -> RunId {
+    self.run_id
+  }
+
+  pub fn remote_span_id(&self) -> Option<SpanId> {
+    self.remote_span_id
+  }
+
+  /// Replaces the carrier's trace fields with this correlation.
+  pub fn inject(&self, carrier: &mut dyn TextMapWriter) {
+    inject(carrier, Some(self.run_id), self.remote_span_id);
+  }
 }
 
 /// Writes named text values into a cross-process carrier.
@@ -104,3 +134,7 @@ fn partial_context() -> PropagationError {
 fn invalid_id() -> PropagationError {
   PropagationError::new("auv.propagation.invalid_id")
 }
+
+#[cfg(test)]
+#[path = "propagation_test.rs"]
+mod tests;
