@@ -2,7 +2,7 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **26**
+Count: **28**
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)
@@ -30,6 +30,8 @@ Count: **26**
 - [`2026-07-03-qodana-operating-model.md`](2026-07-03-qodana-operating-model.md)
 - [`2026-07-07-inference-task-object-detection-simplification-plan.md`](2026-07-07-inference-task-object-detection-simplification-plan.md)
 - [`2026-09-23-crates-io-publication-reference.md`](2026-09-23-crates-io-publication-reference.md)
+- [`2026-10-07-kubernetes-kvm-x11-auv-runbook.md`](2026-10-07-kubernetes-kvm-x11-auv-runbook.md): Parameterized runbook for KVM, X11, noVNC, AUV daemon readiness, and Device pairing on Kubernetes.
+- [`2026-10-07-osworld-on-kubernetes-workflow.md`](2026-10-07-osworld-on-kubernetes-workflow.md): Responsibility split and episode flow for evaluating OSWorld tasks through AUV.
 
 ## Related
 
