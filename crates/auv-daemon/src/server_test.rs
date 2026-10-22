@@ -1200,3 +1200,60 @@ fn config_new_fills_cli_matching_defaults() {
   assert!(config.listeners.is_empty());
   assert!(matches!(config.local_clients, auv_api_server::LocalClientPolicy::LauncherOnly(_)));
 }
+
+// An app exposing its daemon to other local apps pairs each one. The paired
+// app reaches the owner socket with its own revocable bearer but cannot mint
+// further pairing tokens; callers with no credential stay rejected.
+#[cfg(unix)]
+#[tokio::test]
+async fn launcher_and_paired_admits_paired_apps_on_local_ipc() {
+  use auv_api_proto::auv::api::daemon::v1::pairing_service_client::PairingServiceClient;
+
+  let root = tempfile::tempdir().unwrap();
+  let token = auv_api_server::LauncherToken::generate().unwrap();
+  let config = Config::new(root.path().join("store")).unwrap().local_clients(auv_api_server::LocalClientPolicy::LauncherAndPaired(token));
+  let server = Server::bind(config).await.unwrap();
+  let owner = server.owner_connection().unwrap();
+  let launcher = owner.credential.clone().unwrap();
+  let BoundEndpoint::Unix(socket) = server.endpoint().clone() else {
+    panic!("owner Unix endpoint")
+  };
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  let launcher_client = auv::Client::connect(&owner.endpoint, Some(&launcher)).await.unwrap();
+  let pairing_token = launcher_client.pairing().create_token(None).await.unwrap();
+  let channel = tonic::transport::Endpoint::from_static("http://localhost")
+    .connect_with_connector(tower::service_fn(move |_: http::Uri| {
+      let socket = socket.clone();
+      async move { tokio::net::UnixStream::connect(socket).await.map(hyper_util::rt::TokioIo::new) }
+    }))
+    .await
+    .unwrap();
+  let bearer = PairingServiceClient::new(channel)
+    .pair_device(proto::PairDeviceRequest {
+      token: pairing_token,
+      device_id: "other-app".into(),
+      label: "Other app".into(),
+    })
+    .await
+    .unwrap()
+    .into_inner()
+    .device_credential;
+
+  let paired = auv::Client::connect(&owner.endpoint, Some(&bearer)).await.unwrap();
+  assert!(!paired.devices().list().await.unwrap().is_empty());
+  let minted = GrpcClient::connect_with_credential(owner.endpoint.parse().unwrap(), &bearer)
+    .await
+    .unwrap()
+    .pairing()
+    .create_pairing_token(proto::CreatePairingTokenRequest { ttl: None })
+    .await
+    .unwrap_err();
+  assert_eq!(minted.code(), tonic::Code::PermissionDenied, "{minted:?}");
+  let stranger = GrpcClient::connect(owner.endpoint.parse().unwrap()).await.unwrap().devices().list_devices().await.unwrap_err();
+  assert_eq!(stranger.code(), tonic::Code::Unauthenticated, "{stranger:?}");
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}

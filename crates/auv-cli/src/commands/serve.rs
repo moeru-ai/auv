@@ -44,8 +44,10 @@ pub struct ServeArgs {
   pub exit_on_stdin_close: bool,
 
   /// Which local processes may call the owner socket or named pipe.
-  /// `launcher-only` reads a 64-character hexadecimal launcher token from the
-  /// first line of stdin; callers must present it as `authorization: Bearer`.
+  /// `launcher-only` and `launcher-and-paired` read a 64-character
+  /// hexadecimal launcher token from the first line of stdin; callers present
+  /// it, or under `launcher-and-paired` a paired Device bearer, as
+  /// `authorization: Bearer`.
   /// The token never appears in argv or the environment, which other
   /// processes of the same user can read.
   #[arg(long, value_enum, default_value_t = LocalClients::AnyProcessOfOsUser)]
@@ -61,6 +63,8 @@ pub struct ServeArgs {
 pub enum LocalClients {
   /// Only the process that launched the daemon. Requires --exit-on-stdin-close.
   LauncherOnly,
+  /// The launcher plus apps it paired. Requires --exit-on-stdin-close.
+  LauncherAndPaired,
   /// Any process running as this OS user.
   AnyProcessOfOsUser,
 }
@@ -80,9 +84,9 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   // Read the token before the lifeline thread takes over stdin.
   let local_clients = match args.local_clients {
     LocalClients::AnyProcessOfOsUser => auv_api_server::LocalClientPolicy::AnyProcessOfOsUser,
-    LocalClients::LauncherOnly => {
+    LocalClients::LauncherOnly | LocalClients::LauncherAndPaired => {
       if !args.exit_on_stdin_close {
-        return Err("--local-clients launcher-only requires --exit-on-stdin-close: the launcher holds the stdin pipe".into());
+        return Err("--local-clients with a launcher requires --exit-on-stdin-close: the launcher holds the stdin pipe".into());
       }
       use std::io::BufRead as _;
       let mut line = zeroize::Zeroizing::new(String::new());
@@ -93,7 +97,11 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
       // processes of the same user, which could otherwise read the token back.
       rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
         .map_err(|error| format!("failed to protect the launcher token in memory: {error}"))?;
-      auv_api_server::LocalClientPolicy::LauncherOnly(token)
+      if args.local_clients == LocalClients::LauncherAndPaired {
+        auv_api_server::LocalClientPolicy::LauncherAndPaired(token)
+      } else {
+        auv_api_server::LocalClientPolicy::LauncherOnly(token)
+      }
     }
   };
   if args.exit_on_stdin_close {

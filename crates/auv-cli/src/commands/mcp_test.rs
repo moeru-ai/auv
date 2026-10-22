@@ -438,6 +438,7 @@ async fn call_invoke(server: McpServer, arguments: serde_json::Value) -> rmcp::m
 #[tokio::test]
 async fn mcp_invoke_with_a_root_device_selection_never_runs_locally() {
   let selection = auv::selection::RootSelection {
+    credential: None,
     device_name: None,
     device_id: Some("0000000000000000000000000000000000000000000000000000000000000000".into()),
     run_id: None,

@@ -130,7 +130,7 @@ impl Config {
 pub struct OwnerConnection {
   /// `unix://` or `npipe://` URI of the owner listener.
   pub endpoint: String,
-  /// Launcher token under `LauncherOnly`; `None` under `AnyProcessOfOsUser`.
+  /// Launcher token, or `None` under `AnyProcessOfOsUser`.
   pub credential: Option<zeroize::Zeroizing<String>>,
 }
 
@@ -277,7 +277,9 @@ impl Server {
   pub fn owner_connection(&self) -> Option<OwnerConnection> {
     let endpoint = self.inner.discovery_endpoint()?.to_string();
     let credential = match &self.local_clients {
-      auv_api_server::LocalClientPolicy::LauncherOnly(token) => Some(zeroize::Zeroizing::new(token.expose().to_owned())),
+      auv_api_server::LocalClientPolicy::LauncherOnly(token) | auv_api_server::LocalClientPolicy::LauncherAndPaired(token) => {
+        Some(zeroize::Zeroizing::new(token.expose().to_owned()))
+      }
       _ => None,
     };
     Some(OwnerConnection {

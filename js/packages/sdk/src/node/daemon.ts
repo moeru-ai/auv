@@ -42,9 +42,9 @@ export interface AuvDaemon {
 /** Serializable defaults for connecting to the preferred bound endpoint. */
 export interface AuvDaemonConnectionOptions {
   /**
-   * Launcher token generated for this launch under the `launcher-only`
-   * policy. The daemon rejects local callers that do not present it,
-   * including other processes of the same OS user. Absent under
+   * Launcher token generated for this launch under the `launcher-only` and
+   * `launcher-and-paired` policies. The daemon rejects local callers without
+   * it, including other processes of the same OS user. Absent under
    * `any-process-of-os-user`.
    */
   readonly credential?: DeviceCredential
@@ -84,7 +84,7 @@ export interface AuvPlatformOptions {
 }
 
 /** Which local processes may call a daemon over its Unix socket or named pipe. */
-export type LocalClientPolicy = 'any-process-of-os-user' | 'launcher-only'
+export type LocalClientPolicy = 'any-process-of-os-user' | 'launcher-and-paired' | 'launcher-only'
 
 /** Options for starting one app-owned `auv serve` child process. */
 export interface StartAuvOptions extends OperationOptions {
@@ -115,9 +115,11 @@ export interface StartAuvOptions extends OperationOptions {
   /**
    * Which local processes may call the daemon over its Unix socket or named
    * pipe. `launcher-only` admits only this process and those it hands
-   * `connectionOptions.credential` to; `any-process-of-os-user` admits every
-   * process of the current OS user, which can then use the screen and input
-   * permissions granted to your app. HTTP listeners always require pairing.
+   * `connectionOptions.credential` to. `launcher-and-paired` also admits apps
+   * you pair with `createPairingToken`, each revocable on its own.
+   * `any-process-of-os-user` admits every process of the current OS user,
+   * which can then use the screen and input permissions granted to your app.
+   * HTTP listeners always require pairing.
    * @default 'launcher-only'
    */
   localClientPolicy?: LocalClientPolicy
@@ -241,7 +243,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   if (configuredNoRegister === true && discoveryFile !== undefined)
     throw new RangeError('discoveryFile registers the daemon and cannot be combined with noRegister: true')
-  if (localClientPolicy !== 'launcher-only' && localClientPolicy !== 'any-process-of-os-user')
+  if (!['any-process-of-os-user', 'launcher-and-paired', 'launcher-only'].includes(localClientPolicy))
     throw new RangeError(`unknown localClientPolicy: ${String(localClientPolicy)}`)
   const noRegister = configuredNoRegister ?? discoveryFile === undefined
   if (!Number.isFinite(startupTimeoutMs))
@@ -277,7 +279,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   const id = randomUUID()
   // Sent over stdin, never argv or the environment: other processes of the
   // same user can read both.
-  const launcherToken = localClientPolicy === 'launcher-only' ? randomBytes(32).toString('hex') : undefined
+  const launcherToken = localClientPolicy === 'any-process-of-os-user' ? undefined : randomBytes(32).toString('hex')
   const child = x(binaryPath, serveArguments({
     daemonIdleTimeoutSeconds,
     discoveryFile,

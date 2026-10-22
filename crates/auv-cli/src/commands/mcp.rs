@@ -969,6 +969,7 @@ mod frontend {
     }
 
     Ok(auv::selection::RootSelection {
+      credential: None,
       device_name,
       device_id,
       run_id: None,

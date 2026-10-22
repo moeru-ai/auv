@@ -44,6 +44,13 @@ struct RootArgs {
   #[arg(long, value_name = "ID")]
   run: Option<String>,
 
+  /// Read a bearer from the first line of stdin and present it to the daemon:
+  /// the launcher token of an app-started daemon, or a paired Device bearer.
+  /// Stdin keeps it out of argv and the environment, which other processes of
+  /// the same user can read.
+  #[arg(long)]
+  credential_stdin: bool,
+
   #[command(subcommand)]
   command: Option<RootCommand>,
 }
@@ -113,7 +120,22 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
   // their own in `runner::run_if_internal`.
   let log_file = matches!(parsed.command, Some(RootCommand::Serve(_))).then_some("daemon");
   crate::logging::init(verbosity, log_file);
+  let credential = if parsed.credential_stdin {
+    if matches!(parsed.command, Some(RootCommand::Serve(_) | RootCommand::Mcp(_))) {
+      return Err("--credential-stdin cannot be used with commands that own stdin".to_string());
+    }
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).map_err(|error| format!("failed to read the credential from stdin: {error}"))?;
+    let value = line.trim_end_matches(['\r', '\n']).to_string();
+    if value.is_empty() {
+      return Err("--credential-stdin read an empty line".to_string());
+    }
+    Some(auv::selection::Credential::new(value))
+  } else {
+    None
+  };
   let selection = auv::selection::RootSelection {
+    credential,
     device_name: parsed.device,
     device_id: parsed.device_id,
     run_id: parsed.run,
@@ -406,6 +428,7 @@ mod tests {
   #[tokio::test]
   async fn devices_access_local_commands_reject_device_selection_before_connecting() {
     let selection = auv::selection::RootSelection {
+      credential: None,
       device_name: None,
       device_id: Some("7f3a".to_string()),
       run_id: None,

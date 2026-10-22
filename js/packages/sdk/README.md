@@ -127,7 +127,13 @@ screen or input permissions granted to your app. `daemon.connect()` presents
 the token for you, and `daemon.connectionOptions.credential` holds it for
 connections you open yourself. Hand it only to processes that should control
 this daemon, and never through argv or environment variables, which other
-processes of the same user can read. Choose `'any-process-of-os-user'` only
+processes of the same user can read.
+
+To let other apps on the machine use your daemon, choose
+`'launcher-and-paired'`. Issue each app a token with
+`createPairingToken(owner)`; the app calls `pairDevice` on the same endpoint and
+from then on presents its own Device bearer, which you can revoke on its own.
+Paired apps cannot issue further tokens. Choose `'any-process-of-os-user'` only
 when every process of the user should share the daemon. `startAuv()` does not
 register the daemon as the default local daemon unless you pass
 `noRegister: false` or a `discoveryFile`.

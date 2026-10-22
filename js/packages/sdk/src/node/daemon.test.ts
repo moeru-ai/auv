@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
-import { checkHealth, createAuv, createPairingToken, listDevices } from '../apis'
+import { checkHealth, createAuv, createPairingToken, listDevices, pairDevice } from '../apis'
 import { repositoryRoot } from '../tutils/dir'
 import { unusedLoopbackPort } from '../tutils/port'
 import { connect } from './connect'
@@ -240,6 +240,39 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
     finally {
       await Promise.all([stranger.close(), owner.close()])
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // An app exposing its daemon to other local apps pairs each one, then can
+  // revoke them one by one. Paired apps cannot mint further pairing tokens.
+  it('admits paired apps on the owner endpoint under launcher-and-paired', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-paired-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      localClientPolicy: 'launcher-and-paired',
+      workingDirectory,
+    })
+    const { credential: _, ...withoutToken } = daemon.connectionOptions
+    const owner = await daemon.connect()
+    const otherApp = await connect(withoutToken)
+    try {
+      const token = await createPairingToken(owner)
+      const enrollment = await pairDevice(otherApp, { deviceId: 'other-app', label: 'Other app', token })
+      const paired = await connect({ ...withoutToken, credential: enrollment.credential })
+      try {
+        expect((await listDevices(paired)).length).toBeGreaterThan(0)
+        await expect(createPairingToken(paired)).rejects.toThrow(/only be created by the daemon owner/)
+      }
+      finally {
+        await paired.close()
+      }
+      await expect(listDevices(otherApp)).rejects.toThrow(/process that launched it/)
+    }
+    finally {
+      await Promise.all([owner.close(), otherApp.close()])
       await daemon.stop()
       await rm(workingDirectory, { force: true, recursive: true })
     }

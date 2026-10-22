@@ -16,6 +16,10 @@ pub enum LocalClientPolicy {
   /// daemon, so other processes of the same OS user cannot borrow its desktop
   /// and OS permissions.
   LauncherOnly(LauncherToken),
+  /// The launcher, plus callers presenting an active paired Device bearer.
+  /// The launcher issues pairing tokens to the apps it admits and can revoke
+  /// each one; paired callers cannot issue further tokens.
+  LauncherAndPaired(LauncherToken),
   /// Any process running as the daemon's OS user.
   AnyProcessOfOsUser,
 }
@@ -96,19 +100,26 @@ impl Authenticator {
 
   pub(crate) fn authenticate_http<T>(&self, request: &axum::http::Request<T>) -> Result<CallerId, Status> {
     match self {
-      Self::Local { policy, .. } => {
+      Self::Local {
+        policy, pairing, ..
+      } => {
         let caller = self.authenticate_extensions(request.extensions())?;
-        if let LocalClientPolicy::LauncherOnly(token) = policy {
-          let presented = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "));
-          if !presented.is_some_and(|presented| token.matches(presented)) {
-            return Err(Status::unauthenticated(LAUNCHER_ONLY_REJECTION));
-          }
+        let presented =
+          request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()).and_then(|value| value.strip_prefix("Bearer "));
+        match policy {
+          LocalClientPolicy::AnyProcessOfOsUser => Ok(caller),
+          LocalClientPolicy::LauncherOnly(token) if presented.is_some_and(|presented| token.matches(presented)) => Ok(caller),
+          LocalClientPolicy::LauncherOnly(_) => Err(Status::unauthenticated(LAUNCHER_ONLY_REJECTION)),
+          LocalClientPolicy::LauncherAndPaired(token) if presented.is_some_and(|presented| token.matches(presented)) => Ok(caller),
+          LocalClientPolicy::LauncherAndPaired(_) => match (pairing, presented) {
+            // A paired app gets the authority of a paired Device, not the owner's.
+            (Some(pairing), Some(bearer)) => pairing.authenticate_bearer(bearer).map_err(|error| {
+              tracing::warn!(%error, "local paired bearer rejected");
+              map_pairing_auth_error(error)
+            }),
+            _ => Err(Status::unauthenticated(LAUNCHER_OR_PAIRED_REJECTION)),
+          },
         }
-        Ok(caller)
       }
       Self::PairedBearer { pairing } => {
         authenticate_bearer(pairing.as_ref(), request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()))
@@ -184,6 +195,8 @@ impl Authenticator {
 }
 
 const LAUNCHER_ONLY_REJECTION: &str = "this daemon only accepts the process that launched it; present its launcher token";
+const LAUNCHER_OR_PAIRED_REJECTION: &str =
+  "this daemon only accepts the process that launched it and apps it paired; present the launcher token or a paired Device bearer";
 
 fn authenticate_bearer(pairing: &dyn Pairing, authorization: Option<&str>) -> Result<CallerId, Status> {
   let credential = authorization
