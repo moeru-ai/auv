@@ -2,9 +2,10 @@ import type { AuvEnvironment } from './context'
 
 import os from 'node:os'
 import path from 'node:path'
-import process from 'node:process'
 
 import { readFile } from 'node:fs/promises'
+
+import { env as processEnv, platform as processPlatform } from 'std-env'
 
 import { AuvConfigurationError } from '../transport/errors'
 
@@ -19,7 +20,7 @@ export interface DiscoveredEndpoint {
 export interface DiscoverEndpointOptions {
   /** Explicit endpoint; wins over `AUV_ENDPOINT` and the descriptor. */
   endpoint?: string
-  /** Environment to read; defaults to `process.env`. */
+  /** Environment to read; defaults to the process environment. */
   env?: AuvEnvironment
 }
 
@@ -35,7 +36,7 @@ interface Descriptor {
  * Resolves `undefined` when no descriptor is published.
  */
 export async function discoverEndpoint(options: DiscoverEndpointOptions = {}): Promise<DiscoveredEndpoint | undefined> {
-  const env = options.env ?? process.env
+  const env = options.env ?? processEnv
   const selected = options.endpoint
     ?? env.AUV_ENDPOINT
     ?? (await readDescriptor(discoveryPath(env)))?.endpoint
@@ -44,8 +45,8 @@ export async function discoverEndpoint(options: DiscoverEndpointOptions = {}): P
 
 /** Descriptor path, overridable by `AUV_DISCOVERY_FILE`. */
 export function discoveryPath(
-  env: AuvEnvironment = process.env,
-  platform: NodeJS.Platform = process.platform,
+  env: AuvEnvironment = processEnv,
+  platform: string = processPlatform,
 ): string {
   const override = env.AUV_DISCOVERY_FILE
   if (override !== undefined)
@@ -142,17 +143,34 @@ async function readDescriptor(file: string): Promise<Descriptor | undefined> {
  * Mirrors `ProjectDirs::from("ai", "moeru", "auv")` from the Rust
  * `directories` crate: `state_dir`, else `data_local_dir`.
  */
-function stateDirectory(env: AuvEnvironment, platform: NodeJS.Platform): string {
+// NOTICE: The daemon publishes where the Rust client looks: `default_path()`
+// in `crates/auv/src/discovery.rs`, built on `directories` 6.0.0 and
+// `dirs-sys` 0.5.0. No npm package reproduces that layout, so each branch
+// below copies one platform's rule. Remove this once the SDK can ask Rust for
+// the path, for example through `@auv-js/cli`.
+function stateDirectory(env: AuvEnvironment, platform: string): string {
   if (platform === 'win32') {
-    // NOTICE: Rust reads FOLDERID_LocalAppData; Node has no known-folder
-    // API, so LOCALAPPDATA approximates it.
+    // NOTICE: Windows has no `state_dir`; `data_local_dir` is
+    // `<LocalAppData>\<organization>\<application>\data` (`directories`
+    // `src/win.rs`). `env-paths` gives `%LOCALAPPDATA%\auv-nodejs\Data`.
+    // WORKAROUND: Rust reads `FOLDERID_LocalAppData` through
+    // `SHGetKnownFolderPath` (`dirs-sys` `known_folder_local_app_data`). Node
+    // has no known-folder API, so `LOCALAPPDATA` stands in; they differ only
+    // when a profile redirects the folder without updating the variable.
     const local = absolute(env.LOCALAPPDATA, path.win32)
       ?? path.win32.join(homeDirectory(env), 'AppData', 'Local')
     return path.win32.join(local, 'moeru', 'auv', 'data')
   }
   const home = homeDirectory(env)
+  // NOTICE: macOS has no `state_dir`; `data_local_dir` is Application Support
+  // plus the `qualifier.organization.application` bundle ID
+  // (`directories` `src/mac.rs`). `env-paths` uses `auv-nodejs` instead.
   if (platform === 'darwin')
     return path.posix.join(home, 'Library', 'Application Support', 'ai.moeru.auv')
+  // NOTICE: Linux `state_dir` is `$XDG_STATE_HOME`, else `~/.local/state`,
+  // plus the lowercased application name (`directories` `src/lin.rs`).
+  // `dirs_sys::is_absolute_path` drops a relative `XDG_STATE_HOME`;
+  // `xdg-basedir` keeps it, so it would disagree with Rust here.
   const state = absolute(env.XDG_STATE_HOME, path.posix)
     ?? path.posix.join(home, '.local', 'state')
   return path.posix.join(state, 'auv')
