@@ -116,19 +116,29 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
         .map_err(|error| format!("failed to load --runner-provider {}: {error}", path.display()))
     })
     .collect::<Result<Vec<_>, _>>()?;
-  let server = auv_daemon::Server::bind(auv_daemon::Config {
-    id: args.id,
-    listeners,
-    first_party_runners: first_party_runner_runtimes(&store_root)?,
-    pairing_store: args.pairing_store.map_or_else(|| store_root.join("pairings.json"), |path| resolve_path(project_root, &path)),
-    store_root,
-    discovery_file: args.discovery_file,
-    register: !args.no_register,
-    daemon_idle_timeout: args.daemon_idle_timeout.map(std::time::Duration::from_secs),
-    local_clients,
-    runner_providers: providers,
-  })
-  .await?;
+  let executable = std::env::current_exe().map_err(|error| format!("failed to resolve the auv executable for Runner hosting: {error}"))?;
+  let mut config = auv_daemon::Config::new(&store_root)?
+    .local_clients(local_clients)
+    .first_party_runners(auv_daemon::runner_provider::FirstPartyRunnerRuntimes::local_driver(executable, &store_root)?);
+  if let Some(path) = args.pairing_store {
+    config = config.pairing_store(resolve_path(project_root, &path));
+  }
+  if !args.no_register {
+    config = config.register(args.discovery_file);
+  }
+  if let Some(id) = args.id {
+    config = config.id(id);
+  }
+  if let Some(seconds) = args.daemon_idle_timeout {
+    config = config.daemon_idle_timeout(std::time::Duration::from_secs(seconds));
+  }
+  for listener in listeners {
+    config = config.listen(listener);
+  }
+  for provider in providers {
+    config = config.runner_provider(provider);
+  }
+  let server = auv_daemon::Server::bind(config).await?;
 
   for endpoint in server.endpoints() {
     println!("auv serve: {endpoint}");
@@ -145,31 +155,4 @@ fn resolve_path(root: &std::path::Path, path: &std::path::Path) -> PathBuf {
   } else {
     root.join(path)
   }
-}
-
-fn first_party_runner_runtimes(store_root: &std::path::Path) -> Result<auv_daemon::runner_provider::FirstPartyRunnerRuntimes, String> {
-  use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerRuntime};
-  use std::collections::BTreeMap;
-  let executable = std::env::current_exe().map_err(|error| format!("failed to resolve the auv executable for Runner hosting: {error}"))?;
-  let runner_state_root = store_root.join("runner-state").join("auv.core.local");
-  let runner_state_root =
-    runner_state_root.to_str().ok_or_else(|| format!("local Runner state path is not valid UTF-8: {}", runner_state_root.display()))?;
-  let runner_trace_root = store_root.join("runner-traces");
-  let runner_trace_root =
-    runner_trace_root.to_str().ok_or_else(|| format!("Runner trace path is not valid UTF-8: {}", runner_trace_root.display()))?;
-  let environment = BTreeMap::from([
-    (crate::runner::STATE_ROOT_ENV.to_string(), runner_state_root.to_string()),
-    (crate::runner::TRACE_ROOT_ENV.to_string(), runner_trace_root.to_string()),
-  ]);
-  Ok(auv_daemon::runner_provider::FirstPartyRunnerRuntimes {
-    local_driver: Some(RunnerRuntime::Executable(ExecutableRunnerRuntime {
-      executable,
-      arguments: vec![
-        crate::runner::INTERNAL_SENTINEL.to_string(),
-        crate::runner::LOCAL_DRIVER_ROLE.to_string(),
-      ],
-      working_directory: None,
-      environment,
-    })),
-  })
 }

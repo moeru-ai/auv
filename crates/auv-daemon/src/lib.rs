@@ -16,6 +16,10 @@ pub use auv_api_server::server::{BoundEndpoint, ListenEndpoint};
 pub use daemon::runner_provider;
 
 /// Configuration for binding a daemon server and its owned state.
+///
+/// Start from [`Config::new`] and adjust it with the chainable setters, so new
+/// options never break existing callers.
+#[non_exhaustive]
 pub struct Config {
   /// Fresh identity for this daemon instance; generated when omitted.
   pub id: Option<uuid::Uuid>,
@@ -41,6 +45,103 @@ pub struct Config {
   pub runner_providers: Vec<runner_provider::RunnerProviderConfig>,
   /// First-party Runner runtime definitions.
   pub first_party_runners: runner_provider::FirstPartyRunnerRuntimes,
+}
+
+impl Config {
+  /// Defaults: no extra listeners (a private owner socket or pipe is added),
+  /// pairing store `<store_root>/pairings.json`, not registered, no idle
+  /// timeout, no Runner providers, and [`LocalClientPolicy::LauncherOnly`]
+  /// with a fresh token, so only this process can call the owner listener.
+  /// Use [`Server::owner_connection`] to connect.
+  ///
+  /// [`LocalClientPolicy::LauncherOnly`]: auv_api_server::LocalClientPolicy::LauncherOnly
+  pub fn new(store_root: impl Into<PathBuf>) -> Result<Self, String> {
+    let store_root = store_root.into();
+    Ok(Self {
+      id: None,
+      listeners: Vec::new(),
+      pairing_store: store_root.join("pairings.json"),
+      store_root,
+      discovery_file: None,
+      register: false,
+      daemon_idle_timeout: None,
+      local_clients: auv_api_server::LocalClientPolicy::LauncherOnly(auv_api_server::LauncherToken::generate()?),
+      runner_providers: Vec::new(),
+      first_party_runners: runner_provider::FirstPartyRunnerRuntimes::default(),
+    })
+  }
+
+  /// Sets the instance identity reported through health.
+  pub fn id(mut self, id: uuid::Uuid) -> Self {
+    self.id = Some(id);
+    self
+  }
+
+  /// Adds one listener; `http://` listeners always require a paired bearer.
+  pub fn listen(mut self, listener: ListenEndpoint) -> Self {
+    self.listeners.push(listener);
+    self
+  }
+
+  /// Replaces the pairing token and Device-bearer store.
+  pub fn pairing_store(mut self, path: impl Into<PathBuf>) -> Self {
+    self.pairing_store = path.into();
+    self
+  }
+
+  /// Registers as the default local daemon, publishing discovery metadata at
+  /// `discovery_file` or the default path.
+  pub fn register(mut self, discovery_file: Option<PathBuf>) -> Self {
+    self.register = true;
+    self.discovery_file = discovery_file;
+    self
+  }
+
+  /// Stops the daemon after this long without live Runners.
+  pub fn daemon_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+    self.daemon_idle_timeout = Some(timeout);
+    self
+  }
+
+  /// Chooses which local processes may call the owner listener.
+  pub fn local_clients(mut self, policy: auv_api_server::LocalClientPolicy) -> Self {
+    self.local_clients = policy;
+    self
+  }
+
+  /// Adds one operator-trusted custom Runner provider.
+  pub fn runner_provider(mut self, provider: runner_provider::RunnerProviderConfig) -> Self {
+    self.runner_providers.push(provider);
+    self
+  }
+
+  /// Sets the built-in Runners, for example
+  /// [`runner_provider::FirstPartyRunnerRuntimes::local_driver`].
+  pub fn first_party_runners(mut self, runners: runner_provider::FirstPartyRunnerRuntimes) -> Self {
+    self.first_party_runners = runners;
+    self
+  }
+}
+
+/// Endpoint and credential that reach a daemon's owner listener: the Rust
+/// counterpart of the JS SDK `daemon.connectionOptions`. Pass both to
+/// [`auv::Client::connect`].
+#[derive(Clone)]
+pub struct OwnerConnection {
+  /// `unix://` or `npipe://` URI of the owner listener.
+  pub endpoint: String,
+  /// Launcher token under `LauncherOnly`; `None` under `AnyProcessOfOsUser`.
+  pub credential: Option<zeroize::Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for OwnerConnection {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("OwnerConnection")
+      .field("endpoint", &self.endpoint)
+      .field("credential", &self.credential.as_ref().map(|_| "[REDACTED]"))
+      .finish()
+  }
 }
 
 /// Parses one listener URI. Every `http://` listener requires a paired Device
@@ -107,6 +208,7 @@ fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, r
 /// Bound daemon server with discovery publication and graceful shutdown.
 pub struct Server {
   inner: auv_api_server::server::Server,
+  local_clients: auv_api_server::LocalClientPolicy,
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   device_local: std::sync::Arc<devices::LocalState>,
   discovery_file: Option<PathBuf>,
@@ -138,7 +240,7 @@ impl Server {
         additional_listeners: listeners.collect(),
         pairing,
         daemon_idle_timeout: config.daemon_idle_timeout,
-        local_clients: config.local_clients,
+        local_clients: config.local_clients.clone(),
       },
       move |parent_endpoint| {
         Ok(std::sync::Arc::new(daemon::Daemon::open_with_runner_providers_and_parent_endpoint(
@@ -154,6 +256,7 @@ impl Server {
     .await?;
     Ok(Self {
       inner: bound,
+      local_clients: config.local_clients,
       #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       device_local,
       discovery_file: config.discovery_file,
@@ -170,6 +273,19 @@ impl Server {
   pub fn endpoints(&self) -> &[BoundEndpoint] {
     self.inner.endpoints()
   }
+  /// Endpoint and credential for this process to call its own daemon.
+  pub fn owner_connection(&self) -> Option<OwnerConnection> {
+    let endpoint = self.inner.discovery_endpoint()?.to_string();
+    let credential = match &self.local_clients {
+      auv_api_server::LocalClientPolicy::LauncherOnly(token) => Some(zeroize::Zeroizing::new(token.expose().to_owned())),
+      _ => None,
+    };
+    Some(OwnerConnection {
+      endpoint,
+      credential,
+    })
+  }
+
   /// Returns the endpoint published for implicit discovery, when available.
   pub fn discovery_endpoint(&self) -> Option<&BoundEndpoint> {
     self.inner.discovery_endpoint()

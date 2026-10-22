@@ -12,16 +12,15 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   let mut runner_environment = std::collections::BTreeMap::new();
   runner_environment.insert("AUV_RUNNER_TEST_CONTEXT".to_string(), child_context_path.display().to_string());
   runner_environment.insert("AUV_RUNNER_TEST_BINARY".to_string(), env!("CARGO_BIN_EXE_auv-runner-netease-music").to_string());
-  let bound = Server::bind(Config {
-    id: None,
-    pairing_store: directory.path().join("pairings.json"),
-    listeners: vec![ListenEndpoint::Unix {
+  // TODO(runner-launcher-token): this Runner calls back through AUV_CONTEXT,
+  // which a LauncherOnly daemon rejects until Runners receive the token.
+  let config = Config::new(directory.path().join("store"))
+    .expect("generate launcher token")
+    .listen(ListenEndpoint::Unix {
       path: socket.clone(),
-    }],
-    discovery_file: None,
-    register: false,
-    store_root: directory.path().join("store"),
-    runner_providers: vec![RunnerProviderConfig {
+    })
+    .local_clients(auv_api_server::LocalClientPolicy::AnyProcessOfOsUser)
+    .runner_provider(RunnerProviderConfig {
       runner_class: "auv.app.netease_music".to_string(),
       runtime: RunnerRuntime::Executable(ExecutableRunnerRuntime {
         executable: std::path::PathBuf::from("/bin/sh"),
@@ -32,13 +31,8 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
         working_directory: None,
         environment: runner_environment,
       }),
-    }],
-    daemon_idle_timeout: None,
-    local_clients: auv_api_server::LocalClientPolicy::AnyProcessOfOsUser,
-    first_party_runners: Default::default(),
-  })
-  .await
-  .expect("bind daemon with trusted NetEase provider");
+    });
+  let bound = Server::bind(config).await.expect("bind daemon with trusted NetEase provider");
   let shutdown = tokio_util::sync::CancellationToken::new();
   let server_shutdown = shutdown.clone();
   let server = tokio::spawn(async move { bound.serve(server_shutdown).await });

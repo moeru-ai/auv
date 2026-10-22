@@ -1165,3 +1165,38 @@ async fn health_identifies_each_daemon_instance_across_protocols_and_listeners()
   assert_ne!(ids[0], ids[1]);
   assert_eq!(ids[2], explicit);
 }
+
+// ROOT CAUSE:
+//
+// `Config` had no defaults and Rust clients could not send a credential on
+// local IPC, so every embedder chose `owner_key: None` and admitted every
+// process of the OS user. `Config::new` now defaults to LauncherOnly, and
+// `owner_connection` plus `auv::Client::connect` reach the daemon with it.
+#[tokio::test]
+async fn embedded_daemon_defaults_to_launcher_only_and_its_owner_connects() {
+  let root = tempfile::tempdir().unwrap();
+  let server = Server::bind(Config::new(root.path().join("store")).unwrap()).await.unwrap();
+  let owner = server.owner_connection().expect("private owner listener");
+  let credential = owner.credential.clone().expect("LauncherOnly token");
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  let stranger = GrpcClient::connect(owner.endpoint.parse().unwrap()).await.unwrap();
+  let rejected = stranger.devices().list_devices().await.unwrap_err();
+  assert_eq!(rejected.code(), tonic::Code::Unauthenticated, "{rejected:?}");
+
+  let client = auv::Client::connect(&owner.endpoint, Some(&credential)).await.unwrap();
+  assert!(client.devices().list().await.unwrap().iter().any(|device| device.local));
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
+#[test]
+fn config_new_fills_cli_matching_defaults() {
+  let config = Config::new("/tmp/auv-store").unwrap();
+  assert_eq!(config.pairing_store, std::path::Path::new("/tmp/auv-store/pairings.json"));
+  assert!(!config.register);
+  assert!(config.listeners.is_empty());
+  assert!(matches!(config.local_clients, auv_api_server::LocalClientPolicy::LauncherOnly(_)));
+}

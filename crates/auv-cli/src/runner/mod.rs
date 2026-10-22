@@ -5,13 +5,10 @@ mod local_driver;
 mod recent_frames;
 mod recording;
 
-pub(crate) const INTERNAL_SENTINEL: &str = "__auv-internal-runner";
-pub(crate) const LOCAL_DRIVER_ROLE: &str = "local-driver";
-pub(crate) const STATE_ROOT_ENV: &str = "AUV_RUNNER_STATE_ROOT";
-/// Parent of the per-Runner trace stores: `<root>/<runner_id>/records.jsonl`.
-/// Each Runner process appends to its own store, so concurrent Runners never
-/// interleave writes in one file.
-pub(crate) const TRACE_ROOT_ENV: &str = "AUV_RUNNER_TRACE_ROOT";
+pub(crate) use auv_daemon::runner_provider::{
+  INTERNAL_RUNNER_SENTINEL as INTERNAL_SENTINEL, LOCAL_DRIVER_ROLE, RUNNER_STATE_ROOT_ENV as STATE_ROOT_ENV,
+  RUNNER_TRACE_ROOT_ENV as TRACE_ROOT_ENV,
+};
 
 /// Runs an internal Runner role before the ordinary CLI runtime is created.
 ///

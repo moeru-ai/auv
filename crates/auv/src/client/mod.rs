@@ -139,6 +139,20 @@ impl Client {
     }
   }
 
+  /// Connects to one daemon endpoint (`unix://`, `npipe://` or `http://`),
+  /// presenting `credential` as a bearer when given: a launcher token on local
+  /// IPC, or a paired Device bearer. Mirrors the JS SDK `connect()`.
+  pub async fn connect(endpoint: &str, credential: Option<&str>) -> Result<Self, ContextError> {
+    let endpoint = endpoint.parse::<ConnectEndpoint>().map_err(|error| ContextError::Connect(error.to_string()))?;
+    let grpc = match credential {
+      Some(credential) => {
+        GrpcClient::connect_with_credential(endpoint, credential).await.map_err(|error| ContextError::Connect(error.to_string()))?
+      }
+      None => GrpcClient::connect(endpoint).await.map_err(|error| ContextError::Connect(error.to_string()))?,
+    };
+    Ok(Self::from_grpc(grpc))
+  }
+
   /// Connects using one non-secret AUV context.
   pub async fn from_context(context: AuvContext) -> Result<Self, PlacementError> {
     Ok(Self::resolve_context(context).await?)

@@ -128,6 +128,15 @@ pub enum PairedConnectError {
   Transport(#[from] tonic::transport::Error),
 }
 
+/// Failure while connecting with a caller-supplied credential.
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialConnectError {
+  #[error(transparent)]
+  Transport(#[from] tonic::transport::Error),
+  #[error("credential must be visible ASCII")]
+  InvalidCredential,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AuthorizationInterceptor {
   authorization: Option<MetadataValue<Ascii>>,
@@ -296,30 +305,16 @@ impl Client {
 
   /// Connects to one API server without selecting a Device, Run, or Runner.
   pub async fn connect(endpoint: ConnectEndpoint) -> Result<Self, tonic::transport::Error> {
-    let channel = match endpoint {
-      ConnectEndpoint::Tcp(uri) => Endpoint::from_shared(uri.to_string())?.connect().await?,
-      #[cfg(unix)]
-      ConnectEndpoint::Unix(path) => {
-        let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
-        endpoint
-          .connect_with_connector(tower::service_fn(move |_: http::Uri| {
-            let path = path.clone();
-            async move { tokio::net::UnixStream::connect(path).await.map(hyper_util::rt::TokioIo::new) }
-          }))
-          .await?
-      }
-      #[cfg(windows)]
-      ConnectEndpoint::NamedPipe(name) => {
-        let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
-        endpoint
-          .connect_with_connector(tower::service_fn(move |_: http::Uri| {
-            let path = format!(r"\\.\pipe\{name}");
-            async move { open_named_pipe(path).await }
-          }))
-          .await?
-      }
-    };
-    Ok(Self::from_channel(channel))
+    Ok(Self::from_channel(connect_channel(endpoint).await?))
+  }
+
+  /// Connects and presents `credential` as `authorization: Bearer` on every
+  /// request: a launcher token on local IPC, or a paired Device bearer.
+  pub async fn connect_with_credential(endpoint: ConnectEndpoint, credential: &str) -> Result<Self, CredentialConnectError> {
+    let mut authorization =
+      format!("Bearer {credential}").parse::<MetadataValue<Ascii>>().map_err(|_| CredentialConnectError::InvalidCredential)?;
+    authorization.set_sensitive(true);
+    Ok(Self::from_channel_with_authorization(connect_channel(endpoint).await?, Some(authorization)))
   }
 
   /// Connects to a paired daemon and adds its opaque bearer to every gRPC request.
@@ -331,6 +326,33 @@ impl Client {
     let channel = Endpoint::from_shared(config.endpoint.to_string())?.connect().await?;
     Ok(Self::from_channel_with_authorization(channel, Some(authorization)))
   }
+}
+
+/// Opens the transport for one endpoint; callers add any credential.
+async fn connect_channel(endpoint: ConnectEndpoint) -> Result<Channel, tonic::transport::Error> {
+  Ok(match endpoint {
+    ConnectEndpoint::Tcp(uri) => Endpoint::from_shared(uri.to_string())?.connect().await?,
+    #[cfg(unix)]
+    ConnectEndpoint::Unix(path) => {
+      let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
+      endpoint
+        .connect_with_connector(tower::service_fn(move |_: http::Uri| {
+          let path = path.clone();
+          async move { tokio::net::UnixStream::connect(path).await.map(hyper_util::rt::TokioIo::new) }
+        }))
+        .await?
+    }
+    #[cfg(windows)]
+    ConnectEndpoint::NamedPipe(name) => {
+      let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
+      endpoint
+        .connect_with_connector(tower::service_fn(move |_: http::Uri| {
+          let path = format!(r"\\.\pipe\{name}");
+          async move { open_named_pipe(path).await }
+        }))
+        .await?
+    }
+  })
 }
 
 #[cfg(windows)]

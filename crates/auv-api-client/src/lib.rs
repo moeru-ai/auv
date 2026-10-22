@@ -9,5 +9,6 @@ pub mod protocol;
 pub mod device_local;
 
 pub use protocol::grpc::{
-  ConnectEndpoint, EndpointParseError, PairedConnectConfig, PairedConnectError, RoutedTransport, RunnerRoute, RunnerRouteInterceptor,
+  ConnectEndpoint, CredentialConnectError, EndpointParseError, PairedConnectConfig, PairedConnectError, RoutedTransport, RunnerRoute,
+  RunnerRouteInterceptor,
 };

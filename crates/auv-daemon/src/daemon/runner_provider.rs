@@ -12,6 +12,16 @@ pub(super) const LOCAL_RUNNER_CLASS: &str = "auv.core.local";
 /// The daemon-assigned Runner id, given to every executable Runner so its own
 /// logs and trace records name the Runner the daemon reports.
 pub const RUNNER_ID_ENV: &str = "AUV_RUNNER_ID";
+/// argv[1] that makes the `auv` executable host a first-party Runner role.
+pub const INTERNAL_RUNNER_SENTINEL: &str = "__auv-internal-runner";
+/// Role argument for the built-in local Driver Runner.
+pub const LOCAL_DRIVER_ROLE: &str = "local-driver";
+/// Per-Runner private state directory for the local Driver Runner.
+pub const RUNNER_STATE_ROOT_ENV: &str = "AUV_RUNNER_STATE_ROOT";
+/// Parent of the per-Runner trace stores: `<root>/<runner_id>/records.jsonl`.
+/// Each Runner process appends to its own store, so concurrent Runners never
+/// interleave writes in one file.
+pub const RUNNER_TRACE_ROOT_ENV: &str = "AUV_RUNNER_TRACE_ROOT";
 
 /// Experimental daemon-side selection of one RunnerClass provider.
 ///
@@ -79,6 +89,32 @@ pub struct RemoteGrpcRunnerRuntime {
 pub struct FirstPartyRunnerRuntimes {
   /// Runtime for the built-in local Driver Runner.
   pub local_driver: Option<RunnerRuntime>,
+}
+
+impl FirstPartyRunnerRuntimes {
+  /// Hosts the built-in local Driver Runner in an `auv` executable, keeping its
+  /// state and traces below `store_root`. `auv serve` passes its own path;
+  /// an embedder passes the `auv` binary it ships.
+  pub fn local_driver(auv_executable: PathBuf, store_root: &Path) -> Result<Self, String> {
+    let state_root = store_root.join("runner-state").join("auv.core.local");
+    let state_root = state_root.to_str().ok_or_else(|| format!("local Runner state path is not valid UTF-8: {}", state_root.display()))?;
+    let trace_root = store_root.join("runner-traces");
+    let trace_root = trace_root.to_str().ok_or_else(|| format!("Runner trace path is not valid UTF-8: {}", trace_root.display()))?;
+    Ok(Self {
+      local_driver: Some(RunnerRuntime::Executable(ExecutableRunnerRuntime {
+        executable: auv_executable,
+        arguments: vec![
+          INTERNAL_RUNNER_SENTINEL.to_string(),
+          LOCAL_DRIVER_ROLE.to_string(),
+        ],
+        working_directory: None,
+        environment: BTreeMap::from([
+          (RUNNER_STATE_ROOT_ENV.to_string(), state_root.to_string()),
+          (RUNNER_TRACE_ROOT_ENV.to_string(), trace_root.to_string()),
+        ]),
+      })),
+    })
+  }
 }
 
 impl RunnerProviderConfig {

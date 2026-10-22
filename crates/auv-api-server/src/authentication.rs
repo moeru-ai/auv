@@ -34,6 +34,25 @@ impl LauncherToken {
     Ok(Self(Arc::new(zeroize::Zeroizing::new(value.to_owned()))))
   }
 
+  /// Generates a token from 32 bytes of operating-system randomness.
+  pub fn generate() -> Result<Self, String> {
+    let mut bytes = zeroize::Zeroizing::new([0u8; 32]);
+    getrandom::fill(bytes.as_mut()).map_err(|error| format!("failed to generate a launcher token: {error}"))?;
+    let mut text = String::with_capacity(64);
+    for byte in bytes.iter() {
+      text.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble"));
+      text.push(char::from_digit(u32::from(byte & 0x0f), 16).expect("nibble"));
+    }
+    Ok(Self(Arc::new(zeroize::Zeroizing::new(text))))
+  }
+
+  /// The secret text to hand to a client that should control this daemon.
+  /// Never put it in argv or the environment: other processes of the same
+  /// user can read both.
+  pub fn expose(&self) -> &str {
+    &self.0
+  }
+
   fn matches(&self, presented: &str) -> bool {
     use subtle::ConstantTimeEq as _;
     let expected = self.0.as_bytes();
@@ -249,6 +268,14 @@ mod tests {
   #[test]
   fn any_process_of_os_user_admits_local_callers_without_a_token() {
     assert!(local(LocalClientPolicy::AnyProcessOfOsUser).authenticate_http(&request(None)).is_ok());
+  }
+
+  #[test]
+  fn generated_launcher_tokens_parse_and_differ() {
+    let first = LauncherToken::generate().unwrap();
+    let second = LauncherToken::generate().unwrap();
+    assert!(LauncherToken::parse(first.expose()).is_ok());
+    assert_ne!(first.expose(), second.expose());
   }
 
   #[test]

@@ -9,16 +9,15 @@ use auv_daemon::{Config, ListenEndpoint, Server};
 async fn daemon_routes_the_app_owned_balatro_runner() {
   let directory = tempfile::tempdir().expect("create isolated daemon state");
   let socket = directory.path().join("auv.sock");
-  let bound = Server::bind(Config {
-    id: None,
-    pairing_store: directory.path().join("pairings.json"),
-    listeners: vec![ListenEndpoint::Unix {
+  // TODO(runner-launcher-token): this Runner calls back through AUV_CONTEXT,
+  // which a LauncherOnly daemon rejects until Runners receive the token.
+  let config = Config::new(directory.path().join("store"))
+    .expect("generate launcher token")
+    .listen(ListenEndpoint::Unix {
       path: socket.clone(),
-    }],
-    discovery_file: None,
-    register: false,
-    store_root: directory.path().join("store"),
-    runner_providers: vec![RunnerProviderConfig {
+    })
+    .local_clients(auv_api_server::LocalClientPolicy::AnyProcessOfOsUser)
+    .runner_provider(RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),
       runtime: RunnerRuntime::Executable(ExecutableRunnerRuntime {
         executable: env!("CARGO_BIN_EXE_auv-runner-balatro").into(),
@@ -26,13 +25,8 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
         working_directory: None,
         environment: Default::default(),
       }),
-    }],
-    daemon_idle_timeout: None,
-    local_clients: auv_api_server::LocalClientPolicy::AnyProcessOfOsUser,
-    first_party_runners: Default::default(),
-  })
-  .await
-  .expect("bind daemon with trusted Balatro provider");
+    });
+  let bound = Server::bind(config).await.expect("bind daemon with trusted Balatro provider");
   let shutdown = tokio_util::sync::CancellationToken::new();
   let server_shutdown = shutdown.clone();
   let server = tokio::spawn(async move { bound.serve(server_shutdown).await });
