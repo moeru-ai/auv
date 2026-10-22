@@ -7,6 +7,8 @@ import type { AuvOverlayOptions, OverlayTheme } from './overlay'
 import process from 'node:process'
 
 import { randomBytes, randomUUID } from 'node:crypto'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -94,8 +96,8 @@ export interface ListenerOptions<Listen, Method extends string> {
 export type LocalAuthMethod = 'launcher-token' | 'os-user' | 'paired-device'
 
 /**
- * The local listener. Without `listen`, the daemon gets a Unix socket below
- * `storeRoot`, or a named pipe on Windows. `auth.allowedMethods` defaults to
+ * The local listener. Without `listen`, the daemon gets a Unix socket in a
+ * private directory under the temp dir, or a named pipe on Windows. `auth.allowedMethods` defaults to
  * `['launcher-token']`: only this process, and those it hands
  * `connectionOptions.credential` to. Add `'paired-device'` to admit apps you
  * pair with `createPairingToken`, each revocable on its own. `'os-user'`
@@ -283,8 +285,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   // The handle connects through the first local listener, so the SDK names
   // one explicitly instead of relying on the daemon's own choice.
   const localPaths = local?.listen?.map(listen => listen.path) ?? []
+  // Unix socket paths are limited to about 104 bytes, which a deep storeRoot
+  // exceeds; like `auv serve`, use a private directory under the temp dir.
+  const socketDirectory = isWindows || localPaths.length > 0 ? undefined : await mkdtemp(join(await realpath(tmpdir()), 'auv-'))
   if (localPaths.length === 0)
-    localPaths.push(isWindows ? `\\\\.\\pipe\\auv-${randomUUID()}` : join(storeRoot, 'auv.sock'))
+    localPaths.push(socketDirectory === undefined ? `\\\\.\\pipe\\auv-${randomUUID()}` : join(socketDirectory, 's'))
   const remoteAddresses = remote?.listen ?? []
   for (const { port } of remoteAddresses) {
     if (port === 0)
@@ -352,7 +357,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     }),
   )
 
-  const exited = completion.then(({ code, signal }) => ({ code, signal }))
+  const exited = completion.then(async ({ code, signal }) => {
+    if (socketDirectory !== undefined)
+      await rm(socketDirectory, { force: true, recursive: true }).catch(() => {})
+    return { code, signal }
+  })
 
   try {
     await Promise.race([

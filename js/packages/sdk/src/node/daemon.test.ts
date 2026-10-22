@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
@@ -45,10 +45,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
       // the owner endpoint that startAuv adds in front of the HTTP listener.
       expect(daemon.endpoints).toEqual(isWindows
         ? [expect.stringMatching(/^npipe:\/\/\.\/pipe\/auv-/), `http://127.0.0.1:${port}`]
-        : [`unix://${join(workingDirectory, 'state', 'auv.sock')}`, `http://127.0.0.1:${port}`])
+        : [expect.stringMatching(/^unix:\/\/.+\/auv-[^/]+\/s$/), `http://127.0.0.1:${port}`])
       expect(daemon.connectionOptions).toEqual(isWindows
         ? { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
-        : { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: join(workingDirectory, 'state', 'auv.sock'), local: true, transport: 'unix' })
+        : { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0]!.slice('unix://'.length), local: true, transport: 'unix' })
       await expect(access(daemon.storeRoot)).resolves.toBeUndefined()
 
       const connection = await daemon.connect()
@@ -317,6 +317,28 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
   })
 
+  // ROOT CAUSE:
+  //
+  // The default owner socket lived at `<storeRoot>/auv.sock`. A deep store
+  // root pushed the path past the ~104-byte Unix socket limit and the daemon
+  // failed to bind; `auv serve` already used a short temp-dir path.
+  it.skipIf(isWindows)('binds the default owner socket under a deep store root', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-deep-'))
+    const storeRoot = join(workingDirectory, 'a-rather-long-directory-name/'.repeat(8))
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), storeRoot, workingDirectory })
+    const socketDirectory = dirname(daemon.connectionOptions.endpoint)
+    try {
+      expect(storeRoot.length).toBeGreaterThan(110)
+      expect((await listDevices(await daemon.connect())).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+    await expect(access(socketDirectory)).rejects.toThrow()
+  })
+
   it('reports a missing executable as a daemon start error', async () => {
     await expect(startAuv({
       binaryPath: join(tmpdir(), 'missing-auv-test-binary'),
@@ -377,13 +399,14 @@ describe('startAuv', { timeout: 30_000 }, () => {
 
     try {
       const [line] = await once(createInterface({ input: owner.stdout }), 'line') as [string]
-      const pid = Number(line)
+      const [pidText, socket] = line.split(' ') as [string, string]
+      const pid = Number(pidText)
       expect(isAlive(pid)).toBe(true)
 
       owner.kill('SIGKILL')
 
       await expect.poll(() => isAlive(pid), { timeout: 15_000 }).toBe(false)
-      await expect(access(join(workingDirectory, '.auv', 'store', 'auv.sock'))).rejects.toThrow()
+      await expect(access(socket)).rejects.toThrow()
     }
     finally {
       owner.kill('SIGKILL')

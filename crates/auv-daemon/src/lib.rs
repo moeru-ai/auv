@@ -19,6 +19,11 @@ pub use daemon::runner_provider;
 ///
 /// Start from [`Config::new`] and adjust it with the chainable setters, so new
 /// options never break existing callers.
+///
+/// Runner presentation is configured through the embedding process's
+/// environment, which Runner children inherit: `AUV_OVERLAY_THEME` (overlay
+/// theme JSON) and, on macOS, `AUV_MACOS_HELPER_APP`. The JS SDK sets the same
+/// variables from its `overlay` and `platforms` options.
 #[non_exhaustive]
 pub struct Config {
   /// Fresh identity for this daemon instance; generated when omitted.
