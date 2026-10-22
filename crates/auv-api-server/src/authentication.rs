@@ -7,20 +7,29 @@ use tonic::Status;
 
 use crate::control::{CallerId, Pairing, PairingError};
 
-/// Per-launch secret held by the process that started the daemon.
-///
-/// Local IPC admits every process of the daemon's OS user. When the launching
-/// process supplies an owner key, local callers must also present it as
-/// `authorization: Bearer <key>`, so other processes of the same user cannot
-/// borrow the daemon's desktop and OS permissions.
+/// Which local processes may call the daemon over its Unix socket or named
+/// pipe. Paired TCP listeners always require a Device bearer instead.
 #[derive(Clone)]
-pub struct OwnerKey(Arc<zeroize::Zeroizing<String>>);
+#[non_exhaustive]
+pub enum LocalClientPolicy {
+  /// Only callers that present the token of the process that launched the
+  /// daemon, so other processes of the same OS user cannot borrow its desktop
+  /// and OS permissions.
+  LauncherOnly(LauncherToken),
+  /// Any process running as the daemon's OS user.
+  AnyProcessOfOsUser,
+}
 
-impl OwnerKey {
+/// Secret generated for one daemon launch and held by the launching process.
+/// Callers present it as `authorization: Bearer <token>`.
+#[derive(Clone)]
+pub struct LauncherToken(Arc<zeroize::Zeroizing<String>>);
+
+impl LauncherToken {
   /// Accepts exactly 64 lowercase hexadecimal characters (32 random bytes).
   pub fn parse(value: &str) -> Result<Self, String> {
     if value.len() != 64 || !value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
-      return Err("owner key must be 64 lowercase hexadecimal characters".into());
+      return Err("launcher token must be 64 lowercase hexadecimal characters".into());
     }
     Ok(Self(Arc::new(zeroize::Zeroizing::new(value.to_owned()))))
   }
@@ -35,12 +44,12 @@ impl OwnerKey {
 /// Authentication policy for one listener.
 #[derive(Clone)]
 pub(crate) enum Authenticator {
-  /// Trust the local caller after optional Unix peer validation and, when
-  /// configured, the owner key.
+  /// Trust the local caller after optional Unix peer validation and the
+  /// configured local client policy.
   Local {
     #[cfg(unix)]
     allowed_unix_uid: Option<u32>,
-    owner_key: Option<OwnerKey>,
+    policy: LocalClientPolicy,
     pairing: Option<Arc<dyn Pairing>>,
   },
   /// Require an active paired Device bearer.
@@ -53,11 +62,11 @@ pub(crate) enum Authenticator {
 pub(crate) struct DeviceEntryAdmission(());
 
 impl Authenticator {
-  pub(crate) fn local(#[cfg(unix)] allowed_unix_uid: Option<u32>, owner_key: Option<OwnerKey>, pairing: Option<Arc<dyn Pairing>>) -> Self {
+  pub(crate) fn local(#[cfg(unix)] allowed_unix_uid: Option<u32>, policy: LocalClientPolicy, pairing: Option<Arc<dyn Pairing>>) -> Self {
     Self::Local {
       #[cfg(unix)]
       allowed_unix_uid,
-      owner_key,
+      policy,
       pairing,
     }
   }
@@ -68,16 +77,16 @@ impl Authenticator {
 
   pub(crate) fn authenticate_http<T>(&self, request: &axum::http::Request<T>) -> Result<CallerId, Status> {
     match self {
-      Self::Local { owner_key, .. } => {
+      Self::Local { policy, .. } => {
         let caller = self.authenticate_extensions(request.extensions())?;
-        if let Some(owner_key) = owner_key {
+        if let LocalClientPolicy::LauncherOnly(token) = policy {
           let presented = request
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "));
-          if !presented.is_some_and(|presented| owner_key.matches(presented)) {
-            return Err(Status::unauthenticated("this daemon requires the owner key of the process that started it"));
+          if !presented.is_some_and(|presented| token.matches(presented)) {
+            return Err(Status::unauthenticated(LAUNCHER_ONLY_REJECTION));
           }
         }
         Ok(caller)
@@ -155,6 +164,8 @@ impl Authenticator {
   }
 }
 
+const LAUNCHER_ONLY_REJECTION: &str = "this daemon only accepts the process that launched it; present its launcher token";
+
 fn authenticate_bearer(pairing: &dyn Pairing, authorization: Option<&str>) -> Result<CallerId, Status> {
   let credential = authorization
     .and_then(|value| value.strip_prefix("Bearer "))
@@ -201,11 +212,11 @@ mod tests {
 
   const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-  fn local(owner_key: Option<OwnerKey>) -> Authenticator {
+  fn local(policy: LocalClientPolicy) -> Authenticator {
     Authenticator::local(
       #[cfg(unix)]
       None,
-      owner_key,
+      policy,
       None,
     )
   }
@@ -223,10 +234,10 @@ mod tests {
   // Local IPC admitted every process of the daemon's OS user as the owner. A
   // process that only learned the socket path from `ps` could drive the
   // daemon's Runner with the permissions granted to the app that started it.
-  // With an owner key, local callers must also present that key.
+  // Under LauncherOnly, local callers must also present the launcher token.
   #[test]
-  fn owner_key_rejects_local_callers_without_the_key() {
-    let authenticator = local(Some(OwnerKey::parse(KEY).unwrap()));
+  fn launcher_only_rejects_local_callers_without_the_token() {
+    let authenticator = local(LocalClientPolicy::LauncherOnly(LauncherToken::parse(KEY).unwrap()));
     let missing = authenticator.authenticate_http(&request(None)).err().unwrap();
     assert_eq!(missing.code(), tonic::Code::Unauthenticated);
     let wrong = format!("Bearer {}", KEY.replace('0', "1"));
@@ -236,15 +247,15 @@ mod tests {
   }
 
   #[test]
-  fn local_listeners_without_an_owner_key_keep_admitting_the_os_user() {
-    assert!(local(None).authenticate_http(&request(None)).is_ok());
+  fn any_process_of_os_user_admits_local_callers_without_a_token() {
+    assert!(local(LocalClientPolicy::AnyProcessOfOsUser).authenticate_http(&request(None)).is_ok());
   }
 
   #[test]
-  fn owner_key_requires_32_random_bytes_in_lowercase_hex() {
-    assert!(OwnerKey::parse(KEY).is_ok());
-    assert!(OwnerKey::parse(&KEY[1..]).is_err());
-    assert!(OwnerKey::parse(&KEY.to_uppercase()).is_err());
-    assert!(OwnerKey::parse(&format!("{}g", &KEY[1..])).is_err());
+  fn launcher_token_requires_32_random_bytes_in_lowercase_hex() {
+    assert!(LauncherToken::parse(KEY).is_ok());
+    assert!(LauncherToken::parse(&KEY[1..]).is_err());
+    assert!(LauncherToken::parse(&KEY.to_uppercase()).is_err());
+    assert!(LauncherToken::parse(&format!("{}g", &KEY[1..])).is_err());
   }
 }

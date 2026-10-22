@@ -73,9 +73,8 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
-  /// Secret every local-IPC caller must also present. Paired TCP listeners
-  /// keep using Device bearers.
-  pub owner_key: Option<crate::OwnerKey>,
+  /// Which local processes may call the Unix socket or named-pipe listeners.
+  pub local_clients: crate::LocalClientPolicy,
 }
 
 /// Resolved endpoint of a bound server.
@@ -152,7 +151,7 @@ impl Server {
     let mut endpoints = Vec::with_capacity(configured.len());
     let mut listeners = Vec::with_capacity(configured.len());
     for endpoint in configured {
-      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone(), config.owner_key.clone()).await?;
+      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone(), config.local_clients.clone()).await?;
       endpoints.push(endpoint);
       listeners.push(BoundListenerState {
         listener,
@@ -345,7 +344,7 @@ async fn shutdown_when_daemon_idle(daemon: Arc<dyn Control>, shutdown: Cancellat
 async fn bind_listener(
   endpoint: ListenEndpoint,
   pairing: Option<Arc<dyn Pairing>>,
-  owner_key: Option<crate::OwnerKey>,
+  local_clients: crate::LocalClientPolicy,
 ) -> Result<(BoundListener, BoundEndpoint, Authenticator), String> {
   Ok(match endpoint {
     ListenEndpoint::Remote { host, port } => {
@@ -359,7 +358,7 @@ async fn bind_listener(
     ListenEndpoint::Unix { path } => {
       let (listener, cleanup) = bind_unix(&path)?;
       let owner_uid = cleanup.owner_uid;
-      (BoundListener::Unix { listener, cleanup }, BoundEndpoint::Unix(path), Authenticator::local(Some(owner_uid), owner_key, pairing))
+      (BoundListener::Unix { listener, cleanup }, BoundEndpoint::Unix(path), Authenticator::local(Some(owner_uid), local_clients, pairing))
     }
     #[cfg(windows)]
     ListenEndpoint::NamedPipe { name } => {
@@ -370,7 +369,7 @@ async fn bind_listener(
           name: name.clone(),
         },
         BoundEndpoint::NamedPipe(name),
-        Authenticator::local(owner_key, pairing),
+        Authenticator::local(local_clients, pairing),
       )
     }
   })

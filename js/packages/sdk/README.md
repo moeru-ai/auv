@@ -87,15 +87,19 @@ for example after a crash or `kill -9`. Starting on an occupied endpoint fails.
 To use a daemon owned by another host, call
 `connect({ endpoint, transport, local })` and close only that connection.
 
-Each launch generates an owner key and sends it to the daemon over stdin. The
-daemon rejects local callers without it, including other processes of the same
-OS user that find the socket or pipe path in `ps`; without the key, they cannot
-use the screen or input permissions granted to your app. `daemon.connect()`
-presents the key for you, and `daemon.connectionOptions.credential` holds it
-for connections you open yourself. Hand it only to processes that should
-control this daemon, and never through argv or environment variables, which
-other processes of the same user can read. `startAuv()` no longer registers
-the daemon as the default local daemon unless you pass `noRegister: false`.
+`localClientPolicy` decides which local processes may call the daemon over its
+Unix socket or named pipe. The default, `'launcher-only'`, generates a launcher
+token for each launch and sends it to the daemon over stdin. The daemon rejects
+local callers without it, including other processes of the same OS user that
+find the socket or pipe path in `ps`; without the token, they cannot use the
+screen or input permissions granted to your app. `daemon.connect()` presents
+the token for you, and `daemon.connectionOptions.credential` holds it for
+connections you open yourself. Hand it only to processes that should control
+this daemon, and never through argv or environment variables, which other
+processes of the same user can read. Choose `'any-process-of-os-user'` only
+when every process of the user should share the daemon. `startAuv()` does not
+register the daemon as the default local daemon unless you pass
+`noRegister: false` or a `discoveryFile`.
 
 `await checkHealth(connection)` and `await auv.health.check()` return
 `{ id, status: 'serving' }`. The same daemon reports the same `id` on every

@@ -51,10 +51,10 @@ fn serve_exits_cleanly_when_its_owner_closes_stdin() {
 //
 // Local IPC admitted every process of the daemon's OS user, so any process
 // that read the private socket path from `ps` could drive the daemon. With
-// --owner-key-stdin, local callers must also present the launching process's
-// key, which never appears in argv or the environment.
+// --local-clients launcher-only, local callers must also present the
+// launching process's token, which never appears in argv or the environment.
 #[test]
-fn serve_rejects_local_callers_without_the_owner_key() {
+fn serve_launcher_only_rejects_local_callers_without_the_token() {
   use std::io::Write as _;
 
   let directory = tempfile::tempdir().unwrap();
@@ -64,7 +64,8 @@ fn serve_rejects_local_callers_without_the_owner_key() {
       "serve",
       "--no-register",
       "--exit-on-stdin-close",
-      "--owner-key-stdin",
+      "--local-clients",
+      "launcher-only",
       "--store-root",
     ])
     .arg(directory.path().join("store"))
@@ -84,11 +85,11 @@ fn serve_rejects_local_callers_without_the_owner_key() {
   drop(stdin);
   let _ = daemon.wait();
   assert!(!stranger.status.success(), "{}", String::from_utf8_lossy(&stranger.stdout));
-  assert!(String::from_utf8_lossy(&stranger.stderr).contains("owner key"), "{}", String::from_utf8_lossy(&stranger.stderr));
+  assert!(String::from_utf8_lossy(&stranger.stderr).contains("process that launched it"), "{}", String::from_utf8_lossy(&stranger.stderr));
 }
 
 #[test]
-fn serve_refuses_to_start_with_a_malformed_owner_key() {
+fn serve_refuses_to_start_with_a_malformed_launcher_token() {
   use std::io::Write as _;
 
   let directory = tempfile::tempdir().unwrap();
@@ -97,7 +98,8 @@ fn serve_refuses_to_start_with_a_malformed_owner_key() {
       "serve",
       "--no-register",
       "--exit-on-stdin-close",
-      "--owner-key-stdin",
+      "--local-clients",
+      "launcher-only",
       "--store-root",
     ])
     .arg(directory.path().join("store"))
@@ -109,5 +111,5 @@ fn serve_refuses_to_start_with_a_malformed_owner_key() {
   writeln!(daemon.stdin.take().unwrap(), "not-a-key").unwrap();
   let output = daemon.wait_with_output().unwrap();
   assert!(!output.status.success());
-  assert!(String::from_utf8_lossy(&output.stderr).contains("owner key must be"), "{}", String::from_utf8_lossy(&output.stderr));
+  assert!(String::from_utf8_lossy(&output.stderr).contains("launcher token must be"), "{}", String::from_utf8_lossy(&output.stderr));
 }

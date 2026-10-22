@@ -221,27 +221,64 @@ describe('startAuv', { timeout: 30_000 }, () => {
 
   // ROOT CAUSE:
   //
-  // Local IPC admitted every process of the daemon's OS user. A process that
-  // read the socket path from `ps` could make the daemon's Runner capture the
-  // screen with the permissions granted to the app that started it, and could
-  // mint a pairing token for a durable bearer. startAuv now requires its
-  // per-launch owner key on every local request.
-  it('rejects a same-user client that knows the endpoint but not the owner key', async () => {
+  // Local IPC admitted every process of the daemon's OS user, so a process
+  // that read the socket path from `ps` could drive the Runner and mint a
+  // pairing token. The launcher-only default now requires the launch token.
+  it('rejects a same-user client that knows the endpoint but not the launcher token', async () => {
     const workspace = await repositoryRoot()
-    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-owner-key-'))
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-launcher-token-'))
     const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), workingDirectory })
-    const { credential: _, ...withoutKey } = daemon.connectionOptions
-    const stranger = await connect(withoutKey)
+    const { credential: _, ...withoutToken } = daemon.connectionOptions
+    const stranger = await connect(withoutToken)
     const owner = await daemon.connect()
     try {
-      await expect(listDevices(stranger)).rejects.toThrow(/owner key/)
-      await expect(createPairingToken(stranger)).rejects.toThrow(/owner key/)
-      await expect(listDevices(await connect({ ...withoutKey, credential: 'f'.repeat(64) }))).rejects.toThrow(/owner key/)
+      await expect(listDevices(stranger)).rejects.toThrow(/process that launched it/)
+      await expect(createPairingToken(stranger)).rejects.toThrow(/process that launched it/)
+      await expect(listDevices(await connect({ ...withoutToken, credential: 'f'.repeat(64) }))).rejects.toThrow(/process that launched it/)
       expect((await listDevices(owner)).some(device => device.local)).toBe(true)
       expect((await listDevices(await connect(daemon.connectionOptions))).some(device => device.local)).toBe(true)
     }
     finally {
       await Promise.all([stranger.close(), owner.close()])
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  it('admits any same-user client under the any-process-of-os-user policy', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-os-user-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      localClientPolicy: 'any-process-of-os-user',
+      workingDirectory,
+    })
+    const stranger = await connect(daemon.connectionOptions)
+    try {
+      expect('credential' in daemon.connectionOptions).toBe(false)
+      expect((await listDevices(stranger)).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await stranger.close()
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  //
+  // noRegister became true by default, but the CLI rejects --discovery-file
+  // together with --no-register, so startAuv({ discoveryFile }) failed to
+  // start. A discovery file now implies registration.
+  it.skipIf(isWindows)('registers the daemon when a discovery file is requested', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-discovery-'))
+    const discoveryFile = join(workingDirectory, 'api-server.json')
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), discoveryFile, workingDirectory })
+    try {
+      await expect(access(discoveryFile)).resolves.toBeUndefined()
+    }
+    finally {
       await daemon.stop()
       await rm(workingDirectory, { force: true, recursive: true })
     }
@@ -361,5 +398,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
     await expect(startAuv({ shutdownTimeoutMs: 0 })).rejects.toThrow('shutdownTimeoutMs must be greater than 0')
     await expect(startAuv({ daemonIdleTimeoutSeconds: 1.5 })).rejects.toThrow('daemonIdleTimeoutSeconds must be an integer')
     await expect(startAuv({ listeners: ['http://127.0.0.1:0'] })).rejects.toThrow('port 0 cannot be used as a connection endpoint')
+    await expect(startAuv({ discoveryFile: 'api-server.json', noRegister: true })).rejects.toThrow('cannot be combined with noRegister: true')
+    // @ts-expect-error The policy is a closed set; untyped callers still get a clear error.
+    await expect(startAuv({ localClientPolicy: 'everyone' })).rejects.toThrow('unknown localClientPolicy')
   })
 })
