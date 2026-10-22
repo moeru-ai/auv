@@ -28,6 +28,7 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
       }),
     }],
     daemon_idle_timeout: None,
+    owner_key: None,
     first_party_runners: Default::default(),
   })
   .await

@@ -34,6 +34,7 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
       }),
     }],
     daemon_idle_timeout: None,
+    owner_key: None,
     first_party_runners: Default::default(),
   })
   .await
