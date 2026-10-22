@@ -99,8 +99,8 @@ describe('auv context', () => {
     )
   })
 
-  it('requires the parent to resolve a daemon endpoint', async () => {
-    await expect(connectFromContext({}, { transport: recordingTransport([]) })).rejects.toThrow(
+  it('requires the parent to resolve an endpoint for Device selectors', async () => {
+    await expect(connectFromContext({ deviceId: 'device-1' }, { transport: recordingTransport([]) })).rejects.toThrow(
       'AuvContext does not contain a resolved daemon_endpoint',
     )
   })

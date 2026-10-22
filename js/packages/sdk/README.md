@@ -77,6 +77,37 @@ const auv = createAuv(connection)
 
 Yet if needed, gRPC can be connected too through `createGrpcTransport`.
 
+### Connect to the daemon started by `auv serve`
+
+`connect({ discover: true })` finds the daemon in the same order as the `auv`
+CLI:
+
+1. the `endpoint` option
+2. the `AUV_ENDPOINT` environment variable
+3. the descriptor file that `auv serve` writes
+
+The default descriptor path is:
+
+- macOS: `~/Library/Application Support/ai.moeru.auv/api-server.json`
+- Linux: `$XDG_STATE_HOME/auv/api-server.json`, or `~/.local/state/auv/api-server.json`
+- Windows: `%LOCALAPPDATA%\moeru\auv\data\api-server.json`
+
+Set `AUV_DISCOVERY_FILE` to use a different path. The endpoint selects the
+transport (`unix://` → Unix socket, `npipe://` → named pipe, `http://` → gRPC),
+so do not also pass `transport`. If no daemon is found, `connect` rejects with
+`AuvConfigurationError`.
+
+```ts
+import { connect, createAuv } from 'auv-js/node'
+
+const connection = await connect({ discover: true })
+const auv = createAuv(connection)
+```
+
+Without `discover`, `connect()` keeps its default HTTP endpoint. Use
+`discoverEndpoint()` to resolve the endpoint without connecting; it returns
+`undefined` when no daemon is published.
+
 ### Connect and start the daemon
 
 Call `startAuv()` once for the lifetime of your Node.js or Electron host, then
@@ -219,6 +250,11 @@ const displays = await auv
   .displays
   .list()
 ```
+
+If the context has no `daemon_endpoint`, `connectFromContext` uses the same
+discovery as `connect({ discover: true })`. A context that names a Device or Run
+without `daemon_endpoint` still rejects; the SDK does not yet search paired
+profiles for it.
 
 > [!NOTE]
 >

@@ -21,16 +21,27 @@ export type AuvEnvironment = Readonly<Record<string, string | undefined>>
 export interface ConnectFromContextOptions extends OperationOptions {
   /** Application-owned credential for a paired Device profile. */
   credential?: DeviceCredential
+  /** Environment read by endpoint discovery; defaults to `process.env`. */
+  env?: AuvEnvironment
   /** Explicit transport adapter; otherwise inferred from `daemonEndpoint`. */
   transport?: ConnectOptions['transport']
 }
 
-/** Connects to the daemon selected by an already resolved `AuvContext`. */
+/**
+ * Connects to the daemon selected by an `AuvContext`. Without
+ * `daemon_endpoint`, discovers the local daemon like the Rust client.
+ */
 export async function connectFromContext(
   context: AuvContext,
   options: ConnectFromContextOptions = {},
 ): Promise<AuvConnection> {
-  if (context.daemonEndpoint === undefined) {
+  const selectsTarget = context.deviceId !== undefined
+    || context.deviceName !== undefined
+    || context.runId !== undefined
+  if (context.daemonEndpoint === undefined && selectsTarget) {
+    // TODO(js-context-target-lookup): Rust resolves Device or Run selectors
+    // without an endpoint across the local daemon and paired profiles. Deferred
+    // with profile lookup below; reopen with an approved consumer.
     throw new AuvConfigurationError(
       'AuvContext does not contain a resolved daemon_endpoint',
     )
@@ -45,13 +56,22 @@ export async function connectFromContext(
     )
   }
 
+  const route = { deviceId: context.deviceId, runId: context.runId }
+  if (context.daemonEndpoint === undefined) {
+    return connect({
+      credential: options.credential,
+      discover: true,
+      env: options.env,
+      route,
+      signal: options.signal,
+      transport: options.transport,
+    })
+  }
+
   return connect({
     credential: options.credential,
     endpoint: context.daemonEndpoint,
-    route: {
-      deviceId: context.deviceId,
-      runId: context.runId,
-    },
+    route,
     signal: options.signal,
     transport: options.transport ?? inferredTransport(context.daemonEndpoint),
   })
