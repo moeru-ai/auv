@@ -6,7 +6,7 @@ const DISPLAY_SERVICE: &str = "auv.api.driver.v1.DisplayService";
 
 impl RunnerSupervisor {
   fn new(local_device: daemon_proto::DeviceRef) -> Self {
-    Self::with_providers(local_device, None, FirstPartyRunnerRuntimes::default(), Vec::new())
+    Self::with_providers(local_device, None, None, FirstPartyRunnerRuntimes::default(), Vec::new())
       .expect("empty RunnerProvider configuration is valid")
   }
 }

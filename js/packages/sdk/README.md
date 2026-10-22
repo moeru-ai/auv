@@ -277,6 +277,8 @@ profiles for it.
 > [!NOTE]
 >
 > `AUV_CONTEXT` never contains credentials. If it names a `config_profile`, the application must pass that profile's credential explicitly to `connectFromContext`; JavaScript profile-store lookup remains intentionally outside the SDK until credential persistence has an approved shared owner.
+>
+> A daemon started with a launcher policy sends each Runner its launcher token on stdin and sets `AUV_CREDENTIAL_STDIN=1`. Read it with `inheritedCredential()` before anything else reads stdin and pass it to `connectFromContext(context, { credential })`. A parent can hand any child process a credential the same way.
 
 ### Selecting a Device
 

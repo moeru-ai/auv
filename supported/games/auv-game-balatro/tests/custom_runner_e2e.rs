@@ -9,16 +9,10 @@ use auv_daemon::{Config, Server};
 async fn daemon_routes_the_app_owned_balatro_runner() {
   let directory = tempfile::tempdir().expect("create isolated daemon state");
   let socket = directory.path().join("auv.sock");
-  // TODO(runner-launcher-token): this Runner calls back through AUV_CONTEXT,
-  // which a LauncherOnly daemon rejects until Runners receive the token.
   let config = Config::new(directory.path().join("store"))
     .expect("generate launcher token")
-    .local(
-      auv_daemon::LocalListener::new()
-        .expect("generate launcher token")
-        .bind_unix(socket.clone())
-        .allowed_auth_methods([auv_api_server::LocalAuthMethod::OsUser]),
-    )
+    // The default launcher-token policy also hands this Runner the token.
+    .local(auv_daemon::LocalListener::new().expect("generate launcher token").bind_unix(socket.clone()))
     .runner_provider(RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),
       runtime: RunnerRuntime::Executable(ExecutableRunnerRuntime {
@@ -29,12 +23,15 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
       }),
     });
   let bound = Server::bind(config).await.expect("bind daemon with trusted Balatro provider");
+  let launcher_token = bound.owner_connection().and_then(|owner| owner.credential).expect("LauncherOnly token");
   let shutdown = tokio_util::sync::CancellationToken::new();
   let server_shutdown = shutdown.clone();
   let server = tokio::spawn(async move { bound.serve(server_shutdown).await });
 
   let client =
-    auv_api_client::protocol::grpc::Client::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.expect("connect to daemon");
+    auv_api_client::protocol::grpc::Client::connect_with_credential(auv_api_client::ConnectEndpoint::Unix(socket), &launcher_token)
+      .await
+      .expect("connect to daemon");
   let device = client.devices().list_devices().await.expect("list Device").into_iter().next().expect("local Device");
   let device = device.r#ref.expect("Device ref");
   let run = client

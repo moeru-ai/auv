@@ -55,6 +55,7 @@ impl Daemon {
   pub(super) fn open_with_runner_providers_and_parent_endpoint(
     store_root: &Path,
     parent_endpoint: Option<String>,
+    parent_credential: Option<zeroize::Zeroizing<String>>,
     first_party_runners: runner_provider::FirstPartyRunnerRuntimes,
     runner_providers: Vec<runner_provider::RunnerProviderConfig>,
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))] device_entry: std::sync::Arc<crate::devices::LocalState>,
@@ -77,6 +78,7 @@ impl Daemon {
     let runners = RunnerSupervisor::with_providers(
       local_device.r#ref.clone().expect("local Device always has a ref"),
       parent_endpoint,
+      parent_credential,
       first_party_runners,
       runner_providers,
     )?;

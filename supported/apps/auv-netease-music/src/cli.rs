@@ -854,7 +854,10 @@ fn inherited_remote_context() -> Option<auv::AuvContext> {
 
 #[cfg(target_os = "macos")]
 async fn remote_now_playing(context: auv::AuvContext, app_id: &str) -> Result<auv_media_macos::NowPlayingState, String> {
-  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let credential = auv::inherited_credential().map_err(|error| error.to_string())?;
+  let auv = auv::Client::from_context_with_credential(context, credential.as_ref().map(auv::selection::Credential::expose))
+    .await
+    .map_err(|error| error.to_string())?;
   let run = auv.run(Default::default()).await.map_err(|error| format!("resolve inherited NetEase Run failed: {error}"))?;
   let runner = run
     .runner(auv::client::RunnerOptions {

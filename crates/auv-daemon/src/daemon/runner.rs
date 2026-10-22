@@ -21,7 +21,7 @@ const LOCAL_IPC_ORIGIN: &str = "http://localhost";
 pub(crate) struct RunnerSupervisor {
   providers: RunnerProviderRegistry,
   local_device: daemon_proto::DeviceRef,
-  parent_context: Option<String>,
+  parent_context: Option<ParentContext>,
   runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
   activity_changed: Arc<Notify>,
 }
@@ -79,6 +79,7 @@ impl RunnerSupervisor {
   pub(crate) fn with_providers(
     local_device: daemon_proto::DeviceRef,
     parent_endpoint: Option<String>,
+    parent_credential: Option<zeroize::Zeroizing<String>>,
     first_party: FirstPartyRunnerRuntimes,
     custom: Vec<RunnerProviderConfig>,
   ) -> Result<Self, String> {
@@ -88,6 +89,10 @@ impl RunnerSupervisor {
           "device_id": local_device.device_id.clone(),
           "daemon_endpoint": daemon_endpoint,
         }))
+        .map(|context| ParentContext {
+          context,
+          credential: parent_credential,
+        })
       })
       .transpose()
       .map_err(|error| format!("failed to encode Runner parent AUV_CONTEXT: {error}"))?;
@@ -122,7 +127,7 @@ impl RunnerSupervisor {
       daemon_proto::RunnerLifecycle::Unspecified => return Err(RunnerError::InvalidArgument("runner lifecycle is required")),
     }
     let runner_id = crate::resource_id::generate().map_err(RunnerError::Start)?;
-    let ready = match spawn_ready(&provider, self.parent_context.as_deref(), &runner_id).await {
+    let ready = match spawn_ready(&provider, self.parent_context.as_ref(), &runner_id).await {
       Ok(ready) => ready,
       Err(error) => {
         tracing::warn!(runner_id = %runner_id, runner_class, %error, "Runner failed to start");
@@ -500,10 +505,41 @@ async fn terminate_child(child: &mut Child) -> Result<(), RunnerError> {
   Ok(())
 }
 
+/// What a Runner needs to call its daemon back.
+pub(crate) struct ParentContext {
+  /// Non-secret `AUV_CONTEXT` JSON naming the daemon endpoint and Device.
+  context: String,
+  /// Launcher token for a launcher-policy daemon, sent over the Runner's
+  /// stdin because other processes of the same user can read the environment.
+  credential: Option<zeroize::Zeroizing<String>>,
+}
+
+fn configure_parent(command: &mut tokio::process::Command, parent_context: Option<&ParentContext>) {
+  command.stdin(std::process::Stdio::null());
+  let Some(parent_context) = parent_context else {
+    return;
+  };
+  command.env("AUV_CONTEXT", &parent_context.context);
+  if parent_context.credential.is_some() {
+    command.env(auv::CREDENTIAL_STDIN_ENV, "1").stdin(std::process::Stdio::piped());
+  }
+}
+
+/// A Runner that never reads its stdin leaves the line in the pipe buffer; one
+/// that already exited fails the write, and its startup error surfaces later.
+async fn send_parent_credential(child: &mut tokio::process::Child, parent_context: Option<&ParentContext>) {
+  use tokio::io::AsyncWriteExt as _;
+  let (Some(credential), Some(mut stdin)) = (parent_context.and_then(|parent| parent.credential.as_ref()), child.stdin.take()) else {
+    return;
+  };
+  let _ = stdin.write_all(credential.as_bytes()).await;
+  let _ = stdin.write_all(b"\n").await;
+}
+
 #[cfg(unix)]
 async fn spawn_ready(
   provider: &RegisteredRunnerProvider,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
   runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
@@ -516,7 +552,7 @@ async fn spawn_ready(
 async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
   runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   use std::os::fd::AsRawFd;
@@ -536,15 +572,9 @@ async fn spawn_executable_ready(
     .env_remove("AUV_CONTEXT")
     .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env("AUV_RUNNER_IPC_FD", "3")
-    .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
-  if let Some(parent_context) = parent_context {
-    // TODO(runner-launcher-token): a LauncherOnly daemon rejects Runner
-    // callbacks through this context until Runners receive a token over a
-    // channel that, unlike the environment, other processes cannot read.
-    command.env("AUV_CONTEXT", parent_context);
-  }
+  configure_parent(&mut command, parent_context);
   if let Some(working_directory) = &runtime.working_directory {
     command.current_dir(working_directory);
   }
@@ -563,6 +593,7 @@ async fn spawn_executable_ready(
     });
   }
   let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  send_parent_credential(&mut child, parent_context).await;
   drop(child_stream);
   let stream = tokio::net::UnixStream::from_std(parent).map_err(|error| RunnerError::Start(error.to_string()))?;
   let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(stream)));
@@ -607,7 +638,7 @@ async fn spawn_executable_ready(
 #[cfg(windows)]
 async fn spawn_ready(
   provider: &RegisteredRunnerProvider,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
   runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
@@ -620,7 +651,7 @@ async fn spawn_ready(
 async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
   runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   let pipe_name = format!(r"\\.\pipe\auv-runner-{}", uuid::Uuid::now_v7());
@@ -635,19 +666,14 @@ async fn spawn_executable_ready(
     .env_remove("AUV_CONTEXT")
     .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env(auv_api_server::runner_transport::RUNNER_IPC_PIPE_ENV, &pipe_name)
-    .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
-  if let Some(parent_context) = parent_context {
-    // TODO(runner-launcher-token): a LauncherOnly daemon rejects Runner
-    // callbacks through this context until Runners receive a token over a
-    // channel that, unlike the environment, other processes cannot read.
-    command.env("AUV_CONTEXT", parent_context);
-  }
+  configure_parent(&mut command, parent_context);
   if let Some(working_directory) = &runtime.working_directory {
     command.current_dir(working_directory);
   }
   let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  send_parent_credential(&mut child, parent_context).await;
   let Some(runner_process_id) = child.id() else {
     let _ = terminate_child(&mut child).await;
     return Err(RunnerError::Start("Runner process omitted its PID".to_string()));
@@ -729,7 +755,7 @@ async fn accept_runner_client(
 #[cfg(not(any(unix, windows)))]
 async fn spawn_ready(
   provider: &RegisteredRunnerProvider,
-  _parent_context: Option<&str>,
+  _parent_context: Option<&ParentContext>,
   _runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {

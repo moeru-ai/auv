@@ -16,7 +16,7 @@ pub mod selection;
 pub mod time;
 
 pub use client::Client;
-pub use context::{AuvContext, ContextError};
+pub use context::{AuvContext, CREDENTIAL_STDIN_ENV, ContextError, inherited_credential};
 
 #[cfg(test)]
 #[path = "resource_test.rs"]

@@ -148,6 +148,20 @@ impl Client {
       .ok_or_else(|| ContextError::Connect(format!("no AUV daemon at {endpoint}")))
   }
 
+  /// Connects to the context's daemon presenting `credential`, such as the one
+  /// returned by [`crate::inherited_credential`]; without one this is
+  /// [`Self::from_context`].
+  pub async fn from_context_with_credential(context: AuvContext, credential: Option<&str>) -> Result<Self, PlacementError> {
+    let Some(credential) = credential else {
+      return Self::from_context(context).await;
+    };
+    validate_context_selectors(&context)?;
+    let endpoint = context.daemon_endpoint.clone().ok_or(ContextError::EndpointNotDiscovered)?;
+    let mut client = Self::connect(&endpoint, Some(credential)).await?;
+    client.context = Some(context);
+    Ok(client)
+  }
+
   /// Connects using one non-secret AUV context.
   pub async fn from_context(context: AuvContext) -> Result<Self, PlacementError> {
     Ok(Self::resolve_context(context).await?)

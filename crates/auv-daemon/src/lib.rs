@@ -313,6 +313,8 @@ impl Server {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let local_state_for_daemon = std::sync::Arc::clone(&device_local);
     let runner_providers = config.runner_providers;
+    // Runners call back with the launcher's authority.
+    let parent_credential = config.local.launcher_token().map(|token| zeroize::Zeroizing::new(token.expose().to_owned()));
     let first_party_runners = config.first_party_runners;
     let bound = auv_api_server::server::Server::bind_with(
       auv_api_server::server::BindConfig {
@@ -328,6 +330,7 @@ impl Server {
         Ok(std::sync::Arc::new(daemon::Daemon::open_with_runner_providers_and_parent_endpoint(
           &store_root,
           parent_endpoint,
+          parent_credential,
           first_party_runners,
           runner_providers,
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -357,11 +360,9 @@ impl Server {
   }
   /// Endpoint and credential for this process to call its own daemon.
   pub fn owner_connection(&self) -> Option<OwnerConnection> {
-    let endpoint = self.inner.discovery_endpoint()?.to_string();
-    let credential = self.launcher_token.as_ref().map(|token| zeroize::Zeroizing::new(token.expose().to_owned()));
     Some(OwnerConnection {
-      endpoint,
-      credential,
+      endpoint: self.inner.discovery_endpoint()?.to_string(),
+      credential: self.launcher_token.as_ref().map(|token| zeroize::Zeroizing::new(token.expose().to_owned())),
     })
   }
 
