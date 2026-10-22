@@ -150,6 +150,28 @@ mod tests {
 
   use super::*;
 
+  /// Windows abbreviates some SIDs in SDDL (the built-in Administrator
+  /// account becomes `LA`), so compare both sides after one round trip.
+  fn canonical_dacl(sddl: &str) -> String {
+    let sddl = sddl.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: The UTF-16 buffer is NUL-terminated; the guard frees the output.
+    unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut descriptor, None) }.unwrap();
+    dacl_text(&SecurityDescriptor(descriptor))
+  }
+
+  fn dacl_text(descriptor: &SecurityDescriptor) -> String {
+    let mut text = PWSTR::null();
+    // SAFETY: The descriptor is live; Windows returns one LocalAlloc string.
+    unsafe {
+      ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor.0, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &mut text, None)
+    }
+    .unwrap();
+    let text = LocalString(text);
+    // SAFETY: Windows returned a NUL-terminated UTF-16 string.
+    unsafe { text.0.to_string() }.unwrap()
+  }
+
   fn dacl_of(pipe: &NamedPipeServer) -> String {
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     // SAFETY: The handle is a live pipe instance; Windows allocates the
@@ -167,16 +189,7 @@ mod tests {
       )
     };
     assert!(status.is_ok(), "{status:?}");
-    let descriptor = SecurityDescriptor(descriptor);
-    let mut text = PWSTR::null();
-    // SAFETY: The descriptor is live; Windows returns one LocalAlloc string.
-    unsafe {
-      ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor.0, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &mut text, None)
-    }
-    .unwrap();
-    let text = LocalString(text);
-    // SAFETY: Windows returned a NUL-terminated UTF-16 string.
-    unsafe { text.0.to_string() }.unwrap()
+    dacl_text(&SecurityDescriptor(descriptor))
   }
 
   // ROOT CAUSE:
@@ -191,7 +204,7 @@ mod tests {
     let path = format!(r"\\.\pipe\auv-owner-only-acl-{}", std::process::id());
     let pipe = create_owner_only(&path, true).unwrap();
     let user = current_user_sid().unwrap();
-    assert_eq!(dacl_of(&pipe), format!("D:P(A;;FA;;;SY)(A;;FA;;;{user})"));
+    assert_eq!(dacl_of(&pipe), canonical_dacl(&format!("D:P(A;;FA;;;SY)(A;;FA;;;{user})")));
   }
 
   #[tokio::test]
