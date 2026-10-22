@@ -18,7 +18,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
   const [credential, setCredential] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const listen = listenUri(endpoint)
+  const bind = remoteBindAddress(endpoint)
 
   const run = async (resolveCredential: () => Promise<string | undefined>) => {
     setBusy(true)
@@ -62,7 +62,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
 
         <Tabs.Panel className="pt-3 flex flex-col gap-2" value="local">
           <Hint>Start a daemon on this machine. A loopback listener without a pairing store accepts local connections without a credential (development only):</Hint>
-          <CommandSnippet command={`auv serve --listen ${listen}`} />
+          <CommandSnippet command={`auv serve --remote-bind ${bind}`} />
           <button className="btn-primary mt-1 self-start" disabled={busy} onClick={() => void run(async () => undefined)} type="button">
             <span className={busy ? 'i-ph-circle-notch animate-spin' : 'i-ph-link'} />
             Connect
@@ -71,7 +71,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
 
         <Tabs.Panel className="pt-3 flex flex-col gap-2" value="paired">
           <Hint>Start the daemon with a pairing store (any writable path); its HTTP listener then requires a paired credential:</Hint>
-          <CommandSnippet command={`auv serve --listen ${listen} --pairing-store ~/.auv/pairings.json`} />
+          <CommandSnippet command={`auv serve --remote-bind ${bind} --pairing-store ~/.auv/pairings.json`} />
           <Hint>Create a one-time token on the daemon host:</Hint>
           <CommandSnippet command="auv devices pair create-token" />
           <div className="mt-1 flex gap-2">
@@ -114,13 +114,12 @@ function hostOf(endpoint: string): string {
   }
 }
 
-/** `auv serve --listen` value for the endpoint typed in the form. */
-function listenUri(endpoint: string): string {
+/** `auv serve --remote-bind` `IP:PORT` for the endpoint typed in the form. */
+function remoteBindAddress(endpoint: string): string {
   try {
-    const url = new URL(endpoint)
-    return `${url.protocol}//${url.host}`
+    return new URL(endpoint).host
   }
   catch {
-    return DEFAULT_ENDPOINT
+    return new URL(DEFAULT_ENDPOINT).host
   }
 }

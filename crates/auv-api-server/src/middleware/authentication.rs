@@ -142,7 +142,7 @@ mod tests {
       authenticator: Authenticator::local(
         #[cfg(unix)]
         None,
-        crate::LocalClientPolicy::AnyProcessOfOsUser,
+        vec![crate::LocalAuthMethod::OsUser].into(),
         None,
       ),
       requirements: Arc::new(builder.requirements),

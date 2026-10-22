@@ -23,8 +23,11 @@ pub use daemon::runner_provider;
 pub struct Config {
   /// Fresh identity for this daemon instance; generated when omitted.
   pub id: Option<uuid::Uuid>,
-  /// Protocol listeners served by this daemon.
-  pub listeners: Vec<ListenEndpoint>,
+  /// Unix socket or named-pipe listener and how its callers authenticate.
+  pub local: LocalListener,
+  /// TCP listeners and how their callers authenticate. No endpoints means no
+  /// network listener.
+  pub remote: RemoteListener,
   /// Root for daemon state and durable Run records.
   pub store_root: PathBuf,
   /// Persistent pairing database. Pairing is always available; paired TCP
@@ -39,8 +42,6 @@ pub struct Config {
   pub register: bool,
   /// Optional shutdown deadline after all Runners become idle.
   pub daemon_idle_timeout: Option<std::time::Duration>,
-  /// Which local processes may call the owner socket or named pipe.
-  pub local_clients: auv_api_server::LocalClientPolicy,
   /// Operator-trusted custom Runner providers.
   pub runner_providers: Vec<runner_provider::RunnerProviderConfig>,
   /// First-party Runner runtime definitions.
@@ -48,24 +49,21 @@ pub struct Config {
 }
 
 impl Config {
-  /// Defaults: no extra listeners (a private owner socket or pipe is added),
-  /// pairing store `<store_root>/pairings.json`, not registered, no idle
-  /// timeout, no Runner providers, and [`LocalClientPolicy::LauncherOnly`]
-  /// with a fresh token, so only this process can call the owner listener.
-  /// Use [`Server::owner_connection`] to connect.
-  ///
-  /// [`LocalClientPolicy::LauncherOnly`]: auv_api_server::LocalClientPolicy::LauncherOnly
+  /// Defaults: [`LocalListener::new`] (a private socket or pipe that only
+  /// this process's launcher token opens), no network listener, pairing store
+  /// `<store_root>/pairings.json`, not registered, no idle timeout and no
+  /// Runner providers. Use [`Server::owner_connection`] to connect.
   pub fn new(store_root: impl Into<PathBuf>) -> Result<Self, String> {
     let store_root = store_root.into();
     Ok(Self {
       id: None,
-      listeners: Vec::new(),
+      local: LocalListener::new()?,
+      remote: RemoteListener::new(),
       pairing_store: store_root.join("pairings.json"),
       store_root,
       discovery_file: None,
       register: false,
       daemon_idle_timeout: None,
-      local_clients: auv_api_server::LocalClientPolicy::LauncherOnly(auv_api_server::LauncherToken::generate()?),
       runner_providers: Vec::new(),
       first_party_runners: runner_provider::FirstPartyRunnerRuntimes::default(),
     })
@@ -77,9 +75,15 @@ impl Config {
     self
   }
 
-  /// Adds one listener; `http://` listeners always require a paired bearer.
-  pub fn listen(mut self, listener: ListenEndpoint) -> Self {
-    self.listeners.push(listener);
+  /// Replaces the Unix socket or named-pipe listener settings.
+  pub fn local(mut self, local: LocalListener) -> Self {
+    self.local = local;
+    self
+  }
+
+  /// Replaces the TCP listener settings.
+  pub fn remote(mut self, remote: RemoteListener) -> Self {
+    self.remote = remote;
     self
   }
 
@@ -103,12 +107,6 @@ impl Config {
     self
   }
 
-  /// Chooses which local processes may call the owner listener.
-  pub fn local_clients(mut self, policy: auv_api_server::LocalClientPolicy) -> Self {
-    self.local_clients = policy;
-    self
-  }
-
   /// Adds one operator-trusted custom Runner provider.
   pub fn runner_provider(mut self, provider: runner_provider::RunnerProviderConfig) -> Self {
     self.runner_providers.push(provider);
@@ -120,6 +118,108 @@ impl Config {
   pub fn first_party_runners(mut self, runners: runner_provider::FirstPartyRunnerRuntimes) -> Self {
     self.first_party_runners = runners;
     self
+  }
+}
+
+/// Listener settings shared by the local and remote sides: where to bind and
+/// how callers may prove themselves. [`LocalListener`] and [`RemoteListener`]
+/// fix the endpoint and method types.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct ListenerConfig<E, M> {
+  /// Endpoints to bind.
+  pub endpoints: Vec<E>,
+  /// How callers may prove themselves; validated when the server binds.
+  pub allowed_auth_methods: Vec<M>,
+}
+
+impl<E, M> ListenerConfig<E, M> {
+  /// Adds one endpoint to bind.
+  pub fn bind(mut self, endpoint: E) -> Self {
+    self.endpoints.push(endpoint);
+    self
+  }
+
+  /// Replaces how callers may prove themselves.
+  pub fn allowed_auth_methods(mut self, methods: impl IntoIterator<Item = M>) -> Self {
+    self.allowed_auth_methods = methods.into_iter().collect();
+    self
+  }
+}
+
+/// A Unix socket path or Windows named-pipe name for the local listener.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LocalEndpoint {
+  #[cfg(unix)]
+  /// Unix domain socket path.
+  Unix(PathBuf),
+  #[cfg(windows)]
+  /// Named-pipe name without the `\\.\pipe\` prefix.
+  NamedPipe(String),
+}
+
+/// Local (Unix socket or named pipe) listener settings.
+pub type LocalListener = ListenerConfig<LocalEndpoint, auv_api_server::LocalAuthMethod>;
+/// Remote (TCP) listener settings. Every remote caller needs a paired bearer.
+pub type RemoteListener = ListenerConfig<std::net::SocketAddr, auv_api_server::RemoteAuthMethod>;
+
+impl LocalListener {
+  /// No endpoints, so binding adds a private socket or pipe, and only the
+  /// launcher token, freshly generated, admits callers.
+  pub fn new() -> Result<Self, String> {
+    Ok(Self {
+      endpoints: Vec::new(),
+      allowed_auth_methods: vec![auv_api_server::LocalAuthMethod::LauncherToken(
+        auv_api_server::LauncherToken::generate()?,
+      )],
+    })
+  }
+
+  /// Adds a Unix socket to bind.
+  #[cfg(unix)]
+  pub fn bind_unix(self, path: impl Into<PathBuf>) -> Self {
+    self.bind(LocalEndpoint::Unix(path.into()))
+  }
+
+  /// Adds a named pipe to bind.
+  #[cfg(windows)]
+  pub fn bind_named_pipe(self, name: impl Into<String>) -> Self {
+    self.bind(LocalEndpoint::NamedPipe(name.into()))
+  }
+
+  fn launcher_token(&self) -> Option<&auv_api_server::LauncherToken> {
+    self.allowed_auth_methods.iter().find_map(|method| match method {
+      auv_api_server::LocalAuthMethod::LauncherToken(token) => Some(token),
+      _ => None,
+    })
+  }
+}
+
+impl LocalEndpoint {
+  fn to_listen_endpoint(&self) -> ListenEndpoint {
+    match self {
+      #[cfg(unix)]
+      Self::Unix(path) => ListenEndpoint::Unix { path: path.clone() },
+      #[cfg(windows)]
+      Self::NamedPipe(name) => ListenEndpoint::NamedPipe { name: name.clone() },
+    }
+  }
+}
+
+impl RemoteListener {
+  /// No endpoints, so no network listener, and paired Device bearers only.
+  pub fn new() -> Self {
+    Self {
+      endpoints: Vec::new(),
+      allowed_auth_methods: vec![auv_api_server::RemoteAuthMethod::PairedDevice],
+    }
+  }
+}
+
+impl Default for RemoteListener {
+  fn default() -> Self {
+    Self::new()
   }
 }
 
@@ -144,36 +244,12 @@ impl std::fmt::Debug for OwnerConnection {
   }
 }
 
-/// Parses one listener URI. Every `http://` listener requires a paired Device
-/// bearer, including loopback; owner authority comes only from local IPC.
-pub fn parse_listener(listener: &str) -> Result<ListenEndpoint, String> {
-  if let Some(authority) = listener.strip_prefix("http://") {
-    let address = authority
-      .parse::<std::net::SocketAddr>()
-      .map_err(|error| format!("invalid listener URI {listener:?}; expected http://IP:PORT: {error}"))?;
-    return Ok(ListenEndpoint::Remote {
-      host: address.ip().to_string(),
-      port: address.port(),
-    });
-  }
-  match listener.parse::<auv_api_client::ConnectEndpoint>().map_err(|error| format!("invalid listener URI: {error}"))? {
-    auv_api_client::ConnectEndpoint::Tcp(_) => Err(format!("invalid listener URI {listener:?}; expected http://IP:PORT")),
-    #[cfg(unix)]
-    auv_api_client::ConnectEndpoint::Unix(path) => Ok(ListenEndpoint::Unix { path }),
-    #[cfg(windows)]
-    auv_api_client::ConnectEndpoint::NamedPipe(name) => Ok(ListenEndpoint::NamedPipe { name }),
-  }
-}
-
-/// Returns the owner-checked IPC listener the daemon adds to the configured
-/// ones, if any. It is the daemon's owner channel: first pairing tokens,
-/// discovery, and executable Runner callbacks all depend on it.
-fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, register: bool) -> Result<Option<ListenEndpoint>, String> {
+/// Returns the local listener the daemon adds when none is configured. It is
+/// the daemon's owner channel: first pairing tokens, discovery, and
+/// executable Runner callbacks all depend on it.
+fn owner_listener(discovery_file: Option<&Path>, register: bool) -> Result<Option<ListenEndpoint>, String> {
   #[cfg(unix)]
   {
-    if listeners.iter().any(|listener| matches!(listener, ListenEndpoint::Unix { .. })) {
-      return Ok(None);
-    }
     let path = if register {
       let descriptor = discovery_file.map(Path::to_path_buf).map_or_else(discovery::default_path, Ok).map_err(|error| error.to_string())?;
       let parent = descriptor.parent().ok_or_else(|| format!("daemon descriptor path has no parent: {}", descriptor.display()))?;
@@ -190,17 +266,14 @@ fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, r
     let _ = (discovery_file, register);
     // The daemon always runs as its user; the LocalSystem Helper Host is a
     // separate service. An owner pipe is therefore always reachable by that
-    // user, including beside `--listen http://...` network listeners.
-    if listeners.iter().any(|listener| matches!(listener, ListenEndpoint::NamedPipe { .. })) {
-      return Ok(None);
-    }
+    // user, including beside `--remote-bind` network listeners.
     Ok(Some(ListenEndpoint::NamedPipe {
       name: format!("auv-{}", uuid::Uuid::now_v7()),
     }))
   }
   #[cfg(not(any(unix, windows)))]
   {
-    let _ = (listeners, discovery_file, register);
+    let _ = (discovery_file, register);
     Ok(None)
   }
 }
@@ -208,7 +281,7 @@ fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, r
 /// Bound daemon server with discovery publication and graceful shutdown.
 pub struct Server {
   inner: auv_api_server::server::Server,
-  local_clients: auv_api_server::LocalClientPolicy,
+  launcher_token: Option<auv_api_server::LauncherToken>,
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   device_local: std::sync::Arc<devices::LocalState>,
   discovery_file: Option<PathBuf>,
@@ -222,8 +295,16 @@ impl Server {
     let pairing = pairing::PairingStore::open(config.pairing_store);
     let pairing = Some(std::sync::Arc::new(pairing.map_err(|error| format!("failed to open pairing store: {error}"))?)
       as std::sync::Arc<dyn auv_api_server::control::Pairing>);
-    let owner = owner_listener(&config.listeners, config.discovery_file.as_deref(), config.register)?;
-    let mut listeners = config.listeners.into_iter().chain(owner);
+    let mut listeners = config.local.endpoints.iter().map(LocalEndpoint::to_listen_endpoint).collect::<Vec<_>>();
+    if listeners.is_empty() {
+      listeners.extend(owner_listener(config.discovery_file.as_deref(), config.register)?);
+    }
+    listeners.extend(config.remote.endpoints.iter().map(|address| ListenEndpoint::Remote {
+      host: address.ip().to_string(),
+      port: address.port(),
+    }));
+    let launcher_token = config.local.launcher_token().cloned();
+    let mut listeners = listeners.into_iter();
     let listen = listeners.next().ok_or_else(|| "daemon requires at least one listener".to_string())?;
     let store_root = config.store_root;
     let published_store_root = store_root.clone();
@@ -240,7 +321,8 @@ impl Server {
         additional_listeners: listeners.collect(),
         pairing,
         daemon_idle_timeout: config.daemon_idle_timeout,
-        local_clients: config.local_clients.clone(),
+        local_auth_methods: config.local.allowed_auth_methods,
+        remote_auth_methods: config.remote.allowed_auth_methods,
       },
       move |parent_endpoint| {
         Ok(std::sync::Arc::new(daemon::Daemon::open_with_runner_providers_and_parent_endpoint(
@@ -256,7 +338,7 @@ impl Server {
     .await?;
     Ok(Self {
       inner: bound,
-      local_clients: config.local_clients,
+      launcher_token,
       #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       device_local,
       discovery_file: config.discovery_file,
@@ -276,12 +358,7 @@ impl Server {
   /// Endpoint and credential for this process to call its own daemon.
   pub fn owner_connection(&self) -> Option<OwnerConnection> {
     let endpoint = self.inner.discovery_endpoint()?.to_string();
-    let credential = match &self.local_clients {
-      auv_api_server::LocalClientPolicy::LauncherOnly(token) | auv_api_server::LocalClientPolicy::LauncherAndPaired(token) => {
-        Some(zeroize::Zeroizing::new(token.expose().to_owned()))
-      }
-      _ => None,
-    };
+    let credential = self.launcher_token.as_ref().map(|token| zeroize::Zeroizing::new(token.expose().to_owned()));
     Some(OwnerConnection {
       endpoint,
       credential,

@@ -69,7 +69,7 @@ disabled while a run is in progress. To control a real Device, choose
   without a pairing store accepts local connections without a credential.
 
   ```sh
-  auv serve --listen http://127.0.0.1:9847
+  auv serve --remote-bind 127.0.0.1:9847
   ```
 
   Then press **Connect**.
@@ -79,7 +79,7 @@ disabled while a run is in progress. To control a real Device, choose
   daemon host:
 
   ```sh
-  auv serve --listen http://127.0.0.1:9847 --pairing-store ~/.auv/pairings.json
+  auv serve --remote-bind 127.0.0.1:9847 --pairing-store ~/.auv/pairings.json
   auv devices pair create-token
   ```
 

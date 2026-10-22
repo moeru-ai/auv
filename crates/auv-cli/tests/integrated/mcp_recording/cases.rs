@@ -75,8 +75,8 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   let mut daemon = tokio::process::Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--store-root",
       store.to_str().unwrap(),
       "--discovery-file",

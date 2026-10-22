@@ -9,7 +9,7 @@
 //! - `termination`: termination signals that start a graceful shutdown.
 
 mod authentication;
-pub use authentication::{LauncherToken, LocalClientPolicy};
+pub use authentication::{LauncherToken, LocalAuthMethod, RemoteAuthMethod, validate_local_auth_methods, validate_remote_auth_methods};
 pub mod control;
 pub mod device_local;
 pub mod method_docs;

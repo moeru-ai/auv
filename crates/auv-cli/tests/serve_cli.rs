@@ -51,7 +51,7 @@ fn serve_exits_cleanly_when_its_owner_closes_stdin() {
 //
 // Local IPC admitted every process of the daemon's OS user, so any process
 // that read the private socket path from `ps` could drive the daemon. With
-// --local-clients launcher-only, local callers must also present the
+// --local-auth-allowed-methods launcher-token, local callers must present the
 // launching process's token, which never appears in argv or the environment.
 #[test]
 fn serve_launcher_only_rejects_local_callers_without_the_token() {
@@ -64,8 +64,8 @@ fn serve_launcher_only_rejects_local_callers_without_the_token() {
       "serve",
       "--no-register",
       "--exit-on-stdin-close",
-      "--local-clients",
-      "launcher-only",
+      "--local-auth-allowed-methods",
+      "launcher-token",
       "--store-root",
     ])
     .arg(directory.path().join("store"))
@@ -98,8 +98,8 @@ fn serve_refuses_to_start_with_a_malformed_launcher_token() {
       "serve",
       "--no-register",
       "--exit-on-stdin-close",
-      "--local-clients",
-      "launcher-only",
+      "--local-auth-allowed-methods",
+      "launcher-token",
       "--store-root",
     ])
     .arg(directory.path().join("store"))
@@ -128,8 +128,8 @@ fn cli_reaches_a_launcher_only_daemon_with_credential_stdin() {
       "serve",
       "--no-register",
       "--exit-on-stdin-close",
-      "--local-clients",
-      "launcher-only",
+      "--local-auth-allowed-methods",
+      "launcher-token",
       "--store-root",
     ])
     .arg(directory.path().join("store"))

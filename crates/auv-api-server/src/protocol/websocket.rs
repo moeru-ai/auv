@@ -17,18 +17,22 @@ use tonic::{Code, Status};
 use tower::ServiceExt as _;
 
 use crate::authentication::Authenticator;
-use crate::control::{Control, RunnerRoute};
+use crate::control::{CallerId, Control, RunnerRoute};
 use crate::protocol::grpc::status::map_control_error;
 
 /// Serves exactly one operation on an upgraded browser connection.
-pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authenticator: Authenticator) {
+pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authenticator: Authenticator, upgraded_caller: Option<CallerId>) {
   let (mut outgoing, mut incoming) = socket.split();
 
   let result = async {
     let open = receive_open(&mut incoming).await?;
-    // NOTICE(websocket-authentication): The browser credential is part of the
-    // Open message, so HTTP request middleware cannot authenticate this session.
-    let caller = authenticator.authenticate_websocket(&open.credential)?;
+    // NOTICE(websocket-authentication): A browser credential arrives in the
+    // Open message, so remote sessions authenticate here. A local upgrade
+    // already has its caller; re-deriving it would ignore the method used.
+    let caller = match upgraded_caller {
+      Some(caller) => caller,
+      None => authenticator.authenticate_websocket(&open.credential)?,
+    };
     let operation = daemon
       .admit_routed_channel(
         &caller,

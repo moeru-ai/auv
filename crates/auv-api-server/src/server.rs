@@ -73,8 +73,11 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
-  /// Which local processes may call the Unix socket or named-pipe listeners.
-  pub local_clients: crate::LocalClientPolicy,
+  /// How callers of the Unix socket or named-pipe listeners may prove
+  /// themselves.
+  pub local_auth_methods: Vec<crate::LocalAuthMethod>,
+  /// How callers of the TCP listeners may prove themselves.
+  pub remote_auth_methods: Vec<crate::RemoteAuthMethod>,
 }
 
 /// Resolved endpoint of a bound server.
@@ -145,13 +148,16 @@ impl Server {
       return Err("daemon instance id is required".into());
     }
     let pairing = config.pairing;
+    crate::authentication::validate_local_auth_methods(&config.local_auth_methods)?;
+    crate::authentication::validate_remote_auth_methods(&config.remote_auth_methods)?;
+    let local_auth_methods: Arc<[crate::LocalAuthMethod]> = config.local_auth_methods.into();
     let mut configured = Vec::with_capacity(1 + config.additional_listeners.len());
     configured.push(config.listen);
     configured.extend(config.additional_listeners);
     let mut endpoints = Vec::with_capacity(configured.len());
     let mut listeners = Vec::with_capacity(configured.len());
     for endpoint in configured {
-      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone(), config.local_clients.clone()).await?;
+      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone(), &local_auth_methods).await?;
       endpoints.push(endpoint);
       listeners.push(BoundListenerState {
         listener,
@@ -344,7 +350,7 @@ async fn shutdown_when_daemon_idle(daemon: Arc<dyn Control>, shutdown: Cancellat
 async fn bind_listener(
   endpoint: ListenEndpoint,
   pairing: Option<Arc<dyn Pairing>>,
-  local_clients: crate::LocalClientPolicy,
+  local_auth_methods: &Arc<[crate::LocalAuthMethod]>,
 ) -> Result<(BoundListener, BoundEndpoint, Authenticator), String> {
   Ok(match endpoint {
     ListenEndpoint::Remote { host, port } => {
@@ -358,7 +364,11 @@ async fn bind_listener(
     ListenEndpoint::Unix { path } => {
       let (listener, cleanup) = bind_unix(&path)?;
       let owner_uid = cleanup.owner_uid;
-      (BoundListener::Unix { listener, cleanup }, BoundEndpoint::Unix(path), Authenticator::local(Some(owner_uid), local_clients, pairing))
+      (
+        BoundListener::Unix { listener, cleanup },
+        BoundEndpoint::Unix(path),
+        Authenticator::local(Some(owner_uid), Arc::clone(local_auth_methods), pairing),
+      )
     }
     #[cfg(windows)]
     ListenEndpoint::NamedPipe { name } => {
@@ -369,7 +379,7 @@ async fn bind_listener(
           name: name.clone(),
         },
         BoundEndpoint::NamedPipe(name),
-        Authenticator::local(local_clients, pairing),
+        Authenticator::local(Arc::clone(local_auth_methods), pairing),
       )
     }
   })

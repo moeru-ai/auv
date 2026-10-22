@@ -64,7 +64,7 @@ uses opaque Protobuf payloads. If an error occurs, it is available as
 
 ### Connect through Unix socket / Named pipe (for Windows)
 
-Since if no `--listen` specified when bootstrapping AUV daemon, by default it listens on a Unix socket or Windows named pipe. The SDK can connect to that socket or pipe directly without HTTP or WebSocket overhead:
+Without `--local-socket`, the AUV daemon listens on its own Unix socket or Windows named pipe. The SDK can connect to that socket or pipe directly without HTTP or WebSocket overhead:
 
 ```ts
 import { connect, createAuv, createUnixSocketTransport } from 'auv-js/node'
@@ -118,25 +118,37 @@ for example after a crash or `kill -9`. Starting on an occupied endpoint fails.
 To use a daemon owned by another host, call
 `connect({ endpoint, transport, local })` and close only that connection.
 
-`localClientPolicy` decides which local processes may call the daemon over its
-Unix socket or named pipe. The default, `'launcher-only'`, generates a launcher
-token for each launch and sends it to the daemon over stdin. The daemon rejects
-local callers without it, including other processes of the same OS user that
-find the socket or pipe path in `ps`; without the token, they cannot use the
-screen or input permissions granted to your app. `daemon.connect()` presents
-the token for you, and `daemon.connectionOptions.credential` holds it for
-connections you open yourself. Hand it only to processes that should control
-this daemon, and never through argv or environment variables, which other
-processes of the same user can read.
+`local.auth.allowedMethods` decides how local callers of the Unix socket or
+named pipe may prove themselves. The default, `['launcher-token']`, generates a
+launcher token for each launch and sends it to the daemon over stdin. The
+daemon rejects local callers without it, including other processes of the same
+OS user that find the socket or pipe path in `ps`; without the token, they
+cannot use the screen or input permissions granted to your app.
+`daemon.connect()` presents the token for you, and
+`daemon.connectionOptions.credential` holds it for connections you open
+yourself. Hand it only to processes that should control this daemon, and never
+through argv or environment variables, which other processes of the same user
+can read.
 
-To let other apps on the machine use your daemon, choose
-`'launcher-and-paired'`. Issue each app a token with
+To let other apps on the machine use your daemon, allow
+`['launcher-token', 'paired-device']`. Issue each app a token with
 `createPairingToken(owner)`; the app calls `pairDevice` on the same endpoint and
 from then on presents its own Device bearer, which you can revoke on its own.
-Paired apps cannot issue further tokens. Choose `'any-process-of-os-user'` only
-when every process of the user should share the daemon. `startAuv()` does not
-register the daemon as the default local daemon unless you pass
-`noRegister: false` or a `discoveryFile`.
+Paired apps cannot issue further tokens. Allow `'os-user'` only when every
+process of the user should share the daemon. `startAuv()` does not register the
+daemon as the default local daemon unless you pass `noRegister: false` or a
+`discoveryFile`.
+
+```ts
+const daemon = await startAuv({
+  local: { auth: { allowedMethods: ['launcher-token', 'paired-device'] } },
+  remote: { auth: { allowedMethods: ['paired-device'] }, listen: [{ host: '127.0.0.1', port: 9847 }] },
+})
+```
+
+`local.listen` and `remote.listen` follow `net.ListenOptions`: `{ path }` for
+a Unix socket or `\\.\pipe\NAME`, and `{ host, port }` for TCP. Remote callers
+always present a paired Device bearer, including on loopback.
 
 `await checkHealth(connection)` and `await auv.health.check()` return
 `{ id, status: 'serving' }`. The same daemon reports the same `id` on every
@@ -159,7 +171,7 @@ import { app } from 'electron'
 
 const daemon = await startAuv({
   binaryPath: join(process.resourcesPath, 'bin', 'auv'),
-  listeners: ['http://127.0.0.1:9847'],
+  remote: { listen: [{ host: '127.0.0.1', port: 9847 }] },
   storeRoot: join(app.getPath('userData'), 'auv'),
 })
 

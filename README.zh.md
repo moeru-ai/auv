@@ -225,7 +225,7 @@ auv setup windows-helper status
 ```
 
 > [!NOTE]
-> 该初始化命令会把内嵌在 `auv.exe` 里的 `auv-helper.exe` 释放到 `%ProgramFiles%\AUV`，然后把它注册为 LocalSystem 服务 `AuvHelper`。Helper 不监听网络。锁定与解锁通过一个以登录用户身份运行的普通 `auv serve` 完成。若要从网络接受配对的 Device，请用 `--listen http://0.0.0.0:9847` 启动那个 daemon。如果当前安装的是 0.0.28 的 Helper，请先运行 `auv setup windows-helper uninstall`，再重新安装并重新配对客户端。
+> 该初始化命令会把内嵌在 `auv.exe` 里的 `auv-helper.exe` 释放到 `%ProgramFiles%\AUV`，然后把它注册为 LocalSystem 服务 `AuvHelper`。Helper 不监听网络。锁定与解锁通过一个以登录用户身份运行的普通 `auv serve` 完成。若要从网络接受配对的 Device，请用 `--remote-bind 0.0.0.0:9847` 启动那个 daemon。如果当前安装的是 0.0.28 的 Helper，请先运行 `auv setup windows-helper uninstall`，再重新安装并重新配对客户端。
 >
 > 证据等级：一个 Windows 11 主机上的一次已安装锁定与解锁门禁测试。这不是普遍支持声明。见 [Windows Helper 与 daemon 拆分](docs/ai/references/session-api/2026-10-06-windows-helper-daemon-split.md#evidence)。
 

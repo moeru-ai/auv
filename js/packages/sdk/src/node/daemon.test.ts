@@ -32,8 +32,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`http://127.0.0.1:${port}`],
       noRegister: true,
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       storeRoot: 'state',
       workingDirectory,
     })
@@ -128,8 +128,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const options = {
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`http://127.0.0.1:${port}`],
       noRegister: true,
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       workingDirectory,
     }
     const first = await startAuv(options)
@@ -252,7 +252,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-paired-'))
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      localClientPolicy: 'launcher-and-paired',
+      local: { auth: { allowedMethods: ['launcher-token', 'paired-device'] } },
       workingDirectory,
     })
     const { credential: _, ...withoutToken } = daemon.connectionOptions
@@ -283,7 +283,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-os-user-'))
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      localClientPolicy: 'any-process-of-os-user',
+      local: { auth: { allowedMethods: ['os-user'] } },
       workingDirectory,
     })
     const stranger = await connect(daemon.connectionOptions)
@@ -333,7 +333,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const controller = new AbortController()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`unix://${join(workingDirectory, 'auv.sock')}`],
+      local: { listen: [{ path: join(workingDirectory, 'auv.sock') }] },
       noRegister: true,
       signal: controller.signal,
       workingDirectory,
@@ -398,9 +398,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`unix://${socket}`, `http://127.0.0.1:${port}`],
+      local: { listen: [{ path: socket }] },
       noRegister: true,
       pairingStore: join(workingDirectory, 'pairings.json'),
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       workingDirectory,
     })
 
@@ -430,9 +431,11 @@ describe('startAuv', { timeout: 30_000 }, () => {
     await expect(startAuv({ startupTimeoutMs: Number.NaN })).rejects.toThrow('startupTimeoutMs must be finite')
     await expect(startAuv({ shutdownTimeoutMs: 0 })).rejects.toThrow('shutdownTimeoutMs must be greater than 0')
     await expect(startAuv({ daemonIdleTimeoutSeconds: 1.5 })).rejects.toThrow('daemonIdleTimeoutSeconds must be an integer')
-    await expect(startAuv({ listeners: ['http://127.0.0.1:0'] })).rejects.toThrow('port 0 cannot be used as a connection endpoint')
+    await expect(startAuv({ remote: { listen: [{ host: '127.0.0.1', port: 0 }] } })).rejects.toThrow('port 0 cannot be used as a connection endpoint')
+    await expect(startAuv({ local: { auth: { allowedMethods: [] } } })).rejects.toThrow('must allow at least one method')
+    await expect(startAuv({ local: { auth: { allowedMethods: ['paired-device'] } } })).rejects.toThrow('must allow launcher-token or os-user')
     await expect(startAuv({ discoveryFile: 'api-server.json', noRegister: true })).rejects.toThrow('cannot be combined with noRegister: true')
-    // @ts-expect-error The policy is a closed set; untyped callers still get a clear error.
-    await expect(startAuv({ localClientPolicy: 'everyone' })).rejects.toThrow('unknown localClientPolicy')
+    // @ts-expect-error The methods are a closed set; untyped callers still get a clear error.
+    await expect(startAuv({ local: { auth: { allowedMethods: ['everyone'] } } })).rejects.toThrow('unknown local auth method')
   })
 })

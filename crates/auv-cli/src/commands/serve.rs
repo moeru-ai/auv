@@ -6,16 +6,22 @@ use clap::Args;
 /// Run the AUV daemon API in the foreground.
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Every daemon has an owner-only local channel: a configured unix:// or npipe:// listener, or otherwise an added Unix socket (Linux, macOS) or named pipe (Windows). It is published for discovery unless --no-register is set, and only it can create pairing tokens.\n\nhttp:// listeners always require a paired Device bearer, including loopback addresses.\n\nExamples:\n  # Serve on the default local socket\n  auv serve\n\n  # Also accept paired Devices over the network\n  auv serve --listen http://0.0.0.0:9847\n\n  # Run a temporary daemon that does not replace the default one\n  auv serve --no-register --store-root /tmp/auv-scratch"
+  after_long_help = "Every daemon has a local listener: the --local-socket paths, or otherwise an added Unix socket (Linux, macOS) or named pipe (Windows). It is published for discovery unless --no-register is set, and only callers with owner authority (launcher-token or os-user) can create pairing tokens.\n\nRemote (--remote-bind) listeners always require a paired Device bearer, including loopback addresses.\n\nExamples:\n  # Serve on the default local socket\n  auv serve\n\n  # Also accept paired Devices over the network\n  auv serve --remote-bind 0.0.0.0:9847\n\n  # Run a temporary daemon that does not replace the default one\n  auv serve --no-register --store-root /tmp/auv-scratch"
 )]
 pub struct ServeArgs {
   /// Fresh daemon instance UUID for launcher health verification.
   #[arg(long)]
   pub id: Option<uuid::Uuid>,
-  /// Additional listener URI. May be repeated with unix://, npipe://, or
-  /// http://IP:PORT; http:// listeners require a paired Device bearer.
-  #[arg(long = "listen", value_name = "URI")]
-  pub listeners: Vec<String>,
+  /// Unix socket path (Linux, macOS) or named pipe (Windows, `\\.\pipe\NAME`
+  /// or `NAME`) for the local listener. May be repeated. Without one, the
+  /// daemon adds its own.
+  #[arg(long = "local-socket", value_name = "PATH")]
+  pub local_sockets: Vec<String>,
+
+  /// TCP address for a remote listener, such as `127.0.0.1:9847`. May be
+  /// repeated. Without one, the daemon opens no network listener.
+  #[arg(long = "remote-bind", value_name = "IP:PORT")]
+  pub remote_binds: Vec<std::net::SocketAddr>,
 
   /// Pairing token and Device-bearer store [default: <STORE_ROOT>/pairings.json].
   #[arg(long, value_name = "PATH")]
@@ -43,30 +49,39 @@ pub struct ServeArgs {
   #[arg(long)]
   pub exit_on_stdin_close: bool,
 
-  /// Which local processes may call the owner socket or named pipe.
-  /// `launcher-only` and `launcher-and-paired` read a 64-character
-  /// hexadecimal launcher token from the first line of stdin; callers present
-  /// it, or under `launcher-and-paired` a paired Device bearer, as
-  /// `authorization: Bearer`.
-  /// The token never appears in argv or the environment, which other
-  /// processes of the same user can read.
-  #[arg(long, value_enum, default_value_t = LocalClients::AnyProcessOfOsUser)]
-  pub local_clients: LocalClients,
+  /// How local callers may prove themselves, comma separated.
+  /// `launcher-token` reads a 64-character hexadecimal token from the first
+  /// line of stdin and requires --exit-on-stdin-close; the token never
+  /// appears in argv or the environment, which other processes of the same
+  /// user can read. `os-user` admits every process of this OS user.
+  #[arg(long, value_enum, value_delimiter = ',', default_values_t = [LocalAuthMethod::OsUser])]
+  pub local_auth_allowed_methods: Vec<LocalAuthMethod>,
+
+  /// How remote callers may prove themselves, comma separated.
+  #[arg(long, value_enum, value_delimiter = ',', default_values_t = [RemoteAuthMethod::PairedDevice])]
+  pub remote_auth_allowed_methods: Vec<RemoteAuthMethod>,
 
   /// Load an operator-trusted custom Runner provider manifest. May be repeated.
   #[arg(long = "runner-provider", value_name = "PATH")]
   pub runner_providers: Vec<PathBuf>,
 }
 
-/// Command-line spelling of `auv_api_server::LocalClientPolicy`.
+/// Command-line spelling of `auv_api_server::LocalAuthMethod`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum LocalClients {
-  /// Only the process that launched the daemon. Requires --exit-on-stdin-close.
-  LauncherOnly,
-  /// The launcher plus apps it paired. Requires --exit-on-stdin-close.
-  LauncherAndPaired,
+pub enum LocalAuthMethod {
+  /// The token of the process that launched the daemon, read from stdin.
+  LauncherToken,
+  /// An active paired Device bearer.
+  PairedDevice,
   /// Any process running as this OS user.
-  AnyProcessOfOsUser,
+  OsUser,
+}
+
+/// Command-line spelling of `auv_api_server::RemoteAuthMethod`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum RemoteAuthMethod {
+  /// An active paired Device bearer.
+  PairedDevice,
 }
 
 pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32, String> {
@@ -74,7 +89,6 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   if let Some(directory) = crate::logging::directory() {
     crate::logging::spawn_expiry(directory.to_path_buf());
   }
-  let listeners = args.listeners.iter().map(|listener| auv_daemon::parse_listener(listener)).collect::<Result<Vec<_>, _>>()?;
   let shutdown = tokio_util::sync::CancellationToken::new();
   let signal = shutdown.clone();
   tokio::spawn(async move {
@@ -82,28 +96,39 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     signal.cancel();
   });
   // Read the token before the lifeline thread takes over stdin.
-  let local_clients = match args.local_clients {
-    LocalClients::AnyProcessOfOsUser => auv_api_server::LocalClientPolicy::AnyProcessOfOsUser,
-    LocalClients::LauncherOnly | LocalClients::LauncherAndPaired => {
-      if !args.exit_on_stdin_close {
-        return Err("--local-clients with a launcher requires --exit-on-stdin-close: the launcher holds the stdin pipe".into());
-      }
-      use std::io::BufRead as _;
-      let mut line = zeroize::Zeroizing::new(String::new());
-      std::io::stdin().lock().read_line(&mut line).map_err(|error| format!("failed to read the launcher token from stdin: {error}"))?;
-      let token = auv_api_server::LauncherToken::parse(line.trim_end_matches(['\r', '\n']))?;
-      #[cfg(target_os = "linux")]
-      // A non-dumpable process hides its memory and /proc environment from other
-      // processes of the same user, which could otherwise read the token back.
-      rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
-        .map_err(|error| format!("failed to protect the launcher token in memory: {error}"))?;
-      if args.local_clients == LocalClients::LauncherAndPaired {
-        auv_api_server::LocalClientPolicy::LauncherAndPaired(token)
-      } else {
-        auv_api_server::LocalClientPolicy::LauncherOnly(token)
-      }
+  let launcher_token = if args.local_auth_allowed_methods.contains(&LocalAuthMethod::LauncherToken) {
+    if !args.exit_on_stdin_close {
+      return Err("--local-auth-allowed-methods launcher-token requires --exit-on-stdin-close: the launcher holds the stdin pipe".into());
     }
+    use std::io::BufRead as _;
+    let mut line = zeroize::Zeroizing::new(String::new());
+    std::io::stdin().lock().read_line(&mut line).map_err(|error| format!("failed to read the launcher token from stdin: {error}"))?;
+    let token = auv_api_server::LauncherToken::parse(line.trim_end_matches(['\r', '\n']))?;
+    #[cfg(target_os = "linux")]
+    // A non-dumpable process hides its memory and /proc environment from other
+    // processes of the same user, which could otherwise read the token back.
+    rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+      .map_err(|error| format!("failed to protect the launcher token in memory: {error}"))?;
+    Some(token)
+  } else {
+    None
   };
+  let local_methods = args.local_auth_allowed_methods.iter().map(|method| match method {
+    LocalAuthMethod::LauncherToken => auv_api_server::LocalAuthMethod::LauncherToken(launcher_token.clone().expect("read above")),
+    LocalAuthMethod::PairedDevice => auv_api_server::LocalAuthMethod::PairedDevice,
+    LocalAuthMethod::OsUser => auv_api_server::LocalAuthMethod::OsUser,
+  });
+  let mut local = auv_daemon::LocalListener::new()?.allowed_auth_methods(local_methods);
+  for socket in &args.local_sockets {
+    local = bind_local_socket(local, socket);
+  }
+  let remote_methods = args.remote_auth_allowed_methods.iter().map(|method| match method {
+    RemoteAuthMethod::PairedDevice => auv_api_server::RemoteAuthMethod::PairedDevice,
+  });
+  let mut remote = auv_daemon::RemoteListener::new().allowed_auth_methods(remote_methods);
+  for address in &args.remote_binds {
+    remote = remote.bind(*address);
+  }
   if args.exit_on_stdin_close {
     let signal = shutdown.clone();
     // A blocking stdin read cannot be cancelled, so it runs on a detached
@@ -126,7 +151,8 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     .collect::<Result<Vec<_>, _>>()?;
   let executable = std::env::current_exe().map_err(|error| format!("failed to resolve the auv executable for Runner hosting: {error}"))?;
   let mut config = auv_daemon::Config::new(&store_root)?
-    .local_clients(local_clients)
+    .local(local)
+    .remote(remote)
     .first_party_runners(auv_daemon::runner_provider::FirstPartyRunnerRuntimes::local_driver(executable, &store_root)?);
   if let Some(path) = args.pairing_store {
     config = config.pairing_store(resolve_path(project_root, &path));
@@ -140,9 +166,6 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   if let Some(seconds) = args.daemon_idle_timeout {
     config = config.daemon_idle_timeout(std::time::Duration::from_secs(seconds));
   }
-  for listener in listeners {
-    config = config.listen(listener);
-  }
   for provider in providers {
     config = config.runner_provider(provider);
   }
@@ -155,6 +178,16 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   std::io::stdout().flush().map_err(|error| format!("failed to flush daemon listener log: {error}"))?;
   server.serve(shutdown).await?;
   Ok(0)
+}
+
+#[cfg(unix)]
+fn bind_local_socket(local: auv_daemon::LocalListener, socket: &str) -> auv_daemon::LocalListener {
+  local.bind_unix(socket)
+}
+
+#[cfg(windows)]
+fn bind_local_socket(local: auv_daemon::LocalListener, socket: &str) -> auv_daemon::LocalListener {
+  local.bind_named_pipe(socket.strip_prefix(r"\\.\pipe\").unwrap_or(socket))
 }
 
 fn resolve_path(root: &std::path::Path, path: &std::path::Path) -> PathBuf {

@@ -83,8 +83,46 @@ export interface AuvPlatformOptions {
   macos?: AuvMacosOptions
 }
 
-/** Which local processes may call a daemon over its Unix socket or named pipe. */
-export type LocalClientPolicy = 'any-process-of-os-user' | 'launcher-and-paired' | 'launcher-only'
+/** Settings shared by the local and remote listeners. */
+export interface ListenerOptions<Listen, Method extends string> {
+  /** How callers may prove themselves; validated before the daemon starts. */
+  auth?: { allowedMethods?: readonly Method[] }
+  /** Addresses to listen on. */
+  listen?: readonly Listen[]
+}
+/** How a caller proves itself to the local (Unix socket or named pipe) listener. */
+export type LocalAuthMethod = 'launcher-token' | 'os-user' | 'paired-device'
+
+/**
+ * The local listener. Without `listen`, the daemon gets a Unix socket below
+ * `storeRoot`, or a named pipe on Windows. `auth.allowedMethods` defaults to
+ * `['launcher-token']`: only this process, and those it hands
+ * `connectionOptions.credential` to. Add `'paired-device'` to admit apps you
+ * pair with `createPairingToken`, each revocable on its own. `'os-user'`
+ * admits every process of the OS user, which can then use the screen and
+ * input permissions granted to your app.
+ */
+export interface LocalListenerOptions extends ListenerOptions<LocalListenOptions, LocalAuthMethod> {}
+
+/** Like `net.ListenOptions.path`: a Unix socket path, or `\\.\pipe\NAME` on Windows. */
+export interface LocalListenOptions {
+  path: string
+}
+
+/** How a caller proves itself to a remote (TCP) listener. */
+export type RemoteAuthMethod = 'paired-device'
+
+/**
+ * Remote listeners. Without `listen`, the daemon opens no network listener.
+ * Remote callers always present a paired Device bearer, including loopback.
+ */
+export interface RemoteListenerOptions extends ListenerOptions<RemoteListenOptions, RemoteAuthMethod> {}
+
+/** Like `net.ListenOptions` `host` and `port`. Port 0 is rejected: clients need the real port. */
+export interface RemoteListenOptions {
+  host: string
+  port: number
+}
 
 /** Options for starting one app-owned `auv serve` child process. */
 export interface StartAuvOptions extends OperationOptions {
@@ -102,31 +140,12 @@ export interface StartAuvOptions extends OperationOptions {
   discoveryFile?: string
   /** Environment values overlaid on the current Node.js process environment. */
   environment?: NodeJS.ProcessEnv
-  /**
-   * Listener URIs passed as repeated `--listen` arguments. Ports must be
-   * explicit. `http://` listeners always require a paired Device bearer,
-   * including loopback. When no `unix://` or `npipe://` listener is listed, an
-   * owner endpoint is added: a Unix socket below `storeRoot`, or an
-   * owner-protected named pipe on Windows. The returned handle connects through
-   * that owner endpoint.
-   * @default []
-   */
-  listeners?: readonly string[]
-  /**
-   * Which local processes may call the daemon over its Unix socket or named
-   * pipe. `launcher-only` admits only this process and those it hands
-   * `connectionOptions.credential` to. `launcher-and-paired` also admits apps
-   * you pair with `createPairingToken`, each revocable on its own.
-   * `any-process-of-os-user` admits every process of the current OS user,
-   * which can then use the screen and input permissions granted to your app.
-   * HTTP listeners always require pairing.
-   * @default 'launcher-only'
-   */
-  localClientPolicy?: LocalClientPolicy
+  /** The Unix socket or named-pipe listener and how its callers authenticate. */
+  local?: LocalListenerOptions
   /**
    * Keeps this child daemon from registering as the default local daemon: it
    * publishes no discovery metadata. Discovery clients cannot use a
-   * registered `launcher-only` daemon without its launcher token.
+   * registered daemon that requires a launcher token.
    * @default true, or false when `discoveryFile` is set
    */
   noRegister?: boolean
@@ -139,6 +158,8 @@ export interface StartAuvOptions extends OperationOptions {
   pairingStore?: string
   /** Platform-specific daemon configuration. */
   platforms?: AuvPlatformOptions
+  /** Network listeners; remote callers always need a paired Device bearer. */
+  remote?: RemoteListenerOptions
   /**
    * Operator-trusted custom Runner provider manifests.
    * @default []
@@ -171,8 +192,6 @@ export interface StartAuvOptions extends OperationOptions {
 type AuvChildProcess = Result
 interface ResolvedStartAuvOptions extends StartAuvOptions {
   binaryPath: string
-  listeners: readonly string[]
-  localClientPolicy: LocalClientPolicy
   runnerProviders: readonly string[]
   shutdownTimeoutMs: number
   startupTimeoutMs: number
@@ -219,12 +238,12 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     daemonIdleTimeoutSeconds,
     discoveryFile,
     environment,
-    listeners,
-    localClientPolicy,
+    local,
     noRegister: configuredNoRegister,
     overlay,
     pairingStore,
     platforms,
+    remote,
     runnerProviders,
     shutdownTimeoutMs,
     signal,
@@ -233,8 +252,6 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     workingDirectory: configuredWorkingDirectory,
   } = merge<ResolvedStartAuvOptions, StartAuvOptions>({
     binaryPath: 'auv',
-    listeners: [],
-    localClientPolicy: 'launcher-only',
     runnerProviders: [],
     shutdownTimeoutMs: 5_000,
     startupTimeoutMs: 10_000,
@@ -243,8 +260,8 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   if (configuredNoRegister === true && discoveryFile !== undefined)
     throw new RangeError('discoveryFile registers the daemon and cannot be combined with noRegister: true')
-  if (!['any-process-of-os-user', 'launcher-and-paired', 'launcher-only'].includes(localClientPolicy))
-    throw new RangeError(`unknown localClientPolicy: ${String(localClientPolicy)}`)
+  const localMethods = validateLocalAuthMethods(local?.auth?.allowedMethods ?? ['launcher-token'])
+  const remoteMethods = validateRemoteAuthMethods(remote?.auth?.allowedMethods ?? ['paired-device'])
   const noRegister = configuredNoRegister ?? discoveryFile === undefined
   if (!Number.isFinite(startupTimeoutMs))
     throw new RangeError('startupTimeoutMs must be finite')
@@ -263,31 +280,33 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   const workingDirectory = resolve(configuredWorkingDirectory)
   const storeRoot = resolve(workingDirectory, configuredStoreRoot ?? join('.auv', 'store'))
-  // The handle needs owner authority to connect without a bearer, so it names
-  // the owner endpoint explicitly instead of relying on the daemon's own one.
-  const ownerEndpoint = listeners.find(isOwnerEndpoint)
-    ?? (isWindows ? `npipe://./pipe/auv-${randomUUID()}` : `unix://${join(storeRoot, 'auv.sock')}`)
-  const endpoints = Object.freeze(listeners.includes(ownerEndpoint) ? [...listeners] : [ownerEndpoint, ...listeners])
-
-  for (const endpoint of endpoints) {
-    const url = new URL(endpoint)
-    if (url.protocol === 'http:' && url.port === '0') {
-      throw new RangeError('startAuv listener ports must be explicit; port 0 cannot be used as a connection endpoint')
-    }
+  // The handle connects through the first local listener, so the SDK names
+  // one explicitly instead of relying on the daemon's own choice.
+  const localPaths = local?.listen?.map(listen => listen.path) ?? []
+  if (localPaths.length === 0)
+    localPaths.push(isWindows ? `\\\\.\\pipe\\auv-${randomUUID()}` : join(storeRoot, 'auv.sock'))
+  const remoteAddresses = remote?.listen ?? []
+  for (const { port } of remoteAddresses) {
+    if (port === 0)
+      throw new RangeError('startAuv remote ports must be explicit; port 0 cannot be used as a connection endpoint')
   }
+  const ownerEndpoint = localEndpointUri(localPaths[0]!)
+  const endpoints = Object.freeze([...localPaths.map(localEndpointUri), ...remoteAddresses.map(address => `http://${hostPort(address)}`)])
 
   const id = randomUUID()
   // Sent over stdin, never argv or the environment: other processes of the
   // same user can read both.
-  const launcherToken = localClientPolicy === 'any-process-of-os-user' ? undefined : randomBytes(32).toString('hex')
+  const launcherToken = localMethods.includes('launcher-token') ? randomBytes(32).toString('hex') : undefined
   const child = x(binaryPath, serveArguments({
     daemonIdleTimeoutSeconds,
     discoveryFile,
     id,
-    listeners: endpoints,
-    localClientPolicy,
+    localMethods,
+    localPaths,
     noRegister,
     pairingStore,
+    remoteAddresses,
+    remoteMethods,
     runnerProviders,
     storeRoot: configuredStoreRoot,
   }), {
@@ -395,8 +414,23 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   }
 }
 
-function isOwnerEndpoint(endpoint: string): boolean {
-  return endpoint.startsWith('unix://') || endpoint.startsWith('npipe://')
+const LOCAL_AUTH_METHODS: readonly LocalAuthMethod[] = ['launcher-token', 'os-user', 'paired-device']
+
+interface ServeArguments extends StartAuvOptions {
+  id: string
+  localMethods: readonly LocalAuthMethod[]
+  localPaths: readonly string[]
+  remoteAddresses: readonly RemoteListenOptions[]
+  remoteMethods: readonly RemoteAuthMethod[]
+}
+
+function hostPort({ host, port }: RemoteListenOptions): string {
+  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`
+}
+
+function localEndpointUri(path: string): string {
+  const pipe = /^\\\\\.\\pipe\\(.+)$/.exec(path)
+  return pipe === null ? `unix://${path}` : `npipe://./pipe/${pipe[1]}`
 }
 
 function ownerConnection(endpoint: string, credential: DeviceCredential | undefined): AuvDaemonConnectionOptions {
@@ -428,10 +462,14 @@ function serializeOverlayTheme(theme: OverlayTheme): string {
   }))
 }
 
-function serveArguments(options: StartAuvOptions & { id: string }): string[] {
-  const args = ['serve', '--id', options.id, '--exit-on-stdin-close', '--local-clients', options.localClientPolicy ?? 'launcher-only']
-  for (const listener of options.listeners ?? [])
-    args.push('--listen', listener)
+function serveArguments(options: ServeArguments): string[] {
+  const args = ['serve', '--id', options.id, '--exit-on-stdin-close', '--local-auth-allowed-methods', options.localMethods.join(',')]
+  for (const path of options.localPaths)
+    args.push('--local-socket', path)
+  if (options.remoteAddresses.length > 0)
+    args.push('--remote-auth-allowed-methods', options.remoteMethods.join(','))
+  for (const address of options.remoteAddresses)
+    args.push('--remote-bind', hostPort(address))
 
   if (options.pairingStore !== undefined)
     args.push('--pairing-store', options.pairingStore)
@@ -478,6 +516,29 @@ async function stopChild(
   child.kill('SIGKILL')
 
   return exited
+}
+
+/** Mirrors the daemon's checks so a bad option fails before spawning. */
+function validateLocalAuthMethods(methods: readonly LocalAuthMethod[]): readonly LocalAuthMethod[] {
+  for (const method of methods) {
+    if (!LOCAL_AUTH_METHODS.includes(method))
+      throw new RangeError(`unknown local auth method: ${String(method)}`)
+  }
+  if (methods.length === 0)
+    throw new RangeError('local.auth.allowedMethods must allow at least one method')
+  if (!methods.includes('launcher-token') && !methods.includes('os-user'))
+    throw new RangeError('local.auth.allowedMethods must allow launcher-token or os-user: only owner authority can issue pairing tokens')
+  return methods
+}
+
+function validateRemoteAuthMethods(methods: readonly RemoteAuthMethod[]): readonly RemoteAuthMethod[] {
+  for (const method of methods) {
+    if (method !== 'paired-device')
+      throw new RangeError(`unknown remote auth method: ${String(method)}`)
+  }
+  if (methods.length === 0)
+    throw new RangeError('remote.auth.allowedMethods must allow at least one method')
+  return methods
 }
 
 /**

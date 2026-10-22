@@ -3,7 +3,7 @@
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use auv_api_proto::auv::api::image::v1 as image_proto;
 use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
-use auv_daemon::{Config, ListenEndpoint, Server};
+use auv_daemon::{Config, Server};
 
 #[tokio::test]
 async fn daemon_routes_the_app_owned_balatro_runner() {
@@ -13,10 +13,12 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
   // which a LauncherOnly daemon rejects until Runners receive the token.
   let config = Config::new(directory.path().join("store"))
     .expect("generate launcher token")
-    .listen(ListenEndpoint::Unix {
-      path: socket.clone(),
-    })
-    .local_clients(auv_api_server::LocalClientPolicy::AnyProcessOfOsUser)
+    .local(
+      auv_daemon::LocalListener::new()
+        .expect("generate launcher token")
+        .bind_unix(socket.clone())
+        .allowed_auth_methods([auv_api_server::LocalAuthMethod::OsUser]),
+    )
     .runner_provider(RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),
       runtime: RunnerRuntime::Executable(ExecutableRunnerRuntime {

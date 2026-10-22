@@ -8,19 +8,21 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+/// Splits test listeners into the local and remote sides. Local callers are
+/// admitted as the OS user so routing tests need no launcher token.
 fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
-  Config {
-    id: None,
-    listeners,
-    store_root: root.join("store"),
-    pairing_store: root.join("pairings.json"),
-    discovery_file: None,
-    register: false,
-    daemon_idle_timeout: None,
-    local_clients: auv_api_server::LocalClientPolicy::AnyProcessOfOsUser,
-    runner_providers: Vec::new(),
-    first_party_runners: Default::default(),
+  let mut local = LocalListener::new().unwrap().allowed_auth_methods([auv_api_server::LocalAuthMethod::OsUser]);
+  let mut remote = RemoteListener::new();
+  for listener in listeners {
+    match listener {
+      ListenEndpoint::Remote { host, port } => remote = remote.bind(std::net::SocketAddr::new(host.parse().unwrap(), port)),
+      #[cfg(unix)]
+      ListenEndpoint::Unix { path } => local = local.bind_unix(path),
+      #[cfg(windows)]
+      ListenEndpoint::NamedPipe { name } => local = local.bind_named_pipe(name),
+    }
   }
+  Config::new(root.join("store")).unwrap().pairing_store(root.join("pairings.json")).local(local).remote(remote)
 }
 
 /// Paired TCP listener on an ephemeral loopback port. HTTP never treats
@@ -1197,8 +1199,8 @@ fn config_new_fills_cli_matching_defaults() {
   let config = Config::new("/tmp/auv-store").unwrap();
   assert_eq!(config.pairing_store, std::path::Path::new("/tmp/auv-store/pairings.json"));
   assert!(!config.register);
-  assert!(config.listeners.is_empty());
-  assert!(matches!(config.local_clients, auv_api_server::LocalClientPolicy::LauncherOnly(_)));
+  assert!(matches!(config.local.allowed_auth_methods[..], [auv_api_server::LocalAuthMethod::LauncherToken(_)]));
+  assert!(config.local.endpoints.is_empty() && config.remote.endpoints.is_empty());
 }
 
 // An app exposing its daemon to other local apps pairs each one. The paired
@@ -1211,7 +1213,11 @@ async fn launcher_and_paired_admits_paired_apps_on_local_ipc() {
 
   let root = tempfile::tempdir().unwrap();
   let token = auv_api_server::LauncherToken::generate().unwrap();
-  let config = Config::new(root.path().join("store")).unwrap().local_clients(auv_api_server::LocalClientPolicy::LauncherAndPaired(token));
+  let local = LocalListener::new().unwrap().allowed_auth_methods([
+    auv_api_server::LocalAuthMethod::LauncherToken(token),
+    auv_api_server::LocalAuthMethod::PairedDevice,
+  ]);
+  let config = Config::new(root.path().join("store")).unwrap().local(local);
   let server = Server::bind(config).await.unwrap();
   let owner = server.owner_connection().unwrap();
   let launcher = owner.credential.clone().unwrap();

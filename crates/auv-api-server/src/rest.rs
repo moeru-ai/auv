@@ -63,8 +63,15 @@ pub(crate) fn router(daemon: Arc<dyn Control>, authenticator: Authenticator, id:
     .merge(generated::runner_class_service_rest_router(runner_classes))
 }
 
-async fn invoke_websocket(State(state): State<RestState>, upgrade: WebSocketUpgrade) -> Response {
-  upgrade.on_upgrade(move |socket| crate::protocol::websocket::serve(socket, state.daemon, state.authenticator)).into_response()
+async fn invoke_websocket(
+  State(state): State<RestState>,
+  caller: Option<axum::Extension<crate::control::CallerId>>,
+  upgrade: WebSocketUpgrade,
+) -> Response {
+  // Local listeners authenticate the upgrade request; remote ones skip that
+  // and authenticate the Open message instead.
+  let caller = caller.map(|axum::Extension(caller)| caller);
+  upgrade.on_upgrade(move |socket| crate::protocol::websocket::serve(socket, state.daemon, state.authenticator, caller)).into_response()
 }
 
 async fn invoke_unary(
