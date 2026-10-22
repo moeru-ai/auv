@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { create, toBinary } from '@bufbuild/protobuf'
 import { Server, ServerCredentials } from '@grpc/grpc-js'
+import { isWindows } from 'std-env'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ListDevicesResponseSchema } from '../gen/auv/api/daemon/v1/device_pb'
@@ -114,7 +115,7 @@ describe('daemon discovery', () => {
     )
   })
 
-  it('connects to a discovered Unix socket with the caller credential', async () => {
+  it.skipIf(isWindows)('connects to a discovered Unix socket with the caller credential', async () => {
     const authorization: (string | undefined)[] = []
     const server = new Server()
     server.addService({
