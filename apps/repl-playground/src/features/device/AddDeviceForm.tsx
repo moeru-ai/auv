@@ -1,19 +1,14 @@
-import { Tabs } from '@base-ui/react/tabs'
 import { useState } from 'react'
 
 import { pairBrowser } from '../../backend/auv'
 import { CommandSnippet } from '../../components/CommandSnippet'
 import { Field, Hint } from '../../components/Field'
-import { TabBar } from '../../components/TabBar'
 import { addConnection, DEFAULT_ENDPOINT } from './devices'
 
-type Mode = 'local' | 'paired'
-
-/** Connects a new daemon: a local loopback one without pairing, or a paired one with a token or credential. */
+/** Connects a new daemon by pairing with a one-time token, or with an existing Device credential. */
 export function AddDeviceForm({ onDone }: { onDone: () => void }) {
   const [endpoint, setEndpoint] = useState(DEFAULT_ENDPOINT)
   const [name, setName] = useState('')
-  const [mode, setMode] = useState<Mode>('local')
   const [token, setToken] = useState('')
   const [credential, setCredential] = useState('')
   const [busy, setBusy] = useState(false)
@@ -51,49 +46,30 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
-      <Tabs.Root onValueChange={value => setMode(value as Mode)} value={mode}>
-        <TabBar
-          tabs={[
-            { icon: 'i-ph-desktop', label: 'Local · no pairing', value: 'local' },
-            { icon: 'i-ph-lock-simple', label: 'Paired', value: 'paired' },
-          ]}
-          variant="segmented"
-        />
-
-        <Tabs.Panel className="pt-3 flex flex-col gap-2" value="local">
-          <Hint>Start a daemon on this machine. A loopback listener without a pairing store accepts local connections without a credential (development only):</Hint>
-          <CommandSnippet command={`auv serve --remote-bind ${bind}`} />
-          <button className="btn-primary mt-1 self-start" disabled={busy} onClick={() => void run(async () => undefined)} type="button">
-            <span className={busy ? 'i-ph-circle-notch animate-spin' : 'i-ph-link'} />
+      <div className="flex flex-col gap-2">
+        <Hint>Start the daemon with a remote listener; it only accepts paired devices:</Hint>
+        <CommandSnippet command={`auv serve --remote-bind ${bind}`} />
+        <Hint>Create a one-time token on the daemon host:</Hint>
+        <CommandSnippet command="auv devices pair create-token" />
+        <div className="mt-1 flex gap-2">
+          <input aria-label="Pairing token" className="input font-mono" onChange={event => setToken(event.target.value)} placeholder="one-time token" value={token} />
+          <button
+            className="btn-primary shrink-0"
+            disabled={busy || !token.trim()}
+            onClick={() => void run(async () => await pairBrowser(endpoint.trim(), token.trim()))}
+            type="button"
+          >
+            {busy && <span className="i-ph-circle-notch animate-spin" />}
+            Pair
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input aria-label="Device credential" className="input font-mono" onChange={event => setCredential(event.target.value)} placeholder="…or an existing Device credential" type="password" value={credential} />
+          <button className="btn-ghost border border-line shrink-0" disabled={busy || !credential.trim()} onClick={() => void run(async () => credential.trim())} type="button">
             Connect
           </button>
-        </Tabs.Panel>
-
-        <Tabs.Panel className="pt-3 flex flex-col gap-2" value="paired">
-          <Hint>Start the daemon with a pairing store (any writable path); its HTTP listener then requires a paired credential:</Hint>
-          <CommandSnippet command={`auv serve --remote-bind ${bind} --pairing-store ~/.auv/pairings.json`} />
-          <Hint>Create a one-time token on the daemon host:</Hint>
-          <CommandSnippet command="auv devices pair create-token" />
-          <div className="mt-1 flex gap-2">
-            <input aria-label="Pairing token" className="input font-mono" onChange={event => setToken(event.target.value)} placeholder="one-time token" value={token} />
-            <button
-              className="btn-primary shrink-0"
-              disabled={busy || !token.trim()}
-              onClick={() => void run(async () => await pairBrowser(endpoint.trim(), token.trim()))}
-              type="button"
-            >
-              {busy && <span className="i-ph-circle-notch animate-spin" />}
-              Pair
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <input aria-label="Device credential" className="input font-mono" onChange={event => setCredential(event.target.value)} placeholder="…or an existing Device credential" type="password" value={credential} />
-            <button className="btn-ghost border border-line shrink-0" disabled={busy || !credential.trim()} onClick={() => void run(async () => credential.trim())} type="button">
-              Connect
-            </button>
-          </div>
-        </Tabs.Panel>
-      </Tabs.Root>
+        </div>
+      </div>
 
       {error && (
         <div className="text-[12.5px] text-bad px-3 py-2 rounded-md bg-bad/10 flex gap-2 items-start" role="alert">

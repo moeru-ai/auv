@@ -240,7 +240,7 @@ function Row({ disabled, highlighted, item, locked, onChoose, onHover, pending, 
 }) {
   const content = (() => {
     if (item.kind === 'add')
-      return { detail: 'Local daemon, or pair with one on another machine', icon: 'i-ph-plus', title: 'Add a device…' }
+      return { detail: 'Pair with a daemon on this or another machine', icon: 'i-ph-plus', title: 'Add a device…' }
     if (item.kind === 'connect') {
       const failed = state?.status === 'error'
       return {

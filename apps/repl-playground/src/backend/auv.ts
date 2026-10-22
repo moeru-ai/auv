@@ -15,7 +15,7 @@ type NativeWindow = WindowClient['window']
 const RUNNER_CLASS = 'auv.core.local'
 
 export interface AuvBackendOptions {
-  /** Paired Device credential; omit for a local loopback daemon without a pairing store. */
+  /** Paired Device credential. The daemon rejects calls without one. */
   credential?: string
   /** Stable Device ID to route operations to; the daemon's local Device when omitted. */
   deviceId?: string
