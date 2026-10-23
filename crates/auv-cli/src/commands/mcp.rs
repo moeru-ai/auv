@@ -322,7 +322,12 @@ mod frontend {
   }
 
   /// Runs one core command on a selected Device through the CLI's typed remote adapter.
-  fn remote_invoke(command_id: String, command: Option<InvokeCommand>, input: McpInvokeInput, context: auv::AuvContext) -> McpInvokeFuture {
+  fn remote_invoke(
+    command_id: String,
+    command: Option<InvokeCommand>,
+    input: McpInvokeInput,
+    daemon: auv_cli_invoke::runner::SelectedDaemon,
+  ) -> McpInvokeFuture {
     Box::pin(async move {
       let inputs = match &command {
         Some(command) => mcp_command_inputs(command.namespace, input.inputs),
@@ -337,7 +342,7 @@ mod frontend {
           dry_run: input.dry_run,
           cancellation: input.cancellation,
         },
-        context,
+        daemon,
       )
       .await?;
       Ok(McpInvokeSuccess::from_output(&output))
@@ -443,13 +448,16 @@ mod frontend {
         None
       };
       let run_id = crate::commands::invoke::tracing_run_id(selected.as_ref()).map_err(invalid_params)?;
-      let remote_context = selected.as_ref().map(|selected| selected.context.clone());
+      let remote_daemon = selected.as_ref().map(|selected| auv_cli_invoke::runner::SelectedDaemon {
+        context: selected.context.clone(),
+        credential: selected.credential.clone(),
+      });
       let command_id = req.command_id.clone();
       let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
       let command_future = root.in_scope(|| {
         auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-        match remote_context {
-          Some(context) => remote_invoke(command_id, command, input, context),
+        match remote_daemon {
+          Some(daemon) => remote_invoke(command_id, command, input, daemon),
           None => adapter.invoke(input),
         }
       });

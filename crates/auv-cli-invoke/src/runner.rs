@@ -105,15 +105,31 @@ where
   }
 }
 
-/// Runs one core command through the selected Runner inside one recorded
-/// command span; see [`crate::trace`].
-pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
-  // The selected adapter is a large state machine; keep it boxed so the span
-  // wrapper does not move it onto the caller's stack (Windows main thread).
-  crate::trace::record_command(input, crate::trace::Execution::Runner, move |input| Box::pin(invoke_selected(input, context))).await
+/// The selected daemon context, plus the bearer the caller presented to it,
+/// such as the launcher token read by `auv --credential-stdin`. The context
+/// stays non-secret; the credential travels beside it.
+#[derive(Clone, Debug, Default)]
+pub struct SelectedDaemon {
+  pub context: auv::AuvContext,
+  pub credential: Option<auv::selection::Credential>,
 }
 
-async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+impl SelectedDaemon {
+  async fn connect(self) -> Result<auv::Client, auv::client::PlacementError> {
+    let credential = self.credential.as_ref().map(auv::selection::Credential::expose);
+    auv::Client::from_context_with_credential(self.context, credential).await
+  }
+}
+
+/// Runs one core command through the selected Runner inside one recorded
+/// command span; see [`crate::trace`].
+pub async fn invoke(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
+  // The selected adapter is a large state machine; keep it boxed so the span
+  // wrapper does not move it onto the caller's stack (Windows main thread).
+  crate::trace::record_command(input, crate::trace::Execution::Runner, move |input| Box::pin(invoke_selected(input, daemon))).await
+}
+
+async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
   {
     let registry = crate::default_registry();
     // Every adapter arm below is a core command, so anything else has no Runner route.
@@ -145,7 +161,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
     // Dry runs keep their current remote-free behavior, so only a real
     // dispatch refuses on a declared-unsupported Runner platform.
     if !input.dry_run {
-      runner_platform_gate(&input.command_id, command, context.device_platform)?;
+      runner_platform_gate(&input.command_id, command, daemon.context.device_platform)?;
     }
   }
 
@@ -155,21 +171,21 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
       let keyboard = crate::commands::input::decode_keyboard_input(&input)
         .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
       crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
-      return execute_keyboard(input, keyboard, context).await;
+      return execute_keyboard(input, keyboard, daemon).await;
     }
     "input.holdKeys" => {
       let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
-      return execute_hold_keys(input, keys, policy, duration, context).await;
+      return execute_hold_keys(input, keys, policy, duration, daemon).await;
     }
-    "input.drag" => return execute_drag(input, context).await,
-    "input.scroll" => return execute_scroll(input, context).await,
-    "input.scrollUntil" => return execute_scroll_until(input, context).await,
+    "input.drag" => return execute_drag(input, daemon).await,
+    "input.scroll" => return execute_scroll(input, daemon).await,
+    "input.scrollUntil" => return execute_scroll_until(input, daemon).await,
     _ => {}
   }
 
   let command_id = input.command_id.as_str();
 
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await.map_err(|error| step_failure("resolve selected Run", error))?;
   let runner = run
     .runner(auv::client::RunnerOptions::default())
@@ -817,9 +833,9 @@ mod tests;
 async fn execute_keyboard(
   input: crate::InvokeCommandInput,
   keyboard: Vec<auv_driver::KeyboardInput>,
-  context: auv::AuvContext,
+  daemon: SelectedDaemon,
 ) -> crate::InvokeExecutionResult {
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await?;
 
@@ -849,9 +865,9 @@ async fn execute_hold_keys(
   keys: Vec<String>,
   policy: auv_driver::InputPolicy,
   duration: std::time::Duration,
-  context: auv::AuvContext,
+  daemon: SelectedDaemon,
 ) -> crate::InvokeExecutionResult {
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await?;
   let target = runner_keyboard_target(&input, &runner).await?;
@@ -877,9 +893,9 @@ async fn execute_hold_keys(
 
 /// Runner route for `input.drag`: the same plan and path as local invoke,
 /// resolved through Runner window/display services and one DragMouse call.
-async fn execute_scroll_until(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+async fn execute_scroll_until(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
   let plan = crate::commands::input::decode_scroll_until(&input)?;
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await?;
   let resolved = resolve_runner_window(&runner, &input).await?;
@@ -923,9 +939,9 @@ async fn resolve_runner_window(
   }
 }
 
-async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+async fn execute_scroll(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
   let plan = crate::commands::input::decode_scroll(&input)?;
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await?;
 
@@ -973,7 +989,7 @@ async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvConte
   crate::commands::input::scroll_output(result).map_err(Into::into)
 }
 
-async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+async fn execute_drag(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
   use crate::commands::input::{DragResult, RelativeToArg};
 
   let plan = crate::commands::input::decode_drag(&input)?;
@@ -986,7 +1002,7 @@ async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext
       "input.drag --input-policy foreground-preferred is available only for local invoke",
     ));
   }
-  let auv = auv::Client::from_context(context).await?;
+  let auv = daemon.connect().await?;
   let run = auv.run(Default::default()).await?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await?;
 

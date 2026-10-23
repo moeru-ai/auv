@@ -2,7 +2,7 @@ import process from 'node:process'
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -46,9 +46,12 @@ describe('startAuv', { timeout: 30_000 }, () => {
       expect(daemon.endpoints).toEqual(isWindows
         ? [expect.stringMatching(/^npipe:\/\/\.\/pipe\/auv-/), `http://127.0.0.1:${port}`]
         : [expect.stringMatching(/^unix:\/\/.+\/auv-[^/]+\/s$/), `http://127.0.0.1:${port}`])
-      expect(daemon.connectionOptions).toEqual(isWindows
-        ? { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
-        : { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0]!.slice('unix://'.length), local: true, transport: 'unix' })
+      expect(daemon.connectionOptions).toEqual({
+        credential: expect.stringMatching(/^[0-9a-f]{64}$/),
+        endpoint: daemon.endpoints[0],
+        local: true,
+        transport: isWindows ? 'npipe' : 'unix',
+      })
       await expect(access(daemon.storeRoot)).resolves.toBeUndefined()
 
       const connection = await daemon.connect()
@@ -223,7 +226,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
   //
   // Local IPC admitted every process of the daemon's OS user, so a process
   // that read the socket path from `ps` could drive the Runner and mint a
-  // pairing token. The launcher-only default now requires the launch token.
+  // pairing token. The default `launcher-token` method now requires it.
   it('rejects a same-user client that knows the endpoint but not the launcher token', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-launcher-token-'))
@@ -247,7 +250,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
 
   // An app exposing its daemon to other local apps pairs each one, then can
   // revoke them one by one. Paired apps cannot mint further pairing tokens.
-  it('admits paired apps on the owner endpoint under launcher-and-paired', async () => {
+  it('admits paired apps on the owner endpoint when paired-device is allowed', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-paired-'))
     const daemon = await startAuv({
@@ -278,7 +281,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
   })
 
-  it('admits any same-user client under the any-process-of-os-user policy', async () => {
+  it('admits any same-user client when os-user is allowed', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-os-user-'))
     const daemon = await startAuv({
@@ -327,7 +330,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-deep-'))
     const storeRoot = join(workingDirectory, 'a-rather-long-directory-name/'.repeat(8))
     const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), storeRoot, workingDirectory })
-    const socketDirectory = dirname(daemon.connectionOptions.endpoint)
+    const socketDirectory = dirname(daemon.connectionOptions.endpoint.slice('unix://'.length))
     try {
       expect(storeRoot.length).toBeGreaterThan(110)
       expect((await listDevices(await daemon.connect())).some(device => device.local)).toBe(true)
@@ -399,7 +402,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
 
     try {
       const [line] = await once(createInterface({ input: owner.stdout }), 'line') as [string]
-      const [pidText, socket] = line.split(' ') as [string, string]
+      const [pidText, endpoint] = line.split(' ') as [string, string]
+      const socket = endpoint.slice('unix://'.length)
       const pid = Number(pidText)
       expect(isAlive(pid)).toBe(true)
 
@@ -417,7 +421,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
   it.skipIf(isWindows)('exposes public health over Unix, gRPC, and HTTP', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-health-'))
-    const socket = join(workingDirectory, 'auv.sock')
+    // A space checks that `unix://` URIs keep the raw path instead of a
+    // percent-encoded URL pathname.
+    await mkdir(join(workingDirectory, 'with space'))
+    const socket = join(workingDirectory, 'with space', 'auv.sock')
     const port = await unusedLoopbackPort()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
@@ -432,6 +439,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       const httpEndpoint = daemon.endpoints.find(endpoint => endpoint.startsWith('http://'))!
       for (const options of [
         { endpoint: socket, local: true, transport: 'unix' as const },
+        { endpoint: `unix://${socket}`, local: true, transport: 'unix' as const },
         { endpoint: httpEndpoint, local: false, transport: 'grpc' as const },
         { endpoint: httpEndpoint, local: false, transport: 'http' as const },
       ]) {
