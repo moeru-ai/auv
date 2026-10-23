@@ -84,7 +84,10 @@ async fn execute(
   } else {
     None
   };
-  let remote_context = selected_context.as_ref().map(|resolved| resolved.context.clone());
+  let remote_daemon = selected_context.as_ref().map(|resolved| auv_cli_invoke::runner::SelectedDaemon {
+    context: resolved.context.clone(),
+    credential: resolved.credential.clone(),
+  });
   let input = auv_cli_invoke::InvokeCommandInput {
     command_id: request.command_id.clone(),
     target: request.target,
@@ -98,10 +101,10 @@ async fn execute(
   let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
   let future = root.in_scope(|| async move {
     auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-    match remote_context {
+    match remote_daemon {
       // The typed remote adapter contains the complete invoke command match.
       // Keep that large async state machine off the Windows main-thread stack.
-      Some(context) => Box::pin(auv_cli_invoke::runner::invoke(input, context)).await,
+      Some(daemon) => Box::pin(auv_cli_invoke::runner::invoke(input, daemon)).await,
       None => invoked_command.invoke(input).await,
     }
   });

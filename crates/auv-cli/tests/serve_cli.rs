@@ -166,3 +166,84 @@ fn cli_reaches_a_launcher_only_daemon_with_credential_stdin() {
   assert!(!rejected.status.success());
   assert!(String::from_utf8_lossy(&rejected.stderr).contains("process that launched it"), "{}", String::from_utf8_lossy(&rejected.stderr));
 }
+
+// ROOT CAUSE:
+//
+// `invoke` with a Device selector resolved the Device and its implicit Run
+// through `Client::from_context`, which never saw the `--credential-stdin`
+// bearer, so a launcher-only daemon rejected the call even with the right
+// token. The selected context now carries the credential to every connection
+// of the invoke: Device resolution, the Runner call, and stopping the Run.
+#[test]
+fn cli_invokes_a_selected_device_with_credential_stdin() {
+  use std::io::Write as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let auv = env!("CARGO_BIN_EXE_auv");
+  let token = "d".repeat(64);
+  let mut daemon = Command::new(auv)
+    .args([
+      "serve",
+      "--no-register",
+      "--exit-on-stdin-close",
+      "--local-auth-allowed-methods",
+      "launcher-token",
+      "--store-root",
+    ])
+    .arg(directory.path().join("store"))
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .unwrap();
+  let mut daemon_stdin = daemon.stdin.take().unwrap();
+  writeln!(daemon_stdin, "{token}").unwrap();
+  let mut ready = String::new();
+  std::io::BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+  let endpoint = ready.trim().strip_prefix("auv serve: ").expect("private daemon endpoint").to_string();
+
+  let cli = |credential: &str, args: &[&str]| {
+    let mut cli = Command::new(auv)
+      .arg("--credential-stdin")
+      .args(args)
+      .env("AUV_ENDPOINT", &endpoint)
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .spawn()
+      .unwrap();
+    writeln!(cli.stdin.take().unwrap(), "{credential}").unwrap();
+    cli.wait_with_output().unwrap()
+  };
+  let devices = cli(&token, &["devices", "list", "--json"]);
+  let devices: serde_json::Value = serde_json::from_slice(&devices.stdout).expect("Device list JSON");
+  let device_id = devices
+    .as_array()
+    .and_then(|devices| devices.iter().find(|device| device["local"] == true))
+    .and_then(|device| device["device_id"].as_str())
+    .expect("local Device ID")
+    .to_string();
+  let invoke = [
+    "--device-id",
+    &device_id,
+    "invoke",
+    "display.list",
+    "--json",
+  ];
+  let accepted = cli(&token, &invoke);
+  let rejected = cli(&"e".repeat(64), &invoke);
+
+  drop(daemon_stdin);
+  let _ = daemon.wait();
+  let accepted_stderr = String::from_utf8_lossy(&accepted.stderr);
+  assert!(!accepted_stderr.contains("process that launched it"), "{accepted_stderr}");
+  // Linux CI has no display session, so only check the listed displays where
+  // the runners have one.
+  if cfg!(any(target_os = "macos", target_os = "windows")) {
+    assert!(accepted.status.success(), "{accepted_stderr}");
+    let accepted: serde_json::Value = serde_json::from_slice(&accepted.stdout).expect("invoke result JSON");
+    assert_eq!(accepted["status"], "completed", "{accepted}");
+  }
+  assert!(!rejected.status.success());
+  assert!(String::from_utf8_lossy(&rejected.stderr).contains("process that launched it"), "{}", String::from_utf8_lossy(&rejected.stderr));
+}

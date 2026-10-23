@@ -100,6 +100,9 @@ fn execute_resolved(
 pub(crate) struct ResolvedExecutionContext {
   pub(crate) context: AuvContext,
   pub(crate) implicit_run_id: Option<String>,
+  /// The bearer from `--credential-stdin`. It stays in this process: the
+  /// context is non-secret and is handed to plugins.
+  pub(crate) credential: Option<auv::selection::Credential>,
 }
 
 impl ResolvedExecutionContext {
@@ -112,7 +115,8 @@ impl ResolvedExecutionContext {
     } else {
       auv::runs::RunOutcome::Failed
     };
-    let client = auv::Client::from_context(self.context).await.map_err(|error| error.to_string())?;
+    let credential = self.credential.as_ref().map(auv::selection::Credential::expose);
+    let client = auv::Client::from_context_with_credential(self.context, credential).await.map_err(|error| error.to_string())?;
     let selector = auv::resource::RunSelector::parse(&run_id).map_err(|error| error.to_string())?;
     client.runs().stop(&selector, outcome).await.map_err(|error| format!("failed to stop the implicit Run: {error}"))?;
     Ok(())
@@ -132,6 +136,7 @@ async fn resolve_context(parent: &RootSelection) -> Result<ResolvedExecutionCont
     return Ok(ResolvedExecutionContext {
       context,
       implicit_run_id: None,
+      credential: None,
     });
   }
 
@@ -154,7 +159,8 @@ async fn resolve_selected_context(
   if let Some(endpoint) = explicit_endpoint {
     context.daemon_endpoint = Some(endpoint.to_string());
   }
-  let client = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let credential = parent.credential.as_ref().map(auv::selection::Credential::expose);
+  let client = auv::Client::from_context_with_credential(context, credential).await.map_err(|error| error.to_string())?;
   let mut context = client.context().cloned().unwrap_or_default();
   if create_implicit_run {
     let selection = parent
@@ -186,6 +192,7 @@ async fn resolve_selected_context(
     return Ok(ResolvedExecutionContext {
       context,
       implicit_run_id,
+      credential: parent.credential.clone(),
     });
   }
   let resolved = client.resolve(parent).await.map_err(|error| error.to_string())?;
@@ -195,6 +202,7 @@ async fn resolve_selected_context(
   Ok(ResolvedExecutionContext {
     context,
     implicit_run_id: None,
+    credential: parent.credential.clone(),
   })
 }
 
