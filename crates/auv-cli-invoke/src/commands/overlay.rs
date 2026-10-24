@@ -110,6 +110,13 @@ struct OutlineArgs {
 #[invoke_command(
   id = "overlay.outline",
   support = { macos: Supported, linux: Unsupported("Linux overlay presentation is unavailable"), windows: Unsupported("the Windows overlay adapter is not wired to this command") },
+  // The Runner-side OverlayService handler is macOS-only; the Windows overlay adapter is not
+  // wired to the Runner service, so the refusal reason differs from the direct notes.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's overlay service is macOS-only"),
+    windows: Unsupported("the Runner's overlay service is macOS-only"),
+  },
   group = "overlay",
   description = "Present one configurable outline layer for visual style inspection.",
   input = OutlineArgs,
@@ -158,6 +165,13 @@ struct CursorArgs {
 #[invoke_command(
   id = "overlay.cursor",
   support = { macos: Supported, linux: Unsupported("Linux overlay presentation is unavailable"), windows: Unsupported("the Windows overlay adapter is not wired to this command") },
+  // The Runner-side OverlayService handler is macOS-only; the Windows overlay adapter is not
+  // wired to the Runner service, so the refusal reason differs from the direct notes.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's overlay service is macOS-only"),
+    windows: Unsupported("the Runner's overlay service is macOS-only"),
+  },
   group = "overlay",
   description = "Present one configurable cursor layer, optionally using runtime SVG source.",
   input = CursorArgs,
@@ -199,6 +213,13 @@ struct StatusArgs {
 #[invoke_command(
   id = "overlay.status",
   support = { macos: Supported, linux: Unsupported("Linux overlay presentation is unavailable"), windows: Unsupported("the Windows overlay adapter is not wired to this command") },
+  // The Runner-side OverlayService handler is macOS-only; the Windows overlay adapter is not
+  // wired to the Runner service, so the refusal reason differs from the direct notes.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's overlay service is macOS-only"),
+    windows: Unsupported("the Runner's overlay service is macOS-only"),
+  },
   group = "overlay",
   description = "Present one configurable status layer for visual style inspection.",
   input = StatusArgs,
@@ -246,6 +267,13 @@ struct CaptureFrameArgs {
 #[invoke_command(
   id = "overlay.captureFrame",
   support = { macos: Supported, linux: Unsupported("Linux overlay presentation is unavailable"), windows: Unsupported("the Windows overlay adapter is not wired to this command") },
+  // The Runner-side OverlayService handler is macOS-only; the Windows overlay adapter is not
+  // wired to the Runner service, so the refusal reason differs from the direct notes.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's overlay service is macOS-only"),
+    windows: Unsupported("the Runner's overlay service is macOS-only"),
+  },
   group = "overlay",
   description = "Present the reusable capture-frame component around a screen rectangle.",
   input = CaptureFrameArgs,
@@ -315,6 +343,13 @@ struct ClickTargetArgs {
 #[invoke_command(
   id = "overlay.clickTarget",
   support = { macos: Supported, linux: Unsupported("Linux overlay presentation is unavailable"), windows: Unsupported("the Windows overlay adapter is not wired to this command") },
+  // The Runner-side OverlayService handler is macOS-only; the Windows overlay adapter is not
+  // wired to the Runner service, so the refusal reason differs from the direct notes.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's overlay service is macOS-only"),
+    windows: Unsupported("the Runner's overlay service is macOS-only"),
+  },
   group = "overlay",
   description = "Present the reusable click-target component with outline, cursor, and status layers.",
   input = ClickTargetArgs,

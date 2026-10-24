@@ -13,6 +13,13 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "app.probePermissions",
   support = { macos: Supported, linux: Unsupported, windows: Unsupported("the result names macOS privacy permissions; the Windows driver's elevation, UIAccess and session probe has no field in it") },
+  // The Runner-side PermissionService handler is macOS-only, which is a different refusal
+  // reason than the direct Windows note, so the route declares its own cells.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's permission service is macOS-only"),
+    windows: Unsupported("the Runner's permission service is macOS-only"),
+  },
   group = "app",
   description = "Probe macOS screen recording, accessibility, and automation permissions.",
   input = ProbePermissionsArgs,
@@ -51,6 +58,7 @@ struct ActivateAppArgs {}
 #[invoke_command(
   id = "app.activate",
   support = { macos: Supported, linux: Unsupported("application activation is not implemented on Linux yet"), windows: Supported },
+  runner = Direct,
   target = RequiredApplication,
   group = "app",
   description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional).",

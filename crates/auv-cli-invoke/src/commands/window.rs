@@ -36,6 +36,7 @@ struct ListWindowsArgs {}
 #[invoke_command(
   id = "window.list",
   support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
   group = "window",
   description = "List visible window candidates using the normalized AUV window selector model.",
   input = ListWindowsArgs,
@@ -90,6 +91,7 @@ struct CaptureWindowArgs {
 #[invoke_command(
   id = "window.capture",
   support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
   target = OptionalApplication,
   group = "window",
   description = "Capture one single-display window without activating it and emit a coordinate contract. Linux uses an AT-SPI display crop; Windows uses PrintWindow.",
@@ -222,6 +224,7 @@ struct FindWindowTextArgs {
 #[invoke_command(
   id = "window.findText",
   support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window and locate OCR text anchors in logical screen coordinates.",
@@ -286,6 +289,7 @@ impl WaitForWindowTextArgs {
 #[invoke_command(
   id = "window.waitForText",
   support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
   target = OptionalApplication,
   group = "window",
   description = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
@@ -375,6 +379,13 @@ impl WindowClickPolicyArg {
 #[invoke_command(
   id = "window.clickText",
   support = { macos: Supported, linux: Unsupported, windows: Partial("test-owned Win32 surface, background-only") },
+  // The Runner route resolves the window and clicks through the window API, so Linux delivers
+  // foreground portal input (background-only rejected) instead of refusing the command.
+  runner = {
+    macos: Supported,
+    linux: Partial("foreground portal delivery only; background_only input policy is rejected"),
+    windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit"),
+  },
   target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window, resolve an OCR text anchor, and click the match point in logical screen coordinates.",

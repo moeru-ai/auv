@@ -17,6 +17,7 @@ struct InvokeCommandAttributes {
   input: Type,
   target: Option<Ident>,
   support: SupportAttribute,
+  runner: RunnerAttribute,
   role: Option<RoleAttribute>,
 }
 
@@ -28,6 +29,7 @@ impl Parse for InvokeCommandAttributes {
     let mut input_type = None;
     let mut target = None;
     let mut support = None;
+    let mut runner = None;
     let mut role = None;
 
     while !input.is_empty() {
@@ -40,11 +42,12 @@ impl Parse for InvokeCommandAttributes {
         "target" => set_once(&mut target, input.parse::<Ident>()?, &key)?,
         "input" => set_once(&mut input_type, input.parse::<Type>()?, &key)?,
         "support" => set_once(&mut support, input.parse::<SupportAttribute>()?, &key)?,
+        "runner" => set_once(&mut runner, input.parse::<RunnerAttribute>()?, &key)?,
         "role" => set_once(&mut role, input.parse::<RoleAttribute>()?, &key)?,
         _ => {
           return Err(syn::Error::new(
             key.span(),
-            "invoke_command unknown attribute; expected only: id, group, description, input, target, support, role",
+            "invoke_command unknown attribute; expected only: id, group, description, input, target, support, runner, role",
           ));
         }
       }
@@ -60,6 +63,7 @@ impl Parse for InvokeCommandAttributes {
       input: required(input_type, "input", input)?,
       target,
       support: required(support, "support", input)?,
+      runner: required(runner, "runner", input)?,
       role,
     })
   }
@@ -135,6 +139,49 @@ impl Parse for SupportCell {
   }
 }
 
+/// `runner = Direct`, `runner = NoRoute`, or
+/// `runner = { macos: Supported, linux: Partial("..."), windows: Unsupported }`.
+///
+/// The attribute is required, so a command cannot leave its Runner route
+/// undeclared. `Direct` says the route's cells are the direct cells and is
+/// allowed only where a source audit confirmed that equality; explicit cells
+/// declare where the route differs from the direct path.
+enum RunnerAttribute {
+  Direct,
+  NoRoute,
+  Cells(SupportAttribute),
+}
+
+impl Parse for RunnerAttribute {
+  fn parse(input: ParseStream<'_>) -> Result<Self> {
+    if input.peek(syn::token::Brace) {
+      return Ok(Self::Cells(input.parse::<SupportAttribute>()?));
+    }
+    let form = input.parse::<Ident>()?;
+    match form.to_string().as_str() {
+      "Direct" => Ok(Self::Direct),
+      "NoRoute" => Ok(Self::NoRoute),
+      _ => Err(syn::Error::new(
+        form.span(),
+        "invoke_command runner must be Direct, NoRoute, or per-platform cells such as { macos: Supported, linux: Supported, windows: Unsupported }",
+      )),
+    }
+  }
+}
+
+impl RunnerAttribute {
+  fn expand(&self) -> proc_macro2::TokenStream {
+    match self {
+      Self::Direct => quote! { ::auv_cli_invoke::support::RunnerSupport::Direct },
+      Self::NoRoute => quote! { ::auv_cli_invoke::support::RunnerSupport::NoRoute },
+      Self::Cells(cells) => {
+        let cells = cells.expand();
+        quote! { ::auv_cli_invoke::support::RunnerSupport::Cells(#cells) }
+      }
+    }
+  }
+}
+
 /// `role = Alias("input.keys")` or `role = Fixture`. A command without one drives the desktop.
 enum RoleAttribute {
   Alias(LitStr),
@@ -175,11 +222,13 @@ fn expand(attributes: InvokeCommandAttributes, function: ItemFn) -> Result<proc_
     input,
     target,
     support,
+    runner,
     role,
   } = attributes;
   let target = target.unwrap_or_else(|| Ident::new("Forbidden", group.span()));
   let namespace = namespace(&group)?;
   let support = support.expand();
+  let runner = runner.expand();
   let role = role.map(|role| role.expand());
   let function_name = &function.sig.ident;
   let export_name = format_ident!("{function_name}_invoke_command");
@@ -204,6 +253,7 @@ fn expand(attributes: InvokeCommandAttributes, function: ItemFn) -> Result<proc_
         ::auv_cli_invoke::InvokeNamespace::#namespace,
         #description,
         #support,
+        #runner,
         #handler_name,
       ).with_target(::auv_cli_invoke::command::TargetPolicy::#target)#role
     }

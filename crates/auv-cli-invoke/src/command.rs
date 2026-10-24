@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde::de::{DeserializeOwned, IntoDeserializer, Visitor, value::MapDeserializer};
 
 use crate::InvokeReport;
-use crate::support::{CommandRole, CommandSupport};
+use crate::support::{CommandRole, CommandSupport, RunnerSupport};
 
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = InvokeExecutionResult> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
@@ -324,6 +324,9 @@ pub struct InvokeCommand {
   pub target: TargetPolicy,
   /// Where the direct local path exists, declared by the command and shown by help and MCP metadata.
   pub support: CommandSupport,
+  /// How the command relates to the selected-Runner route; required on every
+  /// registered command. See [`crate::support::RunnerSupport`].
+  pub runner: RunnerSupport,
   pub role: CommandRole,
   typed_command: fn(&'static str, &'static str) -> Command,
   typed_parse: InvokeCommandParser,
@@ -421,6 +424,13 @@ impl InvokeCommand {
   pub fn with_target(mut self, target: TargetPolicy) -> Self {
     self.target = target;
     self
+  }
+
+  /// The selected-Runner route's per-platform cells, or `None` when the command
+  /// has no Runner route. Help and MCP metadata render from these cells, so
+  /// every surface states the same route facts.
+  pub fn runner_cells(&self) -> Option<CommandSupport> {
+    self.runner.cells(self.support)
   }
 
   pub fn with_role(mut self, role: CommandRole) -> Self {
@@ -546,6 +556,7 @@ pub fn typed_spec<T>(
   namespace: InvokeNamespace,
   description: &'static str,
   support: CommandSupport,
+  runner: RunnerSupport,
   handler: InvokeCommandHandler,
 ) -> InvokeCommand
 where
@@ -557,6 +568,7 @@ where
     description,
     target: TargetPolicy::default(),
     support,
+    runner,
     role: CommandRole::Desktop,
     typed_command: typed_command::<T>,
     typed_parse: parse_cli_args::<T>,
