@@ -129,6 +129,10 @@ pub struct Layout {
   pub label_rect: [i32; 4],
   #[serde(default)]
   pub edit_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_center: [i32; 2],
 }
 
 /// A process the harness started detached and holds by handle.

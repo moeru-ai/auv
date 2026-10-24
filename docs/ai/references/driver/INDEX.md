@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **80**
+Count: **81**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -101,6 +101,7 @@ Count: **80**
 - [`2026-10-20-linux-live-desktop-matrix.md`](2026-10-20-linux-live-desktop-matrix.md): live Linux desktop evidence behind the matrix cells: window list/capture/findText, display capture fallback, PaperWM and occlusion boundaries.
 - [`2026-10-20-linux-window-text-ocr.md`](2026-10-20-linux-window-text-ocr.md): `window.findText` and `window.waitForText` wired on Linux through AT-SPI resolve, display crop, and Tesseract; visible-area and PaperWM boundaries, no support-matrix claim.
 - [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
+- [`2026-10-24-windows-gui-workflow-evidence.md`](2026-10-24-windows-gui-workflow-evidence.md): the `workflow` scenario's per-route evidence levels: static and unit verification done, isolated-desktop functional runs pending.
 
 
 ## Related
