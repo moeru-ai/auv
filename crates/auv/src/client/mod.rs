@@ -150,13 +150,19 @@ impl Client {
 
   /// Connects to the context's daemon presenting `credential`, such as the one
   /// returned by [`crate::inherited_credential`]; without one this is
-  /// [`Self::from_context`].
-  pub async fn from_context_with_credential(context: AuvContext, credential: Option<&str>) -> Result<Self, PlacementError> {
+  /// [`Self::from_context`]. A credential names one daemon, so a context
+  /// without an endpoint uses the discovered local daemon instead of searching
+  /// paired profiles, and records its endpoint for later connections.
+  pub async fn from_context_with_credential(mut context: AuvContext, credential: Option<&str>) -> Result<Self, PlacementError> {
     let Some(credential) = credential else {
       return Self::from_context(context).await;
     };
     validate_context_selectors(&context)?;
-    let endpoint = context.daemon_endpoint.clone().ok_or(ContextError::EndpointNotDiscovered)?;
+    let endpoint = match context.daemon_endpoint.clone() {
+      Some(endpoint) => endpoint,
+      None => discovery::resolve(None).map_err(ContextError::Discovery)?.ok_or(ContextError::EndpointNotDiscovered)?.to_string(),
+    };
+    context.daemon_endpoint = Some(endpoint.clone());
     let mut client = Self::connect(&endpoint, Some(credential)).await?;
     client.context = Some(context);
     Ok(client)
