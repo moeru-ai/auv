@@ -135,3 +135,24 @@ Following the source above, before any run:
 3. Refusal before dispatch from `DevicePlatform`.
 4. Runs through a Runner for the cells that become `Partial` or `Supported`, recorded in
    `docs/SUPPORT_MATRIX.md` with their evidence level.
+
+## Status 2026-10-25: slice 2 landed
+
+The `runner` declaration, help and MCP rendering, and registry tests (slice 2 above) landed on
+`local/selected-runner-capability` (base `739fe399`), with every cell read from source
+by the command-level audit of 2026-10-25 (not from this note's draft tables, which predate #386,
+#389, and the fixture refusal fix and are superseded where they disagree). Shape as built:
+
+- `RunnerSupport` in `crates/auv-cli-invoke/src/support.rs`: `NoRoute` (fixtures; matches the
+  pre-dispatch refusal, and MCP states `no_route` instead of "unsupported platforms"), `Direct`
+  (audited shorthand: route cells equal the direct cells), `Cells(CommandSupport)` where the route
+  differs (screen.clickText, window.clickText, input.drag, input.focusText/axFocusText,
+  app.probePermissions, the overlay commands).
+- The `invoke_command` macro makes `runner =` required, so an undeclared route fails to compile;
+  registry tests pin completeness and that explicit cells are used only where they differ.
+- CLI per-command help adds a `Selected Runner support:` block; MCP `x-auv-commands` adds
+  `runner_support` (`route` + resolved `cells`) and the tool description adds a
+  `runner support:` line only where the route differs from the direct cells; a consistency test
+  proves CLI and MCP render the same registry cells.
+- Still deferred: slices 1 (typed status mapping) and 3 (refusal before dispatch from
+  `DevicePlatform`) — `TODO(invoke-support-runner-route)` in `support.rs` marks the deferral.

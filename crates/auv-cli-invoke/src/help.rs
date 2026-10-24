@@ -36,6 +36,9 @@ pub fn render_help_index(registry: &InvokeRegistry) -> String {
     "\nPlatform support is whether the command's direct local path exists in the current source. It is not a claim that the path was run.\n  yes      a path exists for everything the command accepts\n  partial  a path exists with limits; see \"auv invoke <COMMAND> --help\"\n  no       no path; the command refuses, or completes without doing the work and says so\n  ?        not audited\nEvidence for each claim is kept in docs/SUPPORT_MATRIX.md in the AUV repository.\n",
   );
   help.push_str(
+    "\nSelected Runner support is the same source-level claim for the route a selected Run or Device takes; see it in \"auv invoke <COMMAND> --help\".\n",
+  );
+  help.push_str(
     "\nOptions:\n  --target <TARGET>    Select a command-supported target; see command help for accepted types\n  --dry-run            Validate without performing the operation\n  --store-root <PATH>  Persist the recorded run under this directory\n  --no-overlay         Disable live visual overlay presentation\n  --json               Render machine-readable JSON output\n  --detail             Include diagnostic detail in human output\n  --wide               Include extra columns in human table output\n\nUse \"auv invoke <COMMAND> --help\" for command-specific options.\n",
   );
 
@@ -55,13 +58,12 @@ pub fn render_command_help(command: &InvokeCommand) -> String {
   let mut clap_command = crate::command::with_invoke_context(command.clap_command(), command.target);
   let mut help = clap_command.render_long_help().to_string();
   help.push_str("\nPlatform support:\n");
-  for platform in Platform::ALL {
-    let support = command.support.on(platform);
-    help.push_str(&format!("  {:<8}{}", platform.label(), support_word(support)));
-    if let Some(note) = support.note {
-      help.push_str(&format!(": {note}"));
-    }
-    help.push('\n');
+  push_support_lines(&mut help, command.support);
+  help.push_str("\nSelected Runner support:\n");
+  match command.runner.cells(command.support) {
+    None => help.push_str("  no Runner route; run it without a selected Run or Device\n"),
+    Some(cells) if cells == command.support => help.push_str("  same as the direct local path above\n"),
+    Some(cells) => push_support_lines(&mut help, cells),
   }
   match command.role {
     CommandRole::Desktop => {}
@@ -69,6 +71,19 @@ pub fn render_command_help(command: &InvokeCommand) -> String {
     CommandRole::Fixture => help.push_str("This command processes fixture data you supply and does not control a desktop.\n"),
   }
   help
+}
+
+/// The per-platform cell lines one support block shows: the word for each
+/// state and, where a cell has one, its note.
+fn push_support_lines(help: &mut String, support: crate::CommandSupport) {
+  for platform in Platform::ALL {
+    let cell = support.on(platform);
+    help.push_str(&format!("  {:<8}{}", platform.label(), support_word(cell)));
+    if let Some(note) = cell.note {
+      help.push_str(&format!(": {note}"));
+    }
+    help.push('\n');
+  }
 }
 
 /// The word the command index and per-command help show for one cell.
