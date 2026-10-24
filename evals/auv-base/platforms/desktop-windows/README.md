@@ -106,9 +106,12 @@ scenario body; the overall `passed` additionally requires the quiet tally, runne
 cleanup, and pointer and foreground restoration. Consumers must gate on `passed`: a true
 `functional_passed` beside a false `passed` is a workflow whose steps ran but whose desktop or
 cleanup contract failed. A fixture or environment failure after the record file exists is
-written as a `setup_failed` entry plus a `passed: false` summary, so `workflow.jsonl` ends with
-an explicit outcome unless the process itself died; global misconfigurations (output directory,
-missing `auv`, temp space) still stop the run with a process error before any route runs.
+written as a `setup_failed` entry plus a `passed: false` summary whose structured `cleanup`
+fields separate verified receipts from unknown drop-only attempts and resources never created.
+So, whenever the record medium is usable and normal error handling can run, `workflow.jsonl`
+ends with an explicit outcome; a forced process kill or an unwritable volume can still truncate
+it. Global misconfigurations (output directory, missing `auv`, temp space) still stop the run
+with a process error before any route runs.
 Because `screen.clickText` re-resolves its target after the preflight, all functional workflow
 runs must happen in a dedicated, isolated Windows session with no user applications open.
 

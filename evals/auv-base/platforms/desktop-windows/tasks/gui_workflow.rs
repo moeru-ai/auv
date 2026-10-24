@@ -389,8 +389,8 @@ fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
 
 /// One case's fixture. Every field owns its cleanup — `Runner::drop` ends the daemon process
 /// tree, `Receiver::drop` closes the receiver after a bounded wait and then kills it, and the
-/// capture-store `TempDir` removes itself — so a partially built fixture is cleaned up by
-/// being dropped on the setup-failure path.
+/// capture-store `TempDir` removes itself — as a backstop behind the explicit, receipt-bearing
+/// cleanup the failure paths perform.
 struct Fixture {
   runner: Option<Runner>,
   driver: WindowsDriverSession,
@@ -403,10 +403,24 @@ struct Fixture {
   hwnd: isize,
 }
 
+/// A fixture build that stopped partway. `runner_stop` is the bounded stop receipt when the
+/// daemon had been created (None when never reached); `receiver_close` is the close result when
+/// the receiver had been spawned. The flags say which later steps were reached: their resources
+/// have no cleanup receipt API and were left to Drop, so the caller records them as `unknown`,
+/// never as verified.
+struct SetupFailure {
+  error: anyhow::Error,
+  runner_stop: Option<Result<Value>>,
+  receiver_close: Option<Result<()>>,
+  driver_created: bool,
+  witness_created: bool,
+  restore_created: bool,
+}
+
 /// Builds one case's fixture: the private daemon (runner route), the driver session, the desktop
-/// witness and the case's own receiver, bound and laid out. A failure returns before the caller
-/// has written anything but the record header, so the caller records it as `setup_failed` plus
-/// a summary instead of leaving a truncated workflow.jsonl.
+/// witness and the case's own receiver, bound and laid out. A failure returns a `SetupFailure`
+/// carrying what the build can speak for, so the caller records receipts instead of claiming a
+/// cleanup it cannot see.
 fn build_fixture(
   options: &Options,
   route: &str,
@@ -415,16 +429,67 @@ fn build_fixture(
   output: &Path,
   spec: &ReceiverSpec,
   extra: &[&str],
-) -> Result<Fixture> {
-  let runner = if route == "runner" {
-    Some(Runner::start(auv, &store.join("private-daemon"), output)?)
+) -> Result<Fixture, SetupFailure> {
+  let mut runner = if route == "runner" {
+    match Runner::start(auv, &store.join("private-daemon"), output) {
+      Ok(runner) => Some(runner),
+      Err(error) => {
+        return Err(SetupFailure {
+          error,
+          runner_stop: None,
+          receiver_close: None,
+          driver_created: false,
+          witness_created: false,
+          restore_created: false,
+        });
+      }
+    }
   } else {
     None
   };
-  let driver = WindowsDriver::new().open_local().map_err(anyhow::Error::msg)?;
-  let watch = DesktopWatch::start()?;
+  let driver = match WindowsDriver::new().open_local().map_err(anyhow::Error::msg) {
+    Ok(driver) => driver,
+    Err(error) => {
+      let runner_stop = runner.as_mut().map(Runner::finish);
+      return Err(SetupFailure {
+        error,
+        runner_stop,
+        receiver_close: None,
+        driver_created: false,
+        witness_created: false,
+        restore_created: false,
+      });
+    }
+  };
+  let watch = match DesktopWatch::start() {
+    Ok(watch) => watch,
+    Err(error) => {
+      let runner_stop = runner.as_mut().map(Runner::finish);
+      return Err(SetupFailure {
+        error,
+        runner_stop,
+        receiver_close: None,
+        driver_created: true,
+        witness_created: false,
+        restore_created: false,
+      });
+    }
+  };
   let start = watch.snapshot();
-  let mut target = spawn_topmost_receiver(spec, extra)?;
+  let mut target = match spawn_topmost_receiver(spec, extra) {
+    Ok(target) => target,
+    Err(error) => {
+      let runner_stop = runner.as_mut().map(Runner::finish);
+      return Err(SetupFailure {
+        error,
+        runner_stop,
+        receiver_close: None,
+        driver_created: true,
+        witness_created: true,
+        restore_created: false,
+      });
+    }
+  };
   let hwnd = target.hwnd();
   let restore = (!options.observe_only).then(|| Restore {
     cursor: start.cursor,
@@ -434,11 +499,32 @@ fn build_fixture(
     store: None,
     clipboard: None,
   });
-  let (window, _) = discover_by_hwnd(&driver, hwnd)?;
-  let layout = target.refresh_layout()?;
-  if !options.observe_only {
-    target.request(json!({"cmd": "keep_foreground"}))?;
-  }
+  let bound = (|| -> Result<(Window, Layout)> {
+    let (window, _) = discover_by_hwnd(&driver, hwnd)?;
+    let layout = target.refresh_layout()?;
+    if !options.observe_only {
+      target.request(json!({"cmd": "keep_foreground"}))?;
+    }
+    Ok((window, layout))
+  })();
+  let (window, layout) = match bound {
+    Ok(pair) => pair,
+    Err(error) => {
+      // The receiver and the daemon both exist here, so their cleanups have real receipts.
+      // The restore, if any, is dropped on this path and recorded as unknown, because its
+      // Drop restores the desktop without returning a result.
+      let receiver_close = target.close();
+      let runner_stop = runner.as_mut().map(Runner::finish);
+      return Err(SetupFailure {
+        error,
+        runner_stop,
+        receiver_close: Some(receiver_close),
+        driver_created: true,
+        witness_created: true,
+        restore_created: true,
+      });
+    }
+  };
   Ok(Fixture {
     runner,
     driver,
@@ -460,9 +546,11 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
   let store = store_dir.path().to_owned();
   let mut records = Records::create(&output.join("workflow.jsonl"), &run_id(), "gui_workflow")?;
   // workflow.jsonl exists from here on, so every per-route failure is recorded instead of
-  // leaving a truncated file. The steps above have no record medium yet; run() surfaces their
-  // process error and stops the whole matrix, because they are global misconfigurations (output
-  // directory, auv binary, temp space), not per-route outcomes.
+  // leaving a truncated file — whenever the record medium itself is usable and normal error
+  // handling can run; a forced process kill or an unwritable volume can still truncate it. The
+  // steps above have no record medium yet; run() surfaces their process error and stops the
+  // whole matrix, because they are global misconfigurations (output directory, auv binary, temp
+  // space), not per-route outcomes.
   let (left, top) = placement(0, 420, 440);
   let spec = ReceiverSpec {
     index: 0,
@@ -508,18 +596,43 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     hwnd,
   } = match fixture {
     Ok(fixture) => fixture,
-    Err(error) => {
-      // Dropping the partial fixture ended the daemon tree (Runner), closed the receiver
-      // (Receiver::drop waits, then kills) and removed the capture store (TempDir). Partial
-      // setup cannot produce cleanup receipts, so the record states what was cleaned how.
-      let error = format!("{error:#}");
+    Err(failure) => {
+      // Cleanup facts, not claims. The store is still open here, so close it and check removal
+      // before the record says anything about it. Resources whose cleanup has no receipt API
+      // are `unknown`, and a resource whose step was never reached is `not_created`.
+      let error = format!("{:#}", failure.error);
+      let store_path = store_dir.path().to_owned();
+      let store_close = store_dir.close();
+      let store_removed = store_close.is_ok() && !store_path.exists();
+      let runner_cleanup = match failure.runner_stop {
+        None => json!({"state": "not_created"}),
+        Some(Ok(receipt)) if receipt["daemon_exited"] == true => json!({"state": "verified", "receipt": receipt}),
+        Some(Ok(receipt)) => json!({"state": "unknown", "receipt": receipt}),
+        Some(Err(stop_error)) => json!({"state": "unknown", "error": stop_error.to_string()}),
+      };
+      let receiver_cleanup = match failure.receiver_close {
+        None => json!({"state": "not_created"}),
+        Some(Ok(())) => json!({"state": "verified"}),
+        Some(Err(close_error)) => json!({"state": "unknown", "error": close_error.to_string()}),
+      };
+      let drop_only = |created: bool| {
+        if created {
+          json!({"state": "unknown", "note": "cleaned up by drop; no receipt exists"})
+        } else {
+          json!({"state": "not_created"})
+        }
+      };
       records.write("setup_failed", json!({"route": route, "round": round, "error": &error}))?;
       records.write(
         "summary",
         json!({"route": route, "round": round, "passed": false, "setup_failed": true,
         "observe_only": options.observe_only, "observation_passed": Value::Null, "functional_passed": Value::Null,
         "error": error, "failures": [], "quiet_operations": 0, "quiet_held": 0, "quiet_inconclusive": 0, "quiet_violated": 0,
-        "cleanup": "fixture resources were dropped: the daemon tree was killed without a bounded stop, the receiver was closed, and the capture store was removed"}),
+        "cleanup": {"runner_daemon": runner_cleanup, "receiver": receiver_cleanup,
+          "driver_session": drop_only(failure.driver_created), "desktop_witness": drop_only(failure.witness_created),
+          "restore": drop_only(failure.restore_created),
+          "capture_store": {"state": if store_removed { "verified" } else { "unknown" }, "removed": store_removed,
+            "close_error": store_close.err().map(|close_error| close_error.to_string())}}}),
       )?;
       println!("workflow {route} round {round}: FAIL (setup failed; see workflow.jsonl)");
       return Ok(false);
@@ -821,5 +934,44 @@ mod tests {
     let error = command_output(command, Duration::from_millis(100)).expect_err("the sleeping CLI must time out");
     assert!(error.to_string().contains("deadline exceeded"), "{error:#}");
     assert!(started.elapsed() < Duration::from_secs(3), "the CLI exceeded its bounded wait");
+  }
+
+  #[test]
+  fn a_setup_failure_is_recorded_with_truthful_cleanup_and_not_passed() {
+    // The runner route fails at the daemon spawn (an existing but non-executable auv binary),
+    // before the driver session, the desktop witness or the receiver are created, so this
+    // exercises the recorded failure path with no desktop contact and no input.
+    let output = tempfile::tempdir().expect("temp output directory");
+    let auv = output.path().join("not-an-executable");
+    std::fs::write(&auv, b"not a PE image").expect("write the invalid binary");
+    let options = Options {
+      output: output.path().to_owned(),
+      auv,
+      rounds: 1,
+      observe_only: true,
+    };
+    let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");
+    assert!(!passed);
+    let records: Vec<Value> = std::fs::read_to_string(output.path().join("runner-01").join("workflow.jsonl"))
+      .expect("the case's workflow.jsonl exists")
+      .lines()
+      .map(|line| serde_json::from_str(line).expect("every record is one JSON object"))
+      .collect();
+    let setup_failed = records.iter().find(|record| record["kind"] == "setup_failed").expect("the failure is recorded");
+    assert!(setup_failed["error"].as_str().is_some_and(|error| !error.is_empty()), "{setup_failed}");
+    let summary = records.iter().find(|record| record["kind"] == "summary").expect("the file ends with a summary");
+    assert_eq!(summary["passed"], json!(false));
+    assert_eq!(summary["setup_failed"], json!(true));
+    assert_eq!(summary["functional_passed"], Value::Null);
+    assert_eq!(summary["observation_passed"], Value::Null);
+    // Never-created resources are not claimed as cleaned, and the store — the one resource the
+    // failure path can close and re-check before recording — is the only verified one.
+    assert_eq!(summary["cleanup"]["runner_daemon"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["receiver"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["driver_session"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["desktop_witness"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["restore"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["capture_store"]["state"], json!("verified"));
+    assert_eq!(summary["cleanup"]["capture_store"]["removed"], json!(true));
   }
 }
