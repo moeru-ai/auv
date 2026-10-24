@@ -101,6 +101,14 @@ These checks are not an atomic OS focus lease; a concurrent desktop change can s
 the precheck. Foreground actions are expected to change input/pointer state and are recorded
 separately from operations required to be quiet. A quiet violation or inconclusive operation
 prevents overall acceptance. Pointer and foreground restoration are checked after the full run.
+The summary's `functional_passed` (and `--observe-only`'s `observation_passed`) covers only the
+scenario body; the overall `passed` additionally requires the quiet tally, runner and fixture
+cleanup, and pointer and foreground restoration. Consumers must gate on `passed`: a true
+`functional_passed` beside a false `passed` is a workflow whose steps ran but whose desktop or
+cleanup contract failed. A fixture or environment failure after the record file exists is
+written as a `setup_failed` entry plus a `passed: false` summary, so `workflow.jsonl` ends with
+an explicit outcome unless the process itself died; global misconfigurations (output directory,
+missing `auv`, temp space) still stop the run with a process error before any route runs.
 Because `screen.clickText` re-resolves its target after the preflight, all functional workflow
 runs must happen in a dedicated, isolated Windows session with no user applications open.
 

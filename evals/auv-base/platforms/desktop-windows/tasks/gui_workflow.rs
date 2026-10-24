@@ -12,7 +12,7 @@ use auv_driver_common::window::Window;
 use auv_driver_common::{Click, MouseButton};
 use auv_driver_windows::WindowsDriverSession;
 
-use super::super::watch::Verdict;
+use super::super::watch::{Snapshot, Verdict};
 use super::*;
 
 pub struct Options {
@@ -387,21 +387,82 @@ fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
   Ok(())
 }
 
-fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
-  let output = options.output.join(format!("{route}-{round:02}"));
-  std::fs::create_dir_all(&output)?;
-  let auv = options.auv.canonicalize()?;
-  let store_dir = tempfile::Builder::new().prefix("store-").tempdir_in(&output)?;
-  let store = store_dir.path().to_owned();
-  let mut runner = if route == "runner" {
-    Some(Runner::start(&auv, &store.join("private-daemon"), &output)?)
+/// One case's fixture. Every field owns its cleanup — `Runner::drop` ends the daemon process
+/// tree, `Receiver::drop` closes the receiver after a bounded wait and then kills it, and the
+/// capture-store `TempDir` removes itself — so a partially built fixture is cleaned up by
+/// being dropped on the setup-failure path.
+struct Fixture {
+  runner: Option<Runner>,
+  driver: WindowsDriverSession,
+  watch: DesktopWatch,
+  start: Snapshot,
+  target: Receiver,
+  window: Window,
+  layout: Layout,
+  restore: Option<Restore>,
+  hwnd: isize,
+}
+
+/// Builds one case's fixture: the private daemon (runner route), the driver session, the desktop
+/// witness and the case's own receiver, bound and laid out. A failure returns before the caller
+/// has written anything but the record header, so the caller records it as `setup_failed` plus
+/// a summary instead of leaving a truncated workflow.jsonl.
+fn build_fixture(
+  options: &Options,
+  route: &str,
+  auv: &Path,
+  store: &Path,
+  output: &Path,
+  spec: &ReceiverSpec,
+  extra: &[&str],
+) -> Result<Fixture> {
+  let runner = if route == "runner" {
+    Some(Runner::start(auv, &store.join("private-daemon"), output)?)
   } else {
     None
   };
   let driver = WindowsDriver::new().open_local().map_err(anyhow::Error::msg)?;
   let watch = DesktopWatch::start()?;
   let start = watch.snapshot();
+  let mut target = spawn_topmost_receiver(spec, extra)?;
+  let hwnd = target.hwnd();
+  let restore = (!options.observe_only).then(|| Restore {
+    cursor: start.cursor,
+    foreground: start.foreground,
+    receiver: hwnd,
+    // TempDir owns and verifies capture-store removal after the receiver and Runner are closed.
+    store: None,
+    clipboard: None,
+  });
+  let (window, _) = discover_by_hwnd(&driver, hwnd)?;
+  let layout = target.refresh_layout()?;
+  if !options.observe_only {
+    target.request(json!({"cmd": "keep_foreground"}))?;
+  }
+  Ok(Fixture {
+    runner,
+    driver,
+    watch,
+    start,
+    target,
+    window,
+    layout,
+    restore,
+    hwnd,
+  })
+}
+
+fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
+  let output = options.output.join(format!("{route}-{round:02}"));
+  std::fs::create_dir_all(&output)?;
+  let auv = options.auv.canonicalize()?;
+  let store_dir = tempfile::Builder::new().prefix("store-").tempdir_in(&output)?;
+  let store = store_dir.path().to_owned();
   let mut records = Records::create(&output.join("workflow.jsonl"), &run_id(), "gui_workflow")?;
+  // workflow.jsonl exists from here on, so every per-route failure is recorded instead of
+  // leaving a truncated file. The steps above have no record medium yet; run() surfaces their
+  // process error and stops the whole matrix, because they are global misconfigurations (output
+  // directory, auv binary, temp space), not per-route outcomes.
   let (left, top) = placement(0, 420, 440);
   let spec = ReceiverSpec {
     index: 0,
@@ -425,32 +486,45 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
   // calibration so observation-only checks cannot pass on an all-black frame. This is fixture
   // setup, not evidence that any AUV click was delivered.
   let calibration = (13 + round % 17).to_string();
-  let mut target = spawn_topmost_receiver(
-    &spec,
-    &[
-      "--foreground-input",
-      "--input-caption",
-      &input_caption,
-      "--button-caption",
-      &button_caption,
-      "--initial-clicks",
-      &calibration,
-    ],
-  )?;
-  let hwnd = target.hwnd();
-  let restore = (!options.observe_only).then(|| Restore {
-    cursor: start.cursor,
-    foreground: start.foreground,
-    receiver: hwnd,
-    // TempDir owns and verifies capture-store removal after the receiver and Runner are closed.
-    store: None,
-    clipboard: None,
-  });
-  let (window, _) = discover_by_hwnd(&driver, hwnd)?;
-  let layout = target.refresh_layout()?;
-  if !options.observe_only {
-    target.request(json!({"cmd": "keep_foreground"}))?;
-  }
+  let extra = [
+    "--foreground-input",
+    "--input-caption",
+    input_caption.as_str(),
+    "--button-caption",
+    button_caption.as_str(),
+    "--initial-clicks",
+    calibration.as_str(),
+  ];
+  let fixture = build_fixture(options, route, &auv, &store, &output, &spec, &extra);
+  let Fixture {
+    mut runner,
+    driver,
+    watch,
+    start,
+    mut target,
+    window,
+    layout,
+    restore,
+    hwnd,
+  } = match fixture {
+    Ok(fixture) => fixture,
+    Err(error) => {
+      // Dropping the partial fixture ended the daemon tree (Runner), closed the receiver
+      // (Receiver::drop waits, then kills) and removed the capture store (TempDir). Partial
+      // setup cannot produce cleanup receipts, so the record states what was cleaned how.
+      let error = format!("{error:#}");
+      records.write("setup_failed", json!({"route": route, "round": round, "error": &error}))?;
+      records.write(
+        "summary",
+        json!({"route": route, "round": round, "passed": false, "setup_failed": true,
+        "observe_only": options.observe_only, "observation_passed": Value::Null, "functional_passed": Value::Null,
+        "error": error, "failures": [], "quiet_operations": 0, "quiet_held": 0, "quiet_inconclusive": 0, "quiet_violated": 0,
+        "cleanup": "fixture resources were dropped: the daemon tree was killed without a bounded stop, the receiver was closed, and the capture store was removed"}),
+      )?;
+      println!("workflow {route} round {round}: FAIL (setup failed; see workflow.jsonl)");
+      return Ok(false);
+    }
+  };
   records.write(
     "setup",
     json!({"route": route, "round": round, "system": system_facts(), "hwnd": hwnd.to_string(),
@@ -669,6 +743,11 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     && (options.observe_only || finish.cursor == start.cursor)
     && handed
     && (options.observe_only || finish.foreground == start.foreground);
+  // Evidence contract: `observation_passed` and `functional_passed` report only the scenario
+  // body (`result`); the overall `passed` below additionally requires the quiet tally, runner
+  // cleanup, fixture cleanup, and cursor/foreground restoration. Consumers must gate on
+  // `passed`: a true `functional_passed` next to a false `passed` records a workflow whose
+  // steps ran but whose desktop or cleanup contract failed.
   scenario.records.write(
     "summary",
     json!({"route": route, "round": round, "passed": passed, "ms": elapsed,
@@ -713,7 +792,7 @@ pub fn run(options: &Options) -> Result<bool> {
   let mut passed = true;
   for route in ["rust", "invoke", "runner"] {
     for round in 1..=options.rounds {
-      passed &= case(options, route, round)?;
+      passed &= case(options, route, round).with_context(|| format!("workflow {route} round {round}"))?;
     }
   }
   Ok(passed)

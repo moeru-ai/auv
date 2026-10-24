@@ -20,6 +20,8 @@ and is documented in the
 | `cargo test --locked -p auv-base-evals --lib desktop_windows` | 13 passed, 0 failed (includes the workflow's bounded-CLI-timeout test `an_unresponsive_cli_cannot_wait_forever`, which spawns a real sleeping subprocess and asserts the 100 ms deadline) |
 | CLI surface the scenario drives (`serve --local-socket`, `run create/stop/get --outcome --endpoint --json`, `--run`, `invoke --no-overlay --store-root`, `input.scroll --settle-ms`) | verified present in the `739fe399` clap definitions |
 | `--observe-only` code review | sends no input: it stops after `window.capture` and two `screen.findText` calls; click, typing, scrolling, submit, the decoy control and pointer/foreground restoration are all unreachable in that mode |
+| Record contract: `functional_passed` semantics | `observation_passed`/`functional_passed` cover only the scenario body; the overall `passed` additionally requires the quiet tally, runner and fixture cleanup, and pointer/foreground restoration. Stated at the summary write site and in the platform README; consumers must gate on `passed` |
+| Record contract: setup failures | a fixture failure after `workflow.jsonl` is created writes a `setup_failed` entry plus a `passed: false` summary (cleanup semantics included), so the file always ends with an explicit outcome; global misconfigurations before the record exists still stop the run with a process error. Statically verified only |
 
 The runner route's daemon call chain was adapted to the current CLI surface:
 the daemon binds a per-run private named pipe via `serve --local-socket <name>`
