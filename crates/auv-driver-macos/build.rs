@@ -103,6 +103,16 @@ fn build_macos_native() {
 
   let mut command = Command::new("swiftc");
   configure_swift_target(&mut command);
+  // Apply Cargo's optimization profile to Swift compilation.
+  match env::var("OPT_LEVEL").as_deref() {
+    Ok("0") | Err(_) => {}
+    Ok("s" | "z") => {
+      command.arg("-Osize");
+    }
+    Ok(_) => {
+      command.arg("-O");
+    }
+  }
   command
     .arg("-emit-library")
     .arg("-static")

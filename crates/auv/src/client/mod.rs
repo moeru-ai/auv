@@ -139,6 +139,29 @@ impl Client {
     }
   }
 
+  /// Connects to one daemon endpoint (`unix://`, `npipe://` or `http://`),
+  /// presenting `credential` as a bearer when given: a launcher token on local
+  /// IPC, or a paired Device bearer. Mirrors the JS SDK `connect()`.
+  pub async fn connect(endpoint: &str, credential: Option<&str>) -> Result<Self, ContextError> {
+    Self::discover_with_credential(Some(endpoint), credential)
+      .await?
+      .ok_or_else(|| ContextError::Connect(format!("no AUV daemon at {endpoint}")))
+  }
+
+  /// Connects to the context's daemon presenting `credential`, such as the one
+  /// returned by [`crate::inherited_credential`]; without one this is
+  /// [`Self::from_context`].
+  pub async fn from_context_with_credential(context: AuvContext, credential: Option<&str>) -> Result<Self, PlacementError> {
+    let Some(credential) = credential else {
+      return Self::from_context(context).await;
+    };
+    validate_context_selectors(&context)?;
+    let endpoint = context.daemon_endpoint.clone().ok_or(ContextError::EndpointNotDiscovered)?;
+    let mut client = Self::connect(&endpoint, Some(credential)).await?;
+    client.context = Some(context);
+    Ok(client)
+  }
+
   /// Connects using one non-secret AUV context.
   pub async fn from_context(context: AuvContext) -> Result<Self, PlacementError> {
     Ok(Self::resolve_context(context).await?)
@@ -179,10 +202,21 @@ impl Client {
   /// A missing discovery descriptor is reported as `Ok(None)` so inventory
   /// interfaces can preserve their daemon-optional behavior.
   pub async fn discover(explicit: Option<&str>) -> Result<Option<Self>, ContextError> {
+    Self::discover_with_credential(explicit, None).await
+  }
+
+  /// Like [`Self::discover`], presenting `credential` as a bearer when given.
+  pub async fn discover_with_credential(explicit: Option<&str>, credential: Option<&str>) -> Result<Option<Self>, ContextError> {
     let Some(endpoint) = discovery::resolve(explicit)? else {
       return Ok(None);
     };
-    Ok(Some(Self::from_grpc(GrpcClient::connect(endpoint).await.map_err(|error| ContextError::Connect(error.to_string()))?)))
+    let grpc = match credential {
+      Some(credential) => {
+        GrpcClient::connect_with_credential(endpoint, credential).await.map_err(|error| ContextError::Connect(error.to_string()))?
+      }
+      None => GrpcClient::connect(endpoint).await.map_err(|error| ContextError::Connect(error.to_string()))?,
+    };
+    Ok(Some(Self::from_grpc(grpc)))
   }
 
   async fn resolve_context(mut context: AuvContext) -> Result<Self, ContextError> {

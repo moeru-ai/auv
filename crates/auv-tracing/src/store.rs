@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::artifact::DetachedArtifact;
 use crate::{
-  ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest, SpanId, TraceRecord,
+  ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest, SpanId, Timestamp,
+  TraceRecord,
 };
 
 #[cfg(feature = "file-store")]
@@ -16,7 +17,7 @@ mod file;
 mod memory;
 
 #[cfg(feature = "file-store")]
-pub use file::FileTracingStore;
+pub use file::{ENVELOPE_VERSION, FileTracingStore, RecordReadError, RecordReader, StoredRecord};
 #[cfg(feature = "memory-store")]
 pub use memory::MemoryTracingStore;
 
@@ -38,13 +39,22 @@ pub struct ArtifactRequest {
   expected_byte_length: ByteLength,
   expected_sha256: Sha256Digest,
   attributes: Attributes,
+  occurred_at: Timestamp,
 }
 
 impl ArtifactRequest {
-  pub(crate) fn from_detached(run_id: RunId, span_id: Option<SpanId>, artifact: DetachedArtifact) -> (Self, ArtifactBody) {
+  /// `submitted_at` stands in when the producer did not record when the
+  /// evidence occurred.
+  pub(crate) fn from_detached(
+    run_id: RunId,
+    span_id: Option<SpanId>,
+    submitted_at: Timestamp,
+    artifact: DetachedArtifact,
+  ) -> (Self, ArtifactBody) {
     let request = Self {
       run_id,
       span_id,
+      occurred_at: artifact.occurred_at.unwrap_or(submitted_at),
       artifact_id: artifact.artifact_id,
       purpose: artifact.purpose,
       content_type: artifact.content_type,
@@ -61,6 +71,9 @@ impl ArtifactRequest {
   }
   pub fn span_id(&self) -> Option<SpanId> {
     self.span_id
+  }
+  pub fn occurred_at(&self) -> Timestamp {
+    self.occurred_at
   }
   pub fn artifact_id(&self) -> ArtifactId {
     self.artifact_id
@@ -100,9 +113,10 @@ impl ArtifactRequest {
 /// A write-only destination for full-fidelity tracing records and artifacts.
 ///
 /// This port deliberately has no lookup, snapshot, cursor, subscription, or
-/// recovery API. Inspection is a separate read-side responsibility.
-// TODO(auv-inspector): read/index APIs stay omitted until the owner approves a
-// separate inspector contract over persisted trace data.
+/// recovery API. Inspection is a separate read-side responsibility: the file
+/// layout has its own sequential reader (`FileTracingStore::read_records`).
+// TODO(auv-inspector): indexes, cursors, and subscriptions stay omitted until
+// an inspector needs more than a sequential scan of one store.
 pub trait TracingStore: Send + Sync {
   /// Appends one record.
   fn write(&self, record: TraceRecord) -> BoxFuture<'_, Result<(), StoreError>>;

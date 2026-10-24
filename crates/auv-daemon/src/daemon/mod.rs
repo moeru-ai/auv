@@ -55,6 +55,7 @@ impl Daemon {
   pub(super) fn open_with_runner_providers_and_parent_endpoint(
     store_root: &Path,
     parent_endpoint: Option<String>,
+    parent_credential: Option<zeroize::Zeroizing<String>>,
     first_party_runners: runner_provider::FirstPartyRunnerRuntimes,
     runner_providers: Vec<runner_provider::RunnerProviderConfig>,
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))] device_entry: std::sync::Arc<crate::devices::LocalState>,
@@ -77,6 +78,7 @@ impl Daemon {
     let runners = RunnerSupervisor::with_providers(
       local_device.r#ref.clone().expect("local Device always has a ref"),
       parent_endpoint,
+      parent_credential,
       first_party_runners,
       runner_providers,
     )?;
@@ -131,6 +133,7 @@ impl Daemon {
       created_at: Some(timestamp_now()),
       completed_at: None,
     };
+    tracing::info!(run_id = %run_id, devices = run.devices.len(), "Run created");
     runs.insert(
       run_id,
       OwnedRun {
@@ -165,6 +168,7 @@ impl Daemon {
       keys.into_iter().filter_map(|key| affinities.remove(&key)).collect::<Vec<_>>()
     };
     self.runner_affinity_locks.lock().await.retain(|key, _| &key.caller != caller || key.run_id != run_id);
+    tracing::info!(run_id, outcome = ?outcome, released_runners = runner_ids.len(), "Run stopped");
     for runner_id in runner_ids {
       self.runners.release_run_affinity(&runner_id).await?;
     }

@@ -6,7 +6,7 @@ const DISPLAY_SERVICE: &str = "auv.api.driver.v1.DisplayService";
 
 impl RunnerSupervisor {
   fn new(local_device: daemon_proto::DeviceRef) -> Self {
-    Self::with_providers(local_device, None, FirstPartyRunnerRuntimes::default(), Vec::new())
+    Self::with_providers(local_device, None, None, FirstPartyRunnerRuntimes::default(), Vec::new())
       .expect("empty RunnerProvider configuration is valid")
   }
 }
@@ -61,7 +61,7 @@ async fn remote_grpc_runtime_connects_without_owning_the_endpoint_process() {
   .expect("remote provider");
   let provider = registry.get("example.runner.remote").expect("remote provider").clone();
 
-  let ready = spawn_ready(&provider, None).await.expect("connect remote Runner");
+  let ready = spawn_ready(&provider, None, "runner_test").await.expect("connect remote Runner");
   assert_eq!(ready.process_id, 0);
   let operation_channel = ready.channel.clone();
   let operation =
@@ -165,4 +165,42 @@ async fn final_activity_selects_ephemeral_stop_or_unless_idle_deadline() {
   let managed = runners.lock().expect("registry").remove("runner_test").expect("managed Runner");
   let mut managed = managed;
   stop_managed_in_place(&mut managed, None, true).await.expect("stop idle test Runner");
+}
+
+// ROOT CAUSE:
+//
+// The daemon adopted whichever process opened the Runner pipe first. Before
+// the fix, a local process watching `\\.\pipe\` could connect before the
+// spawned Runner, receive the daemon's requests, and block Runner startup.
+// The daemon now disconnects any client whose PID is not the spawned Runner.
+#[cfg(windows)]
+#[tokio::test]
+async fn runner_pipe_disconnects_a_client_that_is_not_the_spawned_runner() {
+  use tokio::io::AsyncReadExt as _;
+
+  let name = format!("auv-runner-test-{}", uuid::Uuid::now_v7());
+  let path = format!(r"\\.\pipe\{name}");
+  let pipe = auv_api_server::windows_pipe::create_owner_only(&path, true).unwrap();
+  let mut impostor = tokio::net::windows::named_pipe::ClientOptions::new().open(&path).unwrap();
+  // NamedPipeClientStream.Connect retries while the impostor holds the pipe.
+  let mut runner = tokio::process::Command::new("powershell")
+    .args([
+      "-NoProfile",
+      "-Command",
+      &format!("$p = New-Object IO.Pipes.NamedPipeClientStream('.', '{name}', 'InOut'); $p.Connect(20000); Start-Sleep 20"),
+    ])
+    .kill_on_drop(true)
+    .spawn()
+    .unwrap();
+
+  let accepted = tokio::time::timeout(std::time::Duration::from_secs(30), super::accept_runner_client(&path, pipe, runner.id().unwrap()))
+    .await
+    .expect("the spawned Runner was never accepted")
+    .unwrap();
+  assert_eq!(auv_api_server::windows_pipe::client_process_id(&accepted).unwrap(), runner.id().unwrap());
+
+  let mut buffer = [0u8; 1];
+  let impostor_read = tokio::time::timeout(std::time::Duration::from_secs(5), impostor.read(&mut buffer)).await;
+  assert!(matches!(impostor_read, Ok(Ok(0) | Err(_))), "the impostor stayed connected");
+  let _ = runner.kill().await;
 }

@@ -7,9 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **76**
-
-- [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
+Count: **80**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -98,6 +96,11 @@ Count: **76**
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 - [`2026-10-14-osu-phase0-s1a-report.md`](2026-10-14-osu-phase0-s1a-report.md): osu! Windows 注入基准与即兴演奏器 Phase 0（执行器骨架、高精度 QPC 混合自旋、P99 0.525ms <= 16.6ms 门禁、50/50 边缘对账）与 S1 Part A（真实谱面 Tear Rain Normal 独立官方对账、4ms 轨迹与交替按键计划合成）验证报告。
+- [`2026-10-19-linux-portal-eis-input.md`](2026-10-19-linux-portal-eis-input.md): Linux RemoteDesktop portal input through EIS (absolute pointer, buttons, discrete scroll, compositor XKB keyboard), the held-button deadline regression in the shared mouse coordinator and its fix, live GNOME Wayland evidence, and the ablation results.
+- [`2026-10-20-linux-window-list-latency.md`](2026-10-20-linux-window-list-latency.md): `window.list` stage-walk latency (17,289 a11y calls, 9 s) reduced to 683 calls by gating the GNOME Shell origin repair and walking both window containers; measurements, ablation, boundaries, and the remaining bounds-only-walk TODO.
+- [`2026-10-20-linux-live-desktop-matrix.md`](2026-10-20-linux-live-desktop-matrix.md): live Linux desktop evidence behind the matrix cells: window list/capture/findText, display capture fallback, PaperWM and occlusion boundaries.
+- [`2026-10-20-linux-window-text-ocr.md`](2026-10-20-linux-window-text-ocr.md): `window.findText` and `window.waitForText` wired on Linux through AT-SPI resolve, display crop, and Tesseract; visible-area and PaperWM boundaries, no support-matrix claim.
+- [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
 
 
 ## Related

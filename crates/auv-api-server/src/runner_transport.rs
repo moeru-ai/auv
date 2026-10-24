@@ -207,10 +207,22 @@ pub fn inherited_transport() -> Result<InheritedTransport, String> {
 /// Opens the private named pipe created by the parent daemon.
 #[cfg(windows)]
 pub fn inherited_transport() -> Result<InheritedTransport, String> {
+  const ERROR_PIPE_BUSY: i32 = 231;
   let pipe = std::env::var_os(RUNNER_IPC_PIPE_ENV).ok_or_else(|| format!("{RUNNER_IPC_PIPE_ENV} is required"))?;
-  let stream = tokio::net::windows::named_pipe::ClientOptions::new()
-    .open(&pipe)
-    .map_err(|error| format!("failed to open inherited Runner named pipe {}: {error}", std::path::Path::new(&pipe).display()))?;
+  // Another process can briefly hold the only instance before the daemon
+  // drops it and offers a new one, so a busy pipe is retried, not fatal.
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+  let stream = loop {
+    match tokio::net::windows::named_pipe::ClientOptions::new().open(&pipe) {
+      Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) && std::time::Instant::now() < deadline => {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+      }
+      result => {
+        break result
+          .map_err(|error| format!("failed to open inherited Runner named pipe {}: {error}", std::path::Path::new(&pipe).display()))?;
+      }
+    }
+  };
   let (disconnected, parent_disconnected) = tokio::sync::oneshot::channel();
   Ok(InheritedTransport {
     stream: InheritedStream {

@@ -26,11 +26,11 @@ pub use event::{EventPayload, EventSchema, JsonPayload, JsonPayloadError};
 pub use image::{ImageArtifactError, ImageResolution, image_artifact};
 pub use propagation::{PropagationError, RemoteContext, TextMapReader, TextMapWriter, extract};
 pub use record::TraceRecord;
-#[cfg(feature = "file-store")]
-pub use store::FileTracingStore;
 #[cfg(feature = "memory-store")]
 pub use store::MemoryTracingStore;
 pub use store::{ArtifactBody, ArtifactRequest, BoxFuture, StoreError, TracingStore};
+#[cfg(feature = "file-store")]
+pub use store::{FileTracingStore, RecordReadError, RecordReader, StoredRecord};
 pub use telemetry::{DispatchErrorReporter, ExportError, TraceExporter};
 pub use value::{
   ArtifactId, ArtifactPurpose, AttributeValue, Attributes, ByteLength, ContentType, ErrorCode, EventId, EventName, FiniteF64, RunId,

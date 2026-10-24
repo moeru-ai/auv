@@ -17,6 +17,7 @@ pub mod registry;
 pub mod render;
 pub mod runner;
 pub mod support;
+pub mod trace;
 
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{

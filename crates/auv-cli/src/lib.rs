@@ -5,5 +5,6 @@
 
 pub mod cli;
 pub mod commands;
+mod logging;
 pub mod runner;
 pub mod xtask;

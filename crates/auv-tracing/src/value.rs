@@ -81,6 +81,20 @@ macro_rules! uuid_id {
 }
 
 uuid_id!(RunId, "Identifies one explicit AUV run scope.");
+
+impl RunId {
+  /// Projects a daemon Run id onto its tracing Run identity.
+  ///
+  /// Daemon Run ids are UUIDs written as 32 hex digits (older stores add a
+  /// `run_` prefix); trace records use the canonical hyphenated form of the
+  /// same UUID, so a Run's daemon id and trace id name one Run.
+  // TODO(resource-id-migration): drop the `run_` prefix once old control
+  // stores no longer expose prefixed Run ids.
+  pub fn from_daemon_run_id(value: &str) -> Result<Self, ValidationError> {
+    let value = value.strip_prefix("run_").unwrap_or(value);
+    Self::from_uuid(Uuid::parse_str(value).map_err(|_| ValidationError::new("Run id must be a UUID"))?)
+  }
+}
 uuid_id!(SpanId, "Identifies a span within a run.");
 uuid_id!(EventId, "Identifies an immutable event within a run.");
 uuid_id!(ArtifactId, "Identifies an artifact within a run.");
@@ -267,6 +281,18 @@ impl Timestamp {
     })
   }
 
+  /// Reads the system clock.
+  ///
+  /// Records from different processes are ordered by this wall clock, so
+  /// cross-process order is only as good as the hosts' clock agreement.
+  pub fn now() -> Result<Self, ValidationError> {
+    let duration = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map_err(|_| ValidationError::new("system clock is before the Unix epoch"))?;
+    let seconds = i64::try_from(duration.as_secs()).map_err(|_| ValidationError::new("system clock is out of range"))?;
+    Self::new(seconds, duration.subsec_nanos())
+  }
+
   /// Returns whole Unix seconds.
   pub fn unix_seconds(self) -> i64 {
     self.unix_seconds
@@ -349,7 +375,13 @@ impl<'de> Deserialize<'de> for AttributeValue {
   where
     D: Deserializer<'de>,
   {
-    let raw = Box::<RawValue>::deserialize(deserializer)?;
+    // NOTICE(json-payload-tagged-read): attributes sit inside the internally
+    // tagged `TraceRecord`, whose buffered fields cannot yield a `RawValue`.
+    // With `arbitrary_precision`, a `Value` keeps the number lexeme, so the
+    // integer/float distinction below survives the detour.
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let text = serde_json::to_string(&value).map_err(de::Error::custom)?;
+    let raw = RawValue::from_string(text).map_err(de::Error::custom)?;
     attribute_value_from_raw(&raw).map_err(de::Error::custom)
   }
 }

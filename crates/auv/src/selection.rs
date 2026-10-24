@@ -3,12 +3,37 @@
 /// Root resource selectors shared by command-like interface adapters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RootSelection {
+  /// Bearer presented to the daemon: a launcher token or a paired Device
+  /// bearer. Never part of the non-secret `AuvContext`.
+  pub credential: Option<Credential>,
   /// Exact Device name selector.
   pub device_name: Option<String>,
   /// Device ID-prefix selector.
   pub device_id: Option<String>,
   /// Run ID-prefix selector.
   pub run_id: Option<String>,
+}
+
+/// Secret bearer text whose `Debug` output is redacted.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Credential(zeroize::Zeroizing<String>);
+
+impl Credential {
+  /// Wraps a launcher token or paired Device bearer.
+  pub fn new(value: String) -> Self {
+    Self(zeroize::Zeroizing::new(value))
+  }
+
+  /// The secret text to present as `authorization: Bearer`.
+  pub fn expose(&self) -> &str {
+    &self.0
+  }
+}
+
+impl std::fmt::Debug for Credential {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter.write_str("Credential([REDACTED])")
+  }
 }
 
 /// Canonical resources resolved from a root selection.
@@ -88,7 +113,14 @@ impl crate::Client {
     endpoint: Option<&str>,
     selection: &RootSelection,
   ) -> Result<Option<(Self, ResolvedSelection)>, SelectedClientError> {
-    let client = if selection.is_empty() {
+    let client = if let Some(credential) = &selection.credential {
+      // A credential names one daemon; Device and Run selectors resolve
+      // against it instead of searching paired profiles.
+      let Some(client) = Self::discover_with_credential(endpoint, Some(credential.expose())).await? else {
+        return Ok(None);
+      };
+      client
+    } else if selection.is_empty() {
       let Some(client) = Self::discover(endpoint).await? else {
         return Ok(None);
       };

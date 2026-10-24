@@ -53,7 +53,7 @@ export interface DeviceSummary {
 export interface SavedConnection {
   /** Reconnect on the next page load; cleared by an explicit disconnect. */
   autoConnect: boolean
-  /** Paired Device credential; absent for a local loopback daemon without a pairing store. */
+  /** Paired Device credential; absent only in connections saved before pairing was required. */
   credential?: string
   endpoint: string
   id: string

@@ -36,10 +36,10 @@ async fn paired_profile_uses_short_token_bearer_without_pki() {
     Command::new(env!("CARGO_BIN_EXE_auv"))
       .args([
         "serve",
-        "--listen",
-        &format!("unix://{}", socket.display()),
-        "--listen",
-        &format!("http://127.0.0.1:{port}"),
+        "--local-socket",
+        socket.to_str().unwrap(),
+        "--remote-bind",
+        &format!("127.0.0.1:{port}"),
         "--pairing-store",
         pairing_path.to_str().unwrap(),
         "--store-root",

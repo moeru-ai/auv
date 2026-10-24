@@ -8,18 +8,21 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+/// Splits test listeners into the local and remote sides. Local callers are
+/// admitted as the OS user so routing tests need no launcher token.
 fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
-  Config {
-    id: None,
-    listeners,
-    store_root: root.join("store"),
-    pairing_store: root.join("pairings.json"),
-    discovery_file: None,
-    register: false,
-    daemon_idle_timeout: None,
-    runner_providers: Vec::new(),
-    first_party_runners: Default::default(),
+  let mut local = LocalListener::new().unwrap().allowed_auth_methods([auv_api_server::LocalAuthMethod::OsUser]);
+  let mut remote = RemoteListener::new();
+  for listener in listeners {
+    match listener {
+      ListenEndpoint::Remote { host, port } => remote = remote.bind(std::net::SocketAddr::new(host.parse().unwrap(), port)),
+      #[cfg(unix)]
+      ListenEndpoint::Unix { path } => local = local.bind_unix(path),
+      #[cfg(windows)]
+      ListenEndpoint::NamedPipe { name } => local = local.bind_named_pipe(name),
+    }
   }
+  Config::new(root.join("store")).unwrap().pairing_store(root.join("pairings.json")).local(local).remote(remote)
 }
 
 /// Paired TCP listener on an ephemeral loopback port. HTTP never treats
@@ -1163,4 +1166,100 @@ async fn health_identifies_each_daemon_instance_across_protocols_and_listeners()
   }
   assert_ne!(ids[0], ids[1]);
   assert_eq!(ids[2], explicit);
+}
+
+// ROOT CAUSE:
+//
+// `Config` had no defaults and Rust clients could not send a credential on
+// local IPC, so every embedder chose `owner_key: None` and admitted every
+// process of the OS user. `Config::new` now defaults to LauncherOnly, and
+// `owner_connection` plus `auv::Client::connect` reach the daemon with it.
+#[tokio::test]
+async fn embedded_daemon_defaults_to_launcher_only_and_its_owner_connects() {
+  let root = tempfile::tempdir().unwrap();
+  let server = Server::bind(Config::new(root.path().join("store")).unwrap()).await.unwrap();
+  let owner = server.owner_connection().expect("private owner listener");
+  let credential = owner.credential.clone().expect("LauncherOnly token");
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  let stranger = GrpcClient::connect(owner.endpoint.parse().unwrap()).await.unwrap();
+  let rejected = stranger.devices().list_devices().await.unwrap_err();
+  assert_eq!(rejected.code(), tonic::Code::Unauthenticated, "{rejected:?}");
+
+  let client = auv::Client::connect(&owner.endpoint, Some(&credential)).await.unwrap();
+  assert!(client.devices().list().await.unwrap().iter().any(|device| device.local));
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
+#[test]
+fn config_new_fills_cli_matching_defaults() {
+  let config = Config::new("/tmp/auv-store").unwrap();
+  assert_eq!(config.pairing_store, std::path::Path::new("/tmp/auv-store/pairings.json"));
+  assert!(!config.register);
+  assert!(matches!(config.local.allowed_auth_methods[..], [auv_api_server::LocalAuthMethod::LauncherToken(_)]));
+  assert!(config.local.endpoints.is_empty() && config.remote.endpoints.is_empty());
+}
+
+// An app exposing its daemon to other local apps pairs each one. The paired
+// app reaches the owner socket with its own revocable bearer but cannot mint
+// further pairing tokens; callers with no credential stay rejected.
+#[cfg(unix)]
+#[tokio::test]
+async fn launcher_and_paired_admits_paired_apps_on_local_ipc() {
+  use auv_api_proto::auv::api::daemon::v1::pairing_service_client::PairingServiceClient;
+
+  let root = tempfile::tempdir().unwrap();
+  let token = auv_api_server::LauncherToken::generate().unwrap();
+  let local = LocalListener::new().unwrap().allowed_auth_methods([
+    auv_api_server::LocalAuthMethod::LauncherToken(token),
+    auv_api_server::LocalAuthMethod::PairedDevice,
+  ]);
+  let config = Config::new(root.path().join("store")).unwrap().local(local);
+  let server = Server::bind(config).await.unwrap();
+  let owner = server.owner_connection().unwrap();
+  let launcher = owner.credential.clone().unwrap();
+  let BoundEndpoint::Unix(socket) = server.endpoint().clone() else {
+    panic!("owner Unix endpoint")
+  };
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  let launcher_client = auv::Client::connect(&owner.endpoint, Some(&launcher)).await.unwrap();
+  let pairing_token = launcher_client.pairing().create_token(None).await.unwrap();
+  let channel = tonic::transport::Endpoint::from_static("http://localhost")
+    .connect_with_connector(tower::service_fn(move |_: http::Uri| {
+      let socket = socket.clone();
+      async move { tokio::net::UnixStream::connect(socket).await.map(hyper_util::rt::TokioIo::new) }
+    }))
+    .await
+    .unwrap();
+  let bearer = PairingServiceClient::new(channel)
+    .pair_device(proto::PairDeviceRequest {
+      token: pairing_token,
+      device_id: "other-app".into(),
+      label: "Other app".into(),
+    })
+    .await
+    .unwrap()
+    .into_inner()
+    .device_credential;
+
+  let paired = auv::Client::connect(&owner.endpoint, Some(&bearer)).await.unwrap();
+  assert!(!paired.devices().list().await.unwrap().is_empty());
+  let minted = GrpcClient::connect_with_credential(owner.endpoint.parse().unwrap(), &bearer)
+    .await
+    .unwrap()
+    .pairing()
+    .create_pairing_token(proto::CreatePairingTokenRequest { ttl: None })
+    .await
+    .unwrap_err();
+  assert_eq!(minted.code(), tonic::Code::PermissionDenied, "{minted:?}");
+  let stranger = GrpcClient::connect(owner.endpoint.parse().unwrap()).await.unwrap().devices().list_devices().await.unwrap_err();
+  assert_eq!(stranger.code(), tonic::Code::Unauthenticated, "{stranger:?}");
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
 }

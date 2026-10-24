@@ -21,7 +21,7 @@ const LOCAL_IPC_ORIGIN: &str = "http://localhost";
 pub(crate) struct RunnerSupervisor {
   providers: RunnerProviderRegistry,
   local_device: daemon_proto::DeviceRef,
-  parent_context: Option<String>,
+  parent_context: Option<ParentContext>,
   runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
   activity_changed: Arc<Notify>,
 }
@@ -79,6 +79,7 @@ impl RunnerSupervisor {
   pub(crate) fn with_providers(
     local_device: daemon_proto::DeviceRef,
     parent_endpoint: Option<String>,
+    parent_credential: Option<zeroize::Zeroizing<String>>,
     first_party: FirstPartyRunnerRuntimes,
     custom: Vec<RunnerProviderConfig>,
   ) -> Result<Self, String> {
@@ -88,6 +89,10 @@ impl RunnerSupervisor {
           "device_id": local_device.device_id.clone(),
           "daemon_endpoint": daemon_endpoint,
         }))
+        .map(|context| ParentContext {
+          context,
+          credential: parent_credential,
+        })
       })
       .transpose()
       .map_err(|error| format!("failed to encode Runner parent AUV_CONTEXT: {error}"))?;
@@ -122,10 +127,14 @@ impl RunnerSupervisor {
       daemon_proto::RunnerLifecycle::Unspecified => return Err(RunnerError::InvalidArgument("runner lifecycle is required")),
     }
     let runner_id = crate::resource_id::generate().map_err(RunnerError::Start)?;
-    let ready = match spawn_ready(&provider, self.parent_context.as_deref()).await {
+    let ready = match spawn_ready(&provider, self.parent_context.as_ref(), &runner_id).await {
       Ok(ready) => ready,
-      Err(error) => return Err(error),
+      Err(error) => {
+        tracing::warn!(runner_id = %runner_id, runner_class, %error, "Runner failed to start");
+        return Err(error);
+      }
     };
+    tracing::info!(runner_id = %runner_id, runner_class, process_id = ready.process_id, lifecycle = ?lifecycle, "Runner started");
     let mut labels = ready.labels.clone();
     labels.extend(request.labels);
     let record = daemon_proto::Runner {
@@ -442,7 +451,10 @@ fn schedule_idle_stop(
       should_stop.then(|| runners.remove(&runner_id)).flatten()
     };
     if let Some(managed) = managed {
-      let _ = stop_managed(managed).await;
+      tracing::info!(runner_id = %runner_id, idle_seconds = timeout.as_secs(), "stopping idle Runner");
+      if let Err(error) = stop_managed(managed).await {
+        tracing::warn!(runner_id = %runner_id, %error, "idle Runner did not stop cleanly");
+      }
     }
   });
 }
@@ -481,6 +493,7 @@ async fn stop_managed_in_place(managed: &mut ManagedRunner, deadline: Option<tok
     }
   }
   managed.record.phase = daemon_proto::RunnerPhase::Stopped as i32;
+  tracing::info!(runner_id = runner_id(&managed.record), force, "Runner stopped");
   Ok(())
 }
 
@@ -492,10 +505,45 @@ async fn terminate_child(child: &mut Child) -> Result<(), RunnerError> {
   Ok(())
 }
 
+/// What a Runner needs to call its daemon back.
+pub(crate) struct ParentContext {
+  /// Non-secret `AUV_CONTEXT` JSON naming the daemon endpoint and Device.
+  context: String,
+  /// Launcher token for a launcher-policy daemon, sent over the Runner's
+  /// stdin because other processes of the same user can read the environment.
+  credential: Option<zeroize::Zeroizing<String>>,
+}
+
+fn configure_parent(command: &mut tokio::process::Command, parent_context: Option<&ParentContext>) {
+  command.stdin(std::process::Stdio::null());
+  let Some(parent_context) = parent_context else {
+    return;
+  };
+  command.env("AUV_CONTEXT", &parent_context.context);
+  if parent_context.credential.is_some() {
+    command.env(auv::CREDENTIAL_STDIN_ENV, "1").stdin(std::process::Stdio::piped());
+  }
+}
+
+/// A Runner that never reads its stdin leaves the line in the pipe buffer; one
+/// that already exited fails the write, and its startup error surfaces later.
+async fn send_parent_credential(child: &mut tokio::process::Child, parent_context: Option<&ParentContext>) {
+  use tokio::io::AsyncWriteExt as _;
+  let (Some(credential), Some(mut stdin)) = (parent_context.and_then(|parent| parent.credential.as_ref()), child.stdin.take()) else {
+    return;
+  };
+  let _ = stdin.write_all(credential.as_bytes()).await;
+  let _ = stdin.write_all(b"\n").await;
+}
+
 #[cfg(unix)]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  parent_context: Option<&ParentContext>,
+  runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
-    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context).await,
+    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context, runner_id).await,
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
   }
 }
@@ -504,7 +552,8 @@ async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option
 async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
+  runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
   use std::os::fd::AsRawFd;
 
@@ -521,13 +570,11 @@ async fn spawn_executable_ready(
     // The daemon owns this value. Never let a stale context inherited by the
     // daemon or supplied by a provider manifest redirect child delegation.
     .env_remove("AUV_CONTEXT")
+    .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env("AUV_RUNNER_IPC_FD", "3")
-    .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
-  if let Some(parent_context) = parent_context {
-    command.env("AUV_CONTEXT", parent_context);
-  }
+  configure_parent(&mut command, parent_context);
   if let Some(working_directory) = &runtime.working_directory {
     command.current_dir(working_directory);
   }
@@ -546,6 +593,7 @@ async fn spawn_executable_ready(
     });
   }
   let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  send_parent_credential(&mut child, parent_context).await;
   drop(child_stream);
   let stream = tokio::net::UnixStream::from_std(parent).map_err(|error| RunnerError::Start(error.to_string()))?;
   let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(stream)));
@@ -588,9 +636,13 @@ async fn spawn_executable_ready(
 }
 
 #[cfg(windows)]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  parent_context: Option<&ParentContext>,
+  runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
-    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context).await,
+    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context, runner_id).await,
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
   }
 }
@@ -599,15 +651,11 @@ async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option
 async fn spawn_executable_ready(
   provider: &RegisteredRunnerProvider,
   runtime: &super::runner_provider::ExecutableRunnerRuntime,
-  parent_context: Option<&str>,
+  parent_context: Option<&ParentContext>,
+  runner_id: &str,
 ) -> Result<ReadyRunner, RunnerError> {
-  use tokio::net::windows::named_pipe::ServerOptions;
-
   let pipe_name = format!(r"\\.\pipe\auv-runner-{}", uuid::Uuid::now_v7());
-  let pipe = ServerOptions::new()
-    .first_pipe_instance(true)
-    .reject_remote_clients(true)
-    .create(&pipe_name)
+  let pipe = auv_api_server::windows_pipe::create_owner_only(&pipe_name, true)
     .map_err(|error| RunnerError::Start(format!("failed to create Runner named pipe: {error}")))?;
   let mut command = tokio::process::Command::new(&runtime.executable);
   command
@@ -616,28 +664,36 @@ async fn spawn_executable_ready(
     // the daemon host while keeping AUV-owned routing values authoritative.
     .envs(&runtime.environment)
     .env_remove("AUV_CONTEXT")
+    .env(super::runner_provider::RUNNER_ID_ENV, runner_id)
     .env(auv_api_server::runner_transport::RUNNER_IPC_PIPE_ENV, &pipe_name)
-    .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::inherit());
-  if let Some(parent_context) = parent_context {
-    command.env("AUV_CONTEXT", parent_context);
-  }
+  configure_parent(&mut command, parent_context);
   if let Some(working_directory) = &runtime.working_directory {
     command.current_dir(working_directory);
   }
   let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  send_parent_credential(&mut child, parent_context).await;
+  let Some(runner_process_id) = child.id() else {
+    let _ = terminate_child(&mut child).await;
+    return Err(RunnerError::Start("Runner process omitted its PID".to_string()));
+  };
   let connected = tokio::select! {
-    result = pipe.connect() => result.map_err(|error| RunnerError::Start(format!("failed to connect Runner named pipe: {error}"))),
+    result = accept_runner_client(&pipe_name, pipe, runner_process_id) => {
+      result.map_err(|error| RunnerError::Start(format!("failed to connect Runner named pipe: {error}")))
+    }
     result = child.wait() => {
       let status = result.map_err(|error| RunnerError::Start(error.to_string()))?;
       Err(RunnerError::Start(format!("Runner process exited before connecting to its named pipe: {status}")))
     }
   };
-  if let Err(error) = connected {
-    let _ = terminate_child(&mut child).await;
-    return Err(error);
-  }
+  let pipe = match connected {
+    Ok(pipe) => pipe,
+    Err(error) => {
+      let _ = terminate_child(&mut child).await;
+      return Err(error);
+    }
+  };
   let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(pipe)));
   let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
   let connect = endpoint.connect_with_connector(tower::service_fn(move |_: http::Uri| {
@@ -675,8 +731,33 @@ async fn spawn_executable_ready(
   })
 }
 
+/// Waits for the spawned Runner to open its pipe. The owner-only DACL keeps
+/// other users out; a same-user process that connects first is dropped
+/// instead of being adopted as the Runner.
+#[cfg(windows)]
+async fn accept_runner_client(
+  path: &str,
+  mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
+  runner_process_id: u32,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+  loop {
+    pipe.connect().await?;
+    if auv_api_server::windows_pipe::client_process_id(&pipe)? == runner_process_id {
+      return Ok(pipe);
+    }
+    // A fresh instance replaces the impostor's: a disconnected Tokio pipe
+    // keeps the old client's I/O state. Creating it before dropping the old
+    // one keeps the name from becoming free for another process to claim.
+    pipe = auv_api_server::windows_pipe::create_owner_only(path, false)?;
+  }
+}
+
 #[cfg(not(any(unix, windows)))]
-async fn spawn_ready(provider: &RegisteredRunnerProvider, _parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+async fn spawn_ready(
+  provider: &RegisteredRunnerProvider,
+  _parent_context: Option<&ParentContext>,
+  _runner_id: &str,
+) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
     RunnerRuntime::Executable(_) => Err(RunnerError::Start("executable Runner IPC is not supported on this platform".to_string())),
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
@@ -726,9 +807,13 @@ async fn validate_ready(channel: Channel, provider: &RegisteredRunnerProvider) -
 }
 
 fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
-  for managed in runners.values_mut() {
+  for (runner_id, managed) in runners.iter_mut() {
+    let exit_status = match &mut managed.runtime {
+      ManagedRunnerRuntime::Executable { child } => child.try_wait().ok().flatten(),
+      ManagedRunnerRuntime::RemoteGrpc => None,
+    };
     let exited = match &mut managed.runtime {
-      ManagedRunnerRuntime::Executable { child } => child.try_wait().ok().flatten().is_some(),
+      ManagedRunnerRuntime::Executable { .. } => exit_status.is_some(),
       // TODO(remote-runner-watch-status): consume WatchStatus and health
       // transitions once retry/backoff and failure evidence semantics are
       // approved. Ordinary RPCs already surface endpoint unavailability.
@@ -740,6 +825,12 @@ fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
       // Automatic restart/backoff is deferred until the owner approves
       // attempt limits, crash-loop visibility, and Run-affinity reassignment.
       managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
+      tracing::warn!(
+        runner_id = %runner_id,
+        process_id = managed.record.process_id,
+        status = ?exit_status,
+        "Runner exited while ready; see its runner-<id> log"
+      );
     }
   }
 }

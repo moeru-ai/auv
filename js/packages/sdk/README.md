@@ -64,7 +64,7 @@ uses opaque Protobuf payloads. If an error occurs, it is available as
 
 ### Connect through Unix socket / Named pipe (for Windows)
 
-Since if no `--listen` specified when bootstrapping AUV daemon, by default it listens on a Unix socket or Windows named pipe. The SDK can connect to that socket or pipe directly without HTTP or WebSocket overhead:
+Without `--local-socket`, the AUV daemon listens on its own Unix socket or Windows named pipe. The SDK can connect to that socket or pipe directly without HTTP or WebSocket overhead:
 
 ```ts
 import { connect, createAuv, createUnixSocketTransport } from 'auv-js/node'
@@ -77,13 +77,78 @@ const auv = createAuv(connection)
 
 Yet if needed, gRPC can be connected too through `createGrpcTransport`.
 
+### Connect to the daemon started by `auv serve`
+
+`connect({ discover: true })` finds the daemon in the same order as the `auv`
+CLI:
+
+1. the `endpoint` option
+2. the `AUV_ENDPOINT` environment variable
+3. the descriptor file that `auv serve` writes
+
+The default descriptor path is:
+
+- macOS: `~/Library/Application Support/ai.moeru.auv/api-server.json`
+- Linux: `$XDG_STATE_HOME/auv/api-server.json`, or `~/.local/state/auv/api-server.json`
+- Windows: `%LOCALAPPDATA%\moeru\auv\data\api-server.json`
+
+Set `AUV_DISCOVERY_FILE` to use a different path. The endpoint selects the
+transport (`unix://` → Unix socket, `npipe://` → named pipe, `http://` → gRPC),
+so do not also pass `transport`. If no daemon is found, `connect` rejects with
+`AuvConfigurationError`.
+
+```ts
+import { connect, createAuv } from 'auv-js/node'
+
+const connection = await connect({ discover: true })
+const auv = createAuv(connection)
+```
+
+Without `discover`, `connect()` keeps its default HTTP endpoint. Use
+`discoverEndpoint()` to resolve the endpoint without connecting; it returns
+`undefined` when no daemon is published.
+
 ### Connect and start the daemon
 
 Call `startAuv()` once for the lifetime of your Node.js or Electron host, then
 reuse its connection and `createAuv(connection)` client. Each `startAuv()` call
 starts a new app-owned process; it does not discover or attach to another daemon.
-Starting on an occupied endpoint fails. To use a daemon owned by another host,
-call `connect({ endpoint, transport, local })` and close only that connection.
+The daemon also shuts down when the host exits without calling `daemon.stop()`,
+for example after a crash or `kill -9`. Starting on an occupied endpoint fails.
+To use a daemon owned by another host, call
+`connect({ endpoint, transport, local })` and close only that connection.
+
+`local.auth.allowedMethods` decides how local callers of the Unix socket or
+named pipe may prove themselves. The default, `['launcher-token']`, generates a
+launcher token for each launch and sends it to the daemon over stdin. The
+daemon rejects local callers without it, including other processes of the same
+OS user that find the socket or pipe path in `ps`; without the token, they
+cannot use the screen or input permissions granted to your app.
+`daemon.connect()` presents the token for you, and
+`daemon.connectionOptions.credential` holds it for connections you open
+yourself. Hand it only to processes that should control this daemon, and never
+through argv or environment variables, which other processes of the same user
+can read.
+
+To let other apps on the machine use your daemon, allow
+`['launcher-token', 'paired-device']`. Issue each app a token with
+`createPairingToken(owner)`; the app calls `pairDevice` on the same endpoint and
+from then on presents its own Device bearer, which you can revoke on its own.
+Paired apps cannot issue further tokens. Allow `'os-user'` only when every
+process of the user should share the daemon. `startAuv()` does not register the
+daemon as the default local daemon unless you pass `noRegister: false` or a
+`discoveryFile`.
+
+```ts
+const daemon = await startAuv({
+  local: { auth: { allowedMethods: ['launcher-token', 'paired-device'] } },
+  remote: { auth: { allowedMethods: ['paired-device'] }, listen: [{ host: '127.0.0.1', port: 9847 }] },
+})
+```
+
+`local.listen` and `remote.listen` follow `net.ListenOptions`: `{ path }` for
+a Unix socket or `\\.\pipe\NAME`, and `{ host, port }` for TCP. Remote callers
+always present a paired Device bearer, including on loopback.
 
 `await checkHealth(connection)` and `await auv.health.check()` return
 `{ id, status: 'serving' }`. The same daemon reports the same `id` on every
@@ -106,8 +171,7 @@ import { app } from 'electron'
 
 const daemon = await startAuv({
   binaryPath: join(process.resourcesPath, 'bin', 'auv'),
-  listeners: ['http://127.0.0.1:9847'],
-  noRegister: true,
+  remote: { listen: [{ host: '127.0.0.1', port: 9847 }] },
   storeRoot: join(app.getPath('userData'), 'auv'),
 })
 
@@ -205,9 +269,16 @@ const displays = await auv
   .list()
 ```
 
+If the context has no `daemon_endpoint`, `connectFromContext` uses the same
+discovery as `connect({ discover: true })`. A context that names a Device or Run
+without `daemon_endpoint` still rejects; the SDK does not yet search paired
+profiles for it.
+
 > [!NOTE]
 >
 > `AUV_CONTEXT` never contains credentials. If it names a `config_profile`, the application must pass that profile's credential explicitly to `connectFromContext`; JavaScript profile-store lookup remains intentionally outside the SDK until credential persistence has an approved shared owner.
+>
+> A daemon started with a launcher policy sends each Runner its launcher token on stdin and sets `AUV_CREDENTIAL_STDIN=1`. Read it with `inheritedCredential()` before anything else reads stdin and pass it to `connectFromContext(context, { credential })`. A parent can hand any child process a credential the same way.
 
 ### Selecting a Device
 

@@ -17,18 +17,22 @@ use tonic::{Code, Status};
 use tower::ServiceExt as _;
 
 use crate::authentication::Authenticator;
-use crate::control::{Control, RunnerRoute};
+use crate::control::{CallerId, Control, RunnerRoute};
 use crate::protocol::grpc::status::map_control_error;
 
 /// Serves exactly one operation on an upgraded browser connection.
-pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authenticator: Authenticator) {
+pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authenticator: Authenticator, upgraded_caller: Option<CallerId>) {
   let (mut outgoing, mut incoming) = socket.split();
 
   let result = async {
     let open = receive_open(&mut incoming).await?;
-    // NOTICE(websocket-authentication): The browser credential is part of the
-    // Open message, so HTTP request middleware cannot authenticate this session.
-    let caller = authenticator.authenticate_websocket(&open.credential)?;
+    // NOTICE(websocket-authentication): A browser credential arrives in the
+    // Open message, so remote sessions authenticate here. A local upgrade
+    // already has its caller; re-deriving it would ignore the method used.
+    let caller = match upgraded_caller {
+      Some(caller) => caller,
+      None => authenticator.authenticate_websocket(&open.credential)?,
+    };
     let operation = daemon
       .admit_routed_channel(
         &caller,
@@ -47,7 +51,9 @@ pub(crate) async fn serve(socket: WebSocket, daemon: Arc<dyn Control>, authentic
 
     let (input, body) = grpc_input_body();
     let mut input_task = tokio::spawn(forward_input(incoming, input));
-    let request = grpc_request(&open.service, &open.method, body)?;
+    let mut request = grpc_request(&open.service, &open.method, body)?;
+    // A browser Open message carries no trace fields; the routed Run supplies them.
+    crate::server::trace_context::forward(request.headers_mut(), open.run_id.as_deref())?;
     let response = tokio::select! {
       response = operation.channel.oneshot(request) => {
         response.map_err(|error| Status::unavailable(format!("Runner transport failed: {error}")))?

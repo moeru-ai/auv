@@ -9,6 +9,7 @@
 //! - `termination`: termination signals that start a graceful shutdown.
 
 mod authentication;
+pub use authentication::{LauncherToken, LocalAuthMethod, RemoteAuthMethod, validate_local_auth_methods, validate_remote_auth_methods};
 pub mod control;
 pub mod device_local;
 pub mod method_docs;
@@ -19,3 +20,5 @@ mod rest;
 pub mod runner_transport;
 pub mod server;
 pub mod termination;
+#[cfg(windows)]
+pub mod windows_pipe;

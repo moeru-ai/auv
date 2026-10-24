@@ -28,8 +28,35 @@ impl AuvContext {
   }
 }
 
+/// Set by the daemon on a Runner whose stdin carries the daemon credential.
+pub const CREDENTIAL_STDIN_ENV: &str = "AUV_CREDENTIAL_STDIN";
+
+/// The credential a daemon handed this Runner on its stdin, read once per
+/// process. `None` when the daemon sent none. Call it before anything else
+/// reads stdin, then pass it to [`crate::Client::from_context_with_credential`].
+/// The daemon uses stdin because other processes of the same user can read
+/// the environment, where `AUV_CONTEXT` lives.
+pub fn inherited_credential() -> Result<Option<crate::selection::Credential>, ContextError> {
+  static CREDENTIAL: std::sync::Mutex<Option<Option<crate::selection::Credential>>> = std::sync::Mutex::new(None);
+  if std::env::var_os(CREDENTIAL_STDIN_ENV).is_none() {
+    return Ok(None);
+  }
+  let mut cached = CREDENTIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+  if let Some(credential) = cached.as_ref() {
+    return Ok(credential.clone());
+  }
+  let mut line = zeroize::Zeroizing::new(String::new());
+  std::io::stdin().read_line(&mut line).map_err(ContextError::CredentialStdin)?;
+  let value = line.trim_end_matches(['\r', '\n']);
+  let credential = (!value.is_empty()).then(|| crate::selection::Credential::new(value.to_owned()));
+  *cached = Some(credential.clone());
+  Ok(credential)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ContextError {
+  #[error("failed to read the credential the daemon sent on stdin: {0}")]
+  CredentialStdin(std::io::Error),
   #[error("AUV_CONTEXT is unavailable or is not valid Unicode: {0}")]
   Environment(std::env::VarError),
   #[error("AUV_CONTEXT is not valid JSON: {0}")]

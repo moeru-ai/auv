@@ -319,7 +319,7 @@ checksum = "4f8abc12baad266b1c8cec146854c195b5864b4221d4b2ca7296a7ae82d9e451"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -354,7 +354,7 @@ checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -371,9 +371,10 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "auv-api-client"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-proto",
+ "auv-tracing",
  "http",
  "hyper-util",
  "libc",
@@ -388,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "auv-api-proto"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "prost",
  "prost-reflect",
@@ -404,13 +405,15 @@ dependencies = [
 
 [[package]]
 name = "auv-api-server"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-proto",
  "auv-core",
+ "auv-tracing",
  "axum",
  "bytes",
  "futures-util",
+ "getrandom 0.3.4",
  "http-body",
  "http-body-util",
  "hyper-util",
@@ -421,6 +424,7 @@ dependencies = [
  "prost-types",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -431,13 +435,14 @@ dependencies = [
  "tonic-rest-build",
  "tower",
  "tower-http",
+ "tracing",
  "windows 0.58.0",
  "zeroize",
 ]
 
 [[package]]
 name = "auv-apple-music"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -451,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "auv-apple-notes"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -462,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "auv-apple-textedit"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-cli-invoke",
  "auv-driver",
@@ -474,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "auv-auto-loop"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "chrono",
  "serde",
@@ -486,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "auv-base-evals"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "anyhow",
  "auv-driver-common",
@@ -505,7 +510,7 @@ dependencies = [
 
 [[package]]
 name = "auv-bench-osu"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "anyhow",
  "clap",
@@ -517,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -537,13 +542,18 @@ dependencies = [
  "auv-tracing",
  "axum",
  "blake3",
+ "bytes",
  "chrono",
  "clap",
+ "directories",
  "futures-core",
+ "http-body",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "percent-encoding",
  "prost",
+ "prost-reflect",
  "prost-types",
  "rcgen",
  "rmcp",
@@ -561,6 +571,7 @@ dependencies = [
  "tonic-health",
  "tower",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "uuid",
  "windows 0.58.0",
@@ -570,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-common"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-cli-common-macros",
  "comfy-table",
@@ -581,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-common-macros"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -590,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-invoke"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "anstream",
  "anstyle",
@@ -620,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-invoke-macros"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -629,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "auv-core"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -655,11 +666,12 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "windows 0.58.0",
+ "zeroize",
 ]
 
 [[package]]
 name = "auv-daemon"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -694,6 +706,7 @@ dependencies = [
  "tonic-health",
  "tonic-reflection",
  "tower",
+ "tracing",
  "uuid",
  "whoami",
  "windows 0.58.0",
@@ -703,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "auv-device-helper-macos"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-macos",
  "block2",
@@ -724,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "auv-device-helper-windows"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-windows",
  "tempfile",
@@ -737,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "auv-driver-linux",
@@ -748,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-common"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "image",
  "serde",
@@ -758,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-linux"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "ashpd",
  "async-io",
@@ -783,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-macos"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay",
@@ -799,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-overlay-common",
  "auv-driver-overlay-macos",
@@ -809,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-common"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "serde",
@@ -818,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-macos"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay-common",
@@ -829,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-windows"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay-common",
@@ -839,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-windows"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-auto-loop",
  "auv-driver-common",
@@ -855,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "auv-file"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "serde",
  "serde_json",
@@ -863,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-balatro"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -902,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-minecraft"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-file",
@@ -918,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-osu"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -936,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "auv-gnome-control-center"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-linux",
@@ -948,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "auv-godot"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-windows",
@@ -960,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-common"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "image",
  "serde",
@@ -970,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-ort"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-inference-common",
  "ndarray",
@@ -979,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-ultralytics"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-inference-common",
  "image",
@@ -991,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "auv-media-macos"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver-common",
  "auv-tracing",
@@ -1002,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "auv-netease-music"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -1038,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "auv-qqmusic"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -1049,11 +1062,11 @@ dependencies = [
 
 [[package]]
 name = "auv-query-readiness"
-version = "0.0.35"
+version = "0.0.38"
 
 [[package]]
 name = "auv-scan"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-driver",
  "image",
@@ -1064,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "auv-steam"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-cli-common",
  "clap",
@@ -1076,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "auv-task-object-detection"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-inference-common",
  "auv-inference-ultralytics",
@@ -1085,8 +1098,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-trace-atif"
+version = "0.0.38"
+dependencies = [
+ "auv-tracing",
+ "chrono",
+ "clap",
+ "futures-executor",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "auv-tracing"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -1106,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "auv-tracing-otel"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-tracing",
  "futures-executor",
@@ -1117,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "auv-view"
-version = "0.0.35"
+version = "0.0.38"
 dependencies = [
  "auv-tracing",
  "image",
@@ -1170,9 +1197,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.18.1"
+version = "1.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
+checksum = "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -1180,9 +1207,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.45.0"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
+checksum = "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc"
 dependencies = [
  "cc",
  "cmake",
@@ -1446,7 +1473,7 @@ dependencies = [
  "prettyplease 0.3.0",
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1489,7 +1516,7 @@ checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1512,9 +1539,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cc"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6651c9ed80effdc7db0ff72512157f901af5e3549e341e24b1dd4887d836d838"
+checksum = "877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1620,7 +1647,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1661,9 +1688,9 @@ dependencies = [
 
 [[package]]
 name = "combine"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
+checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
 dependencies = [
  "bytes",
  "memchr",
@@ -1819,9 +1846,9 @@ checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
 dependencies = [
  "cfg-if",
 ]
@@ -1948,7 +1975,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1970,7 +1997,7 @@ checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
 dependencies = [
  "darling_core 0.24.1",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2011,9 +2038,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
 
 [[package]]
 name = "digest"
@@ -2086,7 +2113,7 @@ checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2249,9 +2276,9 @@ dependencies = [
 
 [[package]]
 name = "equivalent"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "errno"
@@ -2384,9 +2411,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fixedbitset"
@@ -2544,7 +2571,7 @@ checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2926,7 +2953,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "tokio",
  "tokio-retry",
@@ -3585,9 +3612,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libfuzzer-sys"
@@ -3724,9 +3751,9 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "litrs"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "log"
@@ -4657,6 +4684,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "ordered-stream"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4768,9 +4804,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.9.3"
+version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b568374ba38b33a6c627141f891faf16902b08d2db26b8ede1bcb0a15b1919fa"
+checksum = "fd47a460a9cbc3b3429c7e22bf0d76653e779319bae45a499ca010c9a990bb23"
 dependencies = [
  "memchr",
  "psm",
@@ -4964,7 +5000,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
 dependencies = [
  "proc-macro2",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -5063,8 +5099,11 @@ version = "0.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01b80ea363c31af2de2b92e3c07ed1156628f7838c4afb4df75ee78a37fedbd1"
 dependencies = [
+ "base64 0.22.1",
  "prost",
  "prost-types",
+ "serde",
+ "serde-value",
 ]
 
 [[package]]
@@ -5493,9 +5532,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.9.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "737970939a87c6fa31e7acad13307bccbb017a073b695b6089a2c484f929e20e"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -5527,7 +5566,7 @@ checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -5798,9 +5837,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -5814,9 +5853,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
+checksum = "4a073f5dc7469f984c52ad2752b63b0807745133b6de880b7b64c1ac4c48aec4"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -5863,9 +5902,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5920,18 +5959,18 @@ dependencies = [
 
 [[package]]
 name = "schannel"
-version = "0.1.29"
+version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
+checksum = "9cb23c424d8ee841bb4d813677ca237e2a610067d594fec130f87d6093495ab5"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "schemars"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
  "chrono",
  "dyn-clone",
@@ -5943,14 +5982,14 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6028,6 +6067,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float",
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6044,7 +6093,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6055,7 +6104,7 @@ checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6090,7 +6139,7 @@ checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6151,9 +6200,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -6455,9 +6504,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.8"
+version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01016da373cd8f7ef12624f796309f5c31ba8d646dd08856c02cd741d823c622"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6492,7 +6541,7 @@ checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6629,7 +6678,7 @@ checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6735,9 +6784,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.54.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "a0c168a474b95bfecfe908a65d4bdffc523144b649a74c09c286afb35d53e0bc"
 dependencies = [
  "bytes",
  "libc",
@@ -6757,7 +6806,7 @@ checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -7344,9 +7393,9 @@ dependencies = [
 
 [[package]]
 name = "ureq-proto"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86fd172ccca569e458f61b6bdd6220965a9ef36e672a6852953b51a0e1583be"
+checksum = "841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922"
 dependencies = [
  "base64 0.23.1",
  "http",
@@ -7572,7 +7621,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
  "wasm-bindgen-shared",
 ]
 
@@ -7781,18 +7830,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -8485,7 +8534,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -8606,7 +8655,7 @@ checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
  "synstructure 0.14.0",
 ]
 
@@ -8654,7 +8703,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
  "zbus_names",
  "zvariant",
  "zvariant_utils",
@@ -8662,9 +8711,9 @@ dependencies = [
 
 [[package]]
 name = "zbus_names"
-version = "4.3.4"
+version = "4.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8bf88b4a3ff53e883001e0e0115b297a9d53c31b9c1edd2bfdd853e3428624e"
+checksum = "812a12be4ead7a59e18ea8f047d08add0066b73bc62fc1467066a2472ae088dd"
 dependencies = [
  "serde",
  "winnow 1.0.4",
@@ -8682,18 +8731,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.62"
+version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d"
+checksum = "e5fe1f8f1b06191a00962174c61aa5005e0bb391a6d80d07e24d115c01a92ed8"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.62"
+version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a"
+checksum = "863ad3ac83293fb4d740aedbfdc9240dd8d1a50c1099acd76ce80ce7c7230c7f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8717,7 +8766,7 @@ checksum = "f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
  "synstructure 0.14.0",
 ]
 
@@ -8757,7 +8806,7 @@ checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -8798,9 +8847,9 @@ dependencies = [
 
 [[package]]
 name = "zvariant"
-version = "5.15.0"
+version = "5.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1d34c27cc6cdd1f458427519dd6b8612f7b7e3f7b9a0b2355d041dda9869147"
+checksum = "80bf6d6cd6a4b601acb64cfb8284cdc643fcfa75ef26ae3c46ec8aa4e8a1fbb7"
 dependencies = [
  "endi",
  "enumflags2",
@@ -8813,14 +8862,14 @@ dependencies = [
 
 [[package]]
 name = "zvariant_derive"
-version = "5.15.0"
+version = "5.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "864155e69b4352db0c7f374917bf45d1e0c8d17659c8b3dbf9795f3673f8c497"
+checksum = "ef2672456ba1cb54b5eaec136e63135b3c7495fb938e53b28a62e633496d486d"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 3.0.8",
+ "syn 3.0.9",
  "zvariant_utils",
 ]
 
@@ -8833,6 +8882,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "syn 3.0.8",
+ "syn 3.0.9",
  "winnow 1.0.4",
 ]

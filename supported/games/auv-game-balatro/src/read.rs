@@ -255,7 +255,15 @@ fn project_display_frame_point(frame: &FrameRef, bounds: auv_driver::Rect, point
 
 async fn connect_auv(endpoint: Option<ConnectEndpoint>) -> Result<Client, ReadError> {
   match std::env::var("AUV_CONTEXT") {
-    Ok(_) => Client::from_context(AuvContext::from_env().map_err(api_error)?).await.map_err(api_error),
+    Ok(_) => {
+      let credential = auv::inherited_credential().map_err(api_error)?;
+      Client::from_context_with_credential(
+        AuvContext::from_env().map_err(api_error)?,
+        credential.as_ref().map(auv::selection::Credential::expose),
+      )
+      .await
+      .map_err(api_error)
+    }
     Err(std::env::VarError::NotPresent) => match endpoint {
       Some(endpoint) => Client::from_context(AuvContext {
         daemon_endpoint: Some(endpoint.to_string()),

@@ -61,7 +61,7 @@ describe.skipIf(isWindows)('invoke against an authenticated AUV daemon', () => {
   beforeAll(async () => {
     daemon = await setupAuvDaemon()
 
-    const owner = await connect({ endpoint: daemon.ownerSocket, local: true, transport: 'unix' })
+    const owner = await daemon.connectOwner()
     const token = await createPairingToken(owner, { ttlMs: 60_000 })
     await owner.close()
 

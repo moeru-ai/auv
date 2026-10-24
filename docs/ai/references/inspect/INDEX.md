@@ -2,7 +2,7 @@
 
 AUV tracing, run storage, artifact delivery, and inspect viewer contracts
 
-Count: **14**
+Count: **15**
 
 ## Current
 
@@ -10,6 +10,11 @@ Count: **14**
   (current producer-side `auv-tracing` contract and implementation handoff)
 
 This contract wins if a historical record conflicts with it.
+
+- [`2026-10-21-trace-and-log-responsibility-split.md`](2026-10-21-trace-and-log-responsibility-split.md)
+  (accepted direction: which layers record traces, which write operational
+  logs, and why drivers do neither; Runner-side recording for the SDK path,
+  nested command and Runner RPC spans, expiring per-user log files)
 
 - [`2026-10-08-playground-sdk-transport-design.md`](2026-10-08-playground-sdk-transport-design.md)
   (accepted: playground scripts on `@auv-js/sdk` over an eventa transport

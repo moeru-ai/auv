@@ -30,7 +30,12 @@ pub(crate) fn pair_device(pairing: &dyn Pairing, request: proto::PairDeviceReque
   if request.token.is_empty() || request.device_id.is_empty() {
     return Err(Status::invalid_argument("token and device_id are required"));
   }
-  let enrollment = pairing.enroll(&request.token, request.device_id.clone(), request.label).map_err(pairing_status)?;
+  let enrollment = pairing.enroll(&request.token, request.device_id.clone(), request.label).map_err(|error| {
+    // The token is a credential and is never logged.
+    tracing::warn!(device_id = %request.device_id, %error, "Device pairing rejected");
+    pairing_status(error)
+  })?;
+  tracing::info!(device_id = %enrollment.device_id, "Device paired");
   Ok(proto::PairDeviceResponse {
     device_id: enrollment.device_id,
     device_credential: enrollment.credential,
@@ -46,6 +51,7 @@ pub(crate) fn revoke_device_credential(
   }
 
   let revoked = pairing.revoke_device_credentials(&request.device_id).map_err(pairing_status)?;
+  tracing::info!(device_id = %request.device_id, revoked, "Device credentials revoked");
   Ok(proto::RevokeDeviceCredentialResponse { revoked })
 }
 

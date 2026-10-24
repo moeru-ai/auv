@@ -26,10 +26,10 @@ fn pair_connect_saves_the_credential_without_printing_it_and_consumes_the_token(
     Command::new(auv)
       .args([
         "serve",
-        "--listen",
-        &format!("unix://{}", socket.display()),
-        "--listen",
-        &format!("http://127.0.0.1:{port}"),
+        "--local-socket",
+        socket.to_str().unwrap(),
+        "--remote-bind",
+        &format!("127.0.0.1:{port}"),
         "--pairing-store",
         store.to_str().unwrap(),
         "--store-root",
@@ -175,8 +175,8 @@ fn http_only_daemon_issues_the_first_token_through_its_owner_socket() {
     Command::new(auv)
       .args([
         "serve",
-        "--listen",
-        &endpoint,
+        "--remote-bind",
+        &format!("127.0.0.1:{port}"),
         "--store-root",
         directory.path().join("store").to_str().unwrap(),
         "--discovery-file",

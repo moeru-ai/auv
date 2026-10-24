@@ -14,6 +14,8 @@ setGlobalFormat(Format.Pretty)
 setGlobalLogLevel(LogLevel.Debug)
 
 export interface AuvDaemonFixture {
+  /** Opens an owner connection that presents this launch's owner key. */
+  connectOwner: () => Promise<AuvConnection>
   readonly ownerSocket: string
   readonly remoteEndpoint: string
   stop: () => Promise<void>
@@ -72,9 +74,10 @@ export async function setupAuvDaemon(options: AuvDaemonFixtureOptions = {}): Pro
 
   const daemon = await startAuv({
     binaryPath: join(workspace, 'target', 'debug', 'auv'),
-    listeners: [`unix://${ownerSocket}`, `http://127.0.0.1:${remotePort}`],
+    local: { listen: [{ path: ownerSocket }] },
     noRegister: true,
     pairingStore: join(root, 'pairings.json'),
+    remote: { listen: [{ host: '127.0.0.1', port: remotePort }] },
     runnerProviders,
     storeRoot: join(root, 'store'),
     workingDirectory: workspace,
@@ -102,7 +105,7 @@ export async function setupAuvDaemon(options: AuvDaemonFixtureOptions = {}): Pro
 
   log.withFields({ endpoint: remoteEndpoint, ownerSocket }).log('AUV daemon ready for testing')
 
-  return { ownerSocket, remoteEndpoint, stop }
+  return { connectOwner: () => daemon.connect(), ownerSocket, remoteEndpoint, stop }
 }
 
 /** Starts an isolated daemon and returns an authenticated paired-Device connection. */
@@ -112,7 +115,7 @@ export async function setupPairedAuvDaemon(deviceId = 'auv-js-test-device', opti
   const daemon = await setupAuvDaemon(options)
   try {
     log.debug('connecting to started AUV daemon for pairing and enrollment')
-    const owner = await connect({ endpoint: daemon.ownerSocket, local: true, transport: 'unix' })
+    const owner = await daemon.connectOwner()
 
     log.log('creating pairing token as owner')
     const token = await createPairingToken(owner)

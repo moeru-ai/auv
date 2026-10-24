@@ -203,8 +203,8 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   let child = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--store-root",
       store.to_str().unwrap(),
       "--discovery-file",
@@ -403,12 +403,11 @@ fn sigterm_shuts_the_daemon_down_and_removes_its_socket() {
   let socket = directory.path().join("auv.sock");
   let store = directory.path().join("store");
   let discovery = directory.path().join("daemon.json");
-  let endpoint = format!("unix://{}", socket.display());
   let child = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--store-root",
       store.to_str().unwrap(),
       "--discovery-file",
@@ -443,8 +442,8 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
   let child = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--store-root",
       store.to_str().unwrap(),
       "--discovery-file",
@@ -598,10 +597,10 @@ fn device_trust_name_requires_a_unique_paired_device() {
     Command::new(env!("CARGO_BIN_EXE_auv"))
       .args([
         "serve",
-        "--listen",
-        &format!("unix://{}", socket.display()),
-        "--listen",
-        &format!("http://127.0.0.1:{port}"),
+        "--local-socket",
+        socket.to_str().unwrap(),
+        "--remote-bind",
+        &format!("127.0.0.1:{port}"),
         "--pairing-store",
         store_path.to_str().unwrap(),
         "--store-root",
@@ -707,12 +706,16 @@ fn serve_help_explains_listener_authentication_and_registration() {
 
   assert_eq!(output.status.code(), Some(0), "serve help must exit 0; stderr={}", stderr(&output));
   let help = stdout(&output);
-  assert!(help.contains("--listen <URI>"), "unexpected serve help:\n{help}");
+  assert!(help.contains("--local-socket <PATH>") && help.contains("--remote-bind <IP:PORT>"), "unexpected serve help:\n{help}");
   assert!(help.contains("--pairing-store <PATH>"), "unexpected serve help:\n{help}");
   assert!(help.contains("--no-register"), "unexpected serve help:\n{help}");
   assert!(!help.contains("--no-discovery"), "unexpected serve help:\n{help}");
-  assert!(help.contains("http:// listeners always require a paired Device bearer"), "unexpected serve help:\n{help}");
-  assert!(help.contains("only it can create pairing tokens"), "unexpected serve help:\n{help}");
+  assert!(help.contains("--local-auth-allowed-methods") && help.contains("--remote-auth-allowed-methods"), "unexpected serve help:\n{help}");
+  assert!(help.contains("Remote (--remote-bind) listeners always require a paired Device bearer"), "unexpected serve help:\n{help}");
+  assert!(
+    help.contains("only callers with owner authority (launcher-token or os-user) can create pairing tokens"),
+    "unexpected serve help:\n{help}"
+  );
 }
 
 #[test]
@@ -782,8 +785,8 @@ fn root_device_and_run_flags_resolve_into_plugin_context() {
   let child = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--store-root",
       store.to_str().unwrap(),
       "--discovery-file",
@@ -1117,8 +1120,8 @@ fn selected_global_text_dry_run_returns_validation_without_delivery() {
   let child = Command::new(env!("CARGO_BIN_EXE_auv"))
     .args([
       "serve",
-      "--listen",
-      &endpoint,
+      "--local-socket",
+      socket.to_str().unwrap(),
       "--no-register",
       "--store-root",
     ])

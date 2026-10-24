@@ -1,6 +1,7 @@
 //! AUV daemon API server lifecycle and listener orchestration.
 
 pub(crate) mod runner_grpc_proxy;
+pub(crate) mod trace_context;
 
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
@@ -24,7 +25,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(unix)]
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
@@ -72,6 +73,11 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
+  /// How callers of the Unix socket or named-pipe listeners may prove
+  /// themselves.
+  pub local_auth_methods: Vec<crate::LocalAuthMethod>,
+  /// How callers of the TCP listeners may prove themselves.
+  pub remote_auth_methods: Vec<crate::RemoteAuthMethod>,
 }
 
 /// Resolved endpoint of a bound server.
@@ -142,13 +148,16 @@ impl Server {
       return Err("daemon instance id is required".into());
     }
     let pairing = config.pairing;
+    crate::authentication::validate_local_auth_methods(&config.local_auth_methods)?;
+    crate::authentication::validate_remote_auth_methods(&config.remote_auth_methods)?;
+    let local_auth_methods: Arc<[crate::LocalAuthMethod]> = config.local_auth_methods.into();
     let mut configured = Vec::with_capacity(1 + config.additional_listeners.len());
     configured.push(config.listen);
     configured.extend(config.additional_listeners);
     let mut endpoints = Vec::with_capacity(configured.len());
     let mut listeners = Vec::with_capacity(configured.len());
     for endpoint in configured {
-      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone()).await?;
+      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing.clone(), &local_auth_methods).await?;
       endpoints.push(endpoint);
       listeners.push(BoundListenerState {
         listener,
@@ -341,6 +350,7 @@ async fn shutdown_when_daemon_idle(daemon: Arc<dyn Control>, shutdown: Cancellat
 async fn bind_listener(
   endpoint: ListenEndpoint,
   pairing: Option<Arc<dyn Pairing>>,
+  local_auth_methods: &Arc<[crate::LocalAuthMethod]>,
 ) -> Result<(BoundListener, BoundEndpoint, Authenticator), String> {
   Ok(match endpoint {
     ListenEndpoint::Remote { host, port } => {
@@ -354,7 +364,11 @@ async fn bind_listener(
     ListenEndpoint::Unix { path } => {
       let (listener, cleanup) = bind_unix(&path)?;
       let owner_uid = cleanup.owner_uid;
-      (BoundListener::Unix { listener, cleanup }, BoundEndpoint::Unix(path), Authenticator::local(Some(owner_uid), pairing))
+      (
+        BoundListener::Unix { listener, cleanup },
+        BoundEndpoint::Unix(path),
+        Authenticator::local(Some(owner_uid), Arc::clone(local_auth_methods), pairing),
+      )
     }
     #[cfg(windows)]
     ListenEndpoint::NamedPipe { name } => {
@@ -365,7 +379,7 @@ async fn bind_listener(
           name: name.clone(),
         },
         BoundEndpoint::NamedPipe(name),
-        Authenticator::local(pairing),
+        Authenticator::local(Arc::clone(local_auth_methods), pairing),
       )
     }
   })
@@ -373,44 +387,10 @@ async fn bind_listener(
 
 #[cfg(windows)]
 fn create_named_pipe(name: &str, first: bool) -> std::io::Result<NamedPipeServer> {
-  use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
-  use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
-  use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-  use windows::core::w;
-
   if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')) {
     return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "named-pipe name contains unsupported characters"));
   }
-
-  let mut descriptor = PSECURITY_DESCRIPTOR::default();
-  // `OW` is the object-owner SID. The protected DACL grants full access only
-  // to the creating user and LocalSystem; no Everyone or Administrators ACE is
-  // inherited. PIPE_REJECT_REMOTE_CLIENTS independently rejects network opens.
-  // SAFETY: `descriptor` is valid writable output storage, the SDDL literal is
-  // NUL-terminated, and the returned allocation is released with LocalFree
-  // after CreateNamedPipeW has synchronously copied the security descriptor.
-  unsafe {
-    ConvertStringSecurityDescriptorToSecurityDescriptorW(w!("D:P(A;;GA;;;SY)(A;;GA;;;OW)"), SDDL_REVISION_1, &mut descriptor, None)
-      .map_err(std::io::Error::other)?;
-  }
-  let mut attributes = SECURITY_ATTRIBUTES {
-    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-    lpSecurityDescriptor: descriptor.0,
-    bInheritHandle: BOOL(0),
-  };
-  let mut options = ServerOptions::new();
-  options.first_pipe_instance(first).reject_remote_clients(true);
-  let path = format!(r"\\.\pipe\{name}");
-  // SAFETY: `attributes` and its descriptor remain live for this synchronous
-  // call. Tokio only forwards the pointer to CreateNamedPipeW and does not
-  // retain it in the returned server handle.
-  let result = unsafe { options.create_with_security_attributes_raw(&path, (&raw mut attributes).cast()) };
-  // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW returned this
-  // allocation and transfers ownership to the caller, which must use LocalFree.
-  unsafe {
-    let _ = LocalFree(HLOCAL(descriptor.0));
-  }
-  result
+  crate::windows_pipe::create_owner_only(&format!(r"\\.\pipe\{name}"), first)
 }
 
 #[cfg(windows)]

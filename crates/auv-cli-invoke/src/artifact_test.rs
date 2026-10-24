@@ -137,3 +137,48 @@ impl TracingStore for RejectArtifactStore {
     Box::pin(async { Ok(()) })
   }
 }
+
+#[test]
+fn capture_evidence_records_where_the_image_sits_on_screen() {
+  // ROOT CAUSE:
+  //
+  // If a reader wanted to draw a click on a recorded screenshot, it could not
+  // map the logical screen point to a pixel, because capture artifacts
+  // recorded only their pixel size and scale.
+  //
+  // The fix records the capture's logical screen bounds and origin space.
+  let image = RgbaImage::new(8, 6);
+  let mut capture = capture(image, 2.0);
+  capture.bounds = auv_driver::Rect::new(100.0, -50.5, 4.0, 3.0);
+  capture.origin = Some(auv_driver::Position {
+    point: auv_driver::Point::new(0.0, 0.0),
+    coordinate_space: auv_driver::CoordinateSpace::Window("w-42".to_string()),
+  });
+
+  let artifact = capture_evidence("auv.test.image", &capture, Some("cap-7")).expect("evidence");
+  let store = Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch");
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  root.in_scope(|| drop(auv_tracing::emit_artifact(artifact)));
+  futures_executor::block_on(dispatch.flush()).expect("flush");
+  let records = store.records();
+  let attributes = records
+    .iter()
+    .find_map(|record| match record {
+      TraceRecord::Artifact { metadata, .. } => Some(metadata.attributes().clone()),
+      _ => None,
+    })
+    .expect("artifact");
+
+  let float = |key: &str| match attributes.get(key) {
+    Some(value) => value.clone(),
+    None => panic!("missing {key}"),
+  };
+  assert_eq!(float("capture.bounds.x"), auv_tracing::AttributeValue::float(100.0).unwrap());
+  assert_eq!(float("capture.bounds.y"), auv_tracing::AttributeValue::float(-50.5).unwrap());
+  assert_eq!(float("capture.bounds.width"), auv_tracing::AttributeValue::float(4.0).unwrap());
+  assert_eq!(attributes.get("capture.origin.space"), Some(&auv_tracing::AttributeValue::string("window")));
+  assert_eq!(attributes.get("capture.origin.id"), Some(&auv_tracing::AttributeValue::string("w-42")));
+  assert_eq!(attributes.get("capture.ref_id"), Some(&auv_tracing::AttributeValue::string("cap-7")));
+  assert_eq!(attributes.get("image.scale_factor"), Some(&auv_tracing::AttributeValue::float(2.0).unwrap()));
+}

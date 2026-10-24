@@ -1,8 +1,8 @@
 # Linux Portal Input Through EIS
 
-Status: implemented and live-validated for pointer, button, scroll, and keyboard
-on GNOME Wayland, 2026-10-19. Held-button timing has a known common-layer
-issue. See "Known Issue: Held-Button Deadline".
+Status: implemented and live-validated for pointer, button, scroll, keyboard,
+held buttons, and drag on GNOME Wayland (2026-10-19; held-button fix and live
+receipt 2026-10-20). See "Held-Button Deadline".
 
 ## Purpose
 
@@ -67,6 +67,10 @@ The shared click path keeps its existing timing:
 
 Each transition uses one EIS frame. A press and its release use separate
 frames.
+
+The hold deadline starts when the button press is delivered. Opening the input
+session inside the first motion no longer counts against the hold. See
+"Held-Button Deadline".
 
 ## Buttons and Scroll
 
@@ -193,6 +197,27 @@ These parts remain because they carry behavior:
 - The keymap mutex. The portal input path reads the keymap after the worker
   sets it.
 
+The held-button fix pass repeated the ablation on the input seam:
+
+- `PollResult` had separate `Timeout` and `Interrupted` results, while all
+  three callers handled them identically. One `NoEvent` result now covers both.
+- The EIS key chord reimplemented the shared press/release loop used by click
+  modifiers. It now uses `with_held_keys` with an empty action.
+- `MouseCoordinator::motion` nested the held-target check; it is one let-chain.
+
+These parts remain because they carry behavior:
+
+- The deadline value reserved before the press. It is the representability check
+  and the ownership record for a failed native reply; the hold re-arms it at
+  the delivered press. Deferring the deadline to the press would leave the
+  failed-reply cleanup without ownership state or add an optional deadline to
+  every consumer.
+- The hold generation. A watchdog can fire after an early release and a new
+  press; the generation keeps the old watchdog from releasing the new hold.
+- The watchdog and `hold`'s own wait. `hold` returns release evidence under the
+  same admission; the watchdog covers a cross-call `mouse_down` whose caller
+  never sends `mouse_up`.
+
 ## Live Evidence
 
 Test host: GNOME Wayland, portal RemoteDesktop version 2.
@@ -209,19 +234,34 @@ Observed results:
 - `press shift+a` reported the expected Shift and A sequence.
 - `type-text Hi!` reported the H, i, and exclamation key events.
 
-The `held_mouse` integration test did not run on this host because the Python
-`gi` module is absent. A temporary Rust probe used the same public API and the
-Chrome receiver. It found the issue below.
+The original live probe used the same public API and the Chrome receiver. It
+found the held-button issue below.
 
-## Known Issue: Held-Button Deadline
+The `held_mouse` integration test now runs with a GTK4 receiver
+(Python with `pygobject3` plus `gtk4`). It passed all 15 cases with both
+`AUV_HELD_BACKEND=uinput` and `AUV_HELD_BACKEND=portal`: left, right, and middle
+buttons across cross-call, hold, watchdog, cancel, and
+drag. Each case produced exactly one down/up pair, and the drag cases kept the
+held-button mask through the motion.
 
-Live validation found an early button release for held input. The cause is in
+The test opens the input session before spawning the receiver. GNOME's first
+RemoteDesktop authorization prompt therefore appears before the readiness guard
+is armed. Before that pre-open, the prompt stole focus from the receiver and the
+portal run stopped at the first post-press move with `input cancelled while
+waiting`; `xdg-desktop-portal-gnome` logged `Failed to associate portal window
+with parent window`. The pre-open removes the authorization delay from the held
+cases, so the slow first `move_to` itself remains covered by the
+delayed-`move_to` regression.
+
+## Held-Button Deadline
+
+Live validation found an early button release for held input. The cause was in
 `auv-driver-common/src/mouse_input.rs`, not in EIS.
 
-`MouseCoordinator::down_admitted` calculates the hold deadline before it calls
+`MouseCoordinator::down_admitted` calculated the hold deadline before it called
 `backend.move_to`. The first `move_to` opens the portal input session. That open
-can take longer than the hold timeout. The watchdog then starts with no
-remaining time and releases the button at once.
+can take longer than the hold timeout. The watchdog then started with no
+remaining time and released the button at once.
 
 Live evidence:
 
@@ -230,18 +270,45 @@ Live evidence:
 - Other runs released between 0.4 and 1.5 seconds after the press.
 - A normal click holds the button for the full 34-millisecond press interval.
 
-The EIS button state is correct. The defect is the deadline start point in the
+The EIS button state was correct. The defect was the deadline start point in the
 shared mouse coordinator.
 
-The fix belongs in a follow-up branch after this EIS work merges. It must start
-the deadline at the delivered button press and add a regression test. This
-branch must not change the shared mouse coordinator.
+The fix keeps the pre-delivery representability check, reserves the hold record
+before posting, re-arms the deadline after the press returns, and only then
+starts the watchdog. The re-arm matches the shared keyboard hold controller,
+which also re-arms after posting. If the re-armed deadline cannot be
+represented, the coordinator releases the press through the same failure path
+and returns the timeout error. Starting the deadline before the press is no
+longer possible.
 
-Until the fix lands, the held mouse and drag live test is blocked.
+Two regression tests in `mouse_input_test.rs` reproduce the failure with a
+backend whose `move_to` or press blocks longer than the timeout:
+
+- `moving_longer_than_the_timeout_keeps_the_full_hold` held the button for about
+  0.08 milliseconds before the fix and at least the full 120 millisecond
+  timeout after it.
+- `press_latency_does_not_count_toward_the_hold_timeout` covered a slow press
+  and the watchdog release path. It held for about 0.13 milliseconds before the
+  fix.
+
+The tests assert the interval from the delivered press to the release, which is
+the contract that failed live.
 
 ## Validation Procedure
 
-Automated tests cover a command flush failure.
+Automated tests cover a command flush failure and the held-button deadline
+(`moving_longer_than_the_timeout_keeps_the_full_hold` and
+`press_latency_does_not_count_toward_the_hold_timeout`). The opt-in GTK
+receipt test covers the live hold, watchdog, cancellation, and drag paths:
+
+```text
+AUV_HELD_BACKEND=uinput cargo test -p auv-driver-linux --test held_mouse -- --ignored --nocapture
+AUV_HELD_BACKEND=portal cargo test -p auv-driver-linux --test held_mouse -- --ignored --nocapture
+```
+
+It moves the pointer and covers the screen with its receiver. The portal run
+opens the input session before the receiver, so approve the first authorization
+prompt before the cases start.
 
 Run these commands on a live GNOME Wayland desktop:
 
@@ -275,5 +342,3 @@ These items are outside this slice:
   every layout. EIS uses the compositor group event.
 - Live multi-layout keyboard validation. Unit tests cover US and German
   groups. The live check used one layout.
-- The held-button deadline fix in `auv-driver-common`. See "Known Issue:
-  Held-Button Deadline".

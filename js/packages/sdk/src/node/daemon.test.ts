@@ -1,11 +1,17 @@
+import process from 'node:process'
+
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
-import { checkHealth, createAuv, listDevices } from '../apis'
+import { checkHealth, createAuv, createPairingToken, listDevices, pairDevice } from '../apis'
 import { repositoryRoot } from '../tutils/dir'
 import { unusedLoopbackPort } from '../tutils/port'
 import { connect } from './connect'
@@ -26,8 +32,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`http://127.0.0.1:${port}`],
       noRegister: true,
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       storeRoot: 'state',
       workingDirectory,
     })
@@ -39,10 +45,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
       // the owner endpoint that startAuv adds in front of the HTTP listener.
       expect(daemon.endpoints).toEqual(isWindows
         ? [expect.stringMatching(/^npipe:\/\/\.\/pipe\/auv-/), `http://127.0.0.1:${port}`]
-        : [`unix://${join(workingDirectory, 'state', 'auv.sock')}`, `http://127.0.0.1:${port}`])
+        : [expect.stringMatching(/^unix:\/\/.+\/auv-[^/]+\/s$/), `http://127.0.0.1:${port}`])
       expect(daemon.connectionOptions).toEqual(isWindows
-        ? { endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
-        : { endpoint: join(workingDirectory, 'state', 'auv.sock'), local: true, transport: 'unix' })
+        ? { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
+        : { credential: expect.stringMatching(/^[0-9a-f]{64}$/), endpoint: daemon.endpoints[0]!.slice('unix://'.length), local: true, transport: 'unix' })
       await expect(access(daemon.storeRoot)).resolves.toBeUndefined()
 
       const connection = await daemon.connect()
@@ -122,8 +128,8 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const options = {
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`http://127.0.0.1:${port}`],
       noRegister: true,
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       workingDirectory,
     }
     const first = await startAuv(options)
@@ -194,6 +200,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       expect(daemon.endpoints).toHaveLength(1)
       expect(daemon.endpoints[0]).toMatch(/^npipe:\/\/\.\/pipe\/auv-/)
       expect(daemon.connectionOptions).toEqual({
+        credential: expect.stringMatching(/^[0-9a-f]{64}$/),
         endpoint: daemon.endpoints[0],
         local: true,
         transport: 'npipe',
@@ -212,6 +219,126 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
   })
 
+  // ROOT CAUSE:
+  //
+  // Local IPC admitted every process of the daemon's OS user, so a process
+  // that read the socket path from `ps` could drive the Runner and mint a
+  // pairing token. The launcher-only default now requires the launch token.
+  it('rejects a same-user client that knows the endpoint but not the launcher token', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-launcher-token-'))
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), workingDirectory })
+    const { credential: _, ...withoutToken } = daemon.connectionOptions
+    const stranger = await connect(withoutToken)
+    const owner = await daemon.connect()
+    try {
+      await expect(listDevices(stranger)).rejects.toThrow(/process that launched it/)
+      await expect(createPairingToken(stranger)).rejects.toThrow(/process that launched it/)
+      await expect(listDevices(await connect({ ...withoutToken, credential: 'f'.repeat(64) }))).rejects.toThrow(/process that launched it/)
+      expect((await listDevices(owner)).some(device => device.local)).toBe(true)
+      expect((await listDevices(await connect(daemon.connectionOptions))).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await Promise.all([stranger.close(), owner.close()])
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // An app exposing its daemon to other local apps pairs each one, then can
+  // revoke them one by one. Paired apps cannot mint further pairing tokens.
+  it('admits paired apps on the owner endpoint under launcher-and-paired', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-paired-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      local: { auth: { allowedMethods: ['launcher-token', 'paired-device'] } },
+      workingDirectory,
+    })
+    const { credential: _, ...withoutToken } = daemon.connectionOptions
+    const owner = await daemon.connect()
+    const otherApp = await connect(withoutToken)
+    try {
+      const token = await createPairingToken(owner)
+      const enrollment = await pairDevice(otherApp, { deviceId: 'other-app', label: 'Other app', token })
+      const paired = await connect({ ...withoutToken, credential: enrollment.credential })
+      try {
+        expect((await listDevices(paired)).length).toBeGreaterThan(0)
+        await expect(createPairingToken(paired)).rejects.toThrow(/only be created by the daemon owner/)
+      }
+      finally {
+        await paired.close()
+      }
+      await expect(listDevices(otherApp)).rejects.toThrow(/process that launched it/)
+    }
+    finally {
+      await Promise.all([owner.close(), otherApp.close()])
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  it('admits any same-user client under the any-process-of-os-user policy', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-os-user-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      local: { auth: { allowedMethods: ['os-user'] } },
+      workingDirectory,
+    })
+    const stranger = await connect(daemon.connectionOptions)
+    try {
+      expect('credential' in daemon.connectionOptions).toBe(false)
+      expect((await listDevices(stranger)).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await stranger.close()
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  //
+  // noRegister became true by default, but the CLI rejects --discovery-file
+  // together with --no-register, so startAuv({ discoveryFile }) failed to
+  // start. A discovery file now implies registration.
+  it.skipIf(isWindows)('registers the daemon when a discovery file is requested', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-discovery-'))
+    const discoveryFile = join(workingDirectory, 'api-server.json')
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), discoveryFile, workingDirectory })
+    try {
+      await expect(access(discoveryFile)).resolves.toBeUndefined()
+    }
+    finally {
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  //
+  // The default owner socket lived at `<storeRoot>/auv.sock`. A deep store
+  // root pushed the path past the ~104-byte Unix socket limit and the daemon
+  // failed to bind; `auv serve` already used a short temp-dir path.
+  it.skipIf(isWindows)('binds the default owner socket under a deep store root', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-deep-'))
+    const storeRoot = join(workingDirectory, 'a-rather-long-directory-name/'.repeat(8))
+    const daemon = await startAuv({ binaryPath: join(workspace, 'target', 'debug', 'auv'), storeRoot, workingDirectory })
+    const socketDirectory = dirname(daemon.connectionOptions.endpoint)
+    try {
+      expect(storeRoot.length).toBeGreaterThan(110)
+      expect((await listDevices(await daemon.connect())).some(device => device.local)).toBe(true)
+    }
+    finally {
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+    await expect(access(socketDirectory)).rejects.toThrow()
+  })
+
   it('reports a missing executable as a daemon start error', async () => {
     await expect(startAuv({
       binaryPath: join(tmpdir(), 'missing-auv-test-binary'),
@@ -228,7 +355,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const controller = new AbortController()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`unix://${join(workingDirectory, 'auv.sock')}`],
+      local: { listen: [{ path: join(workingDirectory, 'auv.sock') }] },
       noRegister: true,
       signal: controller.signal,
       workingDirectory,
@@ -245,6 +372,48 @@ describe('startAuv', { timeout: 30_000 }, () => {
     }
   })
 
+  // ROOT CAUSE:
+  //
+  // A killed owner never ran stop(), so its daemon was reparented and kept
+  // running for days. The daemon now exits when the OS closes the stdin pipe
+  // that startAuv holds open.
+  it.skipIf(isWindows)('stops the daemon gracefully when its owner process is killed', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-owner-'))
+    const owner = spawn(process.execPath, [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('../tutils/auv-owner.ts', import.meta.url)),
+      join(workspace, 'target', 'debug', 'auv'),
+      workingDirectory,
+    ], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const isAlive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      }
+      catch {
+        return false
+      }
+    }
+
+    try {
+      const [line] = await once(createInterface({ input: owner.stdout }), 'line') as [string]
+      const [pidText, socket] = line.split(' ') as [string, string]
+      const pid = Number(pidText)
+      expect(isAlive(pid)).toBe(true)
+
+      owner.kill('SIGKILL')
+
+      await expect.poll(() => isAlive(pid), { timeout: 15_000 }).toBe(false)
+      await expect(access(socket)).rejects.toThrow()
+    }
+    finally {
+      owner.kill('SIGKILL')
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
   it.skipIf(isWindows)('exposes public health over Unix, gRPC, and HTTP', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-health-'))
@@ -252,9 +421,10 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const port = await unusedLoopbackPort()
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      listeners: [`unix://${socket}`, `http://127.0.0.1:${port}`],
+      local: { listen: [{ path: socket }] },
       noRegister: true,
       pairingStore: join(workingDirectory, 'pairings.json'),
+      remote: { listen: [{ host: '127.0.0.1', port }] },
       workingDirectory,
     })
 
@@ -284,6 +454,11 @@ describe('startAuv', { timeout: 30_000 }, () => {
     await expect(startAuv({ startupTimeoutMs: Number.NaN })).rejects.toThrow('startupTimeoutMs must be finite')
     await expect(startAuv({ shutdownTimeoutMs: 0 })).rejects.toThrow('shutdownTimeoutMs must be greater than 0')
     await expect(startAuv({ daemonIdleTimeoutSeconds: 1.5 })).rejects.toThrow('daemonIdleTimeoutSeconds must be an integer')
-    await expect(startAuv({ listeners: ['http://127.0.0.1:0'] })).rejects.toThrow('port 0 cannot be used as a connection endpoint')
+    await expect(startAuv({ remote: { listen: [{ host: '127.0.0.1', port: 0 }] } })).rejects.toThrow('port 0 cannot be used as a connection endpoint')
+    await expect(startAuv({ local: { auth: { allowedMethods: [] } } })).rejects.toThrow('must allow at least one method')
+    await expect(startAuv({ local: { auth: { allowedMethods: ['paired-device'] } } })).rejects.toThrow('must allow launcher-token or os-user')
+    await expect(startAuv({ discoveryFile: 'api-server.json', noRegister: true })).rejects.toThrow('cannot be combined with noRegister: true')
+    // @ts-expect-error The methods are a closed set; untyped callers still get a clear error.
+    await expect(startAuv({ local: { auth: { allowedMethods: ['everyone'] } } })).rejects.toThrow('unknown local auth method')
   })
 })

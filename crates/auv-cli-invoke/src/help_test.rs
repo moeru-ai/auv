@@ -42,7 +42,7 @@ fn command_help_names_the_limit_of_a_partial_platform() {
   let registry = default_registry();
   let help = render_command_help(registry.resolve("input.typeText").expect("input.typeText is registered"));
   assert!(help.contains("Platform support:\n  macOS   yes\n"), "{help}");
-  assert!(help.contains("  Linux   partial: foreground delivery only; targeted delivery is unsupported\n"), "{help}");
+  assert!(help.contains("  Linux   partial: focused target only; cannot focus or raise a window\n"), "{help}");
 }
 
 #[test]

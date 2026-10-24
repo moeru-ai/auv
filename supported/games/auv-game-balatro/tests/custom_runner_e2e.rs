@@ -3,22 +3,17 @@
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use auv_api_proto::auv::api::image::v1 as image_proto;
 use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
-use auv_daemon::{Config, ListenEndpoint, Server};
+use auv_daemon::{Config, Server};
 
 #[tokio::test]
 async fn daemon_routes_the_app_owned_balatro_runner() {
   let directory = tempfile::tempdir().expect("create isolated daemon state");
   let socket = directory.path().join("auv.sock");
-  let bound = Server::bind(Config {
-    id: None,
-    pairing_store: directory.path().join("pairings.json"),
-    listeners: vec![ListenEndpoint::Unix {
-      path: socket.clone(),
-    }],
-    discovery_file: None,
-    register: false,
-    store_root: directory.path().join("store"),
-    runner_providers: vec![RunnerProviderConfig {
+  let config = Config::new(directory.path().join("store"))
+    .expect("generate launcher token")
+    // The default launcher-token policy also hands this Runner the token.
+    .local(auv_daemon::LocalListener::new().expect("generate launcher token").bind_unix(socket.clone()))
+    .runner_provider(RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),
       runtime: RunnerRuntime::Executable(ExecutableRunnerRuntime {
         executable: env!("CARGO_BIN_EXE_auv-runner-balatro").into(),
@@ -26,18 +21,17 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
         working_directory: None,
         environment: Default::default(),
       }),
-    }],
-    daemon_idle_timeout: None,
-    first_party_runners: Default::default(),
-  })
-  .await
-  .expect("bind daemon with trusted Balatro provider");
+    });
+  let bound = Server::bind(config).await.expect("bind daemon with trusted Balatro provider");
+  let launcher_token = bound.owner_connection().and_then(|owner| owner.credential).expect("LauncherOnly token");
   let shutdown = tokio_util::sync::CancellationToken::new();
   let server_shutdown = shutdown.clone();
   let server = tokio::spawn(async move { bound.serve(server_shutdown).await });
 
   let client =
-    auv_api_client::protocol::grpc::Client::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.expect("connect to daemon");
+    auv_api_client::protocol::grpc::Client::connect_with_credential(auv_api_client::ConnectEndpoint::Unix(socket), &launcher_token)
+      .await
+      .expect("connect to daemon");
   let device = client.devices().list_devices().await.expect("list Device").into_iter().next().expect("local Device");
   let device = device.r#ref.expect("Device ref");
   let run = client

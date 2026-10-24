@@ -178,11 +178,13 @@ impl Inner {
       TraceRecord::Artifact {
         run_id,
         span_id,
+        occurred_at,
         metadata,
       } => {
         let mut record = self.logger.create_log_record();
         record.set_event_name("auv.artifact.published");
         record.set_target(LOG_TARGET);
+        record.set_timestamp(system_time(occurred_at)?);
         record.add_attribute("auv.run.id", run_id.to_string());
         if let Some(span_id) = span_id {
           record.add_attribute("auv.span.id", span_id.to_string());

@@ -63,28 +63,17 @@ left corner shows the active Device; click it to open the device picker. Several
 daemons can stay connected at once: pick any Device they report (or the mock
 desktop) to make it the one scripts, the canvas and live view use. Switching is
 disabled while a run is in progress. To control a real Device, choose
-**Add a device…** and pick one of two modes:
+**Add a device…**. The daemon's remote listener only accepts paired Devices,
+so start it and create a one-time token on the daemon host:
 
-- **Local · no pairing** (same machine, development): a loopback listener
-  without a pairing store accepts local connections without a credential.
+```sh
+auv serve --remote-bind 127.0.0.1:9847
+auv devices pair create-token
+```
 
-  ```sh
-  auv serve --listen http://127.0.0.1:9847
-  ```
-
-  Then press **Connect**.
-
-- **Paired**: start the daemon with a pairing store, so its HTTP listener
-  requires a paired Device credential, and create a one-time token on the
-  daemon host:
-
-  ```sh
-  auv serve --listen http://127.0.0.1:9847 --pairing-store ~/.auv/pairings.json
-  auv devices pair create-token
-  ```
-
-  Paste the token and press **Pair**. The browser keeps the credential and
-  reconnects with it on the next visit.
+Paste the token and press **Pair**. The browser keeps the credential and
+reconnects with it on the next visit. To reuse a Device credential that you
+already have, paste it instead and press **Connect**.
 
 Daemons that were connected when the page closed reconnect on the next visit,
 and the previously active Device is restored. **Disconnect** keeps a daemon in

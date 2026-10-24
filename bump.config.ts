@@ -119,14 +119,25 @@ export default defineConfig({
   all: true,
   commit: 'release: v%s',
   execute: async () => {
-    await x('pnpm', ['publish', '-r', '--access', 'public', '--no-git-checks', '--dry-run'])
+    // NOTICE: tinyexec ignores non-zero exits and hides output by default. A
+    // failed step would then leave a stale lockfile in the release commit.
+    // v0.0.36 most likely shipped an old js/packages/cli/Cargo.lock this way,
+    // because its `--offline` update failed without notice.
+    const options = { nodeOptions: { stdio: 'inherit' }, throwOnError: true } as const
+    // NOTICE: `@auv-js/cli` is skipped: its `napi prepublish` needs CI-built
+    // binaries, which `release.yml` checks. Keep this list in sync with
+    // `release-npm-package.yml`. A stale SDK `src/gen` fails this step; run
+    // `pnpm generate:proto` first.
+    await x('pnpm', ['-r', '--filter', '@auv-js/api-client', '--filter', '@auv-js/sdk', 'publish', '--access', 'public', '--no-git-checks', '--dry-run'], options)
 
     await syncCargoToml()
-    await x('cargo', ['generate-lockfile'])
+    // Refresh only the versions of workspace path packages. Do not use
+    // `cargo generate-lockfile`: it re-resolves every registry dependency, and
+    // in v0.0.36 it pulled an incompatible `ort` release candidate.
+    await x('cargo', ['update', '--workspace'], options)
     // The N-API crate is a separate Cargo workspace with its own committed
-    // lockfile, and release builds pass `--locked`. Refresh only the versions
-    // of its local path packages; leave registry dependencies untouched.
-    await x('cargo', ['update', '--workspace', '--offline', '--manifest-path', 'js/packages/cli/Cargo.toml'])
+    // lockfile, and release builds pass `--locked`.
+    await x('cargo', ['update', '--workspace', '--manifest-path', 'js/packages/cli/Cargo.toml'], options)
   },
   push: false,
   recursive: true,

@@ -262,7 +262,8 @@ async fn local(
 
 async fn list(args: DeviceListArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
   let selector = selection.device_selector().map_err(|error| error.to_string())?;
-  let mut devices = match auv::Client::discover(args.endpoint.as_deref()).await {
+  let credential = selection.credential.as_ref().map(auv::selection::Credential::expose);
+  let mut devices = match auv::Client::discover_with_credential(args.endpoint.as_deref(), credential).await {
     Ok(Some(client)) => client.devices().list().await.map_err(|error| error.to_string())?,
     Ok(None) => Vec::new(),
     Err(error) if args.endpoint.is_none() => {

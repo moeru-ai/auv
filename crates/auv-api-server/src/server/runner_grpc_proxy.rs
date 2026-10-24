@@ -34,9 +34,14 @@ impl RunnerGrpcProxy {
   }
 
   pub(crate) async fn forward(&self, mut request: Request<AxumBody>) -> Response<TonicBody> {
+    let path = request.uri().path().to_string();
     match self.try_forward(&mut request).await {
       Ok(response) => response,
-      Err(status) => status.into_http(),
+      Err(status) => {
+        // Daemon-side refusals only; a Runner's own failures are in its log.
+        tracing::warn!(path, code = ?status.code(), message = status.message(), "routed Runner call refused");
+        status.into_http()
+      }
     }
   }
 
@@ -46,7 +51,10 @@ impl RunnerGrpcProxy {
     reject_daemon_namespace(service)?;
     let caller = authentication::http_caller(request)?.clone();
     let route = runner_route(request.headers())?;
-    let operation = self.daemon.admit_routed_channel(&caller, route, service, method).await.map_err(map_control_error)?;
+    let (service, method) = (service.to_string(), method.to_string());
+    // Checked before admission so a rejected trace context starts no Runner.
+    super::trace_context::forward(request.headers_mut(), route.run_id.as_deref())?;
+    let operation = self.daemon.admit_routed_channel(&caller, route, &service, &method).await.map_err(map_control_error)?;
 
     // Route fields are daemon input rather than application metadata.
     request.headers_mut().remove(ROUTE_DEVICE_METADATA);

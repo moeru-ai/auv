@@ -76,6 +76,7 @@ pub struct NewArtifact<R> {
   byte_length: ByteLength,
   sha256: Sha256Digest,
   attributes: Attributes,
+  occurred_at: Option<crate::Timestamp>,
   body: R,
 }
 
@@ -89,8 +90,16 @@ impl<R> NewArtifact<R> {
       byte_length,
       sha256,
       attributes: options.attributes,
+      occurred_at: None,
       body,
     }
+  }
+
+  /// Records when the evidence was produced, such as a capture's completion,
+  /// instead of when it was emitted. Encoding can run long after the capture.
+  pub fn with_occurred_at(mut self, occurred_at: crate::Timestamp) -> Self {
+    self.occurred_at = Some(occurred_at);
+    self
   }
 
   /// Body length, known before emission so callers can enforce their own limits.
@@ -110,6 +119,7 @@ impl<R> NewArtifact<R> {
       byte_length: self.byte_length,
       sha256: self.sha256,
       attributes: self.attributes,
+      occurred_at: self.occurred_at,
       body: Box::pin(self.body),
     }
   }
@@ -126,6 +136,7 @@ impl NewArtifact<Cursor<Vec<u8>>> {
       byte_length: ByteLength::new(length)?,
       sha256: Sha256Digest::new(Sha256::digest(&body).into()),
       attributes: options.attributes,
+      occurred_at: None,
       body: Cursor::new(body),
     })
   }
@@ -155,6 +166,7 @@ pub(crate) struct DetachedArtifact {
   pub byte_length: ByteLength,
   pub sha256: Sha256Digest,
   pub attributes: Attributes,
+  pub occurred_at: Option<crate::Timestamp>,
   pub body: ArtifactBody,
 }
 

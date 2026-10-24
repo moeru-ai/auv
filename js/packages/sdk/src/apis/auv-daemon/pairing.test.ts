@@ -14,7 +14,7 @@ describe.skipIf(isWindows)('pairing operations against an AUV daemon', () => {
     const daemon = await setupAuvDaemon()
 
     try {
-      const owner = await connect({ endpoint: daemon.ownerSocket, local: true, transport: 'unix' })
+      const owner = await daemon.connectOwner()
       const issuedAfter = Date.now()
       const token = await createPairingToken(owner, { ttlMs: 60_000 })
       await owner.close()
@@ -32,7 +32,7 @@ describe.skipIf(isWindows)('pairing operations against an AUV daemon', () => {
     const daemon = await setupAuvDaemon()
 
     try {
-      const owner = await connect({ endpoint: daemon.ownerSocket, local: true, transport: 'unix' })
+      const owner = await daemon.connectOwner()
       const token = await createPairingToken(owner)
       await owner.close()
 

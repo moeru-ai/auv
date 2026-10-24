@@ -201,7 +201,7 @@ fn mcp_support_metadata_comes_from_the_executable_definition() {
   let type_text = super::invoke_command_metadata(registry.resolve("input.typeText").unwrap());
   assert_eq!(
     type_text["support"]["linux"],
-    serde_json::json!({ "state": "partial", "note": "foreground delivery only; targeted delivery is unsupported" })
+    serde_json::json!({ "state": "partial", "note": "focused target only; cannot focus or raise a window" })
   );
 
   let press_keys = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
@@ -438,6 +438,7 @@ async fn call_invoke(server: McpServer, arguments: serde_json::Value) -> rmcp::m
 #[tokio::test]
 async fn mcp_invoke_with_a_root_device_selection_never_runs_locally() {
   let selection = auv::selection::RootSelection {
+    credential: None,
     device_name: None,
     device_id: Some("0000000000000000000000000000000000000000000000000000000000000000".into()),
     run_id: None,
