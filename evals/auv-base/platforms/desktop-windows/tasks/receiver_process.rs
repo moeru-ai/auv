@@ -129,6 +129,10 @@ pub struct Layout {
   pub label_rect: [i32; 4],
   #[serde(default)]
   pub edit_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_center: [i32; 2],
 }
 
 /// A process the harness started detached and holds by handle.
@@ -290,6 +294,12 @@ impl Receiver {
       .spawn()
       .with_context(|| format!("launch {}", binary.display()))?;
     let stdin = child.stdin.take();
+    // NOTICE: the same early-failure window `spawn_detached_with` had remains here — after
+    // `spawn()` succeeds, a failing stdout take or ready handshake leaves only `Child::drop`,
+    // which closes the handles but does not terminate the receiver's process. Deferred: the
+    // piped receiver is the `single --piped` control path, not the workflow harness's, so a
+    // terminate-on-early-return fix here is its own slice. Trigger: owner approval or a
+    // harness that starts piped receivers.
     let lines = forward_lines(BufReader::new(child.stdout.take().context("receiver stdout unavailable")?));
     let layout = ready_layout(&lines)?;
     Ok(Self {
@@ -320,6 +330,8 @@ impl Receiver {
     }
     let process = create_with_shell_parent(&command_line)?;
 
+    // From here until the Receiver owns `process`, an early return would only drop the handle
+    // and leave the receiver's process running, so every failure path terminates it first.
     let started = Instant::now();
     let stream = loop {
       match listener.accept() {
@@ -334,13 +346,31 @@ impl Receiver {
           }
           std::thread::sleep(Duration::from_millis(10));
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+          process.terminate();
+          return Err(error.into());
+        }
       }
     };
-    stream.set_nonblocking(false)?;
+    if let Err(error) = stream.set_nonblocking(false) {
+      process.terminate();
+      return Err(error.into());
+    }
     let _ = stream.set_nodelay(true);
-    let lines = forward_lines(BufReader::new(stream.try_clone()?));
-    let layout = ready_layout(&lines)?;
+    let lines = match stream.try_clone() {
+      Ok(clone) => forward_lines(BufReader::new(clone)),
+      Err(error) => {
+        process.terminate();
+        return Err(error.into());
+      }
+    };
+    let layout = match ready_layout(&lines) {
+      Ok(layout) => layout,
+      Err(error) => {
+        process.terminate();
+        return Err(error.into());
+      }
+    };
     Ok(Self {
       spec: spec.clone(),
       layout,

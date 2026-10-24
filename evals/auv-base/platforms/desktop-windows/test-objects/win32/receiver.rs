@@ -131,6 +131,12 @@ mod native {
     /// Caption for the push button.
     #[arg(long, default_value = "Activate Target")]
     button_caption: String,
+    /// Initial text in the foreground-input text box, for OCR-driven workflow evaluations.
+    #[arg(long, default_value = "")]
+    input_caption: String,
+    /// Nonzero capture calibration before any input is sent; not a delivered click.
+    #[arg(long, default_value_t = 0)]
+    initial_clicks: u64,
     /// Shown in the edit text so each receiver's content differs.
     #[arg(long, default_value_t = 0)]
     index: u32,
@@ -234,6 +240,9 @@ mod native {
   static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   static BUTTON_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  static INPUT_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  /// Text the application submitted when its button actually received BN_CLICKED.
+  static SUBMITTED_TEXT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
   /// Where replies go: stdout, or the socket to the parent. Written from the window thread only.
   static OUT: std::sync::Mutex<Option<Box<dyn std::io::Write + Send>>> = std::sync::Mutex::new(None);
 
@@ -269,6 +278,7 @@ mod native {
       let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     INDEX.store(u64::from(options.index), Relaxed);
+    COUNTERS.clicks.store(options.initial_clicks, Relaxed);
     // SAFETY: a read-only query.
     HOME_FOREGROUND.store(unsafe { GetForegroundWindow() }.0 as isize, Relaxed);
     SINK.store(options.sink, Relaxed);
@@ -277,6 +287,7 @@ mod native {
     let _ = STARTED.set(std::time::Instant::now());
     let _ = BASE_TITLE.set(options.title.clone());
     let _ = BUTTON_CAPTION.set(options.button_caption.clone());
+    let _ = INPUT_CAPTION.set(options.input_caption.clone());
     let reader: Box<dyn BufRead + Send> = match &options.connect {
       Some(address) => {
         let stream = std::net::TcpStream::connect(address).expect("connect to the parent");
@@ -420,7 +431,8 @@ mod native {
     let button_caption = BUTTON_CAPTION.get().map(String::as_str).unwrap_or("Activate Target");
     let button_caption_hstring = HSTRING::from(button_caption);
     let button = child(w!("BUTTON"), PCWSTR(button_caption_hstring.as_ptr()), WINDOW_STYLE(BS_PUSHBUTTON as u32), ID_BUTTON);
-    let label = child(w!("STATIC"), w!("clicks 0"), WINDOW_STYLE(0), ID_LABEL);
+    let initial_label = HSTRING::from(format!("clicks {}", COUNTERS.clicks.load(Relaxed)));
+    let label = child(w!("STATIC"), PCWSTR(initial_label.as_ptr()), WINDOW_STYLE(0), ID_LABEL);
     let edit =
       child(w!("EDIT"), w!(""), WS_VSCROLL | WS_BORDER | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY) as u32), ID_EDIT);
 
@@ -440,6 +452,7 @@ mod native {
       // SAFETY: live control; its original procedure is kept for `call_original`. Associating no
       // input context turns the IME off for this control only.
       unsafe {
+        let _ = SetWindowTextW(typing, &HSTRING::from(INPUT_CAPTION.get().map(String::as_str).unwrap_or("")));
         TYPING_PROC.store(SetWindowLongPtrW(typing, GWLP_WNDPROC, typing_proc as *const () as usize as isize), Relaxed);
         if !KEEP_IME.load(Relaxed) {
           let _ = ImmAssociateContext(typing, HIMC::default());
@@ -698,6 +711,11 @@ mod native {
         let id = wparam.0 & 0xFFFF;
         if id == ID_BUTTON && notification == BN_CLICKED {
           let clicks = COUNTERS.clicks.fetch_add(1, Relaxed) + 1;
+          if FOREGROUND_INPUT.load(Relaxed)
+            && let Ok(mut submitted) = SUBMITTED_TEXT.lock()
+          {
+            *submitted = window_text(handle(&TYPING));
+          }
           // SAFETY: live label control.
           unsafe {
             let _ = SetWindowTextW(handle(&LABEL), &HSTRING::from(format!("clicks {clicks}")));
@@ -909,6 +927,7 @@ mod native {
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
+      state["submitted_text"] = json!(SUBMITTED_TEXT.lock().map(|text| text.clone()).unwrap_or_default());
       state["typing"] = json!({
         "text": window_text(typing),
         // The request runs on the window's own thread, so this is the control focused in it.

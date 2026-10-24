@@ -1,10 +1,10 @@
 # Windows desktop evaluations
 
 Opt-in evaluations of the Windows driver acting on windows the user is not looking at.
-They need an interactive desktop and open small windows of their own; they never take the
-foreground, move the pointer or send input outside the windows they own, and they check that
-independently of what the driver reports. `foreground` is the exception: it runs the commands
-whose job is to move the real pointer and send real keys, and keeps them on its own window (below).
+They need an interactive desktop and open small windows of their own. Background scenarios
+request no global input and independently record foreground, pointer and input disturbances;
+an application's launch can still activate a window and is a separate finding. `foreground`
+and the full `workflow` scenario deliberately use the real pointer and keyboard on owned windows.
 
 ```text
 test-objects/win32/receiver.rs   A native Win32 window in a process of its own: a push button, a
@@ -55,6 +55,8 @@ just eval windows quiet    --output evals/auv-base/results/windows-quiet --minut
 just eval windows window   --output evals/auv-base/results/windows-window --auv target/debug/auv.exe
 just eval windows screen   --output evals/auv-base/results/windows-screen --auv target/debug/auv.exe
 just eval windows foreground --output evals/auv-base/results/windows-foreground --auv target/debug/auv.exe
+just eval windows workflow --output evals/auv-base/results/windows-workflow --auv target/debug/auv.exe --rounds 2
+just eval windows workflow --output evals/auv-base/results/windows-observation --auv target/debug/auv.exe --rounds 2 --observe-only
 ```
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
@@ -79,6 +81,52 @@ text instead of judging it.
 format the driver can copy) before it starts and gives it back however it ends. Before the paste
 steps it puts its own text on the clipboard, then checks after each paste that the clipboard holds
 that text again. Its records hold only whether the clipboard came back, never what was on it.
+
+## Complete workflows
+
+`workflow` runs the same owned Win32 record-entry workflow through direct Rust APIs, local
+Invoke, and a real daemon-owned Runner selected by `--run`: resolve and capture the window,
+OCR the input caption, click, verify foreground and control focus, select and type text,
+scroll a separate control, OCR-click Submit, then check the actual submitted record and
+decode the painted state strip from a final capture. Receiver setup starts with a nonzero
+calibration count; it is never counted as delivered input. Every real submission must add
+exactly one click. The fixture's `submitted_text` is copied from the control by `BN_CLICKED`.
+
+No input action is retried. OCR readiness gets at most three observations. Before dispatch,
+OCR must select a single candidate inside the expected owned control, the user must have
+been idle for two seconds, and keyboard input requires the correct foreground and control
+focus. The returned click point is checked too. Wrong-focus and wrong-window controls
+must reject keys before dispatch and leave both applications' text/key logs unchanged.
+These checks are not an atomic OS focus lease; a concurrent desktop change can still race
+the precheck. Foreground actions are expected to change input/pointer state and are recorded
+separately from operations required to be quiet. A quiet violation or inconclusive operation
+prevents overall acceptance. Pointer and foreground restoration are checked after the full run.
+The summary's `functional_passed` (and `--observe-only`'s `observation_passed`) covers only the
+scenario body; the overall `passed` additionally requires the quiet tally, runner and fixture
+cleanup, and pointer and foreground restoration. Consumers must gate on `passed`: a true
+`functional_passed` beside a false `passed` is a workflow whose steps ran but whose desktop or
+cleanup contract failed. A fixture or environment failure after the record file exists is
+written as a `setup_failed` entry plus a `passed: false` summary whose structured `cleanup`
+fields separate verified receipts from unknown drop-only attempts and resources never created.
+So, whenever the record medium is usable and normal error handling can run, `workflow.jsonl`
+ends with an explicit outcome; a forced process kill or an unwritable volume can still truncate
+it. Global misconfigurations (output directory, missing `auv`, temp space) still stop the run
+with a process error before any route runs.
+Because `screen.clickText` re-resolves its target after the preflight, all functional workflow
+runs must happen in a dedicated, isolated Windows session with no user applications open.
+
+`--observe-only` exercises resolution, owned-window capture, OCR coordinates and Runner
+lifecycle, with no input, decoy activation, clipboard access or pointer/foreground restoration.
+Its `observation_passed` is separate from desktop quietness; `functional_passed` remains null.
+It cannot pass the full workflow or its wrong-focus/wrong-window controls. Choose a fresh
+output directory; an existing directory is rejected. Temporary desktop captures are removed
+on normal/error return. Run stop and private daemon process-tree termination are recorded
+before store removal; serve logs remain outside the temporary store. No default daemon or
+paired Device configuration is changed. If the harness process itself is force-killed, its
+detached receiver windows can outlive it and must be closed by hand in that session.
+
+The [2026-10-24 evidence](../../../../docs/ai/references/driver/2026-10-24-windows-gui-workflow-evidence.md)
+records measured effects and the per-route runs behind this evaluation.
 
 ## How to read a result
 

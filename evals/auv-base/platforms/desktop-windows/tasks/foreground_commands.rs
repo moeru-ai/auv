@@ -51,6 +51,9 @@ use super::sustained::decode_strip;
 use super::watch::DesktopWatch;
 use super::window_commands::{Invocation, invoke, rect_of};
 
+#[path = "gui_workflow.rs"]
+pub mod workflow;
+
 /// How long the user must have left the mouse and keyboard alone before a command sends real
 /// input, so the input cannot interleave with theirs.
 const IDLE_MS: u64 = 2_000;
@@ -76,7 +79,7 @@ struct Restore {
   cursor: (i32, i32),
   foreground: isize,
   receiver: isize,
-  store: PathBuf,
+  store: Option<PathBuf>,
   /// Every format of the user's clipboard at the start; the paste steps replace it.
   clipboard: Option<ClipboardSnapshot>,
 }
@@ -104,7 +107,9 @@ impl Drop for Restore {
     }
     std::thread::sleep(Duration::from_millis(200));
     // The store holds a screenshot of the user's desktop; none of it is evidence.
-    let _ = std::fs::remove_dir_all(&self.store);
+    if let Some(store) = &self.store {
+      let _ = std::fs::remove_dir_all(store);
+    }
   }
 }
 
@@ -302,7 +307,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     cursor: start.cursor,
     foreground: start.foreground,
     receiver: hwnd,
-    store: store.clone(),
+    store: Some(store.clone()),
     clipboard: Some(clipboard_at_start),
   };
   let (window, _) = discover_by_hwnd(&driver, hwnd)?;
