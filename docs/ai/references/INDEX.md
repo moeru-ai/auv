@@ -56,6 +56,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | [`archive/phase-history/`](archive/phase-history/INDEX.md) | Historical | Early phase freeze / acceptance | |
 | [`archive/ax-copilot/`](archive/ax-copilot/INDEX.md) | Archived | macOS AX copilot vertical | |
 | [`ops/`](ops/INDEX.md) | Mixed | Setup, tooling, cross-cutting notes | |
+| [`release/`](release/INDEX.md) | Active | Release artifacts, dependency portability, packaging, validation | [Linux native OCR distribution comparison](release/2026-10-06-linux-native-ocr-distribution-comparison.md) |
 
 ## Quick entry
 

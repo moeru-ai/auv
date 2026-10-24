@@ -35,16 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            archive: auv-x86_64-unknown-linux-gnu.tar.gz
-            binding: auv-binding.linux-x64-gnu.node
-            executable: auv
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            archive: auv-aarch64-unknown-linux-gnu.tar.gz
-            binding: auv-binding.linux-arm64-gnu.node
-            executable: auv
           - os: macos-15-intel
             target: x86_64-apple-darwin
             archive: auv-x86_64-apple-darwin.tar.gz
@@ -74,23 +64,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libclang-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libdbus-1-dev \
-            libpipewire-0.3-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libegl-dev \
-            libleptonica-dev \
-            libtesseract-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -235,11 +208,223 @@ jobs:
             ${{ matrix.archive }}.sha256
             js/packages/cli/${{ matrix.binding }}
 
+  build-linux:
+    name: Build ${{ matrix.target }} full bundle
+    runs-on: ${{ matrix.os }}
+    # Debian 12 provides PipeWire 0.3.65 headers, the oldest distro baseline
+    # compatible with pipewire-rs 0.8. Ubuntu 22.04 only provides 0.3.48.
+    container: debian:12-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: auv-x86_64-unknown-linux-gnu.tar.gz
+            binding: auv-binding.linux-x64-gnu.node
+            package_dir: linux-x64-gnu
+            package_name: "@auv-js/cli-linux-x64-gnu"
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: auv-aarch64-unknown-linux-gnu.tar.gz
+            binding: auv-binding.linux-arm64-gnu.node
+            package_dir: linux-arm64-gnu
+            package_name: "@auv-js/cli-linux-arm64-gnu"
+
+    steps:
+      - name: Install Linux build and packaging dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils \
+            build-essential \
+            ca-certificates \
+            curl \
+            git \
+            libclang-dev \
+            libdbus-1-dev \
+            libegl-dev \
+            libleptonica-dev \
+            libpipewire-0.3-dev \
+            libpipewire-0.3-modules \
+            libspa-0.2-modules \
+            libtesseract-dev \
+            libwayland-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            patchelf \
+            pax-utils \
+            pipewire-bin \
+            pkg-config \
+            python3 \
+            tesseract-ocr-eng
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build NAPI binding
+        working-directory: js/packages/cli
+        run: |
+          pnpm build:js
+          pnpm exec napi build --platform --release --esm --js binding.js --dts binding.d.ts \
+            --target '${{ matrix.target }}' -- --locked
+          node -e "require('./${{ matrix.binding }}')"
+          ../../../scripts/tests/verify-elf-glibc-baseline 2.36 "${{ matrix.binding }}"
+
+      - name: Build release binary
+        run: |
+          cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
+          cargo build --locked --release --package auv-driver-linux --example release_ocr_probe --example release_pipewire_probe --target "${{ matrix.target }}"
+
+      - name: Create and verify full Linux archive
+        run: |
+          version="$(node -p "require('./js/packages/cli/package.json').version")"
+          scripts/package-linux-release \
+            --binary "target/${{ matrix.target }}/release/auv" \
+            --archive "${{ matrix.archive }}" \
+            --target "${{ matrix.target }}" \
+            --version "$version" \
+            --project-license LICENSE
+          scripts/tests/verify-linux-release-archive "${{ matrix.archive }}" "${{ matrix.target }}" "$version"
+          cp "target/${{ matrix.target }}/release/examples/release_ocr_probe" release-ocr-probe
+          patchelf --set-rpath '$ORIGIN/lib/auv' release-ocr-probe
+          cp "target/${{ matrix.target }}/release/examples/release_pipewire_probe" release-pipewire-probe
+          patchelf --set-rpath '$ORIGIN/lib/auv' release-pipewire-probe
+
+      - name: Stage and pack the Linux npm platform package
+        run: |
+          mkdir -p target/release-artifacts
+          cp "${{ matrix.archive }}" target/release-artifacts/
+          cp "js/packages/cli/${{ matrix.binding }}" "js/packages/cli/npm/${{ matrix.package_dir }}/"
+          cd js/packages/cli
+          pnpm exec tsx ./scripts/stage-platform-packages.ts "$GITHUB_WORKSPACE/target/release-artifacts" "${{ matrix.package_dir }}"
+          cd "$GITHUB_WORKSPACE"
+          scripts/tests/verify-staged-linux-npm-package "js/packages/cli/npm/${{ matrix.package_dir }}"
+          package_tarball="$(cd "js/packages/cli/npm/${{ matrix.package_dir }}" && npm pack --pack-destination "$GITHUB_WORKSPACE" --silent)"
+          mv "$package_tarball" release-platform-package.tgz
+
+      - name: Calculate hash
+        run: sha256sum "${{ matrix.archive }}" | awk '{ print $1 }' > "${{ matrix.archive }}.sha256"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+            js/packages/cli/${{ matrix.binding }}
+            release-ocr-probe
+            release-pipewire-probe
+            release-platform-package.tgz
+
+  verify-linux-release:
+    name: Verify ${{ matrix.archive }} on supported Linux runtimes
+    needs: build-linux
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            archive: auv-x86_64-unknown-linux-gnu.tar.gz
+            package_name: "@auv-js/cli-linux-x64-gnu"
+          - os: ubuntu-24.04-arm
+            archive: auv-aarch64-unknown-linux-gnu.tar.gz
+            package_name: "@auv-js/cli-linux-arm64-gnu"
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.archive }}
+
+      - name: Verify startup and OCR on clean supported containers
+        run: |
+          mkdir bundle
+          tar -xzf "${{ matrix.archive }}" -C bundle
+          cp release-ocr-probe release-pipewire-probe bundle/
+          for image in debian:12-slim debian:13-slim ubuntu:24.04 ubuntu:26.04; do
+            docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
+              for package in tesseract-ocr libtesseract4 libtesseract5 liblept5 libleptonica6; do
+                if dpkg-query -W "$package" >/dev/null 2>&1; then
+                  echo "clean runtime unexpectedly contains $package" >&2
+                  exit 1
+                fi
+              done
+              /opt/auv/auv --help >/dev/null
+              /opt/auv/release-ocr-probe
+            '
+          done
+
+      # Regression: a bundled libpipewire 0.3 loaded the host's PipeWire 1.x
+      # client modules and failed with `undefined symbol:
+      # pw_log_topic_register`. Connect the bundled client, with its own
+      # modules, to each distribution's own PipeWire daemon.
+      - name: Verify the bundled PipeWire client against host daemons
+        run: |
+          for image in debian:12-slim debian:13-slim ubuntu:24.04 ubuntu:26.04; do
+            docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update >/dev/null
+              apt-get install -y --no-install-recommends pipewire >/dev/null
+              export XDG_RUNTIME_DIR=/tmp/xdg
+              mkdir -m 0700 "$XDG_RUNTIME_DIR"
+              pipewire &
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                test -S "$XDG_RUNTIME_DIR/pipewire-0" && break
+                sleep 1
+              done
+              echo "host PipeWire $(dpkg-query -W -f "\${Version}" pipewire)"
+              /opt/auv/release-pipewire-probe
+            '
+          done
+
+      - name: Verify installed npm package and NAPI binding
+        env:
+          PACKAGE_NAME: ${{ matrix.package_name }}
+        run: |
+          for image in node:20-bookworm-slim node:22-bookworm-slim; do
+            docker run --rm \
+              -e PACKAGE_NAME \
+              -v "$PWD:/work:ro" \
+              "$image" \
+              sh -c '
+                mkdir /tmp/app
+                cd /tmp/app
+                npm init -y >/dev/null
+                npm install /work/release-platform-package.tgz >/dev/null
+                node -e "require(process.env.PACKAGE_NAME)"
+                "node_modules/$PACKAGE_NAME/bin/auv" --help >/dev/null
+              '
+          done
+
   publish:
     name: Publish release artifacts
     needs:
       - build
       - notarize-macos
+      - verify-linux-release
     runs-on: ubuntu-24.04
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release && inputs.tag_name != '')
     steps:
@@ -363,6 +548,11 @@ jobs:
         env:
           AUV_RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: pnpm artifacts
+
+      - name: Verify staged Linux npm bundles
+        run: |
+          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-x64-gnu
+          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-arm64-gnu
 
       - name: Verify npm package contents
         working-directory: js/packages/cli

@@ -73,8 +73,11 @@ that copied path at runtime.
 
 - macOS: copy it to `YourApp.app/Contents/MacOS/auv`, and list it in
   electron-builder's `mac.binaries` so it is signed as nested code.
-- Windows and Linux: copy it to `resources/bin/auv.exe` or
-  `resources/bin/auv` through `extraResources`.
+- Windows: copy it to `resources/bin/auv.exe` through `extraResources`.
+- Linux: copy the complete directory containing the path returned by
+  `binaryPath()` to `resources/bin` through `extraResources`. The sibling
+  `lib/`, `share/`, `licenses/`, and `manifest.json` entries are part of the
+  executable's runtime bundle; copying only `auv` is unsupported.
 
 The Electron main process should own the child process and pass the resulting
 absolute path to `startAuv()`. Importing `@auv-js/cli/binary` during staging

@@ -535,6 +535,7 @@ dependencies = [
  "auv-device-helper-macos",
  "auv-device-helper-windows",
  "auv-driver",
+ "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
  "auv-media-macos",
