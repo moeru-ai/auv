@@ -97,24 +97,50 @@ impl Runner {
     command
   }
 
-  fn start(auv: &Path, root: &Path, evidence: &Path) -> Result<Self> {
-    std::fs::create_dir_all(root)?;
-    std::fs::write(root.join("profiles.json"), "{\"profiles\":{}}")?;
+  /// Starts the private daemon and creates the harness's own Run on it. A failure after the
+  /// daemon process was spawned returns it in `RunnerStartFailure::started`, because a
+  /// half-started daemon must be stopped with a receipt, not recorded as never created.
+  fn start(auv: &Path, root: &Path, evidence: &Path) -> Result<Self, RunnerStartFailure> {
+    std::fs::create_dir_all(root).map_err(|error| RunnerStartFailure {
+      error: error.into(),
+      started: None,
+    })?;
+    std::fs::write(root.join("profiles.json"), "{\"profiles\":{}}").map_err(|error| RunnerStartFailure {
+      error: error.into(),
+      started: None,
+    })?;
     // The daemon binds its local listener from a bare Windows pipe name; clients dial the same
     // pipe through the npipe:// URI form the endpoint parser accepts.
     let pipe = format!("auv-gui-workflow-{}-{}", std::process::id(), run_id());
     let endpoint = format!("npipe://./pipe/{pipe}");
-    let child = Command::new(auv)
+    let stdout = std::fs::File::create(root.join("serve.stdout.log")).map_err(|error| RunnerStartFailure {
+      error: error.into(),
+      started: None,
+    })?;
+    let stderr = std::fs::File::create(root.join("serve.stderr.log")).map_err(|error| RunnerStartFailure {
+      error: error.into(),
+      started: None,
+    })?;
+    let child = match Command::new(auv)
       .args(["serve", "--local-socket", &pipe, "--store-root"])
       .arg(root.join("server"))
       .arg("--discovery-file")
       .arg(root.join("daemon.json"))
       .env("AUV_CONFIG_PROFILES_FILE", root.join("profiles.json"))
       .stdin(Stdio::null())
-      .stdout(std::fs::File::create(root.join("serve.stdout.log"))?)
-      .stderr(std::fs::File::create(root.join("serve.stderr.log"))?)
+      .stdout(stdout)
+      .stderr(stderr)
       .creation_flags(0x0800_0000)
-      .spawn()?;
+      .spawn()
+    {
+      Ok(child) => child,
+      Err(error) => {
+        return Err(RunnerStartFailure {
+          error: error.into(),
+          started: None,
+        });
+      }
+    };
     let mut scope = Self {
       child,
       auv: auv.into(),
@@ -125,23 +151,76 @@ impl Runner {
     };
     let started = Instant::now();
     loop {
-      if scope.child.try_wait()?.is_some() {
-        bail!("the private workflow daemon exited; see its serve logs");
+      match scope.child.try_wait() {
+        Ok(Some(_)) => {
+          return Err(RunnerStartFailure {
+            error: anyhow::anyhow!("the private workflow daemon exited; see its serve logs"),
+            started: Some(scope),
+          });
+        }
+        Ok(None) => {}
+        Err(error) => {
+          return Err(RunnerStartFailure {
+            error: error.into(),
+            started: Some(scope),
+          });
+        }
       }
       if root.join("daemon.json").exists() {
         let mut command = scope.command();
         command.args(["run", "create", "--endpoint", &scope.endpoint, "--json"]);
         let remaining = Duration::from_secs(30).saturating_sub(started.elapsed());
-        let output = command_output(command, remaining.min(Duration::from_secs(5)))?;
+        let output = match command_output(command, remaining.min(Duration::from_secs(5))) {
+          Ok(output) => output,
+          Err(error) => {
+            return Err(RunnerStartFailure {
+              error,
+              started: Some(scope),
+            });
+          }
+        };
         if output.status.success() {
-          let created: Value = serde_json::from_slice(&output.stdout)?;
-          scope.run = created["run_id"].as_str().context("create Run returned no run_id")?.into();
-          std::fs::write(root.join("run-created.json"), serde_json::to_vec_pretty(&created)?)?;
+          let created: Value = match serde_json::from_slice(&output.stdout) {
+            Ok(created) => created,
+            Err(error) => {
+              return Err(RunnerStartFailure {
+                error: error.into(),
+                started: Some(scope),
+              });
+            }
+          };
+          scope.run = match created["run_id"].as_str() {
+            Some(run_id) => run_id.into(),
+            None => {
+              return Err(RunnerStartFailure {
+                error: anyhow::anyhow!("create Run returned no run_id"),
+                started: Some(scope),
+              });
+            }
+          };
+          let encoded = match serde_json::to_vec_pretty(&created) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+              return Err(RunnerStartFailure {
+                error: error.into(),
+                started: Some(scope),
+              });
+            }
+          };
+          if let Err(error) = std::fs::write(root.join("run-created.json"), encoded) {
+            return Err(RunnerStartFailure {
+              error: error.into(),
+              started: Some(scope),
+            });
+          }
           return Ok(scope);
         }
       }
       if started.elapsed() > Duration::from_secs(30) {
-        bail!("private Runner startup exceeded 30 seconds");
+        return Err(RunnerStartFailure {
+          error: anyhow::anyhow!("private Runner startup exceeded 30 seconds"),
+          started: Some(scope),
+        });
       }
       std::thread::sleep(Duration::from_millis(200));
     }
@@ -387,6 +466,14 @@ fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
   Ok(())
 }
 
+/// A failed daemon startup. `started` carries the Runner when the daemon process was actually
+/// spawned — a half-started daemon must be stopped with a receipt, not recorded as never
+/// having existed.
+struct RunnerStartFailure {
+  error: anyhow::Error,
+  started: Option<Runner>,
+}
+
 /// One case's fixture. Every field owns its cleanup — `Runner::drop` ends the daemon process
 /// tree, `Receiver::drop` closes the receiver after a bounded wait and then kills it, and the
 /// capture-store `TempDir` removes itself — as a backstop behind the explicit, receipt-bearing
@@ -412,6 +499,9 @@ struct SetupFailure {
   error: anyhow::Error,
   runner_stop: Option<Result<Value>>,
   receiver_close: Option<Result<()>>,
+  /// The receiver's answer when the foreground was explicitly handed back while it could still
+  /// act on the request; None when there was no restore or the receiver was never created.
+  foreground_restore: Option<Result<bool>>,
   driver_created: bool,
   witness_created: bool,
   restore_created: bool,
@@ -433,11 +523,15 @@ fn build_fixture(
   let mut runner = if route == "runner" {
     match Runner::start(auv, &store.join("private-daemon"), output) {
       Ok(runner) => Some(runner),
-      Err(error) => {
+      Err(mut failure) => {
+        // The daemon may have been spawned before the failure; stop it with its receipt. Only
+        // a spawn that never happened is recorded as not_created.
+        let runner_stop = failure.started.as_mut().map(Runner::finish);
         return Err(SetupFailure {
-          error,
-          runner_stop: None,
+          error: failure.error,
+          runner_stop,
           receiver_close: None,
+          foreground_restore: None,
           driver_created: false,
           witness_created: false,
           restore_created: false,
@@ -455,6 +549,7 @@ fn build_fixture(
         error,
         runner_stop,
         receiver_close: None,
+        foreground_restore: None,
         driver_created: false,
         witness_created: false,
         restore_created: false,
@@ -469,6 +564,7 @@ fn build_fixture(
         error,
         runner_stop,
         receiver_close: None,
+        foreground_restore: None,
         driver_created: true,
         witness_created: false,
         restore_created: false,
@@ -484,6 +580,7 @@ fn build_fixture(
         error,
         runner_stop,
         receiver_close: None,
+        foreground_restore: None,
         driver_created: true,
         witness_created: true,
         restore_created: false,
@@ -511,14 +608,22 @@ fn build_fixture(
     Ok(pair) => pair,
     Err(error) => {
       // The receiver and the daemon both exist here, so their cleanups have real receipts.
-      // The restore, if any, is dropped on this path and recorded as unknown, because its
-      // Drop restores the desktop without returning a result.
+      // Hand the foreground back while the receiver can still act on the request: the Restore
+      // backstop only posts a message to the receiver's window, and a window that has exited
+      // cannot yield a foreground it no longer holds. The receiver is closed after that
+      // answer, and the daemon gets its bounded stop.
+      let foreground_restore = if restore.is_some() {
+        Some(target.yield_foreground(start.foreground))
+      } else {
+        None
+      };
       let receiver_close = target.close();
       let runner_stop = runner.as_mut().map(Runner::finish);
       return Err(SetupFailure {
         error,
         runner_stop,
         receiver_close: Some(receiver_close),
+        foreground_restore,
         driver_created: true,
         witness_created: true,
         restore_created: true,
@@ -615,6 +720,11 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
         Some(Ok(())) => json!({"state": "verified"}),
         Some(Err(close_error)) => json!({"state": "unknown", "error": close_error.to_string()}),
       };
+      let foreground_cleanup = match failure.foreground_restore {
+        None => json!({"state": "not_attempted"}),
+        Some(Ok(handed)) => json!({"state": "verified", "handed": handed}),
+        Some(Err(restore_error)) => json!({"state": "unknown", "error": restore_error.to_string()}),
+      };
       let drop_only = |created: bool| {
         if created {
           json!({"state": "unknown", "note": "cleaned up by drop; no receipt exists"})
@@ -629,6 +739,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
         "observe_only": options.observe_only, "observation_passed": Value::Null, "functional_passed": Value::Null,
         "error": error, "failures": [], "quiet_operations": 0, "quiet_held": 0, "quiet_inconclusive": 0, "quiet_violated": 0,
         "cleanup": {"runner_daemon": runner_cleanup, "receiver": receiver_cleanup,
+          "foreground_restore": foreground_cleanup,
           "driver_session": drop_only(failure.driver_created), "desktop_witness": drop_only(failure.witness_created),
           "restore": drop_only(failure.restore_created),
           "capture_store": {"state": if store_removed { "verified" } else { "unknown" }, "removed": store_removed,
@@ -973,5 +1084,37 @@ mod tests {
     assert_eq!(summary["cleanup"]["restore"]["state"], json!("not_created"));
     assert_eq!(summary["cleanup"]["capture_store"]["state"], json!("verified"));
     assert_eq!(summary["cleanup"]["capture_store"]["removed"], json!(true));
+  }
+
+  #[test]
+  fn a_half_started_daemon_is_stopped_with_a_receipt_not_recorded_as_never_created() {
+    // The runner route spawns a real process (cmd.exe, which exits on the unknown `serve`
+    // command) that never becomes a daemon, so Runner::start fails after the spawn and must
+    // hand the started process back for a receipt-bearing stop. No desktop contact, no input.
+    let output = tempfile::tempdir().expect("temp output directory");
+    let auv = PathBuf::from(std::env::var_os("ComSpec").expect("ComSpec is defined on Windows"));
+    let options = Options {
+      output: output.path().to_owned(),
+      auv,
+      rounds: 1,
+      observe_only: true,
+    };
+    let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");
+    assert!(!passed);
+    let records: Vec<Value> = std::fs::read_to_string(output.path().join("runner-01").join("workflow.jsonl"))
+      .expect("the case's workflow.jsonl exists")
+      .lines()
+      .map(|line| serde_json::from_str(line).expect("every record is one JSON object"))
+      .collect();
+    let summary = records.iter().find(|record| record["kind"] == "summary").expect("the file ends with a summary");
+    assert_eq!(summary["passed"], json!(false));
+    assert_eq!(summary["setup_failed"], json!(true));
+    // The daemon process was spawned, so its cleanup is a verified receipt, not not_created,
+    // and the receipt shows the process tree actually ended.
+    assert_eq!(summary["cleanup"]["runner_daemon"]["state"], json!("verified"));
+    assert_eq!(summary["cleanup"]["runner_daemon"]["receipt"]["daemon_exited"], json!(true));
+    assert_eq!(summary["cleanup"]["receiver"]["state"], json!("not_created"));
+    assert_eq!(summary["cleanup"]["foreground_restore"]["state"], json!("not_attempted"));
+    assert_eq!(summary["cleanup"]["capture_store"]["state"], json!("verified"));
   }
 }
