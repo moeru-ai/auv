@@ -11,6 +11,12 @@ pub struct AuvContext {
   pub device_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub device_name: Option<String>,
+  /// Platform reported by the selected Device's own daemon host, threaded
+  /// from the placement resolution. `None` means no Device fact reached the
+  /// context; consumers must treat `None` and `DevicePlatform::Unspecified`
+  /// the same way and never substitute the local host's OS.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub device_platform: Option<crate::devices::DevicePlatform>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub run_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -13,7 +13,8 @@ use crate::resource::{DeviceId, DeviceSelector};
 use crate::{AuvContext, ContextError};
 
 /// Operating-system family reported by a Device.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DevicePlatform {
   /// The daemon did not report a platform.
   Unspecified,
@@ -809,5 +810,32 @@ mod tests {
       }),
       Err(DeviceError::InvalidEntryResponse)
     ));
+  }
+
+  // The invoke context carries the platform inline through `AUV_CONTEXT`, so
+  // the serde spelling is part of that process contract: a renamed variant or
+  // non-snake-case encoding would silently decode as a missing platform and
+  // disable the runner-route platform gate.
+  #[test]
+  fn device_platform_round_trips_through_the_inline_context_encoding() {
+    for (platform, encoded) in [
+      (DevicePlatform::Unspecified, "\"unspecified\""),
+      (DevicePlatform::Linux, "\"linux\""),
+      (DevicePlatform::Macos, "\"macos\""),
+      (DevicePlatform::Windows, "\"windows\""),
+    ] {
+      assert_eq!(serde_json::to_string(&platform).unwrap(), encoded);
+      assert_eq!(serde_json::from_str::<DevicePlatform>(encoded).unwrap(), platform);
+    }
+
+    let context = crate::AuvContext {
+      device_platform: Some(DevicePlatform::Linux),
+      ..crate::AuvContext::default()
+    };
+    let decoded: crate::AuvContext = serde_json::from_str(&serde_json::to_string(&context).unwrap()).unwrap();
+    assert_eq!(decoded, context);
+
+    let bare: crate::AuvContext = serde_json::from_str("{}").unwrap();
+    assert_eq!(bare.device_platform, None);
   }
 }
