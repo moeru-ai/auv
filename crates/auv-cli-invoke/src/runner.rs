@@ -10,6 +10,45 @@ fn step_failure(step: &str, error: impl Into<crate::InvokeFailure>) -> crate::In
   failure
 }
 
+/// Refuses a non-dry runner-route dispatch whose declared Runner support for
+/// the selected Runner's platform is explicitly unsupported, before any
+/// capability RPC. A missing or `Unspecified` platform never refuses: without
+/// a Device fact the backend's UNIMPLEMENTED answer, typed by the shared
+/// failure mapping, stays the only fallback. The decision input is the
+/// daemon-reported platform of the selected device's own host, never the
+/// local OS.
+fn runner_platform_gate(
+  command_id: &str,
+  command: &crate::InvokeCommand,
+  platform: Option<auv::devices::DevicePlatform>,
+) -> Result<(), crate::InvokeFailure> {
+  let Some(platform) = platform else {
+    return Ok(());
+  };
+  let support_platform = match platform {
+    auv::devices::DevicePlatform::Macos => crate::support::Platform::Macos,
+    auv::devices::DevicePlatform::Linux => crate::support::Platform::Linux,
+    auv::devices::DevicePlatform::Windows => crate::support::Platform::Windows,
+    auv::devices::DevicePlatform::Unspecified => return Ok(()),
+  };
+  let Some(cells) = command.runner_cells() else {
+    // Fixture commands have no Runner route; the earlier no-route refusal
+    // owns that case, so the gate is not their business.
+    return Ok(());
+  };
+  if cells.on(support_platform).state == crate::support::SupportState::Unsupported {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::Unsupported,
+      format!(
+        "{command_id} has no {} Runner path; the declared Runner support for {} is unsupported",
+        support_platform.label(),
+        support_platform.label()
+      ),
+    ));
+  }
+  Ok(())
+}
+
 /// Reuse the existing polling policy for local OCR and selected Runner calls.
 /// Callers own capture and recognition, including cancellation between Driver calls.
 ///
@@ -93,6 +132,11 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
         crate::FailureCode::Unsupported,
         format!("{} has no Runner route; run it without a selected Run or Device", input.command_id),
       ));
+    }
+    // Dry runs keep their current remote-free behavior, so only a real
+    // dispatch refuses on a declared-unsupported Runner platform.
+    if !input.dry_run {
+      runner_platform_gate(&input.command_id, command, context.device_platform)?;
     }
   }
 

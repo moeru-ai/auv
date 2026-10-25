@@ -115,9 +115,11 @@ pub enum CommandRole {
 /// Like the direct cells, a declaration is a source fact: a routed variant means
 /// the Runner adapter arm, the RPC, and the runner-side handler exist in the
 /// current source, not that anyone ran them.
-// TODO(invoke-support-runner-route): these declarations are metadata; refusing
-// a call before its first RPC when the selected Runner's platform has no path
-// is deferred to an owner-approved pre-dispatch gate slice.
+// NOTICE(invoke-support-runner-route): `crate::runner`'s pre-dispatch gate
+// refuses a non-dry dispatch as `unsupported` when the selected Runner's
+// daemon-reported platform is known and this declaration's cell for that
+// platform is Unsupported. Unknown platforms never refuse; the backend's
+// typed UNIMPLEMENTED answer stays the fallback there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunnerSupport {
   /// The command has no Runner route at all: dispatch refuses it before

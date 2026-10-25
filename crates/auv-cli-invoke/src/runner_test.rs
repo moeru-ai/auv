@@ -505,3 +505,144 @@ async fn undeclared_input_keys_fail_before_daemon_resolution() {
   let id_spelling = validate("input.clickPoint", &[("x", "1"), ("y", "1"), ("click_count", "2")]).expect_err("ids are not input keys");
   assert!(id_spelling.message.contains("does not accept input click_count"), "{}", id_spelling.message);
 }
+
+fn gate_context(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
+  auv::AuvContext {
+    device_platform: platform,
+    ..Default::default()
+  }
+}
+
+// An endpoint that cannot parse fails placement deterministically and without
+// any network traffic, so a placement error from it proves the dispatch got
+// past the gate instead of connecting anywhere.
+fn gate_context_past_the_gate(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
+  auv::AuvContext {
+    device_platform: platform,
+    daemon_endpoint: Some("not a valid endpoint".to_string()),
+    ..Default::default()
+  }
+}
+
+fn gate_input(command_id: &str, dry_run: bool) -> crate::InvokeCommandInput {
+  crate::InvokeCommandInput {
+    command_id: command_id.to_string(),
+    target: None,
+    inputs: Default::default(),
+    typed_args: None,
+    dry_run,
+    cancellation: Default::default(),
+  }
+}
+
+// focusText validates an application target before dispatch, so its gate
+// tests must satisfy that validation to reach the gate itself.
+fn gate_input_targeted(command_id: &str, dry_run: bool) -> crate::InvokeCommandInput {
+  crate::InvokeCommandInput {
+    target: Some(crate::ExecutionTarget::Application {
+      id: "com.example.TextEdit".to_string(),
+    }),
+    ..gate_input(command_id, dry_run)
+  }
+}
+
+#[test]
+fn runner_platform_gate_refuses_only_explicitly_unsupported_cells() {
+  let registry = crate::default_registry();
+  use auv::devices::DevicePlatform;
+
+  // Explicit Cells: linux and windows unsupported, macOS supported.
+  let focus_text = registry.resolve("input.focusText").unwrap();
+  for (platform, label) in [
+    (DevicePlatform::Linux, "Linux"),
+    (DevicePlatform::Windows, "Windows"),
+  ] {
+    let error = runner_platform_gate("input.focusText", focus_text, Some(platform)).unwrap_err();
+    assert_eq!(error.code, crate::FailureCode::Unsupported);
+    assert_eq!(error.message, format!("input.focusText has no {label} Runner path; the declared Runner support for {label} is unsupported"));
+  }
+  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Macos)).is_ok());
+
+  // Partial proceeds: nowPlaying is Partial on Windows.
+  let now_playing = registry.resolve("mediaControl.nowPlaying").unwrap();
+  assert!(runner_platform_gate("mediaControl.nowPlaying", now_playing, Some(DevicePlatform::Windows)).is_ok());
+
+  // Direct shorthand: pointerPosition is Unsupported on Linux only.
+  let pointer = registry.resolve("input.pointerPosition").unwrap();
+  assert!(runner_platform_gate("input.pointerPosition", pointer, Some(DevicePlatform::Linux)).is_err());
+  assert!(runner_platform_gate("input.pointerPosition", pointer, Some(DevicePlatform::Windows)).is_ok());
+
+  // A missing or unreported platform never refuses.
+  assert!(runner_platform_gate("input.focusText", focus_text, None).is_ok());
+  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Unspecified)).is_ok());
+
+  // Fixtures have no Runner route; their upstream refusal owns that case.
+  let fixture = registry.resolve("scan.frame").unwrap();
+  assert!(runner_platform_gate("scan.frame", fixture, Some(DevicePlatform::Linux)).is_ok());
+}
+
+// ROOT CAUSE:
+//
+// If the selected Runner's platform was known and a command's Runner support
+// cell for that platform was Unsupported, dispatch still issued the capability
+// RPC and surfaced the backend's refusal (before the typed-failure phase,
+// flattened to `command_failed`).
+//
+// Before the fix, input.focusText against a Linux Runner reached the Runner
+// and failed remotely. The fix refuses the dispatch pre-RPC as a typed
+// `unsupported` failure that names the command and the Runner platform.
+#[tokio::test]
+async fn selected_dispatch_refuses_a_declared_unsupported_runner_platform_before_resolution() {
+  let error = invoke(gate_input_targeted("input.focusText", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect_err("a Linux Runner has no focusText path");
+  assert_eq!(error.code, crate::FailureCode::Unsupported);
+  assert_eq!(error.message, "input.focusText has no Linux Runner path; the declared Runner support for Linux is unsupported");
+}
+
+#[tokio::test]
+async fn selected_dispatch_without_a_platform_fact_reaches_placement() {
+  // No platform fact in the context: the gate stays open and the dispatch
+  // proceeds until the (deliberately invalid) endpoint fails placement.
+  let error = invoke(gate_input_targeted("input.focusText", false), gate_context_past_the_gate(None))
+    .await
+    .expect_err("the invalid endpoint must fail placement");
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
+  assert!(!error.message.contains("Runner path"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn selected_dispatch_decides_on_the_runner_platform_not_the_local_os() {
+  // Runs on a Windows host: the Linux cell refuses while the Partial Windows
+  // cell proceeds, so only the Runner's reported platform drives the gate.
+  let refused = invoke(gate_input("mediaControl.nowPlaying", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect_err("a Linux Runner has no now-playing path");
+  assert_eq!(refused.code, crate::FailureCode::Unsupported);
+  assert!(refused.message.contains("has no Linux Runner path"));
+
+  let proceeded =
+    invoke(gate_input("mediaControl.nowPlaying", false), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Windows)))
+      .await
+      .expect_err("the Partial Windows cell must proceed to placement");
+  assert_eq!(proceeded.code, crate::FailureCode::CommandFailed);
+  assert!(!proceeded.message.contains("Runner path"), "{}", proceeded.message);
+}
+
+#[tokio::test]
+async fn selected_dry_runs_bypass_the_platform_gate() {
+  let error = invoke(gate_input_targeted("input.focusText", true), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect_err("a dry run proceeds past the gate and fails at the invalid endpoint");
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
+  assert!(!error.message.contains("Runner path"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn fixture_refusal_stays_identical_with_a_known_platform() {
+  let error = invoke(gate_input("scan.frame", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect_err("fixtures have no Runner route regardless of platform");
+  assert_eq!(error.code, crate::FailureCode::Unsupported);
+  assert_eq!(error.message, "scan.frame has no Runner route; run it without a selected Run or Device");
+}
