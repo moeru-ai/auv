@@ -646,3 +646,67 @@ async fn fixture_refusal_stays_identical_with_a_known_platform() {
   assert_eq!(error.code, crate::FailureCode::Unsupported);
   assert_eq!(error.message, "scan.frame has no Runner route; run it without a selected Run or Device");
 }
+
+// Builds a valid typed overlay invocation; `extra` appends flags such as
+// `--no-overlay`, mirroring how the CLI frontend produces overlay inputs.
+fn overlay_gate_input(extra: &[&str]) -> crate::InvokeCommandInput {
+  let mut arguments = vec![
+    "overlay.outline",
+    "--x",
+    "10",
+    "--y",
+    "20",
+    "--width",
+    "30",
+    "--height",
+    "40",
+  ];
+  arguments.extend_from_slice(extra);
+  let crate::InvokeCliParse::Invoke {
+    command_id,
+    target,
+    inputs,
+    typed_args,
+    dry_run,
+    ..
+  } = crate::parse_invoke_args(&arguments.into_iter().map(str::to_string).collect::<Vec<_>>()).expect("parse overlay")
+  else {
+    panic!("expected overlay invocation");
+  };
+  crate::InvokeCommandInput {
+    command_id,
+    target,
+    inputs,
+    typed_args: Some(typed_args),
+    dry_run,
+    cancellation: Default::default(),
+  }
+}
+
+// ROOT CAUSE:
+//
+// If the selected Runner's platform was known and the command's Runner cell
+// for it was Unsupported, the platform gate refused before the disabled-
+// overlay early return, so `overlay.outline --no-overlay` — a call that
+// validates and answers locally without any capability RPC — failed as
+// `unsupported` on Linux and Windows Runners.
+//
+// Before the fix, the gate sat ahead of the overlay block. The fix keeps the
+// local disabled-overlay answer ahead of the gate; only an overlay that will
+// really issue its Runner RPC can be refused by the platform cell.
+#[tokio::test]
+async fn selected_disabled_overlay_stays_local_on_an_unsupported_runner_platform() {
+  let output = invoke(overlay_gate_input(&["--no-overlay"]), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect("a disabled overlay answers locally regardless of the Runner platform");
+  assert_eq!(output.report.expect("overlay report").fields.last().expect("overlay status").value, "disabled");
+}
+
+#[tokio::test]
+async fn selected_enabled_overlay_is_still_gated_on_an_unsupported_runner_platform() {
+  let error = invoke(overlay_gate_input(&[]), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+    .await
+    .expect_err("an overlay that would issue its Runner RPC is refused pre-RPC");
+  assert_eq!(error.code, crate::FailureCode::Unsupported);
+  assert_eq!(error.message, "overlay.outline has no Linux Runner path; the declared Runner support for Linux is unsupported");
+}

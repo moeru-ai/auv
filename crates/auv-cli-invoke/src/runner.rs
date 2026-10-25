@@ -133,6 +133,15 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
         format!("{} has no Runner route; run it without a selected Run or Device", input.command_id),
       ));
     }
+    // A disabled overlay validates and answers locally without any capability
+    // RPC, so this early return must stay ahead of the platform gate: even a
+    // Runner platform without overlay support can still skip a showing.
+    if input.command_id.as_str().starts_with("overlay.") {
+      let plan = crate::commands::overlay::plan_overlay(&input)?;
+      if input.dry_run || !input.overlay_enabled()? {
+        return crate::commands::overlay::selected_overlay_output(&plan, false).map_err(Into::into);
+      }
+    }
     // Dry runs keep their current remote-free behavior, so only a real
     // dispatch refuses on a declared-unsupported Runner platform.
     if !input.dry_run {
@@ -159,12 +168,6 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
   }
 
   let command_id = input.command_id.as_str();
-  if command_id.starts_with("overlay.") {
-    let plan = crate::commands::overlay::plan_overlay(&input)?;
-    if input.dry_run || !input.overlay_enabled()? {
-      return crate::commands::overlay::selected_overlay_output(&plan, false).map_err(Into::into);
-    }
-  }
 
   let auv = auv::Client::from_context(context).await?;
   let run = auv.run(Default::default()).await.map_err(|error| step_failure("resolve selected Run", error))?;
