@@ -122,14 +122,15 @@ async fn text_wait_rejects_cancellation_before_observation() {
     &cancellation,
     || {
       calls.set(calls.get() + 1);
-      async { Ok(false) }
+      async { Ok::<bool, crate::InvokeFailure>(false) }
     },
     |matched| *matched,
   )
   .await
   .expect_err("cancelled wait must not observe the desktop");
 
-  assert_eq!(error, "invoke cancelled");
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
+  assert_eq!(error.message, "invoke cancelled");
   assert_eq!(calls.get(), 0);
 }
 
@@ -149,7 +150,7 @@ async fn text_wait_cancels_during_the_poll_interval_without_another_observation(
     &cancellation,
     || {
       calls.set(calls.get() + 1);
-      async { Ok(false) }
+      async { Ok::<bool, crate::InvokeFailure>(false) }
     },
     |matched| *matched,
   );
@@ -159,7 +160,9 @@ async fn text_wait_cancels_during_the_poll_interval_without_another_observation(
   cancellation.cancel();
   let result = waiting.as_mut().now_or_never().expect("cancellation must finish without waiting for the poll timer");
 
-  assert_eq!(result.expect_err("cancelled wait"), "invoke cancelled");
+  let error = result.expect_err("cancelled wait");
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
+  assert_eq!(error.message, "invoke cancelled");
   assert_eq!(calls.get(), 1);
 }
 
@@ -173,14 +176,15 @@ async fn text_wait_preserves_observation_errors_without_retry() {
     &Default::default(),
     || {
       calls.set(calls.get() + 1);
-      async { Err::<bool, _>("fixture capture permission denied".to_string()) }
+      async { Err::<bool, crate::InvokeFailure>("fixture capture permission denied".to_string().into()) }
     },
     |matched| *matched,
   )
   .await
   .expect_err("observation failure");
 
-  assert_eq!(error, "fixture capture permission denied");
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
+  assert_eq!(error.message, "fixture capture permission denied");
   assert_eq!(calls.get(), 1);
 }
 
@@ -199,7 +203,7 @@ async fn selected_text_wait_retries_until_the_first_matching_response() {
     || {
       calls.set(calls.get() + 1);
       let response = responses.pop_front().expect("fixture response");
-      async move { Ok(response) }
+      async move { Ok::<_, crate::InvokeFailure>(response) }
     },
     |response| !response.is_empty(),
   )
@@ -223,17 +227,83 @@ async fn selected_text_wait_preserves_timeout_semantics_after_one_exact_call() {
     &Default::default(),
     || {
       calls.set(calls.get() + 1);
-      async { Ok(Vec::<u8>::new()) }
+      async { Ok::<Vec<u8>, crate::InvokeFailure>(Vec::new()) }
     },
     |response| !response.is_empty(),
   )
   .await
   .expect_err("empty response at the deadline times out");
 
+  assert_eq!(error.code, crate::FailureCode::CommandFailed);
   assert_eq!(
-    error,
+    error.message,
     "window.waitForText did not find text \"Ready\" within 0 ms; capture the window to check what is shown, or raise --timeout-ms"
   );
+  assert_eq!(calls.get(), 1);
+}
+
+// ROOT CAUSE:
+//
+// If a Runner capability RPC failed, the arm stringified the CapabilityError
+// into "RPC failed: {error}", and From<String> classified that message as
+// command_failed. The transport category behind the error (not_found,
+// unsupported, permission_denied, invalid_input, stale_ui_reference,
+// backend) never reached CLI or MCP callers, so machine consumers could only
+// grep the message text.
+//
+// Before the fix, every converted arm reported code command_failed, with the
+// RPC name only inside the message. The fix routes the same arms through the
+// shared From classifications while step_failure keeps the RPC name and the
+// original error text in the message.
+#[test]
+fn runner_step_failures_keep_the_rpc_name_and_typed_code() {
+  let not_found = step_failure("WindowService/ResolveWindow", auv::client::runner::CapabilityError::NotFound("window 777".to_string()));
+  assert_eq!(not_found.code, crate::FailureCode::NotFound);
+  assert_eq!(not_found.message, "WindowService/ResolveWindow failed: window 777 was not found");
+
+  // Client-side request validation carries no transport category, so it
+  // classifies no more specifically than backend, while the RPC name and the
+  // error text stay in the message.
+  let invalid = step_failure(
+    "InputService/ScrollPoint",
+    auv::client::runner::CapabilityError::InvalidArgument("hold duration must be within (0, 30s]".to_string()),
+  );
+  assert_eq!(invalid.code, crate::FailureCode::Backend);
+  assert_eq!(invalid.message, "InputService/ScrollPoint failed: Runner request is invalid: hold duration must be within (0, 30s]");
+
+  // Placement steps keep their context prefix through the same conversion.
+  let routed = step_failure(
+    "route core Runner for input.key",
+    auv::client::PlacementError::Capability(auv::client::runner::CapabilityError::NotFound("hold id 777".to_string())),
+  );
+  assert_eq!(routed.code, crate::FailureCode::NotFound);
+  assert_eq!(routed.message, "route core Runner for input.key failed: hold id 777 was not found");
+}
+
+#[tokio::test]
+async fn text_wait_surfaces_typed_runner_observation_failures() {
+  let calls = std::cell::Cell::new(0);
+  let error = wait_for_selected_text(
+    "window.waitForText",
+    "Ready",
+    Default::default(),
+    &Default::default(),
+    || {
+      calls.set(calls.get() + 1);
+      async {
+        Err::<bool, _>(step_failure(
+          "TextRecognitionService/FindWindowText",
+          auv::client::runner::CapabilityError::NotFound("window 777".to_string()),
+        ))
+      }
+    },
+    |matched| *matched,
+  )
+  .await
+  .expect_err("observation failure");
+
+  assert_eq!(error.code, crate::FailureCode::NotFound);
+  assert_eq!(error.message, "TextRecognitionService/FindWindowText failed: window 777 was not found");
   assert_eq!(calls.get(), 1);
 }
 

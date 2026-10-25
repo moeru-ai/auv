@@ -274,7 +274,9 @@ async fn recognize_screen_text_with_cancellation(
       .find_text_in_capture(&capture.capture, &query, RelativeRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     cancellation.check().map_err(|error| error.to_string())?;
-    Ok((matches, capture))
+    // The ascription keeps this local OCR observation text-errors, which also
+    // pins the shared wait helper's error type on this path.
+    Ok::<_, String>((matches, capture))
   };
   let (matches, capture) = if let Some(options) = wait {
     crate::runner::wait_for_selected_text("screen.waitForText", &query, options, cancellation, observe, |(matches, _)| {

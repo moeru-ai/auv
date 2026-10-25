@@ -578,7 +578,9 @@ async fn recognize_window_text_with_session(
       let capture = session.window().capture(window).map_err(|error| error.to_string())?;
       let matches =
         session.vision().find_text_in_capture(&capture, query, RelativeRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
-      Ok((matches, capture))
+      // The ascription keeps this local OCR observation text-errors, which also
+      // pins the shared wait helper's error type on this path.
+      Ok::<_, String>((matches, capture))
     }
   };
   let (matches, capture) = match wait {
