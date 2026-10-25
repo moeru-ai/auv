@@ -805,7 +805,7 @@ pub(crate) fn with_invoke_context(command: Command, target: TargetPolicy) -> Com
     )
     .arg(Arg::new("auv_json").long("json").action(ArgAction::SetTrue).help("Render machine-readable JSON output."))
     .arg(Arg::new("auv_detail").long("detail").action(ArgAction::SetTrue).help("Include diagnostic detail in human output."))
-    .arg(Arg::new("auv_wide").long("wide").action(ArgAction::SetTrue).help("Include extra columns in human output."))
+    .arg(Arg::new("auv_wide").long("wide").action(ArgAction::SetTrue).help("Include extra columns in human table output."))
 }
 
 #[cfg(test)]
