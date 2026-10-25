@@ -101,6 +101,18 @@ pub(crate) fn window_handle(window: &Window) -> DriverResult<windows::Win32::Fou
   Ok(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
 }
 
+/// The main-window preference `WindowSelector::main_visible` and the
+/// activation window observation share: foreground first, then a titled
+/// window, then the largest frame. One rank so the resolver and the
+/// observation can never disagree about which window is the app's main one.
+pub(crate) fn main_visible_rank(window: &Window) -> (bool, bool, i64) {
+  (
+    window.is_main,
+    window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
+    (window.frame.size.width * window.frame.size.height).round() as i64,
+  )
+}
+
 /// Resolves a single window from an already-observed list.
 ///
 /// Kept independent of the Win32 enumeration so selector semantics are unit
@@ -111,13 +123,7 @@ fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> Driver
   let mut matches: Vec<&Window> = windows.iter().filter(|window| matches_window_selector_except_main_visible(window, selector)).collect();
 
   if selector.main_visible {
-    matches.sort_by_key(|window| {
-      std::cmp::Reverse((
-        window.is_main,
-        window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
-        (window.frame.size.width * window.frame.size.height).round() as i64,
-      ))
-    });
+    matches.sort_by_key(|window| std::cmp::Reverse(main_visible_rank(window)));
     return matches.first().map(|window| (*window).clone()).ok_or_else(|| missing_window(windows, selector, "main visible window"));
   }
 

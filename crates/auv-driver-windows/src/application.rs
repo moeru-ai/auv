@@ -89,6 +89,12 @@ impl ApplicationApi<'_> {
 /// the enumeration activation already paid for. Presence is a fact, not a
 /// usability promise: a minimized window is still reported `Present`, as the
 /// window the driver would target next.
+///
+/// Absence demands proof: the enumerator can fail to read a window's process
+/// name (the `OpenProcess` or image-name query) while the enumeration itself
+/// succeeds, leaving listed windows with no owner. When nothing matched and
+/// any window's ownership is unreadable, the observation degrades to
+/// `Unknown` — an unattributable window may be the target application's.
 fn activation_window_observation(requested_process: &str, windows: &[auv_driver_common::window::Window]) -> ActivationWindowObservation {
   let mut matching: Vec<&auv_driver_common::window::Window> = windows
     .iter()
@@ -96,20 +102,22 @@ fn activation_window_observation(requested_process: &str, windows: &[auv_driver_
       window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, &TextMatcher::Exact(requested_process.to_string())))
     })
     .collect();
-  // Same main-window preference as the resolver's main_visible ordering:
-  // foreground, then titled, then largest frame.
-  matching.sort_by_key(|window| {
-    std::cmp::Reverse((
-      window.is_main,
-      window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
-      (window.frame.size.width * window.frame.size.height).round() as i64,
-    ))
-  });
+  // The resolver's own main-window preference, shared through one rank.
+  matching.sort_by_key(|window| std::cmp::Reverse(crate::window::main_visible_rank(window)));
   match matching.first() {
     Some(window) => ActivationWindowObservation::Present {
       reference: window.reference.clone(),
     },
-    None => ActivationWindowObservation::Absent,
+    None => {
+      let unattributed = windows.iter().filter(|window| window.app_name.is_none()).count();
+      if unattributed > 0 {
+        ActivationWindowObservation::Unknown {
+          reason: format!("window enumeration left {unattributed} window(s) without a process name, so absence is not confirmed"),
+        }
+      } else {
+        ActivationWindowObservation::Absent
+      }
+    }
   }
 }
 

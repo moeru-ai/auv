@@ -156,8 +156,11 @@ pub enum ActivationWindowObservation {
     /// Window the driver would target next.
     reference: WindowRef,
   },
-  /// The observation succeeded and found no window matching the activated
-  /// application.
+  /// The observation succeeded and found no window it could attribute to
+  /// the activated application. This is scoped to what the observation path
+  /// can see and attribute: when any listed window's ownership is unreadable
+  /// (for example a Windows process-name query that failed), the observation
+  /// reports `Unknown` instead rather than claim a proven absence.
   #[serde(rename = "window_absent")]
   Absent,
   /// The window observation failed; `reason` names the failure. Distinct
