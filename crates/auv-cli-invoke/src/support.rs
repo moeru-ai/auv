@@ -124,7 +124,10 @@ pub enum CommandRole {
 pub enum RunnerSupport {
   /// The command has no Runner route at all: dispatch refuses it before
   /// contacting a Runner. Fixture commands declare this, matching the refusal
-  /// in `crate::runner`.
+  /// in `crate::runner`. Only a fixture may declare it:
+  /// `registry_test::every_command_declares_its_runner_route` fails any
+  /// Desktop or Alias command that tries, so a routed command without a
+  /// platform path must declare explicit Unsupported cells instead.
   NoRoute,
   /// The Runner adapter calls the same driver capability as the direct local
   /// path with no additional limits, so the route's cells are the direct
