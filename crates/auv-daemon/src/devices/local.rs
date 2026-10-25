@@ -17,8 +17,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use auv::devices::{DeviceEntryErrorReason, EnsureUserSessionLockedEffect, EnsureUserSessionUnlockedEffect, UserSession, UserSessionTarget};
-#[cfg(windows)]
-use auv_api_client::device_local::named_pipe_name;
 #[cfg(unix)]
 use auv_api_client::device_local::unix_socket_path;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -199,7 +197,7 @@ impl LocalState {
       #[cfg(unix)]
       socket: unix_socket_path(store_root).map_err(|error| format!("failed to locate Device-local socket: {error}"))?,
       #[cfg(windows)]
-      pipe_name: named_pipe_name(store_root)
+      pipe_name: auv_api_client::device_local::canonical_pipe_name(store_root)
         .map_err(|error| format!("failed to resolve the Device-local store root {}: {error}", store_root.display()))?,
     })
   }
