@@ -68,4 +68,31 @@ mod tests {
     assert_eq!(error.kind(), ClientErrorKind::Unavailable);
     assert!(error.source().is_some());
   }
+
+  // Pins the transport-category half of the Runner-route failure
+  // classification: invoke frontends turn each ClientErrorKind into a typed
+  // failure code, so a status code silently changing category would change
+  // the code every CLI and MCP caller sees.
+  #[test]
+  fn transport_status_codes_pin_the_transport_category_table() {
+    let cases = [
+      (tonic::Status::unauthenticated("denied"), ClientErrorKind::Unauthorized),
+      (tonic::Status::permission_denied("denied"), ClientErrorKind::Unauthorized),
+      (tonic::Status::unavailable("offline"), ClientErrorKind::Unavailable),
+      (tonic::Status::deadline_exceeded("slow"), ClientErrorKind::Unavailable),
+      (tonic::Status::cancelled("stopped"), ClientErrorKind::Unavailable),
+      (tonic::Status::invalid_argument("bad"), ClientErrorKind::InvalidRequest),
+      (tonic::Status::failed_precondition("drifted"), ClientErrorKind::Ambiguous),
+      (tonic::Status::not_found("missing"), ClientErrorKind::NotFound),
+      (tonic::Status::already_exists("duplicate"), ClientErrorKind::Conflict),
+      (tonic::Status::aborted("raced"), ClientErrorKind::Conflict),
+      (tonic::Status::unimplemented("unsupported"), ClientErrorKind::Unsupported),
+      (tonic::Status::internal("broken"), ClientErrorKind::Protocol),
+      (tonic::Status::unknown("uncertain"), ClientErrorKind::Protocol),
+      (tonic::Status::data_loss("lost"), ClientErrorKind::Protocol),
+    ];
+    for (status, kind) in cases {
+      assert_eq!(ClientError::from_status("Runner capability RPC", status).kind(), kind);
+    }
+  }
 }
