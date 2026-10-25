@@ -145,7 +145,9 @@ fn no_local_daemon(store_root: &Path, source: StoreSource) -> String {
   match source {
     StoreSource::Flag => format!("no local `auv serve` owned by this user is running on store {store} (from --store-root)"),
     StoreSource::Discovered => {
-      format!("the discovered local `auv serve` (store {store}) is not answering; check that it is still running")
+      format!(
+        "the discovered local `auv serve` (store {store}) is not answering; check that it is still running; if it is, its `auv` build may predate this client's Device-local pipe naming — restart `auv serve` with this build instead of pairing again"
+      )
     }
     StoreSource::Default => format!(
       "no local `auv serve` is registered, and none runs on the default store {store}; start `auv serve`, or pass --store-root with the store it uses"

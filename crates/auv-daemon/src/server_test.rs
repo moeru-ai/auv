@@ -1263,3 +1263,68 @@ async fn launcher_and_paired_admits_paired_apps_on_local_ipc() {
   shutdown.cancel();
   task.await.unwrap().unwrap();
 }
+
+// ROOT CAUSE (Windows health audit F-PIPE-1):
+//
+// The daemon bound the DeviceLocalService pipe under the hash of its
+// plain-form store root while the CLI dialed the hash of the discovery
+// descriptor's verbatim-canonical form, so `auv devices access
+// enrollments|policy|audit` on the documented default path dialed a pipe that
+// was never bound.
+//
+// Before the fix, `named_pipe_name` hashed its input bytes unchanged. The fix
+// canonicalizes inside the function; this test proves the two sides end to end
+// over a REAL named pipe: the daemon binds with the plain spelling this
+// process would launch with, and the client connects through both the plain
+// and the verbatim spelling of the same directory.
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_device_local_pipe_matches_across_store_root_spellings() {
+  use auv_api_client::device_local::DeviceLocalClient;
+
+  let root = tempfile::tempdir().unwrap();
+  let server = Server::bind(config(Vec::new(), root.path())).await.unwrap();
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  // The daemon's store root is `<root>/store` (see `config`), so the plain
+  // spelling is exactly what a launcher would pass to `auv serve`.
+  let store_root = root.path().join("store");
+
+  // The DeviceLocal pipe binds while serve() runs; connect_windows fails fast
+  // on a missing pipe, so poll briefly instead of racing the startup.
+  let mut plain = None;
+  let mut last_error = None;
+  for _ in 0..200 {
+    match DeviceLocalClient::connect_windows(&store_root).await {
+      Ok(client) => {
+        plain = Some(client);
+        break;
+      }
+      Err(error) => {
+        let mut chain = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(link) = source {
+          chain.push_str(" <- ");
+          chain.push_str(&link.to_string());
+          source = link.source();
+        }
+        last_error = Some(chain);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+      }
+    }
+  }
+  let mut plain = plain.unwrap_or_else(|| panic!("the plain store-root spelling reaches the bound pipe; last error: {last_error:?}"));
+  let policy = plain.service().get_policy(proto::GetPolicyRequest::default()).await.unwrap().into_inner();
+  assert!(policy.enabled, "the dialed pipe serves the real DeviceLocalService");
+
+  // The descriptor publishes the verbatim-canonical form of the SAME store
+  // root; that spelling must reach the same pipe.
+  let canonical = store_root.canonicalize().unwrap();
+  let mut verbatim = DeviceLocalClient::connect_windows(&canonical).await.unwrap();
+  let policy = verbatim.service().get_policy(proto::GetPolicyRequest::default()).await.unwrap().into_inner();
+  assert!(policy.enabled, "the verbatim spelling reaches the same service");
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}

@@ -53,11 +53,16 @@ impl DeviceLocalClient {
   /// runs as this process's own user, the per-user daemon for `store_root`.
   #[cfg(windows)]
   pub async fn connect_windows(store_root: &Path) -> Result<Self, tonic::transport::Error> {
-    let name = named_pipe_name(store_root);
+    let store_root = store_root.to_path_buf();
     let channel = tonic::transport::Endpoint::from_static("http://localhost")
       .connect_with_connector(tower::service_fn(move |_: http::Uri| {
-        let name = name.clone();
-        async move { windows_pipe::open_verified(&name).await.map(hyper_util::rt::TokioIo::new) }
+        let store_root = store_root.clone();
+        async move {
+          // The shared normalization rule lives in `named_pipe_name`; both the
+          // plain and verbatim spellings of one store resolve to one pipe.
+          let name = named_pipe_name(&store_root)?;
+          windows_pipe::open_verified(&name).await.map(hyper_util::rt::TokioIo::new)
+        }
       }))
       .await?;
     Ok(Self {
@@ -126,19 +131,85 @@ fn current_euid() -> u32 {
 
 /// Stable, store-specific Windows pipe name shared by a local host and CLI.
 /// The path is never placed in an API request or credential-bearing argument.
+///
+/// The name is derived from the CANONICALIZED store root: `fs::canonicalize`
+/// publishes the verbatim `\\?\` form, and hashing different spellings of one
+/// directory (plain `C:\...` from the daemon's config versus verbatim from a
+/// published discovery descriptor) would give the binder and the dialer two
+/// different pipe names. Normalizing here is the one shared rule, so every
+/// caller and every path spelling that resolves to the same directory gets the
+/// same name. Failure is an explicit error, never a second hash over
+/// unnormalized bytes.
+// ROOT CAUSE (Windows health audit F-PIPE-1):
+//
+// The daemon bound the hash of its plain-form store root while the CLI dialed
+// the hash of the descriptor's verbatim-canonical form, so
+// `auv devices access enrollments|policy|audit` on the documented default
+// path dialed a pipe that was never bound.
+//
+// Before the fix, `named_pipe_name` hashed its input bytes unchanged. The fix
+// canonicalizes inside this function, which also keeps older CLIs compatible
+// with a fixed daemon: they hash the descriptor's verbatim form as-is, and
+// canonicalizing a verbatim path is the identity on Windows.
 #[cfg(windows)]
-pub fn named_pipe_name(store_root: &Path) -> String {
+pub fn named_pipe_name(store_root: &Path) -> std::io::Result<String> {
   use std::os::windows::ffi::OsStrExt;
 
   use sha2::{Digest as _, Sha256};
 
+  // `canonicalize` returns the verbatim `\\?\` form and is the identity on an
+  // already-verbatim input, so plain, verbatim, and relative spellings of one
+  // directory all collapse to the same bytes here.
+  let canonical = store_root.canonicalize()?;
+
   let mut hash = Sha256::new();
 
-  for unit in store_root.as_os_str().encode_wide() {
+  for unit in canonical.as_os_str().encode_wide() {
     hash.update(unit.to_le_bytes());
   }
 
   let digest = hash.finalize();
   let suffix = digest[..12].iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-  format!("auv-device-local-{suffix}")
+  Ok(format!("auv-device-local-{suffix}"))
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+  use super::*;
+
+  // ROOT CAUSE (Windows health audit F-PIPE-1):
+  //
+  // The daemon bound the hash of its plain-form store root while the CLI
+  // dialed the hash of the discovery descriptor's verbatim-canonical form, so
+  // the two sides of the documented default path derived different pipe names
+  // and every `auv devices access` command failed on Windows.
+  //
+  // Before the fix, `named_pipe_name` hashed its input bytes unchanged. The
+  // fix canonicalizes inside the function, so the plain form, the verbatim
+  // form, and the normalized output of one directory all produce one name,
+  // and a different directory still produces a different name.
+  #[test]
+  fn named_pipe_name_matches_across_store_root_spellings() {
+    let raw = std::env::temp_dir().join(format!("auv-pipe-name-test-{}", std::process::id()));
+    std::fs::create_dir_all(&raw).expect("create the private test store root");
+    let canonical = raw.canonicalize().expect("canonicalize the test store root");
+
+    // Windows `fs::canonicalize` publishes the verbatim `\\?\` form; the rule
+    // depends on that behavior, so pin it.
+    let as_os = canonical.as_os_str().to_string_lossy().into_owned();
+    assert!(as_os.starts_with(r"\\?\"), "canonical form is verbatim: {as_os}");
+
+    let from_raw = named_pipe_name(&raw).expect("plain spelling resolves");
+    let from_canonical = named_pipe_name(&canonical).expect("verbatim spelling resolves");
+
+    assert_eq!(from_raw, from_canonical, "one directory, one pipe name");
+
+    // A different directory must not collide.
+    let other = raw.join("other");
+    std::fs::create_dir_all(&other).expect("create the sibling directory");
+    let from_other = named_pipe_name(&other).expect("sibling spelling resolves");
+    assert_ne!(from_raw, from_other);
+
+    std::fs::remove_dir_all(&raw).ok();
+  }
 }
