@@ -80,6 +80,24 @@ fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
   let endpoint = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::EndpointNotDiscovered));
   assert_eq!(endpoint.code, FailureCode::CommandFailed);
   assert_eq!(endpoint.message, "could not resolve an AUV daemon endpoint from the context or local discovery");
+
+  // A typed missing-Run fact classifies as not found; the wording is the
+  // ContextError Display, unchanged from the legacy command_failed path.
+  let run_missing = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::RunNotFound("run_123".to_string())));
+  assert_eq!(run_missing.code, FailureCode::NotFound);
+  assert_eq!(run_missing.message, "Run \"run_123\" was not found on the local daemon or any configured paired Device");
+
+  // Ambiguous and unconfigured selections stay deferred: their multiple-
+  // matches/configuration semantics have no clean current code (owner
+  // decision, see TODO(runner-placement-failure-codes)).
+  let run_ambiguous = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::RunAmbiguous {
+    run_id: "run_123".to_string(),
+    locations: "local, paired-laptop".to_string(),
+  }));
+  assert_eq!(run_ambiguous.code, FailureCode::CommandFailed);
+  let device_unconfigured = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::DeviceNotConfigured));
+  assert_eq!(device_unconfigured.code, FailureCode::CommandFailed);
+
   let cleanup = InvokeFailure::from(auv::client::PlacementError::Cleanup {
     primary: "route core Runner failed".to_string(),
     cleanup: "cancel failed".to_string(),

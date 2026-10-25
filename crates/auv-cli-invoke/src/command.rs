@@ -304,19 +304,24 @@ impl From<auv::client::PlacementError> for InvokeFailure {
         auv::ContextError::RemoteDeviceList(error) | auv::ContextError::RunLookup { error, .. } => {
           Self::new(client_failure_code(Some(error.kind())), context.to_string())
         }
+        // The selected Run does not exist on any reachable daemon; the type
+        // states exactly that, so it classifies as not found.
+        auv::ContextError::RunNotFound(_) => Self::new(FailureCode::NotFound, context.to_string()),
         // TODO(runner-placement-failure-codes): the free-form Context
-        // variants below and the trailing free-form placement variants keep
-        // command_failed; see the marker on the final arm.
+        // variants below keep command_failed; see the marker on the final arm.
         _ => Self::from(context.to_string()),
       },
       // Runner placement re-surfaces capability failures; reuse the shared
       // conversion so keyboard progress survives.
       PlacementError::Capability(error) => error.into(),
-      // TODO(runner-placement-failure-codes): the free-form Context variants,
-      // Selection, ContextEnvironment, and Cleanup mix unknown ids, ambiguous
-      // selectors, environment problems, and compound cleanup text, so no
-      // single failure code classifies them reliably. They keep command_failed
-      // until an owner-approved slice makes these variants classifiable.
+      // TODO(runner-placement-failure-codes): Selection, ContextEnvironment,
+      // and Cleanup mix unknown ids, environment problems, and compound
+      // cleanup text, and the remaining unclassified Context variants
+      // (RunAmbiguous, DeviceSelectionAmbiguous, DeviceNotConfigured) need a
+      // multiple-matches-versus-configuration distinction the current codes
+      // do not carry — classifying them is an owner decision, not a guess.
+      // They keep command_failed until an owner-approved slice classifies
+      // them.
       other => Self::from(other.to_string()),
     }
   }
