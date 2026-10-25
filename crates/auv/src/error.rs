@@ -90,6 +90,8 @@ mod tests {
       (tonic::Status::internal("broken"), ClientErrorKind::Protocol),
       (tonic::Status::unknown("uncertain"), ClientErrorKind::Protocol),
       (tonic::Status::data_loss("lost"), ClientErrorKind::Protocol),
+      (tonic::Status::resource_exhausted("drained"), ClientErrorKind::Protocol),
+      (tonic::Status::out_of_range("beyond"), ClientErrorKind::Protocol),
     ];
     for (status, kind) in cases {
       assert_eq!(ClientError::from_status("Runner capability RPC", status).kind(), kind);
