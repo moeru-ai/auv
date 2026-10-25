@@ -264,22 +264,48 @@ impl From<auv_driver::KeyboardInputError> for InvokeFailure {
   }
 }
 
+/// Failure-code classification shared by every Runner-route error that exposes
+/// a protocol-neutral transport category. `None` means the error carried no
+/// transport category, which is no more specific than `backend`.
+fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode {
+  use auv::error::ClientErrorKind;
+  match kind {
+    Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
+    Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
+    Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
+    Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
+    Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleUiReference,
+    _ => FailureCode::Backend,
+  }
+}
+
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
-    use auv::error::ClientErrorKind;
-    let code = match error.client_kind() {
-      Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
-      Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
-      Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
-      Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
-      Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleUiReference,
-      _ => FailureCode::Backend,
-    };
-    let mut failure = Self::new(code, error.to_string());
+    let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {
       failure.keyboard_progress = Some(progress);
     }
     failure
+  }
+}
+
+impl From<auv::client::PlacementError> for InvokeFailure {
+  fn from(error: auv::client::PlacementError) -> Self {
+    use auv::client::PlacementError;
+    match error {
+      // Daemon control RPCs fail with the same transport categories as
+      // capability RPCs, so they share the classification.
+      PlacementError::Client(error) => Self::new(client_failure_code(Some(error.kind())), error.to_string()),
+      // Runner placement re-surfaces capability failures; reuse the shared
+      // conversion so keyboard progress survives.
+      PlacementError::Capability(error) => error.into(),
+      // TODO(runner-placement-failure-codes): Selection, Context, and Cleanup
+      // mix unknown ids, ambiguous selectors, environment problems, and
+      // compound cleanup text in free-form variants, so no single failure code
+      // classifies them reliably. They keep command_failed until an
+      // owner-approved slice makes these variants classifiable.
+      other => Self::from(other.to_string()),
+    }
   }
 }
 
@@ -766,5 +792,9 @@ pub(crate) fn with_invoke_context(command: Command, target: TargetPolicy) -> Com
     )
     .arg(Arg::new("auv_json").long("json").action(ArgAction::SetTrue).help("Render machine-readable JSON output."))
     .arg(Arg::new("auv_detail").long("detail").action(ArgAction::SetTrue).help("Include diagnostic detail in human output."))
-    .arg(Arg::new("auv_wide").long("wide").action(ArgAction::SetTrue).help("Include extra columns in human table output."))
+    .arg(Arg::new("auv_wide").long("wide").action(ArgAction::SetTrue).help("Include extra columns in human output."))
 }
+
+#[cfg(test)]
+#[path = "command_test.rs"]
+mod tests;
