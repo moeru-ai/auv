@@ -61,7 +61,7 @@ pub fn render_command_help(command: &InvokeCommand) -> String {
   push_support_lines(&mut help, command.support);
   help.push_str("\nSelected Runner support:\n");
   match command.runner.cells(command.support) {
-    None => help.push_str("  no Runner route; run it without a selected Run or Device\n"),
+    None => help.push_str(&format!("  {}\n", crate::support::NO_RUNNER_ROUTE_NOTE)),
     Some(cells) if cells == command.support => help.push_str("  same as the direct local path above\n"),
     Some(cells) => push_support_lines(&mut help, cells),
   }

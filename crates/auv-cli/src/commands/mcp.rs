@@ -798,7 +798,7 @@ mod frontend {
   /// `support` line above it or the command has no Runner route at all.
   fn runner_support_summary(command: &InvokeCommand) -> Option<String> {
     match command.runner_cells() {
-      None => Some("no Runner route; run without a selected Run or Device".to_string()),
+      None => Some(auv_cli_invoke::support::NO_RUNNER_ROUTE_NOTE.to_string()),
       Some(cells) if cells == command.support => None,
       Some(cells) => Some(support_summary(cells)),
     }
