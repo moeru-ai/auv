@@ -51,12 +51,15 @@ fn capability_failures_reuse_the_transport_classification() {
 }
 
 // TODO(runner-failure-roundtrip-tests): CapabilityError::Client and
-// ::KeyboardInput wrap auv-core's ClientError, which cannot be constructed
-// outside auv-core, and RunnerClient::new is pub(crate), so this crate cannot
-// exercise the tonic-status round trip or the keyboard-progress copy in
-// From<CapabilityError>. That branch is unchanged from the owner-approved
-// conversion; pin it end to end once an owner-approved loopback fixture or
-// test seam exists.
+// ::KeyboardInput, the PlacementError::Client branch, and the two
+// ContextError transport branches in From<PlacementError> all wrap or consume
+// auv-core's ClientError, which cannot be constructed outside auv-core, and
+// RunnerClient::new is pub(crate), so this crate cannot exercise the
+// tonic-status round trip or the keyboard-progress copy in
+// From<CapabilityError> directly. Those branches reuse client_failure_code,
+// which is pinned above, and the tonic-status half is pinned in auv-core; pin
+// them end to end here once an owner-approved loopback fixture or test seam
+// exists.
 #[test]
 fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
   // Placement re-surfaces capability failures; the shared conversion keeps
@@ -66,17 +69,54 @@ fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
   assert_eq!(capability.code, FailureCode::NotFound);
   assert_eq!(capability.message, "hold id 777 was not found");
 
-  // Free-form placement failures keep their legacy command_failed class.
+  // Free-form placement and context failures keep their legacy command_failed
+  // class and their full wording.
   let selection = InvokeFailure::from(auv::client::PlacementError::Selection("unknown Run ID \"abc\"".to_string()));
   assert_eq!(selection.code, FailureCode::CommandFailed);
   assert_eq!(selection.message, "unknown Run ID \"abc\"");
   let environment = InvokeFailure::from(auv::client::PlacementError::ContextEnvironment(std::env::VarError::NotPresent));
   assert_eq!(environment.code, FailureCode::CommandFailed);
   assert_eq!(environment.message, "AUV_CONTEXT is not valid Unicode: environment variable not found");
+  let endpoint = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::EndpointNotDiscovered));
+  assert_eq!(endpoint.code, FailureCode::CommandFailed);
+  assert_eq!(endpoint.message, "could not resolve an AUV daemon endpoint from the context or local discovery");
   let cleanup = InvokeFailure::from(auv::client::PlacementError::Cleanup {
     primary: "route core Runner failed".to_string(),
     cleanup: "cancel failed".to_string(),
   });
   assert_eq!(cleanup.code, FailureCode::CommandFailed);
   assert_eq!(cleanup.message, "route core Runner failed; cleanup also failed: cancel failed");
+}
+
+// The local driver route carries keyboard partial progress through
+// From<KeyboardInputError>; the Runner route performs the same copy in
+// From<CapabilityError>, which this crate cannot construct (see the
+// runner-failure-roundtrip-tests marker above). This pins the shared
+// InvokeFailure.keyboard_progress contract on the constructible sibling.
+#[test]
+fn keyboard_input_failures_preserve_partial_progress() {
+  let error = auv_driver::KeyboardInputError {
+    cause: auv_driver::DriverError::Unsupported {
+      operation: "type_text",
+    },
+    progress: auv_driver::KeyboardInputProgress {
+      action_index: 2,
+      completed: Vec::new(),
+      completed_presses: 3,
+    },
+  };
+  let failure = InvokeFailure::from(error);
+  assert_eq!(failure.code, FailureCode::Unsupported);
+  assert_eq!(
+    failure.keyboard_progress,
+    Some(auv_driver::KeyboardInputProgress {
+      action_index: 2,
+      completed: Vec::new(),
+      completed_presses: 3,
+    })
+  );
+  // The wrapper's own Display survives, naming the stopped action and the
+  // completed work before the failure.
+  assert!(failure.message.starts_with("keyboard action 2 failed after 0 complete actions and 3 presses: "));
+  assert!(failure.message.ends_with("type_text is not supported by this driver"));
 }

@@ -296,14 +296,27 @@ impl From<auv::client::PlacementError> for InvokeFailure {
       // Daemon control RPCs fail with the same transport categories as
       // capability RPCs, so they share the classification.
       PlacementError::Client(error) => Self::new(client_failure_code(Some(error.kind())), error.to_string()),
+      PlacementError::Context(context) => match &context {
+        // The two context-resolution steps that wrap a daemon control RPC
+        // failure classify with the same shared rule; the ContextError Display
+        // keeps each step's own wording ("paired daemon ListDevices failed:
+        // ...", "failed to look up Run on <location>: ...").
+        auv::ContextError::RemoteDeviceList(error) | auv::ContextError::RunLookup { error, .. } => {
+          Self::new(client_failure_code(Some(error.kind())), context.to_string())
+        }
+        // TODO(runner-placement-failure-codes): the free-form Context
+        // variants below and the trailing free-form placement variants keep
+        // command_failed; see the marker on the final arm.
+        _ => Self::from(context.to_string()),
+      },
       // Runner placement re-surfaces capability failures; reuse the shared
       // conversion so keyboard progress survives.
       PlacementError::Capability(error) => error.into(),
-      // TODO(runner-placement-failure-codes): Selection, Context, and Cleanup
-      // mix unknown ids, ambiguous selectors, environment problems, and
-      // compound cleanup text in free-form variants, so no single failure code
-      // classifies them reliably. They keep command_failed until an
-      // owner-approved slice makes these variants classifiable.
+      // TODO(runner-placement-failure-codes): the free-form Context variants,
+      // Selection, ContextEnvironment, and Cleanup mix unknown ids, ambiguous
+      // selectors, environment problems, and compound cleanup text, so no
+      // single failure code classifies them reliably. They keep command_failed
+      // until an owner-approved slice makes these variants classifiable.
       other => Self::from(other.to_string()),
     }
   }
