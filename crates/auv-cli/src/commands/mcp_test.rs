@@ -283,10 +283,10 @@ fn cli_help_and_mcp_metadata_render_runner_support_from_the_same_registry_cells(
     let metadata = super::invoke_command_metadata(command);
     let help = auv_cli_invoke::render_command_help(command);
 
-    let direct = help_block_states(&help, "Platform support:").expect("direct cells are listed");
+    let direct = help_block_cells(&help, "Platform support:").expect("direct cells are listed");
     assert_eq!(
       direct,
-      metadata_cell_states(&metadata["support"]),
+      metadata_cells(&metadata["support"]),
       "direct cells of {} must agree between CLI help and MCP metadata",
       command.id
     );
@@ -302,8 +302,8 @@ fn cli_help_and_mcp_metadata_render_runner_support_from_the_same_registry_cells(
           assert!(help.contains("same as the direct local path above"), "direct-route note of {}:\n{help}", command.id);
           assert_eq!(cells, metadata["support"], "{}: a direct route repeats the direct cells", command.id);
         } else {
-          let runner = help_block_states(&help, "Selected Runner support:").expect("runner cells are listed");
-          assert_eq!(runner, metadata_cell_states(&cells), "runner cells of {} must agree between CLI help and MCP metadata", command.id);
+          let runner = help_block_cells(&help, "Selected Runner support:").expect("runner cells are listed");
+          assert_eq!(runner, metadata_cells(&cells), "runner cells of {} must agree between CLI help and MCP metadata", command.id);
         }
       }
     }
@@ -328,19 +328,23 @@ fn invoke_description_states_runner_support_where_it_differs_from_direct() {
   assert!(frame.contains("no Runner route"), "fixture block:\n{frame}");
 }
 
-/// The per-platform states one help block lists, as MCP state strings.
-fn help_block_states(help: &str, header: &str) -> Option<Vec<String>> {
+/// The per-platform cells one help block lists, as MCP `(state, note)` pairs.
+/// Help renders each cell as `<label> <word>` plus `: <note>` when the cell
+/// has one, so the note is everything after the word's separating space.
+fn help_block_cells<'a>(help: &'a str, header: &'a str) -> Option<Vec<(String, Option<&'a str>)>> {
   let mut lines = help.lines().skip_while(|line| *line != header);
   lines.next()?;
   let labels = ["macOS", "Linux", "Windows"];
-  let mut states = Vec::new();
+  let mut cells = Vec::new();
   for line in lines {
-    let mut tokens = line.split_whitespace();
+    let mut tokens = line.trim_start().splitn(2, char::is_whitespace);
     let Some(label) = tokens.next() else { break };
     if !labels.contains(&label) {
       break;
     }
-    let word = tokens.next().unwrap_or_else(|| panic!("support word missing in {line:?}"));
+    let rest = tokens.next().unwrap_or_default().trim_start();
+    let mut rest_tokens = rest.splitn(2, char::is_whitespace);
+    let word = rest_tokens.next().unwrap_or_else(|| panic!("support word missing in {line:?}"));
     let state = match word.trim_end_matches(':') {
       "yes" => "supported",
       "partial" => "partial",
@@ -348,15 +352,20 @@ fn help_block_states(help: &str, header: &str) -> Option<Vec<String>> {
       "?" => "not_evidenced",
       other => panic!("unknown support word {other:?} in {line:?}"),
     };
-    states.push(state.to_string());
+    cells.push((state.to_string(), rest_tokens.next()));
   }
-  (states.len() == labels.len()).then_some(states)
+  (cells.len() == labels.len()).then_some(cells)
 }
 
-fn metadata_cell_states(cells: &serde_json::Value) -> Vec<String> {
+fn metadata_cells(cells: &serde_json::Value) -> Vec<(String, Option<&str>)> {
   ["macos", "linux", "windows"]
     .iter()
-    .map(|key| cells[key]["state"].as_str().unwrap_or_else(|| panic!("missing {key} cell")).to_string())
+    .map(|key| {
+      let cell = &cells[key];
+      let state = cell["state"].as_str().unwrap_or_else(|| panic!("missing {key} cell")).to_string();
+      let note = cell.get("note").and_then(|note| note.as_str());
+      (state, note)
+    })
     .collect()
 }
 
