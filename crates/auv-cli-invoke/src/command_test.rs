@@ -50,16 +50,42 @@ fn capability_failures_reuse_the_transport_classification() {
   assert_eq!(malformed.message, "Runner response is invalid: key hold id missing");
 }
 
-// TODO(runner-failure-roundtrip-tests): CapabilityError::Client and
-// ::KeyboardInput, the PlacementError::Client branch, and the two
-// ContextError transport branches in From<PlacementError> all wrap or consume
-// auv-core's ClientError, which cannot be constructed outside auv-core, and
-// RunnerClient::new is pub(crate), so this crate cannot exercise the
-// tonic-status round trip or the keyboard-progress copy in
-// From<CapabilityError> directly. Those branches reuse client_failure_code,
-// which is pinned above, and the tonic-status half is pinned in auv-core; pin
-// them end to end here once an owner-approved loopback fixture or test seam
-// exists.
+// Pins the serialized half of the runner failure roundtrip: every
+// FailureCode a runner-route failure can carry reaches JSON output under its
+// documented snake_case spelling with the step message intact, so a renamed
+// or re-spelled variant cannot slip into callers' output silently.
+#[test]
+fn failure_codes_serialize_to_their_documented_json_spelling() {
+  let cases = [
+    (FailureCode::CommandFailed, "command_failed"),
+    (FailureCode::InvalidTarget, "invalid_target"),
+    (FailureCode::NotFound, "not_found"),
+    (FailureCode::Unsupported, "unsupported"),
+    (FailureCode::PermissionDenied, "permission_denied"),
+    (FailureCode::InvalidInput, "invalid_input"),
+    (FailureCode::StaleUiReference, "stale_ui_reference"),
+    (FailureCode::RoleMismatch, "role_mismatch"),
+    (FailureCode::Backend, "backend"),
+  ];
+  for (code, encoded) in cases {
+    let failure = InvokeFailure::new(code, "InputService/GetPointerPosition failed: boom");
+    let value = serde_json::to_value(&failure).expect("serialize failure");
+    assert_eq!(value["code"], encoded, "{code:?}");
+    assert_eq!(value["message"], "InputService/GetPointerPosition failed: boom");
+  }
+}
+
+// TODO(runner-failure-roundtrip-tests): the transport half of the roundtrip
+// is pinned hermetically — auv-core's loopback fixture serves the real tonic
+// statuses and asserts each ClientErrorKind and its step context, the
+// kind-to-code table is pinned above, and the JSON spelling of every code is
+// pinned in the test above this marker. The remaining gap is the literal
+// Client-wrapping From arms (CapabilityError::Client and ::KeyboardInput,
+// PlacementError::Client, the two ContextError transport branches): they
+// consume auv-core's ClientError, which cannot be constructed outside
+// auv-core, and RunnerClient::new is pub(crate). They reuse the pinned
+// client_failure_code; exercise them end to end here once an owner-approved
+// loopback fixture or test seam exists.
 #[test]
 fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
   // Placement re-surfaces capability failures; the shared conversion keeps
