@@ -2,8 +2,13 @@ use std::sync::Mutex;
 
 use super::*;
 
+// Every test in this module drives the REAL system clipboard, so each one is
+// `#[ignore]`d: the default `cargo test` run must never touch the user's
+// desktop state. Run them explicitly on an isolated desktop with
+// `cargo test -p auv-driver-windows clipboard -- --ignored`.
+//
 // The Win32 clipboard is a single system-wide resource (OpenClipboard is
-// exclusive per thread/task), so these live smoke tests must not run
+// exclusive per thread/task), so these live smoke tests must also not run
 // concurrently with each other or they intermittently fail with spurious
 // "clipboard not open" errors from cargo test's parallel test threads.
 static CLIPBOARD_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -12,6 +17,7 @@ static CLIPBOARD_TEST_LOCK: Mutex<()> = Mutex::new(());
 // user's existing clipboard text so the roundtrip leaves the clipboard
 // unchanged.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn set_then_snapshot_roundtrips_and_restores_original() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -32,6 +38,7 @@ fn set_then_snapshot_roundtrips_and_restores_original() {
 // format round-trips through the raw-bytes path rather than `restore`'s
 // text-only path.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn snapshot_rich_then_restore_rich_roundtrips_captured_formats() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -58,6 +65,7 @@ fn snapshot_rich_then_restore_rich_roundtrips_captured_formats() {
 // The fix rejects a format whose payload exceeds a fixed per-format cap with
 // a clear backend error before any matching-size allocation happens.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn snapshot_rich_rejects_a_format_over_the_size_cap() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -77,6 +85,7 @@ fn snapshot_rich_rejects_a_format_over_the_size_cap() {
 // Live test against the real Win32 clipboard, which it gives back. This process reads the lent
 // text with `snapshot`, which opens the clipboard without a window, so the reader is unnamed.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn lent_text_is_handed_to_its_first_reader_and_the_read_is_reported() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
   let original = snapshot_rich().expect("snapshot original clipboard");
@@ -97,6 +106,7 @@ fn lent_text_is_handed_to_its_first_reader_and_the_read_is_reported() {
 
 // Live test against the real Win32 clipboard, which it gives back.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn lent_text_nobody_reads_reports_no_read() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
   let original = snapshot_rich().expect("snapshot original clipboard");
@@ -111,6 +121,7 @@ fn lent_text_nobody_reads_reports_no_read() {
 
 // Live test against the real Win32 clipboard, which it gives back.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn lent_text_is_kept_out_of_clipboard_history_cloud_and_monitors() {
   use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
   use windows::core::w;
@@ -145,6 +156,7 @@ fn lent_text_is_kept_out_of_clipboard_history_cloud_and_monitors() {
 // Before the fix, the clipboard was left empty.
 // The fix retries the open, as every other clipboard open in this module does.
 #[test]
+#[ignore = "drives the REAL system clipboard: run explicitly on an isolated desktop with `cargo test -p auv-driver-windows clipboard -- --ignored`"]
 fn a_loan_dropped_while_it_owns_the_clipboard_leaves_the_text() {
   let _lock = CLIPBOARD_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
   let original = snapshot_rich().expect("snapshot original clipboard");
