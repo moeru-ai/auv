@@ -316,7 +316,7 @@ impl From<auv::client::PlacementError> for InvokeFailure {
       PlacementError::Capability(error) => error.into(),
       // TODO(runner-placement-failure-codes): Selection, ContextEnvironment,
       // and Cleanup mix unknown ids, environment problems, and compound
-      // cleanup text, and the remaining unclassified Context variants
+      // cleanup text, and the remaining placement-semantic Context variants
       // (RunAmbiguous, DeviceSelectionAmbiguous, DeviceNotConfigured) need a
       // multiple-matches-versus-configuration distinction the current codes
       // do not carry — classifying them is an owner decision, not a guess.

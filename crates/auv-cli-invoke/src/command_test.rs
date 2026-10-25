@@ -95,6 +95,11 @@ fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
     locations: "local, paired-laptop".to_string(),
   }));
   assert_eq!(run_ambiguous.code, FailureCode::CommandFailed);
+  let device_ambiguous = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::DeviceSelectionAmbiguous {
+    selector: "laptop".to_string(),
+    candidate_ids: "dev-1, dev-2".to_string(),
+  }));
+  assert_eq!(device_ambiguous.code, FailureCode::CommandFailed);
   let device_unconfigured = InvokeFailure::from(auv::client::PlacementError::Context(auv::ContextError::DeviceNotConfigured));
   assert_eq!(device_unconfigured.code, FailureCode::CommandFailed);
 
