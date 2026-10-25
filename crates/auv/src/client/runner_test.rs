@@ -631,6 +631,7 @@ fn activation_response(requested_application_id: &str) -> proto::ActivateApplica
     verification: auv_driver::ApplicationActivationVerification::ForegroundMismatch {
       observed_application_id: "com.example.Other".to_string(),
     },
+    window_observation: None,
   })
 }
 

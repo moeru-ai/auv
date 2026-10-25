@@ -91,6 +91,7 @@ fn activation_report_names_id_kind_method_window_and_observed_foreground() {
     verification: auv_driver::ApplicationActivationVerification::ForegroundMismatch {
       observed_application_id: "explorer.exe".to_string(),
     },
+    window_observation: None,
   };
 
   let output = activation_output(&result).expect("activation output");
@@ -113,11 +114,77 @@ fn activation_report_omits_window_when_the_platform_activated_the_application() 
     verification: auv_driver::ApplicationActivationVerification::Unavailable {
       reason: "observation denied".to_string(),
     },
+    window_observation: None,
   })
   .expect("activation output");
   assert_eq!(report_value(&output, "Activated window"), None);
   assert_eq!(report_value(&output, "Observed foreground"), None);
   assert_eq!(report_value(&output, "Verification detail"), Some("observation denied"));
+}
+
+// ROOT CAUSE (issue #324, output half):
+//
+// The activation report carried no window fact, so an agent that read
+// `verified_foreground` had no way to know a window-targeted follow-up
+// would fail for a windowless app, and no wording distinguished "no window
+// observed" from "observation failed".
+//
+// The report now renders the window observation as its own fact. Presence
+// never reads as usability: the rendered vocabulary is exactly
+// window_present / window_absent / window_unknown, with no captureable,
+// focused, or ready wording anywhere.
+#[test]
+fn activation_report_renders_each_window_observation_as_its_own_fact() {
+  let observation_report = |observation| {
+    let output = activation_output(&auv_driver::ApplicationActivationResult {
+      window_observation: observation,
+      ..auv_driver::ApplicationActivationResult {
+        requested_application_id: "notepad.exe".to_string(),
+        application_id_kind: auv_driver::ApplicationIdKind::ProcessName,
+        method: auv_driver::ApplicationActivationMethod::ForegroundWindow,
+        activated_window: None,
+        verification: auv_driver::ApplicationActivationVerification::VerifiedForeground {
+          observed_application_id: "notepad.exe".to_string(),
+        },
+        window_observation: None,
+      }
+    })
+    .expect("activation output");
+    output
+      .report
+      .expect("activation report")
+      .fields
+      .iter()
+      .map(|field| (field.label.clone(), field.value.clone()))
+      .collect::<Vec<(String, String)>>()
+  };
+
+  let present = observation_report(Some(auv_driver::ActivationWindowObservation::Present {
+    reference: auv_driver::WindowRef {
+      id: "0x1234".to_string(),
+    },
+  }));
+  assert!(present.contains(&("Window observation".to_string(), "window_present".to_string())), "{present:?}");
+  assert!(present.contains(&("Observed window".to_string(), "window:0x1234".to_string())), "{present:?}");
+
+  let absent = observation_report(Some(auv_driver::ActivationWindowObservation::Absent));
+  assert!(absent.contains(&("Window observation".to_string(), "window_absent".to_string())), "{absent:?}");
+  assert!(!absent.iter().any(|(label, _)| label == "Observed window"), "{absent:?}");
+
+  let unknown = observation_report(Some(auv_driver::ActivationWindowObservation::Unknown {
+    reason: "window observation failed".to_string(),
+  }));
+  assert!(unknown.contains(&("Window observation".to_string(), "window_unknown".to_string())), "{unknown:?}");
+  assert!(unknown.contains(&("Window observation detail".to_string(), "window observation failed".to_string())), "{unknown:?}");
+
+  // A driver that did not observe renders no window fact at all — an absent
+  // fact, never an absence claim — and no rendered field promises usability.
+  let unobserved = observation_report(None);
+  assert!(!unobserved.iter().any(|(label, _)| label == "Window observation"), "{unobserved:?}");
+  for (_, value) in present.iter().chain(absent.iter()).chain(unknown.iter()).chain(unobserved.iter()) {
+    let lower = value.to_ascii_lowercase();
+    assert!(!lower.contains("captureable") && !lower.contains("ready"), "presence is not usability: {value}");
+  }
 }
 
 #[test]

@@ -11,7 +11,8 @@
 use std::time::Duration;
 
 use auv_driver_common::application::{
-  ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind,
+  ActivationWindowObservation, ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification,
+  ApplicationIdKind,
 };
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::selector::{App, TextMatcher, WindowSelector};
@@ -60,16 +61,55 @@ impl ApplicationApi<'_> {
     }
 
     let requested_application_id = process_name.to_string();
-    let observation = list_windows()
-      .map(|windows| windows.into_iter().find(|window| window.is_main).and_then(|window| window.app_name))
+    // One enumeration feeds both the foreground verification and the window
+    // observation, so the two facts describe the same instant.
+    let listed = list_windows();
+    let foreground = listed
+      .as_ref()
+      .map(|windows| windows.iter().find(|window| window.is_main).and_then(|window| window.app_name.clone()))
       .map_err(|error| format!("foreground window observation failed: {error}"));
+    let window_observation = match listed.as_ref() {
+      Ok(windows) => activation_window_observation(process_name, windows),
+      Err(error) => ActivationWindowObservation::Unknown {
+        reason: format!("window observation failed: {error}"),
+      },
+    };
     Ok(ApplicationActivationResult {
-      verification: activation_verification(&requested_application_id, observation),
+      verification: activation_verification(&requested_application_id, foreground),
       requested_application_id,
       application_id_kind: ApplicationIdKind::ProcessName,
       method: ApplicationActivationMethod::ForegroundWindow,
       activated_window: Some(window.reference),
+      window_observation: Some(window_observation),
     })
+  }
+}
+
+/// Derives the post-activation window observation for one process name from
+/// the enumeration activation already paid for. Presence is a fact, not a
+/// usability promise: a minimized window is still reported `Present`, as the
+/// window the driver would target next.
+fn activation_window_observation(requested_process: &str, windows: &[auv_driver_common::window::Window]) -> ActivationWindowObservation {
+  let mut matching: Vec<&auv_driver_common::window::Window> = windows
+    .iter()
+    .filter(|window| {
+      window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, &TextMatcher::Exact(requested_process.to_string())))
+    })
+    .collect();
+  // Same main-window preference as the resolver's main_visible ordering:
+  // foreground, then titled, then largest frame.
+  matching.sort_by_key(|window| {
+    std::cmp::Reverse((
+      window.is_main,
+      window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
+      (window.frame.size.width * window.frame.size.height).round() as i64,
+    ))
+  });
+  match matching.first() {
+    Some(window) => ActivationWindowObservation::Present {
+      reference: window.reference.clone(),
+    },
+    None => ActivationWindowObservation::Absent,
   }
 }
 

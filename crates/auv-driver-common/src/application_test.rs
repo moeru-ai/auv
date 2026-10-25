@@ -38,6 +38,7 @@ fn activation_result_round_trips_with_stable_status_strings_and_new_fields() {
     verification: ApplicationActivationVerification::ForegroundMismatch {
       observed_application_id: "explorer.exe".to_string(),
     },
+    window_observation: None,
   };
 
   let serialized = serde_json::to_value(&result).expect("activation result should serialize");
@@ -52,6 +53,7 @@ fn activation_result_round_trips_with_stable_status_strings_and_new_fields() {
         "status": "activation_only_foreground_mismatch",
         "observed_application_id": "explorer.exe",
       },
+      "window_observation": null,
     })
   );
   let decoded: ApplicationActivationResult = serde_json::from_value(serialized).expect("activation result should deserialize");
@@ -97,4 +99,42 @@ fn wayland_application_id_kind_fails_as_unsupported_naming_the_platform() {
   let wayland = unsupported_activation(ApplicationIdKind::DesktopAppId);
   assert!(matches!(wayland, DriverError::Unsupported { .. }));
   assert!(wayland.to_string().contains("Linux Wayland"), "{wayland}");
+}
+
+// The window observation (#324) is a fact about the observation, never a
+
+// usability claim: the spellings below are the whole vocabulary a caller
+
+// sees, and none of them names captureability, focus, or readiness.
+
+#[test]
+
+fn activation_window_observation_serializes_with_stable_status_strings() {
+  for (observation, status, json) in [
+    (
+      ActivationWindowObservation::Present {
+        reference: WindowRef {
+          id: "0x1234".to_string(),
+        },
+      },
+      "window_present",
+      serde_json::json!({ "status": "window_present", "reference": { "id": "0x1234" } }),
+    ),
+    (ActivationWindowObservation::Absent, "window_absent", serde_json::json!({ "status": "window_absent" })),
+    (
+      ActivationWindowObservation::Unknown {
+        reason: "window observation failed".to_string(),
+      },
+      "window_unknown",
+      serde_json::json!({ "status": "window_unknown", "reason": "window observation failed" }),
+    ),
+  ] {
+    assert_eq!(observation.status(), status);
+
+    assert_eq!(serde_json::to_value(&observation).expect("serialize observation"), json);
+
+    let decoded: ActivationWindowObservation = serde_json::from_value(json).expect("deserialize observation");
+
+    assert_eq!(decoded, observation);
+  }
 }

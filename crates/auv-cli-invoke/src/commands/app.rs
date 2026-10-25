@@ -90,6 +90,23 @@ pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> In
   if let auv_driver::ApplicationActivationVerification::Unavailable { reason } = &result.verification {
     fields.push(InvokeReportField::new("Verification detail", reason));
   }
+  // The window observation is a fact separate from the foreground
+  // verification; `None` (this driver did not observe) renders nothing
+  // rather than implying an absence.
+  match &result.window_observation {
+    Some(auv_driver::ActivationWindowObservation::Present { reference }) => {
+      fields.push(InvokeReportField::new("Window observation", "window_present"));
+      fields.push(InvokeReportField::new("Observed window", format!("window:{}", reference.id)));
+    }
+    Some(auv_driver::ActivationWindowObservation::Absent) => {
+      fields.push(InvokeReportField::new("Window observation", "window_absent"));
+    }
+    Some(auv_driver::ActivationWindowObservation::Unknown { reason }) => {
+      fields.push(InvokeReportField::new("Window observation", "window_unknown"));
+      fields.push(InvokeReportField::new("Window observation detail", reason));
+    }
+    None => {}
+  }
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
