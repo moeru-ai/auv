@@ -139,9 +139,10 @@ pub enum RunnerSupport {
   Cells(CommandSupport),
 }
 
-/// The wording every surface uses for a command with no Runner route: command
-/// help, MCP metadata, and the runtime refusal in `crate::runner` all point
-/// the caller at the same fix, so the sentence is declared once here.
+/// The no-route wording the command-help and MCP-metadata surfaces render.
+/// The runtime refusal in `crate::runner` carries the same sentence inline in
+/// its per-command failure message; wording pins in `help_test` and
+/// `mcp_test` drift-guard the rendered copies.
 pub const NO_RUNNER_ROUTE_NOTE: &str = "no Runner route; run it without a selected Run or Device";
 
 impl RunnerSupport {
