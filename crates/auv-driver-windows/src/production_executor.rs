@@ -136,53 +136,38 @@ enum StepKind {
   SkipNext,
   Play,
   WgcCapture,
-  Other,
 }
 
-fn classify_step(step: &OperationStepDef) -> StepKind {
-  if let Some(action_type) = step.action.get("type").and_then(|v| v.as_str()) {
-    match action_type {
-      "smtc_query" => return StepKind::SmtcQuery,
-      "ensure_playing_and_volume" | "volume" => return StepKind::EnsurePlayingAndVolume,
-      "skip_next" | "next" => return StepKind::SkipNext,
-      "play" => return StepKind::Play,
-      "wgc_capture" | "capture" => return StepKind::WgcCapture,
-      _ => {}
+fn classify_step(step: &OperationStepDef) -> Result<StepKind, String> {
+  if let Some(action_type_val) = step.action.get("type") {
+    if let Some(action_type) = action_type_val.as_str() {
+      match action_type {
+        "smtc_query" => return Ok(StepKind::SmtcQuery),
+        "ensure_playing_and_volume" | "volume" | "set_volume" => return Ok(StepKind::EnsurePlayingAndVolume),
+        "skip_next" | "next" => return Ok(StepKind::SkipNext),
+        "play" => return Ok(StepKind::Play),
+        "wgc_capture" | "capture" => return Ok(StepKind::WgcCapture),
+        unknown => return Err(format!("unrecognized action.type '{unknown}' in step '{}'", step.id)),
+      }
+    } else {
+      return Err(format!("action.type in step '{}' is not a string", step.id));
     }
   }
 
   match &step.verification_gate {
-    VerificationGateDef::SmtcSessionPresent { .. } => StepKind::SmtcQuery,
+    VerificationGateDef::SmtcSessionPresent { .. } => Ok(StepKind::SmtcQuery),
     VerificationGateDef::StatusAndVolumeGate { .. } => {
       let id_lower = step.id.to_lowercase();
       let name_lower = step.name.to_lowercase();
-      if id_lower.contains("volume") || name_lower.contains("volume") {
-        StepKind::EnsurePlayingAndVolume
-      } else if id_lower.contains("play") || name_lower.contains("play") {
-        StepKind::Play
+      if (id_lower.contains("play") || name_lower.contains("play")) && !id_lower.contains("volume") && !name_lower.contains("volume") {
+        Ok(StepKind::Play)
       } else {
-        StepKind::EnsurePlayingAndVolume
+        Ok(StepKind::EnsurePlayingAndVolume)
       }
     }
-    VerificationGateDef::TitleChangeGate { .. } => StepKind::SkipNext,
-    VerificationGateDef::WgcAliveGate { .. } => StepKind::WgcCapture,
-    _ => {
-      let id_lower = step.id.to_lowercase();
-      let name_lower = step.name.to_lowercase();
-      if id_lower.contains("query") || name_lower.contains("query") {
-        StepKind::SmtcQuery
-      } else if id_lower.contains("volume") || name_lower.contains("volume") {
-        StepKind::EnsurePlayingAndVolume
-      } else if id_lower.contains("skip") || id_lower.contains("next") || name_lower.contains("skip") || name_lower.contains("next") {
-        StepKind::SkipNext
-      } else if id_lower.contains("play") || name_lower.contains("play") {
-        StepKind::Play
-      } else if id_lower.contains("wgc") || id_lower.contains("capture") || id_lower.contains("alive") || name_lower.contains("capture") {
-        StepKind::WgcCapture
-      } else {
-        StepKind::Other
-      }
-    }
+    VerificationGateDef::TitleChangeGate { .. } => Ok(StepKind::SkipNext),
+    VerificationGateDef::WgcAliveGate { .. } => Ok(StepKind::WgcCapture),
+    _ => Err(format!("step '{}' has no recognized action.type and verification_gate cannot authorize execution", step.id)),
   }
 }
 
@@ -205,6 +190,27 @@ fn check_minimized_and_restore(window: &Window, allow_restore: bool) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn check_minimized_and_restore(_window: &Window, _allow_restore: bool) -> bool {
   false
+}
+
+fn calculate_operation_confirmed(
+  mode: ExecutionMode,
+  steps: &[OperationStepDef],
+  classified_kinds: &[StepKind],
+  skip_next_confirmed: bool,
+) -> bool {
+  let has_unverified_steps = steps.iter().any(|s| {
+    s.is_unverified
+      || matches!(&s.verification_gate, VerificationGateDef::UnverifiedFallback { .. })
+      || s.verification_gate.requires_verified_mode().is_none()
+  });
+
+  if mode == ExecutionMode::Fast || has_unverified_steps || steps.is_empty() {
+    false
+  } else if classified_kinds.iter().any(|kind| *kind == StepKind::SkipNext) {
+    skip_next_confirmed
+  } else {
+    true
+  }
 }
 
 impl OperationExecutor for WindowsProductionExecutor {
@@ -231,7 +237,23 @@ impl OperationExecutor for WindowsProductionExecutor {
       };
     }
 
-    // Acquire operation context (first driver call occurs ONLY after mode gate passes)
+    // Pre-flight check: validate that ALL steps are recognized and can be executed.
+    // Must fail-closed BEFORE acquiring driver context or dispatching any side-effects.
+    let mut classified_steps = Vec::with_capacity(op.steps.len());
+    for step in &op.steps {
+      match classify_step(step) {
+        Ok(kind) => classified_steps.push((step, kind)),
+        Err(err) => {
+          return ExecutionResult::GateFailed {
+            step_id: step.id.clone(),
+            message: format!("Unrecognized or unsupported operation step: {err}"),
+            consecutive_failures: 1,
+          };
+        }
+      }
+    }
+
+    // Acquire operation context (first driver call occurs ONLY after mode gate and pre-flight step checks pass)
     let ctx = match WindowsOperationContext::resolve(None) {
       Ok(c) => c,
       Err(err) => {
@@ -253,8 +275,8 @@ impl OperationExecutor for WindowsProductionExecutor {
     let mut skip_next_confirmed = false;
     let mut steps_executed = 0;
 
-    for step in &op.steps {
-      match classify_step(step) {
+    for (step, step_kind) in &classified_steps {
+      match *step_kind {
         StepKind::SmtcQuery => {
           let meta = match ctx.session.track_metadata() {
             Ok(m) => m,
@@ -499,19 +521,11 @@ impl OperationExecutor for WindowsProductionExecutor {
             }
           }
         }
-        StepKind::Other => {
-          steps_executed += 1;
-        }
       }
     }
 
-    let effective_confirmed = if op.execution_mode == ExecutionMode::Fast {
-      false
-    } else if op.steps.iter().any(|s| matches!(classify_step(s), StepKind::SkipNext)) {
-      skip_next_confirmed
-    } else {
-      true
-    };
+    let kinds: Vec<StepKind> = classified_steps.iter().map(|(_, k)| *k).collect();
+    let effective_confirmed = calculate_operation_confirmed(op.execution_mode, &op.steps, &kinds, skip_next_confirmed);
 
     ExecutionResult::success(steps_executed, op.execution_mode, effective_confirmed)
   }
@@ -661,5 +675,254 @@ mod tests {
 
     let executor_restore = WindowsProductionExecutor::with_allow_restore(true);
     assert!(executor_restore.allow_restore);
+  }
+  #[test]
+  fn test_classify_step_rejects_unknown_action_type() {
+    let step = OperationStepDef {
+      id: "step_custom_unknown".to_string(),
+      name: "Play something".to_string(),
+      description: "Unknown action".to_string(),
+      action: serde_json::json!({ "type": "some_unrecognized_action" }),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+
+    let err = classify_step(&step).expect_err("unknown action.type must be rejected");
+    assert!(err.contains("unrecognized action.type 'some_unrecognized_action'"), "{err}");
+    assert!(err.contains("step_custom_unknown"), "{err}");
+  }
+
+  #[test]
+  fn test_classify_step_rejects_substring_authorization_without_typed_gate() {
+    // ID/Name containing 'play' or 'next' with no recognized action type and custom assertion
+    // MUST NOT authorize real SMTC operations.
+    let play_step = OperationStepDef {
+      id: "play_audio_step".to_string(),
+      name: "Play track".to_string(),
+      description: "Step with play in name".to_string(),
+      action: serde_json::json!({}),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+    let err = classify_step(&play_step).expect_err("substring 'play' must not authorize execution");
+    assert!(err.contains("has no recognized action.type"), "{err}");
+
+    let next_step = OperationStepDef {
+      id: "skip_to_next".to_string(),
+      name: "Next Track".to_string(),
+      description: "Step with next in name".to_string(),
+      action: serde_json::json!({}),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+    let err = classify_step(&next_step).expect_err("substring 'next' must not authorize execution");
+    assert!(err.contains("has no recognized action.type"), "{err}");
+  }
+
+  #[test]
+  fn test_classify_step_builtin_operations_all_recognized() {
+    // All steps in the built-in verified operation must be recognized
+    let raw_verified: OperationDef = serde_json::from_str(include_str!("../../../docs/ai/references/driver/qqmusic-prepared-playback.json"))
+      .expect("builtin verified op json must parse");
+    for step in &raw_verified.steps {
+      classify_step(step).unwrap_or_else(|e| panic!("step {} in verified op must be recognized: {e}", step.id));
+    }
+
+    // All steps in the built-in fast operation must be recognized
+    let raw_fast: OperationDef =
+      serde_json::from_str(include_str!("../../../docs/ai/references/driver/qqmusic-prepared-playback-fast.json"))
+        .expect("builtin fast op json must parse");
+    for step in &raw_fast.steps {
+      classify_step(step).unwrap_or_else(|e| panic!("step {} in fast op must be recognized: {e}", step.id));
+    }
+  }
+
+  #[test]
+  fn test_preflight_rejects_single_unknown_step_without_success_or_confirmation() {
+    let executor = WindowsProductionExecutor::default();
+    let req = dummy_request(Some(ExecutionMode::Verified));
+
+    let mut op = dummy_operation("custom.unknown_step_op", ExecutionMode::Verified);
+    op.steps = vec![OperationStepDef {
+      id: "unrecognized_step_1".to_string(),
+      name: "Do mystery thing".to_string(),
+      description: "Mystery".to_string(),
+      action: serde_json::json!({ "type": "mystery_action" }),
+      verification_gate: VerificationGateDef::CustomAssertion {
+        expression: "true".to_string(),
+        timeout_ms: 100,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    }];
+
+    let res = executor.execute(&op, &req);
+    match &res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "unrecognized_step_1");
+        assert_eq!(*consecutive_failures, 1);
+        assert!(message.contains("Unrecognized or unsupported operation step"), "{message}");
+        assert!(!message.contains("Bearer"), "no sensitive data leak: {message}");
+      }
+      other => panic!("expected GateFailed for unknown step, got {other:?}"),
+    }
+    assert!(!res.confirmed(), "unknown step must NEVER produce confirmed: true");
+    assert!(!matches!(res, ExecutionResult::Success { .. }), "unknown step must NEVER produce Success");
+  }
+
+  #[test]
+  fn test_preflight_rejects_unknown_step_after_valid_step_with_zero_side_effects() {
+    let executor = WindowsProductionExecutor::default();
+    let req = dummy_request(Some(ExecutionMode::Verified));
+
+    let mut op = dummy_operation("custom.multi_step_op", ExecutionMode::Verified);
+    op.steps = vec![
+      // Step 1: Valid recognized action
+      OperationStepDef {
+        id: "step_valid_1".to_string(),
+        name: "Query state".to_string(),
+        description: "SMTC query step".to_string(),
+        action: serde_json::json!({ "type": "smtc_query" }),
+        verification_gate: VerificationGateDef::SmtcSessionPresent {
+          timeout_ms: 1000,
+          escalate_on_mismatch: "escalate_to_vlm".to_string(),
+        },
+        is_unverified: false,
+      },
+      // Step 2: Unrecognized action
+      OperationStepDef {
+        id: "step_invalid_2".to_string(),
+        name: "Unknown action".to_string(),
+        description: "Should fail in preflight".to_string(),
+        action: serde_json::json!({ "type": "format_c_drive" }),
+        verification_gate: VerificationGateDef::CustomAssertion {
+          expression: "true".to_string(),
+          timeout_ms: 100,
+          escalate_on_mismatch: "none".to_string(),
+        },
+        is_unverified: false,
+      },
+    ];
+
+    let res = executor.execute(&op, &req);
+    match &res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "step_invalid_2");
+        assert_eq!(*consecutive_failures, 1);
+        assert!(message.contains("format_c_drive"), "{message}");
+      }
+      other => panic!("expected GateFailed at preflight for invalid step 2, got {other:?}"),
+    }
+    // Crucial: steps_executed is 0 because step 1 was never executed!
+    assert!(!matches!(res, ExecutionResult::Success { .. }), "preflight failure must NEVER produce Success");
+    assert!(!res.confirmed());
+  }
+
+  #[test]
+  fn test_calculate_operation_confirmed_hermetic_invariants() {
+    let make_step = |is_unverified: bool, gate: VerificationGateDef| OperationStepDef {
+      id: "test_step".to_string(),
+      name: "Test step".to_string(),
+      description: "Test".to_string(),
+      action: serde_json::json!({ "type": "smtc_query" }),
+      verification_gate: gate,
+      is_unverified,
+    };
+
+    let strong_gate = VerificationGateDef::SmtcSessionPresent {
+      timeout_ms: 1000,
+      escalate_on_mismatch: "none".to_string(),
+    };
+    let unverified_fallback_gate = VerificationGateDef::UnverifiedFallback {
+      description: "fallback".to_string(),
+      timeout_ms: 100,
+      escalate_on_mismatch: "none".to_string(),
+    };
+    let custom_assertion_gate = VerificationGateDef::CustomAssertion {
+      expression: "true".to_string(),
+      timeout_ms: 100,
+      escalate_on_mismatch: "none".to_string(),
+    };
+
+    // 1. Fast mode is NEVER confirmed, even with strong gates and skip_next_confirmed: true
+    let confirmed_fast =
+      calculate_operation_confirmed(ExecutionMode::Fast, &[make_step(false, strong_gate.clone())], &[StepKind::SmtcQuery], true);
+    assert!(!confirmed_fast, "Fast mode must NEVER be confirmed");
+
+    // 2. Empty steps is NEVER confirmed
+    let confirmed_empty = calculate_operation_confirmed(ExecutionMode::Verified, &[], &[], true);
+    assert!(!confirmed_empty, "Empty steps must NEVER be confirmed");
+
+    // 3. Step marked is_unverified: true in Verified mode is NEVER confirmed
+    let confirmed_unverified_flag =
+      calculate_operation_confirmed(ExecutionMode::Verified, &[make_step(true, strong_gate.clone())], &[StepKind::SmtcQuery], true);
+    assert!(!confirmed_unverified_flag, "is_unverified step must NEVER be confirmed");
+
+    // 4. Step with UnverifiedFallback in Verified mode is NEVER confirmed
+    let confirmed_fallback =
+      calculate_operation_confirmed(ExecutionMode::Verified, &[make_step(false, unverified_fallback_gate)], &[StepKind::SmtcQuery], true);
+    assert!(!confirmed_fallback, "UnverifiedFallback step must NEVER be confirmed");
+
+    // 5. Step with CustomAssertion in Verified mode is NEVER confirmed (requires_verified_mode is None)
+    let confirmed_custom =
+      calculate_operation_confirmed(ExecutionMode::Verified, &[make_step(false, custom_assertion_gate)], &[StepKind::SmtcQuery], true);
+    assert!(!confirmed_custom, "CustomAssertion step must NEVER be confirmed in Verified mode");
+
+    // 6. SkipNext present with skip_next_confirmed: false yields confirmed: false
+    let confirmed_skip_false = calculate_operation_confirmed(
+      ExecutionMode::Verified,
+      &[make_step(
+        false,
+        VerificationGateDef::TitleChangeGate {
+          require_title_change: true,
+          timeout_ms: 1000,
+          escalate_on_mismatch: "none".to_string(),
+        },
+      )],
+      &[StepKind::SkipNext],
+      false,
+    );
+    assert!(!confirmed_skip_false, "SkipNext with unconfirmed title change must NOT be confirmed");
+
+    // 7. SkipNext present with skip_next_confirmed: true yields confirmed: true
+    let confirmed_skip_true = calculate_operation_confirmed(
+      ExecutionMode::Verified,
+      &[make_step(
+        false,
+        VerificationGateDef::TitleChangeGate {
+          require_title_change: true,
+          timeout_ms: 1000,
+          escalate_on_mismatch: "none".to_string(),
+        },
+      )],
+      &[StepKind::SkipNext],
+      true,
+    );
+    assert!(confirmed_skip_true, "SkipNext with confirmed title change must be confirmed");
+
+    // 8. Fully verified steps without SkipNext yields confirmed: true
+    let confirmed_strong =
+      calculate_operation_confirmed(ExecutionMode::Verified, &[make_step(false, strong_gate)], &[StepKind::SmtcQuery], false);
+    assert!(confirmed_strong, "Fully verified steps in Verified mode must be confirmed");
   }
 }
