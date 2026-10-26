@@ -357,13 +357,24 @@ jobs:
         with:
           name: ${{ matrix.archive }}
 
-      - name: Verify startup and OCR on clean supported containers
+      # The oldest supported runtime (Debian 12, glibc 2.36 and PipeWire 0.3.65)
+      # and the newest (Ubuntu 26.04, PipeWire 1.6). `build-linux` already
+      # proves the library closure resolves inside the bundle; these runs cover
+      # what only a clean host shows: runtime loading, OCR without the distro's
+      # Tesseract, and the bundled PipeWire client against the host daemon.
+      #
+      # Regression: a bundled libpipewire 0.3 loaded the host's PipeWire 1.x
+      # client modules and failed with `undefined symbol:
+      # pw_log_topic_register`. The probe connects the bundled client, with its
+      # own modules, to the distribution's own PipeWire daemon.
+      - name: Verify startup, OCR and PipeWire on clean supported runtimes
         run: |
           mkdir bundle
           tar -xzf "${{ matrix.archive }}" -C bundle
           cp release-ocr-probe release-pipewire-probe bundle/
-          for image in debian:12-slim debian:13-slim ubuntu:24.04 ubuntu:26.04; do
+          for image in debian:12-slim ubuntu:26.04; do
             docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
+              set -e
               for package in tesseract-ocr libtesseract4 libtesseract5 liblept5 libleptonica6; do
                 if dpkg-query -W "$package" >/dev/null 2>&1; then
                   echo "clean runtime unexpectedly contains $package" >&2
@@ -372,18 +383,7 @@ jobs:
               done
               /opt/auv/auv --help >/dev/null
               /opt/auv/release-ocr-probe
-            '
-          done
 
-      # Regression: a bundled libpipewire 0.3 loaded the host's PipeWire 1.x
-      # client modules and failed with `undefined symbol:
-      # pw_log_topic_register`. Connect the bundled client, with its own
-      # modules, to each distribution's own PipeWire daemon.
-      - name: Verify the bundled PipeWire client against host daemons
-        run: |
-          for image in debian:12-slim debian:13-slim ubuntu:24.04 ubuntu:26.04; do
-            docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
-              set -e
               export DEBIAN_FRONTEND=noninteractive
               apt-get update >/dev/null
               apt-get install -y --no-install-recommends pipewire >/dev/null
@@ -399,24 +399,24 @@ jobs:
             '
           done
 
+      # N-API is ABI-stable across Node.js versions; the bookworm base checks
+      # the binding against the glibc 2.36 baseline.
       - name: Verify installed npm package and NAPI binding
         env:
           PACKAGE_NAME: ${{ matrix.package_name }}
         run: |
-          for image in node:20-bookworm-slim node:22-bookworm-slim; do
-            docker run --rm \
-              -e PACKAGE_NAME \
-              -v "$PWD:/work:ro" \
-              "$image" \
-              sh -c '
-                mkdir /tmp/app
-                cd /tmp/app
-                npm init -y >/dev/null
-                npm install /work/release-platform-package.tgz >/dev/null
-                node -e "require(process.env.PACKAGE_NAME)"
-                "node_modules/$PACKAGE_NAME/bin/auv" --help >/dev/null
-              '
-          done
+          docker run --rm \
+            -e PACKAGE_NAME \
+            -v "$PWD:/work:ro" \
+            node:lts-bookworm-slim \
+            sh -c '
+              mkdir /tmp/app
+              cd /tmp/app
+              npm init -y >/dev/null
+              npm install /work/release-platform-package.tgz >/dev/null
+              node -e "require(process.env.PACKAGE_NAME)"
+              "node_modules/$PACKAGE_NAME/bin/auv" --help >/dev/null
+            '
 
   publish:
     name: Publish release artifacts
