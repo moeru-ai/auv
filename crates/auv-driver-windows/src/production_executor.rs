@@ -230,6 +230,25 @@ fn check_minimized_and_restore(_window: &Window, _allow_restore: bool) -> bool {
   false
 }
 
+/// Normalizes a non-black pixel ratio to a canonical percentage in `0.0..=100.0`.
+///
+/// In Operation definitions, `min_non_black_ratio` is commonly expressed as a unit fraction
+/// `0.0..=1.0` (e.g. `0.50` for 50%). In `WindowHealth`, `non_black_ratio` is produced on a
+/// `0.0..=100.0` percentage scale, but mock or client structures may also use unit fractions.
+///
+/// If `ratio` is in `(0.0, 1.0]`, it is scaled to `ratio * 100.0`.
+/// If `ratio > 1.0`, it is clamped to `100.0`.
+/// Values `<= 0.0` or NaN evaluate to `0.0`.
+fn normalize_ratio_to_percentage(ratio: f64) -> f64 {
+  if ratio.is_nan() || ratio <= 0.0 {
+    0.0
+  } else if ratio <= 1.0 {
+    ratio * 100.0
+  } else {
+    ratio.min(100.0)
+  }
+}
+
 fn execute_wgc_capture_step(
   step: &OperationStepDef,
   mode: ExecutionMode,
@@ -260,17 +279,46 @@ fn execute_wgc_capture_step(
             consecutive_failures: 1,
           })
         }
-      } else if health.alive && health.is_fresh {
-        Ok(true)
       } else {
-        Err(ExecutionResult::GateFailed {
-          step_id: step.id.clone(),
-          message: format!(
-            "Strict window health check failed: alive={}, is_fresh={}, non_black_ratio={}",
-            health.alive, health.is_fresh, health.non_black_ratio
-          ),
-          consecutive_failures: 1,
-        })
+        if !health.is_fresh {
+          return Err(ExecutionResult::GateFailed {
+            step_id: step.id.clone(),
+            message: format!(
+              "Strict window health check failed: frame is stale (is_fresh=false), alive={}, non_black_ratio={}",
+              health.alive, health.non_black_ratio
+            ),
+            consecutive_failures: 1,
+          });
+        }
+        if !health.alive {
+          return Err(ExecutionResult::GateFailed {
+            step_id: step.id.clone(),
+            message: format!(
+              "Strict window health check failed: window is not alive (alive=false), non_black_ratio={}",
+              health.non_black_ratio
+            ),
+            consecutive_failures: 1,
+          });
+        }
+        if let VerificationGateDef::WgcAliveGate {
+          min_non_black_ratio,
+          ..
+        } = &step.verification_gate
+        {
+          let gate_threshold_pct = normalize_ratio_to_percentage(*min_non_black_ratio);
+          let health_ratio_pct = normalize_ratio_to_percentage(health.non_black_ratio);
+          if health.non_black_ratio.is_nan() || health_ratio_pct < gate_threshold_pct {
+            return Err(ExecutionResult::GateFailed {
+              step_id: step.id.clone(),
+              message: format!(
+                "Strict window health check failed: non_black_ratio {:.2}% is below gate threshold {:.2}%",
+                health_ratio_pct, gate_threshold_pct
+              ),
+              consecutive_failures: 1,
+            });
+          }
+        }
+        Ok(true)
       }
     }
     Err(e) => Err(ExecutionResult::GateFailed {
@@ -1115,5 +1163,85 @@ mod tests {
       })
     });
     assert!(matches!(stale_res, Err(ExecutionResult::GateFailed { .. })));
+  }
+
+  #[test]
+  fn test_wgc_capture_threshold_satisfied_in_verified_mode() {
+    // Gate requires 60% non-black ratio (0.60 fraction)
+    let step = OperationStepDef {
+      id: "step_thresh_ok".to_string(),
+      name: "Assert alive".to_string(),
+      description: "Assert 60% non-black".to_string(),
+      action: serde_json::json!({ "type": "wgc_capture" }),
+      verification_gate: VerificationGateDef::WgcAliveGate {
+        min_non_black_ratio: 0.60,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+
+    // Both 75.0% and 0.75 ratio satisfy 0.60 threshold
+    let res1 = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 1024,
+        height: 768,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 75.0,
+      })
+    });
+    assert_eq!(res1, Ok(true));
+
+    let res2 = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 1024,
+        height: 768,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 0.75,
+      })
+    });
+    assert_eq!(res2, Ok(true));
+  }
+
+  #[test]
+  fn test_wgc_capture_threshold_not_satisfied_in_verified_mode_even_when_alive() {
+    // Gate requires 80% non-black ratio (0.80 fraction)
+    let step = OperationStepDef {
+      id: "step_thresh_fail".to_string(),
+      name: "Assert high alive".to_string(),
+      description: "Assert 80% non-black".to_string(),
+      action: serde_json::json!({ "type": "wgc_capture" }),
+      verification_gate: VerificationGateDef::WgcAliveGate {
+        min_non_black_ratio: 0.80,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+
+    // Health has alive: true (since 60% >= 50%), is_fresh: true, but non_black_ratio is 60.0% < 80%
+    let res = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 1024,
+        height: 768,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 60.0,
+      })
+    });
+    match res {
+      Err(ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      }) => {
+        assert_eq!(step_id, "step_thresh_fail");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("below gate threshold"), "message must explicitly state ratio is below threshold: {message}");
+      }
+      other => panic!("expected GateFailed, got {other:?}"),
+    }
   }
 }
