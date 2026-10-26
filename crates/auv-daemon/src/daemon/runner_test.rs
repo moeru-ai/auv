@@ -412,6 +412,32 @@ async fn cancelled_delete_future_still_completes_deletion() {
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
+// The policy unit is `record_stop_failure` itself: an OS-level stop failure is
+// not portably injectable, so this test exercises the retention policy and the
+// DeleteRunner retry it enables instead of a real kill failure.
+#[tokio::test]
+async fn stop_failure_retains_failed_runner_for_retry() {
+  let supervisor = Arc::new(RunnerSupervisor::new(daemon_proto::DeviceRef {
+    device_id: "device_test".to_string(),
+  }));
+  supervisor
+    .runners
+    .lock()
+    .expect("registry")
+    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+  let managed = supervisor.runners.lock().expect("registry").remove("runner_test").expect("managed Runner");
+  record_stop_failure(&supervisor.runners, "runner_test".to_string(), managed);
+  let retained = supervisor.get("runner_test").expect("the failed Runner is retained").runner.expect("record");
+  assert_eq!(retained.phase, daemon_proto::RunnerPhase::Failed as i32);
+
+  let deleted = tokio::time::timeout(Duration::from_secs(5), supervisor.delete("runner_test", None, false))
+    .await
+    .expect("the retry delete must finish")
+    .expect("a retained Failed Runner can be deleted again");
+  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert!(supervisor.get("runner_test").is_err(), "the retried delete removes the entry");
+}
+
 #[tokio::test]
 async fn remote_grpc_delete_detaches_without_stopping_the_endpoint() {
   use driver_proto::display_service_server::DisplayServiceServer;

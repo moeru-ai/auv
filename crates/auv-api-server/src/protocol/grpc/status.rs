@@ -9,6 +9,7 @@ pub(crate) fn map_control_error(error: crate::control::ControlError) -> Status {
     DaemonError::InvalidArgument(_) | DaemonError::UnknownDevice(_) => Status::invalid_argument(error.to_string()),
     DaemonError::UnknownRun(_) | DaemonError::UnknownRunner(_) => Status::not_found(error.to_string()),
     DaemonError::RunnerProviderUnavailable(_) => Status::unimplemented(error.to_string()),
+    DaemonError::RunnerDeleting(_) => Status::failed_precondition(error.to_string()),
     DaemonError::RunnerOperation(_) => Status::unavailable(error.to_string()),
   }
 }

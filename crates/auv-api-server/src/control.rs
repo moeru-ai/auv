@@ -126,6 +126,9 @@ pub enum ControlError {
   /// No provider can create the requested RunnerClass.
   #[error("no RunnerProvider is registered for RunnerClass: {0}")]
   RunnerProviderUnavailable(String),
+  /// The Runner is already being deleted by another request.
+  #[error("Runner is already being deleted: {0}")]
+  RunnerDeleting(String),
   /// A routed Runner operation failed.
   #[error("Runner operation failed: {0}")]
   RunnerOperation(String),

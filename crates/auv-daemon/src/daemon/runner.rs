@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use tokio::process::Child;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, futures::Notified};
 use tonic::transport::{Channel, Endpoint};
 
 use super::runner_provider::{
@@ -285,56 +285,124 @@ impl RunnerSupervisor {
     force: bool,
   ) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
     let grace_period = grace_period.map(validate_grace_period).transpose()?;
-    {
+    // Claiming Draining marks this delete the single owner of the Runner's
+    // deletion: a second delete, lifecycle auto-stop, and the idle stop all
+    // leave Draining entries to that owner.
+    let drain = {
       let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
       let managed = runners.get_mut(runner_id).ok_or_else(|| RunnerError::Unknown(runner_id.to_string()))?;
+      if managed.record.phase == daemon_proto::RunnerPhase::Draining as i32 {
+        return Err(RunnerError::Deleting(runner_id.to_string()));
+      }
       managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
       managed.run_affinities = 0;
       managed.record.idle_deadline = None;
-    }
-    let deadline = grace_period.map(|grace| tokio::time::Instant::now() + grace);
-    let is_remote = self
-      .runners
-      .lock()
-      .expect("Runner registry lock poisoned")
-      .get(runner_id)
-      .is_some_and(|managed| matches!(&managed.runtime, ManagedRunnerRuntime::RemoteGrpc));
-    if is_remote && !force {
-      loop {
-        let changed = self.activity_changed.notified();
-        let drained = self
-          .runners
-          .lock()
-          .expect("Runner registry lock poisoned")
-          .get(runner_id)
-          .is_some_and(|managed| managed.record.active_operations == 0);
-        if drained {
-          break;
-        }
-        match deadline {
-          Some(deadline) => {
-            if tokio::time::timeout_at(deadline, changed).await.is_err() {
-              break;
-            }
-          }
-          None => changed.await,
-        }
-      }
-    }
-    let mut managed =
-      self.runners.lock().expect("Runner registry lock poisoned").remove(runner_id).expect("draining Runner remains registered");
-    stop_managed_in_place(&mut managed, deadline, force).await?;
-    Ok(daemon_proto::DeleteRunnerResponse {
-      runner: Some(managed.record),
-    })
+      matches!(&managed.runtime, ManagedRunnerRuntime::RemoteGrpc) && !force
+    };
+    // Claim and spawn happen without an await between them, so a cancelled
+    // caller can never strand a claimed-but-unowned Draining entry: the task
+    // owns the deletion to completion once the claim is taken.
+    let task = tokio::spawn(delete_runner_task(
+      self.runners.clone(),
+      self.activity_changed.clone(),
+      runner_id.to_string(),
+      grace_period.map(|grace| tokio::time::Instant::now() + grace),
+      force,
+      drain,
+    ));
+    // The task result is already the caller-facing Result; `?` only unwraps
+    // the JoinHandle's join error.
+    task.await.map_err(|error| RunnerError::Stop(format!("Runner deletion task failed: {error}")))?
   }
 
   pub(crate) async fn shutdown(&self) {
     let runners = std::mem::take(&mut *self.runners.lock().expect("Runner registry lock poisoned"));
+    // Draining deletes watch registry membership, not the map's identity;
+    // wake them so they observe the taken entry instead of waiting forever.
+    self.activity_changed.notify_waiters();
     for (_, managed) in runners {
       let _ = stop_managed(managed).await;
     }
   }
+}
+
+/// Owns one Runner deletion to completion, detached from its caller.
+///
+/// The registry entry is the ownership token: only this task removes a
+/// Draining entry, so a cancelled or racing caller can neither stop the same
+/// Runner twice nor lose the registry's only handle to an executable child.
+async fn delete_runner_task(
+  runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
+  activity_changed: Arc<Notify>,
+  runner_id: String,
+  deadline: Option<tokio::time::Instant>,
+  force: bool,
+  drain: bool,
+) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
+  if drain {
+    loop {
+      let mut changed = std::pin::pin!(activity_changed.notified());
+      let already_notified = arm_notify_waiter(changed.as_mut()).await;
+      let active_operations =
+        runners.lock().expect("Runner registry lock poisoned").get(&runner_id).map(|managed| managed.record.active_operations);
+      let Some(active_operations) = active_operations else {
+        // The entry left the registry while draining; only shutdown() does
+        // that, and it stops the Runner itself.
+        return Err(RunnerError::Unknown(runner_id));
+      };
+      if active_operations == 0 {
+        break;
+      }
+      if already_notified {
+        continue;
+      }
+      match deadline {
+        Some(deadline) => {
+          if tokio::time::timeout_at(deadline, changed.as_mut()).await.is_err() {
+            break;
+          }
+        }
+        None => changed.await,
+      }
+    }
+  }
+  let mut managed =
+    { runners.lock().expect("Runner registry lock poisoned").remove(&runner_id) }.ok_or_else(|| RunnerError::Unknown(runner_id.clone()))?;
+  match stop_managed_in_place(&mut managed, deadline, force).await {
+    Ok(()) => Ok(daemon_proto::DeleteRunnerResponse {
+      runner: Some(managed.record),
+    }),
+    Err(error) => {
+      record_stop_failure(&runners, runner_id, managed);
+      Err(error)
+    }
+  }
+}
+
+/// Registers a `Notified` waiter before the caller re-checks its predicate.
+///
+/// `Notified` registers with the `Notify` on its first poll and
+/// `notify_waiters` never stores permits, so a waiter that registers after the
+/// notification fires never wakes. Polling once up front closes that window:
+/// any later `notify_waiters` finds the waiter registered, and any state
+/// change that fired before registration is already visible to the predicate
+/// check that follows. Returns whether the waiter was already notified.
+async fn arm_notify_waiter(mut waiter: std::pin::Pin<&mut Notified<'_>>) -> bool {
+  use std::future::Future as _;
+  std::future::poll_fn(|cx| match waiter.as_mut().poll(cx) {
+    std::task::Poll::Ready(()) => std::task::Poll::Ready(true),
+    std::task::Poll::Pending => std::task::Poll::Ready(false),
+  })
+  .await
+}
+
+/// Retains a Runner whose stop failed: the registry keeps tracking it (and an
+/// executable runtime keeps owning its child) under the Failed phase so a
+/// later DeleteRunner can retry, instead of leaking an unmanaged process.
+fn record_stop_failure(runners: &Arc<Mutex<HashMap<String, ManagedRunner>>>, runner_id: String, mut managed: ManagedRunner) {
+  managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
+  tracing::warn!(runner_id = %runner_id, "Runner did not stop cleanly; retained as Failed for a retry");
+  runners.lock().expect("Runner registry lock poisoned").insert(runner_id, managed);
 }
 
 fn runner_class_record<'a>(
@@ -373,6 +441,8 @@ pub(crate) enum RunnerError {
   ProviderUnavailable(String),
   #[error("unknown Runner: {0}")]
   Unknown(String),
+  #[error("Runner {0} is already being deleted")]
+  Deleting(String),
   #[error("failed to start Runner: {0}")]
   Start(String),
   #[error("failed to stop Runner: {0}")]
@@ -421,6 +491,12 @@ fn decrement_activity_locked(
   if managed.run_affinities != 0 || managed.record.active_operations != 0 {
     return Ok((None, None));
   }
+  if managed.record.phase != daemon_proto::RunnerPhase::Ready as i32 {
+    // A Draining Runner is owned by its in-flight delete; a Failed Runner is
+    // retained stop-failure evidence. Lifecycle auto-stop only applies to
+    // Ready Runners so it can never race the delete owner.
+    return Ok((None, None));
+  }
   match daemon_proto::RunnerLifecycle::try_from(managed.record.lifecycle).unwrap_or_default() {
     daemon_proto::RunnerLifecycle::Ephemeral => Ok((runners.remove(runner_id), None)),
     daemon_proto::RunnerLifecycle::UnlessIdle => {
@@ -444,7 +520,8 @@ fn schedule_idle_stop(
     let managed = {
       let mut runners = runners.lock().expect("Runner registry lock poisoned");
       let should_stop = runners.get(&runner_id).is_some_and(|managed| {
-        managed.run_affinities == 0
+        managed.record.phase == daemon_proto::RunnerPhase::Ready as i32
+          && managed.run_affinities == 0
           && managed.record.active_operations == 0
           && managed.record.idle_deadline.as_ref() == Some(&timestamp_from_system_time(deadline))
       });
