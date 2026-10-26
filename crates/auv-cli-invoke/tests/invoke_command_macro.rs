@@ -1,4 +1,4 @@
-use auv_cli_invoke::{CommandRole, InvokeNamespace, Platform, SupportState, invoke_command};
+use auv_cli_invoke::{CommandRole, InvokeNamespace, Platform, RunnerSupport, SupportState, invoke_command};
 use clap::Args;
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -14,6 +14,7 @@ struct ExternalArgs {
   description = "External generated test command.",
   input = ExternalArgs,
   support = { macos: Supported, linux: Partial("a limit the test names"), windows: Unsupported("a reason the test names") },
+  runner = { macos: Supported, linux: NotEvidenced("a runner gap the test names"), windows: Unsupported("a runner reason the test names") },
 )]
 async fn external_generated_command_handler(
   _input: auv_cli_invoke::InvokeCommandInput,
@@ -49,4 +50,23 @@ fn invoke_command_macro_expands_for_downstream_crates() {
     cancellation: auv_cli_invoke::InvokeCancellation::new(),
   }))
   .expect("handler should run");
+}
+
+/// The `runner =` attribute is required and takes the same cell vocabulary as
+/// `support =`, including `NotEvidenced` for a cell no audit has resolved.
+#[test]
+fn invoke_command_macro_expands_the_runner_declaration() {
+  let command: auv_cli_invoke::InvokeCommand = external_generated_command_handler_invoke_command();
+
+  let RunnerSupport::Cells(cells) = command.runner else {
+    panic!("external.generated should declare explicit Runner cells");
+  };
+  assert_eq!(cells.on(Platform::Macos).state, SupportState::Supported);
+  assert_eq!(cells.on(Platform::Linux).state, SupportState::NotEvidenced);
+  assert_eq!(cells.on(Platform::Linux).note, Some("a runner gap the test names"));
+  assert_eq!(cells.on(Platform::Windows).state, SupportState::Unsupported);
+  assert_eq!(cells.on(Platform::Windows).note, Some("a runner reason the test names"));
+
+  let resolved = command.runner_cells().expect("cells resolve for a routed command");
+  assert_eq!(resolved, cells, "explicit cells resolve to themselves");
 }

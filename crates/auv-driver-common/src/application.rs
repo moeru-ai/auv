@@ -81,6 +81,11 @@ pub struct ApplicationActivationResult {
   pub activated_window: Option<WindowRef>,
   /// Evidence from the post-activation foreground observation.
   pub verification: ApplicationActivationVerification,
+  /// What a post-activation window observation established about the
+  /// activated application's windows (issue #324). `None` means this driver
+  /// version did not observe windows — an absent fact, never an absence
+  /// claim.
+  pub window_observation: Option<ActivationWindowObservation>,
 }
 
 /// What a post-activation platform observation could establish.
@@ -126,6 +131,55 @@ impl ApplicationActivationVerification {
         observed_application_id,
       } => Some(observed_application_id),
       Self::Unavailable { .. } => None,
+    }
+  }
+}
+
+/// What a post-activation window observation established about the activated
+/// application's windows (issue #324).
+///
+/// The three states are facts about the observation, not promises about
+/// usability: a `Present` window may still be minimized, occluded, or
+/// uncapturable, and only a window operation's own evidence proves a window
+/// usable. `Absent` means the observation succeeded and the application owns
+/// no matching window. `Unknown` means the observation itself failed and
+/// carries no claim about the application either way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ActivationWindowObservation {
+  /// The application owns at least one window the observation path can see;
+  /// `reference` names the window the driver resolves as the application's
+  /// main window, in the same preference a main-visible window selector
+  /// applies.
+  #[serde(rename = "window_present")]
+  Present {
+    /// Window the driver would target next.
+    reference: WindowRef,
+  },
+  /// The observation succeeded and found no window it could attribute to
+  /// the activated application. This is scoped to what the observation path
+  /// can see and attribute: when any listed window's ownership is unreadable
+  /// (for example a Windows process-name query that failed), the observation
+  /// reports `Unknown` instead rather than claim a proven absence.
+  #[serde(rename = "window_absent")]
+  Absent,
+  /// The window observation failed; `reason` names the failure. Distinct
+  /// from every foreground-verification outcome: an unknown observation says
+  /// nothing about which application owns the foreground.
+  #[serde(rename = "window_unknown")]
+  Unknown {
+    /// Why the platform could not observe windows.
+    reason: String,
+  },
+}
+
+impl ActivationWindowObservation {
+  /// Returns the canonical status used by human and structured output.
+  pub fn status(&self) -> &'static str {
+    match self {
+      Self::Present { .. } => "window_present",
+      Self::Absent => "window_absent",
+      Self::Unknown { .. } => "window_unknown",
     }
   }
 }

@@ -37,6 +37,10 @@ message ActivateApplicationResponse {
   // Set when the platform activated the application through one window.
   WindowRef activated_window = 4;
   ApplicationActivationVerification verification = 5;
+  // Post-activation window observation (issue #324). Absent when the Runner's
+  // driver version did not observe windows; never a claim that the app owns
+  // no window.
+  ActivationWindowObservation window_observation = 6;
 }
 
 // Exact wire projection of auv_driver::ApplicationIdKind.
@@ -77,5 +81,25 @@ message ForegroundMismatch {
 }
 
 message VerificationUnavailable {
+  string reason = 1;
+}
+
+// Exact wire projection of auv_driver::ActivationWindowObservation (#324).
+// Presence is a fact about the observation, not a usability promise.
+message ActivationWindowObservation {
+  oneof observation {
+    WindowPresent present = 1;
+    WindowAbsent absent = 2;
+    ObservationUnavailable unknown = 3;
+  }
+}
+
+message WindowPresent {
+  WindowRef reference = 1;
+}
+
+message WindowAbsent {}
+
+message ObservationUnavailable {
   string reason = 1;
 }

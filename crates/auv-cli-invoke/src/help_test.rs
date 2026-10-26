@@ -62,6 +62,65 @@ fn an_alias_names_its_canonical_command_in_its_help() {
 }
 
 #[test]
+fn every_command_help_states_its_selected_runner_route() {
+  for command in default_registry().all() {
+    let help = render_command_help(command);
+    assert!(help.contains("\nSelected Runner support:\n"), "{} does not state its Runner route:\n{help}", command.id);
+  }
+}
+
+#[test]
+fn command_help_distinguishes_runner_cells_from_direct_cells() {
+  let registry = default_registry();
+  let help = render_command_help(registry.resolve("screen.clickText").expect("screen.clickText is registered"));
+  // The direct path refuses Linux while the Runner route finds display text and
+  // clicks through global ClickPoint, so one help must show both facts.
+  assert!(help.contains("Platform support:\n  macOS   yes\n  Linux   no\n"), "{help}");
+  assert!(
+    help.contains("\nSelected Runner support:\n  macOS   yes\n  Linux   yes\n  Windows partial: primary display only; global ClickPoint ignores the requested input policy and Windows delivers it as foreground SendInput\n"),
+    "{help}"
+  );
+}
+
+#[test]
+fn command_help_names_the_limit_of_a_partial_runner_cell() {
+  let registry = default_registry();
+  let help = render_command_help(registry.resolve("input.drag").expect("input.drag is registered"));
+  assert!(
+    help.contains(
+      "\nSelected Runner support:\n  macOS   partial: foreground-preferred input policy is refused; DragMouse carries no window policy\n"
+    ),
+    "{help}"
+  );
+  assert!(
+    help.contains("  Windows partial: foreground-preferred input policy is refused; background delivery posts window messages"),
+    "{help}"
+  );
+}
+
+#[test]
+fn command_help_says_when_the_runner_route_matches_the_direct_path() {
+  let registry = default_registry();
+  let help = render_command_help(registry.resolve("input.typeText").expect("input.typeText is registered"));
+  assert!(help.contains("\nSelected Runner support:\n  same as the direct local path above\n"), "{help}");
+}
+
+#[test]
+fn fixture_help_declares_no_runner_route_instead_of_unsupported_platforms() {
+  let registry = default_registry();
+  for id in ["scan.frame", "scan.coverage"] {
+    let help = render_command_help(registry.resolve(id).expect("scan fixture is registered"));
+    assert!(help.contains("\nSelected Runner support:\n  no Runner route; run it without a selected Run or Device\n"), "{id}:\n{help}");
+  }
+}
+
+#[test]
+fn the_index_points_at_the_per_command_runner_route() {
+  let index = render_help_index(&default_registry());
+  assert!(index.contains("Selected Runner support is the same source-level claim for the route a selected Run or Device takes"), "{index}");
+}
+
+#[test]
 fn every_command_documents_at_least_one_example_it_accepts() {
   for command in default_registry().all() {
     let examples = command.examples().unwrap_or_else(|error| panic!("{error}"));

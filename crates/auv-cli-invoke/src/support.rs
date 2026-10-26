@@ -1,9 +1,14 @@
 //! Per-platform support declared by every invoke command.
 //!
-//! A cell describes one command's direct local path in the current source on one
-//! platform. It is not behavior evidence: `Supported` means the path exists, not
-//! that anyone ran it. Evidence levels stay in `docs/SUPPORT_MATRIX.md`, and a
-//! selected Runner's support is a separate fact (`TODO(invoke-support-runner-route)`).
+//! `CommandSupport` cells describe one command's direct local path in the
+//! current source on one platform. `RunnerSupport` declares how the same
+//! command relates to the selected-Runner route. Neither is behavior evidence:
+//! `Supported` means the path exists, not that anyone ran it. Evidence levels
+//! stay in `docs/SUPPORT_MATRIX.md`.
+//!
+//! The Runner cells were established by the command-level source audit of
+//! 2026-10-25 (adapter arm in `crate::runner`, runner-side handler, platform
+//! driver capability). They back the invoke help and MCP metadata.
 
 use serde::Serialize;
 
@@ -101,4 +106,53 @@ pub enum CommandRole {
   /// Processes caller-supplied fixture data and never touches a desktop, so its
   /// platform cells describe the build, not a driver.
   Fixture,
+}
+
+/// How one command relates to the selected-Runner route.
+///
+/// Every registered command must declare one; the `invoke_command` macro makes
+/// `runner =` required, so a command without a declaration does not compile.
+/// Like the direct cells, a declaration is a source fact: a routed variant means
+/// the Runner adapter arm, the RPC, and the runner-side handler exist in the
+/// current source, not that anyone ran them.
+// NOTICE(invoke-support-runner-route): `crate::runner`'s pre-dispatch gate
+// refuses a non-dry dispatch as `unsupported` when the selected Runner's
+// daemon-reported platform is known and this declaration's cell for that
+// platform is Unsupported. Unknown platforms never refuse; the backend's
+// typed UNIMPLEMENTED answer stays the fallback there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunnerSupport {
+  /// The command has no Runner route at all: dispatch refuses it before
+  /// contacting a Runner. Fixture commands declare this, matching the refusal
+  /// in `crate::runner`. Only a fixture may declare it:
+  /// `registry_test::every_command_declares_its_runner_route` fails any
+  /// Desktop or Alias command that tries, so a routed command without a
+  /// platform path must declare explicit Unsupported cells instead.
+  NoRoute,
+  /// The Runner adapter calls the same driver capability as the direct local
+  /// path with no additional limits, so the route's cells are the direct
+  /// cells. Allowed only where the source audit confirmed the equality; it
+  /// must be re-confirmed when either side changes.
+  Direct,
+  /// The route's per-platform cells, used where they differ from the direct
+  /// cells in state or note.
+  Cells(CommandSupport),
+}
+
+/// The no-route wording the command-help and MCP-metadata surfaces render.
+/// The runtime refusal in `crate::runner` carries the same sentence inline in
+/// its per-command failure message; wording pins in `help_test` and
+/// `mcp_test` drift-guard the rendered copies.
+pub const NO_RUNNER_ROUTE_NOTE: &str = "no Runner route; run it without a selected Run or Device";
+
+impl RunnerSupport {
+  /// The route's per-platform cells, or `None` when the command has no Runner
+  /// route. `Direct` resolves against the command's direct cells.
+  pub fn cells(&self, direct: CommandSupport) -> Option<CommandSupport> {
+    match self {
+      Self::NoRoute => None,
+      Self::Direct => Some(direct),
+      Self::Cells(cells) => Some(*cells),
+    }
+  }
 }

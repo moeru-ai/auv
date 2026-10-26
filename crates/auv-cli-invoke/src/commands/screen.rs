@@ -37,6 +37,7 @@ struct CaptureRegionArgs {
 #[invoke_command(
   id = "screen.captureRegion",
   support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
   group = "screen",
   description = "Capture one display-contained region and emit its coordinate contract.",
   input = CaptureRegionArgs,
@@ -196,6 +197,7 @@ impl WaitForScreenTextArgs {
 #[invoke_command(
   id = "screen.findText",
   support = { macos: Supported, linux: Supported, windows: Partial("primary display only") },
+  runner = Direct,
   group = "screen",
   description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates. Target activation is not yet available for this command.",
   input = FindScreenTextArgs,
@@ -221,6 +223,7 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
 #[invoke_command(
   id = "screen.waitForText",
   support = { macos: Supported, linux: Supported, windows: Partial("primary display only") },
+  runner = Direct,
   group = "screen",
   description = "Poll live-desktop OCR until a text anchor appears or the timeout expires. Target activation is not yet available for this command.",
   input = WaitForScreenTextArgs,
@@ -271,7 +274,9 @@ async fn recognize_screen_text_with_cancellation(
       .find_text_in_capture(&capture.capture, &query, RelativeRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     cancellation.check().map_err(|error| error.to_string())?;
-    Ok((matches, capture))
+    // The ascription keeps this local OCR observation text-errors, which also
+    // pins the shared wait helper's error type on this path.
+    Ok::<_, String>((matches, capture))
   };
   let (matches, capture) = if let Some(options) = wait {
     crate::runner::wait_for_selected_text("screen.waitForText", &query, options, cancellation, observe, |(matches, _)| {
@@ -325,6 +330,13 @@ struct ClickScreenTextArgs {
 #[invoke_command(
   id = "screen.clickText",
   support = { macos: Supported, linux: Unsupported, windows: Partial("primary display only; foreground pointer input") },
+  // The Runner route finds display text and clicks through global ClickPoint with no platform
+  // gate, so Linux works remotely even though the local handler refuses it.
+  runner = {
+    macos: Supported,
+    linux: Supported,
+    windows: Partial("primary display only; global ClickPoint ignores the requested input policy and Windows delivers it as foreground SendInput"),
+  },
   group = "screen",
   description = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. Target activation is not yet available for this command.",
   input = ClickScreenTextArgs,

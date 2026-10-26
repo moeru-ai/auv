@@ -42,7 +42,9 @@ mod frontend {
   use serde_json::Value;
 
   use auv_auto_loop::runtime::OperationExecutor;
-  use auv_cli_invoke::{ExecutionTarget, InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeRegistry, default_registry};
+  use auv_cli_invoke::{
+    CommandSupport, ExecutionTarget, InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeRegistry, RunnerSupport, default_registry,
+  };
 
   use crate::commands::op::{ExecutionModeArg, OpRunArgs, default_executor, run_with_executor_inner};
 
@@ -731,7 +733,8 @@ mod frontend {
       "Invoke one AUV command and record it as a Run. Set `command_id` to one command below and \
        pass its arguments in `inputs` as string values, keyed exactly as listed; list values are JSON array strings. \
        Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
-       command; it is not a claim that the path was run.\n\n\
+       command, and `runner support` states the same for the selected-Runner route when it differs; neither is a \
+       claim that the path was run.\n\n\
        Application ids are the ones `window.list` reports on this Device, and they differ by platform: a bundle id \
        on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
        application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
@@ -759,6 +762,9 @@ mod frontend {
         auv_cli_invoke::CommandRole::Fixture => text.push_str("\n  fixture: processes data you supply; does not control a desktop"),
       }
       text.push_str(&format!("\n  support: {}", platform_support_summary(command)));
+      if let Some(runner) = runner_support_summary(command) {
+        text.push_str(&format!("\n  runner support: {runner}"));
+      }
       for argument in command_arguments(command) {
         let required = if argument.required {
           "required"
@@ -785,9 +791,23 @@ mod frontend {
   /// the same delivery note repeats on every keyboard command. The description explains input
   /// delivery once in its header; notes stay in `x-auv-commands` and `auv invoke <id> --help`.
   fn platform_support_summary(command: &InvokeCommand) -> String {
+    support_summary(command.support)
+  }
+
+  /// One line of selected-Runner support, shown only where the route differs from the direct
+  /// `support` line above it or the command has no Runner route at all.
+  fn runner_support_summary(command: &InvokeCommand) -> Option<String> {
+    match command.runner_cells() {
+      None => Some(auv_cli_invoke::support::NO_RUNNER_ROUTE_NOTE.to_string()),
+      Some(cells) if cells == command.support => None,
+      Some(cells) => Some(support_summary(cells)),
+    }
+  }
+
+  fn support_summary(cells: CommandSupport) -> String {
     auv_cli_invoke::Platform::ALL
       .iter()
-      .map(|platform| format!("{} {}", platform.label(), command.support.on(*platform).state.as_str()))
+      .map(|platform| format!("{} {}", platform.label(), cells.on(*platform).state.as_str()))
       .collect::<Vec<_>>()
       .join("; ")
   }
@@ -834,6 +854,7 @@ mod frontend {
       "target_help": command.target.help(),
       "target": { "required": command.target.required(), "accepted_types": command.target.accepted_types() },
       "support": command.support,
+      "runner_support": runner_support_metadata(command),
       "role": command.role,
       "arguments": clap_command
         .get_arguments()
@@ -854,6 +875,22 @@ mod frontend {
         .map(|example| serde_json::json!({ "summary": example.summary, "cli": example.cli, "call": mcp_example_call(command.id, example) }))
         .collect::<Vec<_>>(),
     })
+  }
+
+  /// The selected-Runner route's support next to the direct `support` cells:
+  /// `route` names the declaration shape and `cells` the resolved per-platform
+  /// cells. A command with no Runner route states that instead of "unsupported
+  /// platforms", because the route is refused before any platform judgment.
+  fn runner_support_metadata(command: &InvokeCommand) -> Value {
+    let route = match command.runner {
+      RunnerSupport::NoRoute => "no_route",
+      RunnerSupport::Direct => "direct",
+      RunnerSupport::Cells(_) => "cells",
+    };
+    match command.runner_cells() {
+      None => serde_json::json!({ "route": route }),
+      Some(cells) => serde_json::json!({ "route": route, "cells": cells }),
+    }
   }
 
   #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]

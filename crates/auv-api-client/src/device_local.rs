@@ -53,11 +53,16 @@ impl DeviceLocalClient {
   /// runs as this process's own user, the per-user daemon for `store_root`.
   #[cfg(windows)]
   pub async fn connect_windows(store_root: &Path) -> Result<Self, tonic::transport::Error> {
-    let name = named_pipe_name(store_root);
+    let store_root = store_root.to_path_buf();
     let channel = tonic::transport::Endpoint::from_static("http://localhost")
       .connect_with_connector(tower::service_fn(move |_: http::Uri| {
-        let name = name.clone();
-        async move { windows_pipe::open_verified(&name).await.map(hyper_util::rt::TokioIo::new) }
+        let store_root = store_root.clone();
+        async move {
+          // The shared normalization rule lives in `canonical_pipe_name`; both
+          // the plain and verbatim spellings of one store resolve to one pipe.
+          let name = canonical_pipe_name(&store_root)?;
+          windows_pipe::open_verified(&name).await.map(hyper_util::rt::TokioIo::new)
+        }
       }))
       .await?;
     Ok(Self {
@@ -126,6 +131,23 @@ fn current_euid() -> u32 {
 
 /// Stable, store-specific Windows pipe name shared by a local host and CLI.
 /// The path is never placed in an API request or credential-bearing argument.
+///
+/// Production callers use [`canonical_pipe_name`], which normalizes the store
+/// root first; this function is the unchanged legacy entry kept for external
+/// callers and hashes the path bytes exactly as given, so handing it two
+/// spellings of one directory yields two different names.
+// ROOT CAUSE (Windows health audit F-PIPE-1):
+//
+// The daemon bound the hash of its plain-form store root while the CLI dialed
+// the hash of the descriptor's verbatim-canonical form, so
+// `auv devices access enrollments|policy|audit` on the documented default
+// path dialed a pipe that was never bound.
+//
+// Before the fix, every caller hashed its input bytes unchanged through this
+// function. The fix moves production callers to [`canonical_pipe_name`],
+// which canonicalizes before hashing and keeps older CLIs compatible with a
+// fixed daemon: they hash the descriptor's verbatim form as-is, and
+// canonicalizing a verbatim path is the identity on Windows.
 #[cfg(windows)]
 pub fn named_pipe_name(store_root: &Path) -> String {
   use std::os::windows::ffi::OsStrExt;
@@ -141,4 +163,89 @@ pub fn named_pipe_name(store_root: &Path) -> String {
   let digest = hash.finalize();
   let suffix = digest[..12].iter().map(|byte| format!("{byte:02x}")).collect::<String>();
   format!("auv-device-local-{suffix}")
+}
+
+/// The production Device-local pipe name: the legacy hash over the
+/// CANONICALIZED store root.
+///
+/// This is the one shared rule for the binder and the dialer: Windows
+/// `fs::canonicalize` publishes the verbatim `\\?\` form, and hashing
+/// different spellings of one directory (plain `C:\...` from the daemon's
+/// config versus verbatim from a published discovery descriptor) would give
+/// the two sides different pipe names. Failure is an explicit error — the
+/// caller cannot resolve a store root that does not exist — never a second
+/// hash over unnormalized bytes.
+#[cfg(windows)]
+pub fn canonical_pipe_name(store_root: &Path) -> std::io::Result<String> {
+  let canonical = store_root.canonicalize()?;
+  Ok(named_pipe_name(&canonical))
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+  use super::*;
+
+  // ROOT CAUSE (Windows health audit F-PIPE-1):
+  //
+  // The daemon bound the hash of its plain-form store root while the CLI
+  // dialed the hash of the discovery descriptor's verbatim-canonical form, so
+  // the two sides of the documented default path derived different pipe names
+  // and every `auv devices access` command failed on Windows.
+  //
+  // Before the fix, production callers hashed their input bytes unchanged
+  // through `named_pipe_name`. The fix moves them to `canonical_pipe_name`,
+  // so the plain form, the verbatim form, and the normalized output of one
+  // directory all produce one name, and a different directory still produces
+  // a different name.
+  #[test]
+  fn canonical_pipe_name_matches_across_store_root_spellings() {
+    let raw = std::env::temp_dir().join(format!("auv-pipe-name-test-{}", std::process::id()));
+    std::fs::create_dir_all(&raw).expect("create the private test store root");
+    let canonical = raw.canonicalize().expect("canonicalize the test store root");
+
+    // Windows `fs::canonicalize` publishes the verbatim `\\?\` form; the rule
+    // depends on that behavior, so pin it.
+    let as_os = canonical.as_os_str().to_string_lossy().into_owned();
+    assert!(as_os.starts_with(r"\\?\"), "canonical form is verbatim: {as_os}");
+
+    let from_raw = canonical_pipe_name(&raw).expect("plain spelling resolves");
+    let from_canonical = canonical_pipe_name(&canonical).expect("verbatim spelling resolves");
+
+    assert_eq!(from_raw, from_canonical, "one directory, one pipe name");
+
+    // A different directory must not collide.
+    let other = raw.join("other");
+    std::fs::create_dir_all(&other).expect("create the sibling directory");
+    let from_other = canonical_pipe_name(&other).expect("sibling spelling resolves");
+    assert_ne!(from_raw, from_other);
+
+    std::fs::remove_dir_all(&raw).ok();
+  }
+
+  // A store root that does not exist must be refused explicitly — no name is
+  // derived from a directory the daemon could never have bound.
+  #[test]
+  fn canonical_pipe_name_rejects_a_missing_store_root() {
+    let missing = std::env::temp_dir().join(format!("auv-pipe-name-missing-{}", std::process::id()));
+    assert!(canonical_pipe_name(&missing).is_err(), "a missing store root must not produce a pipe name");
+  }
+
+  // The legacy entry keeps hashing its input bytes unchanged: that contract
+  // is what lets a fixed daemon serve older CLIs, which dial the descriptor's
+  // verbatim form as-is. Pin that it does NOT normalize, so the two entries
+  // stay distinguishable.
+  #[test]
+  fn legacy_named_pipe_name_hashes_the_given_bytes_without_normalizing() {
+    let raw = std::env::temp_dir().join(format!("auv-pipe-name-legacy-{}", std::process::id()));
+    std::fs::create_dir_all(&raw).expect("create the private test store root");
+    let canonical = raw.canonicalize().expect("canonicalize the test store root");
+
+    let legacy_raw = named_pipe_name(&raw);
+    let legacy_canonical = named_pipe_name(&canonical);
+    assert_ne!(legacy_raw, legacy_canonical, "the legacy entry hashes the given spelling");
+
+    assert_eq!(legacy_canonical, canonical_pipe_name(&raw).expect("production entry"), "the production entry hashes the canonical form");
+
+    std::fs::remove_dir_all(&raw).ok();
+  }
 }

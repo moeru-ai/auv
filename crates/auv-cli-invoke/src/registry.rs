@@ -39,7 +39,7 @@ fn assert_unique_command_ids(commands: &[InvokeCommand]) {
 }
 
 /// An alias counts once and shares its canonical command's cells, so it must name a registered
-/// command that is not itself an alias, and declare the same support.
+/// command that is not itself an alias, and declare the same support and Runner route.
 fn assert_aliases_name_a_canonical_command(commands: &[InvokeCommand]) {
   for command in commands {
     let CommandRole::Alias { canonical } = command.role else {
@@ -55,6 +55,7 @@ fn assert_aliases_name_a_canonical_command(commands: &[InvokeCommand]) {
       command.id
     );
     assert_eq!(command.support, target.support, "invoke alias {} must declare the same support as {canonical}", command.id);
+    assert_eq!(command.runner, target.runner, "invoke alias {} must declare the same Runner route as {canonical}", command.id);
   }
 }
 

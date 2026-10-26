@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde::de::{DeserializeOwned, IntoDeserializer, Visitor, value::MapDeserializer};
 
 use crate::InvokeReport;
-use crate::support::{CommandRole, CommandSupport};
+use crate::support::{CommandRole, CommandSupport, RunnerSupport};
 
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = InvokeExecutionResult> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
@@ -264,22 +264,66 @@ impl From<auv_driver::KeyboardInputError> for InvokeFailure {
   }
 }
 
+/// Failure-code classification shared by every Runner-route error that exposes
+/// a protocol-neutral transport category. `None` means the error carried no
+/// transport category, which is no more specific than `backend`.
+fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode {
+  use auv::error::ClientErrorKind;
+  match kind {
+    Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
+    Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
+    Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
+    Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
+    Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleUiReference,
+    _ => FailureCode::Backend,
+  }
+}
+
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
-    use auv::error::ClientErrorKind;
-    let code = match error.client_kind() {
-      Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
-      Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
-      Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
-      Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
-      Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleUiReference,
-      _ => FailureCode::Backend,
-    };
-    let mut failure = Self::new(code, error.to_string());
+    let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {
       failure.keyboard_progress = Some(progress);
     }
     failure
+  }
+}
+
+impl From<auv::client::PlacementError> for InvokeFailure {
+  fn from(error: auv::client::PlacementError) -> Self {
+    use auv::client::PlacementError;
+    match error {
+      // Daemon control RPCs fail with the same transport categories as
+      // capability RPCs, so they share the classification.
+      PlacementError::Client(error) => Self::new(client_failure_code(Some(error.kind())), error.to_string()),
+      PlacementError::Context(context) => match &context {
+        // The two context-resolution steps that wrap a daemon control RPC
+        // failure classify with the same shared rule; the ContextError Display
+        // keeps each step's own wording ("paired daemon ListDevices failed:
+        // ...", "failed to look up Run on <location>: ...").
+        auv::ContextError::RemoteDeviceList(error) | auv::ContextError::RunLookup { error, .. } => {
+          Self::new(client_failure_code(Some(error.kind())), context.to_string())
+        }
+        // The selected Run does not exist on any reachable daemon; the type
+        // states exactly that, so it classifies as not found.
+        auv::ContextError::RunNotFound(_) => Self::new(FailureCode::NotFound, context.to_string()),
+        // TODO(runner-placement-failure-codes): the free-form Context
+        // variants below keep command_failed; see the marker on the final arm.
+        _ => Self::from(context.to_string()),
+      },
+      // Runner placement re-surfaces capability failures; reuse the shared
+      // conversion so keyboard progress survives.
+      PlacementError::Capability(error) => error.into(),
+      // TODO(runner-placement-failure-codes): Selection, ContextEnvironment,
+      // and Cleanup mix unknown ids, environment problems, and compound
+      // cleanup text, and the remaining placement-semantic Context variants
+      // (RunAmbiguous, DeviceSelectionAmbiguous, DeviceNotConfigured) need a
+      // multiple-matches-versus-configuration distinction the current codes
+      // do not carry — classifying them is an owner decision, not a guess.
+      // They keep command_failed until an owner-approved slice classifies
+      // them.
+      other => Self::from(other.to_string()),
+    }
   }
 }
 
@@ -324,6 +368,9 @@ pub struct InvokeCommand {
   pub target: TargetPolicy,
   /// Where the direct local path exists, declared by the command and shown by help and MCP metadata.
   pub support: CommandSupport,
+  /// How the command relates to the selected-Runner route; required on every
+  /// registered command. See [`crate::support::RunnerSupport`].
+  pub runner: RunnerSupport,
   pub role: CommandRole,
   typed_command: fn(&'static str, &'static str) -> Command,
   typed_parse: InvokeCommandParser,
@@ -421,6 +468,13 @@ impl InvokeCommand {
   pub fn with_target(mut self, target: TargetPolicy) -> Self {
     self.target = target;
     self
+  }
+
+  /// The selected-Runner route's per-platform cells, or `None` when the command
+  /// has no Runner route. Help and MCP metadata render from these cells, so
+  /// every surface states the same route facts.
+  pub fn runner_cells(&self) -> Option<CommandSupport> {
+    self.runner.cells(self.support)
   }
 
   pub fn with_role(mut self, role: CommandRole) -> Self {
@@ -546,6 +600,7 @@ pub fn typed_spec<T>(
   namespace: InvokeNamespace,
   description: &'static str,
   support: CommandSupport,
+  runner: RunnerSupport,
   handler: InvokeCommandHandler,
 ) -> InvokeCommand
 where
@@ -557,6 +612,7 @@ where
     description,
     target: TargetPolicy::default(),
     support,
+    runner,
     role: CommandRole::Desktop,
     typed_command: typed_command::<T>,
     typed_parse: parse_cli_args::<T>,
@@ -756,3 +812,7 @@ pub(crate) fn with_invoke_context(command: Command, target: TargetPolicy) -> Com
     .arg(Arg::new("auv_detail").long("detail").action(ArgAction::SetTrue).help("Include diagnostic detail in human output."))
     .arg(Arg::new("auv_wide").long("wide").action(ArgAction::SetTrue).help("Include extra columns in human table output."))
 }
+
+#[cfg(test)]
+#[path = "command_test.rs"]
+mod tests;

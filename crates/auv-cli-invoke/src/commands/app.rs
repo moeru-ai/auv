@@ -13,6 +13,13 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "app.probePermissions",
   support = { macos: Supported, linux: Unsupported, windows: Unsupported("the result names macOS privacy permissions; the Windows driver's elevation, UIAccess and session probe has no field in it") },
+  // The Runner-side PermissionService handler is macOS-only, which is a different refusal
+  // reason than the direct Windows note, so the route declares its own cells.
+  runner = {
+    macos: Supported,
+    linux: Unsupported("the Runner's permission service is macOS-only"),
+    windows: Unsupported("the Runner's permission service is macOS-only"),
+  },
   group = "app",
   description = "Probe macOS screen recording, accessibility, and automation permissions.",
   input = ProbePermissionsArgs,
@@ -51,6 +58,7 @@ struct ActivateAppArgs {}
 #[invoke_command(
   id = "app.activate",
   support = { macos: Supported, linux: Unsupported("application activation is not implemented on Linux yet"), windows: Supported },
+  runner = Direct,
   target = RequiredApplication,
   group = "app",
   description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional).",
@@ -81,6 +89,23 @@ pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> In
   }
   if let auv_driver::ApplicationActivationVerification::Unavailable { reason } = &result.verification {
     fields.push(InvokeReportField::new("Verification detail", reason));
+  }
+  // The window observation is a fact separate from the foreground
+  // verification; `None` (this driver did not observe) renders nothing
+  // rather than implying an absence.
+  match &result.window_observation {
+    Some(auv_driver::ActivationWindowObservation::Present { reference }) => {
+      fields.push(InvokeReportField::new("Window observation", "window_present"));
+      fields.push(InvokeReportField::new("Observed window", format!("window:{}", reference.id)));
+    }
+    Some(auv_driver::ActivationWindowObservation::Absent) => {
+      fields.push(InvokeReportField::new("Window observation", "window_absent"));
+    }
+    Some(auv_driver::ActivationWindowObservation::Unknown { reason }) => {
+      fields.push(InvokeReportField::new("Window observation", "window_unknown"));
+      fields.push(InvokeReportField::new("Window observation detail", reason));
+    }
+    None => {}
   }
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }

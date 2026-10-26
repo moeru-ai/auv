@@ -3,7 +3,8 @@
 
 use auv_api_proto::auv::api::driver::v1 as proto;
 use auv_driver::{
-  ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind, WindowRef,
+  ActivationWindowObservation, ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification,
+  ApplicationIdKind, WindowRef,
 };
 
 /// A wire activation response that does not carry complete typed evidence.
@@ -21,6 +22,10 @@ pub enum DecodeError {
   MissingVerification,
   #[error("ActivateApplication response contained empty verification evidence")]
   EmptyVerificationEvidence,
+  #[error("ActivateApplication response contained a window observation with an empty window_id")]
+  EmptyWindowObservationReference,
+  #[error("ActivateApplication response contained a window observation without a reason")]
+  EmptyWindowObservationEvidence,
 }
 
 /// Encodes a driver activation result without validation.
@@ -58,6 +63,21 @@ pub fn encode(result: ApplicationActivationResult) -> proto::ActivateApplication
     }),
     verification: Some(proto::ApplicationActivationVerification {
       verification: Some(verification),
+    }),
+    window_observation: result.window_observation.map(|observation| proto::ActivationWindowObservation {
+      observation: Some(match observation {
+        ActivationWindowObservation::Present { reference } => {
+          proto::activation_window_observation::Observation::Present(proto::WindowPresent {
+            reference: Some(proto::WindowRef {
+              window_id: reference.id,
+            }),
+          })
+        }
+        ActivationWindowObservation::Absent => proto::activation_window_observation::Observation::Absent(proto::WindowAbsent {}),
+        ActivationWindowObservation::Unknown { reason } => {
+          proto::activation_window_observation::Observation::Unknown(proto::ObservationUnavailable { reason })
+        }
+      }),
     }),
   }
 }
@@ -105,13 +125,47 @@ pub fn decode(response: proto::ActivateApplicationResponse) -> Result<Applicatio
     },
     _ => return Err(DecodeError::EmptyVerificationEvidence),
   };
+  // An unset observation stays `None`: the Runner's driver version did not
+  // observe, which is an absent fact, never an absence claim.
+  let window_observation = response.window_observation.map(|observation| decode_window_observation(observation)).transpose()?;
   Ok(ApplicationActivationResult {
     requested_application_id: response.requested_application_id,
     application_id_kind,
     method,
     activated_window,
     verification,
+    window_observation,
   })
+}
+
+/// Decodes one window observation, failing closed on an empty oneof arm, an
+/// empty window reference, or an empty unknown reason, so a partial
+/// observation never reads as a fact.
+fn decode_window_observation(observation: proto::ActivationWindowObservation) -> Result<ActivationWindowObservation, DecodeError> {
+  use proto::activation_window_observation::Observation;
+  match observation.observation {
+    Some(Observation::Present(present)) => {
+      let reference = present.reference.ok_or(DecodeError::EmptyWindowObservationReference)?;
+      if reference.window_id.trim().is_empty() {
+        return Err(DecodeError::EmptyWindowObservationReference);
+      }
+      Ok(ActivationWindowObservation::Present {
+        reference: WindowRef {
+          id: reference.window_id,
+        },
+      })
+    }
+    Some(Observation::Absent(_)) => Ok(ActivationWindowObservation::Absent),
+    Some(Observation::Unknown(unknown)) => {
+      if unknown.reason.trim().is_empty() {
+        return Err(DecodeError::EmptyWindowObservationEvidence);
+      }
+      Ok(ActivationWindowObservation::Unknown {
+        reason: unknown.reason,
+      })
+    }
+    None => Err(DecodeError::EmptyWindowObservationEvidence),
+  }
 }
 
 #[cfg(test)]

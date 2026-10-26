@@ -181,6 +181,7 @@ async fn resolve_selected_context(
       .map_err(|error| error.to_string())?;
     context.device_id = run.device().map(|device| device.id.to_string());
     context.device_name = run.device().and_then(|device| (!device.name.is_empty()).then(|| device.name.clone()));
+    context.device_platform = run.device().map(|device| device.platform);
     context.run_id = Some(run.resource().id.to_string());
     let implicit_run_id = run.is_owned().then(|| context.run_id.clone()).flatten();
     return Ok(ResolvedExecutionContext {
@@ -189,6 +190,7 @@ async fn resolve_selected_context(
     });
   }
   let resolved = client.resolve(parent).await.map_err(|error| error.to_string())?;
+  context.device_platform = resolved.device.as_ref().map(|device| device.platform);
   context.device_id = resolved.device.as_ref().map(|device| device.id.to_string());
   context.device_name = resolved.device.and_then(|device| (!device.name.is_empty()).then_some(device.name));
   context.run_id = resolved.run.map(|run| run.id.to_string());

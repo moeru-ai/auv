@@ -77,6 +77,12 @@ impl ApplicationApi<'_> {
       // AppleScript activates the application; it does not report which of
       // its windows came forward.
       activated_window: None,
+      // TODO(macos-activation-window-observation): populate the #324 window
+      // observation by matching the window-list snapshot's owner bundle ids
+      // once that matching is validated on macOS. This phase establishes the
+      // shared contract and the Windows producer; `None` means this driver
+      // version did not observe, never that the app owns no window.
+      window_observation: None,
     })
   }
 }
