@@ -1078,11 +1078,19 @@ fn invoke_store_root_cannot_consume_the_next_flag() {
 // A CLI-only list of three command IDs let new keyboard dry-runs succeed
 // locally even when a Runner was explicitly selected. Driver validation must
 // use the selected Runner for every registered keyboard command.
+// https://github.com/moeru-ai/auv/pull/428
+// https://github.com/moeru-ai/auv/actions/runs/40325285278/job/121580283670
+// Preselection failures now use JSON stdout for --json. The old stderr
+// assertion failed even though selected Runner validation still refused
+// execution. Assert the structured failure on every local transport.
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(unix, windows))]
 fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
   let root = tempfile::tempdir().unwrap();
+  #[cfg(unix)]
   let endpoint = format!("unix://{}", root.path().join("missing-daemon.sock").display());
+  #[cfg(windows)]
+  let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
   for arguments in [
     vec!["input.key", "escape"],
     vec!["input.keys", "escape"],
@@ -1096,14 +1104,29 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
       .current_dir(root.path())
       .env_remove("AUV_CONTEXT")
       .env("AUV_ENDPOINT", &endpoint)
+      .env("AUV_DISCOVERY_FILE", root.path().join("missing-discovery.json"))
+      .env("AUV_CONFIG_PROFILES_FILE", root.path().join("profiles.json"))
       .args(["--device-id", &"0".repeat(64), "invoke"])
       .args(&arguments)
       .args(["--dry-run", "--json"])
       .output()
       .unwrap();
-    assert!(!output.status.success(), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
-    assert!(stderr(&output).contains("connect"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(1), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+      .unwrap_or_else(|error| panic!("{} must return JSON: {error}; stdout={} stderr={}", arguments[0], stdout(&output), stderr(&output)));
+    assert_eq!(response["status"], "failed", "{response}");
+    assert_eq!(response["command_id"], arguments[0], "{response}");
+    assert_eq!(response["failure_details"]["code"], "command_failed", "{response}");
+    assert!(response["failure_details"]["message"].as_str().unwrap().contains("connect"), "{response}");
+    assert_eq!(response["failure"], response["failure_details"]["message"], "{response}");
+    assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
+    assert!(response.get("artifacts").is_none(), "dry-run returned artifacts: {response}");
   }
+  assert_eq!(
+    std::fs::read_to_string(root.path().join(".auv").join("store").join("records.jsonl")).expect("preselection tracing store"),
+    "",
+    "unreachable selected Runner must not enter local command validation"
+  );
 }
 
 // https://github.com/moeru-ai/auv/pull/177

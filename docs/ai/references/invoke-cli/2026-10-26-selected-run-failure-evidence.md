@@ -61,6 +61,25 @@ cargo test --locked -p auv-cli --test root_cli --test integrated --no-fail-fast 
 These tests do not deliver input, capture images, or start a daemon.
 They establish frontend error behavior, not driver capability support.
 
+## Selected keyboard dry-run CI regression
+
+The [macOS CI job](https://github.com/moeru-ai/auv/actions/runs/40325285278/job/121580283670)
+failed at head `7c819698cebc7e64e28a5cc6ec6f964c8d3f0967`.
+The existing `selected_keyboard_dry_runs_never_fall_back_to_local_validation`
+test still expected the connection error on stderr, despite its `--json` flag.
+
+The test now reads the structured failure from stdout.
+It covers `input.key`, `input.keys`, and `input.keyboard` on Unix and Windows.
+Private profile and discovery paths isolate the subprocesses.
+The unreachable endpoint uses a Unix socket or a unique Windows named pipe.
+The legacy stderr assertion also failed on Windows after the platform guard
+was expanded, before the assertions changed.
+
+The assertions require exit 1, the selected command ID, the connection error,
+and an empty command trace store.
+The connection error retains its existing `command_failed` classification.
+This follow-up changes test coverage only.
+
 ## Validation on Windows
 
 Local validation used Rust 1.98.1 with the Windows helper rebuilt from this
@@ -71,7 +90,7 @@ checkout. The helper path was explicit for the package tests.
 | `cargo fmt --check` | Passed |
 | `cargo check --locked` | Passed |
 | `cargo build --locked -p auv-device-helper-windows --bin auv-helper` | Passed |
-| `cargo test --locked -p auv-cli -p auv-cli-invoke -p auv-core --no-fail-fast` | 420 passed, 2 ignored |
+| `cargo test --locked -p auv-cli -p auv-cli-invoke -p auv-core --no-fail-fast` | 421 passed, 2 ignored |
 | `cargo run --quiet --locked -- invoke --help` | Passed |
 | `git diff --check` | Passed |
 
