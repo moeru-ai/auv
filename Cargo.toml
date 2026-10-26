@@ -46,8 +46,6 @@ members = [
   "crates/auv-view",
   "crates/auv-bench-osu",
   "crates/auv-trace-atif",
-  "crates/auv-bundle-layout",
-  "crates/auv-release",
   "evals/auv-base",
 ]
 default-members = [ "crates/auv-cli" ]

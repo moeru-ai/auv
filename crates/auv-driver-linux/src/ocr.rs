@@ -140,7 +140,7 @@ fn resolve_tessdata_path(
     return Some(PathBuf::from(prefix));
   }
 
-  let bundled = auv_bundle_layout::path(executable.parent()?, auv_bundle_layout::TESSDATA_DIR);
+  let bundled = executable.parent()?.join("share").join("auv").join("tessdata");
   let has_all_models =
     language.split('+').filter(|model| !model.is_empty()).all(|model| is_file(&bundled.join(format!("{model}.traineddata"))));
   has_all_models.then_some(bundled)
