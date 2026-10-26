@@ -206,6 +206,44 @@ fn classify_step(step: &OperationStepDef) -> Result<StepKind, String> {
     _ => {}
   }
 
+  // Validate gate values before any earlier step can dispatch an action. These
+  // branches execute fixed capabilities; they cannot satisfy arbitrary statuses.
+  match &step.verification_gate {
+    VerificationGateDef::StatusAndVolumeGate {
+      expected_status,
+      expected_volume,
+      volume_tolerance,
+      timeout_ms,
+      ..
+    } => {
+      if !expected_status.eq_ignore_ascii_case("Playing") {
+        return Err(format!("step '{}' has unsupported expected_status '{expected_status}'; only Playing is verified", step.id));
+      }
+      if !expected_volume.is_finite() || !(0.0..=1.0).contains(expected_volume) {
+        return Err(format!("step '{}' expected_volume must be finite and in 0..=1", step.id));
+      }
+      if !volume_tolerance.is_finite() || !(0.0..=1.0).contains(volume_tolerance) {
+        return Err(format!("step '{}' volume_tolerance must be finite and in 0..=1", step.id));
+      }
+      if *timeout_ms == 0 {
+        return Err(format!("step '{}' gate timeout_ms must be greater than zero", step.id));
+      }
+    }
+    VerificationGateDef::WgcAliveGate {
+      min_non_black_ratio,
+      timeout_ms,
+      ..
+    } => {
+      if !min_non_black_ratio.is_finite() || !(0.0..=1.0).contains(min_non_black_ratio) {
+        return Err(format!("step '{}' min_non_black_ratio must be a finite fraction in 0..=1", step.id));
+      }
+      if *timeout_ms == 0 {
+        return Err(format!("step '{}' gate timeout_ms must be greater than zero", step.id));
+      }
+    }
+    _ => {}
+  }
+
   Ok(step_kind)
 }
 
@@ -230,25 +268,6 @@ fn check_minimized_and_restore(_window: &Window, _allow_restore: bool) -> bool {
   false
 }
 
-/// Normalizes a non-black pixel ratio to a canonical percentage in `0.0..=100.0`.
-///
-/// In Operation definitions, `min_non_black_ratio` is commonly expressed as a unit fraction
-/// `0.0..=1.0` (e.g. `0.50` for 50%). In `WindowHealth`, `non_black_ratio` is produced on a
-/// `0.0..=100.0` percentage scale, but mock or client structures may also use unit fractions.
-///
-/// If `ratio` is in `(0.0, 1.0]`, it is scaled to `ratio * 100.0`.
-/// If `ratio > 1.0`, it is clamped to `100.0`.
-/// Values `<= 0.0` or NaN evaluate to `0.0`.
-fn normalize_ratio_to_percentage(ratio: f64) -> f64 {
-  if ratio.is_nan() || ratio <= 0.0 {
-    0.0
-  } else if ratio <= 1.0 {
-    ratio * 100.0
-  } else {
-    ratio.min(100.0)
-  }
-}
-
 fn execute_wgc_capture_step(
   step: &OperationStepDef,
   mode: ExecutionMode,
@@ -267,7 +286,23 @@ fn execute_wgc_capture_step(
     return Ok(false);
   }
 
-  match health_check() {
+  let started = Instant::now();
+  let health_result = health_check();
+  if mode == ExecutionMode::Verified
+    && let VerificationGateDef::WgcAliveGate { timeout_ms, .. } = &step.verification_gate
+    && started.elapsed() >= Duration::from_millis(*timeout_ms)
+  {
+    // NOTICE: the native capture has its own bounded wait and is synchronous.
+    // This deadline rejects late confirmation; it cannot cancel an in-flight OS
+    // call. Cancellation requires a separate driver-lifecycle slice.
+    return Err(ExecutionResult::GateFailed {
+      step_id: step.id.clone(),
+      message: format!("WGC verification exceeded gate timeout_ms={timeout_ms}"),
+      consecutive_failures: 1,
+    });
+  }
+
+  match health_result {
     Ok(health) => {
       if mode == ExecutionMode::Fast {
         if health.alive {
@@ -290,33 +325,39 @@ fn execute_wgc_capture_step(
             consecutive_failures: 1,
           });
         }
-        if !health.alive {
-          return Err(ExecutionResult::GateFailed {
-            step_id: step.id.clone(),
-            message: format!(
-              "Strict window health check failed: window is not alive (alive=false), non_black_ratio={}",
-              health.non_black_ratio
-            ),
-            consecutive_failures: 1,
-          });
-        }
         if let VerificationGateDef::WgcAliveGate {
           min_non_black_ratio,
           ..
         } = &step.verification_gate
         {
-          let gate_threshold_pct = normalize_ratio_to_percentage(*min_non_black_ratio);
-          let health_ratio_pct = normalize_ratio_to_percentage(health.non_black_ratio);
-          if health.non_black_ratio.is_nan() || health_ratio_pct < gate_threshold_pct {
+          // Gates use fractions; WindowHealth always uses percentages, even
+          // below 1%. The generic alive flag uses a fixed 50% policy and cannot
+          // override the declared threshold.
+          let gate_threshold_pct = min_non_black_ratio * 100.0;
+          let health_ratio_pct = health.non_black_ratio;
+          if !min_non_black_ratio.is_finite()
+            || !(0.0..=1.0).contains(min_non_black_ratio)
+            || !health_ratio_pct.is_finite()
+            || !(0.0..=100.0).contains(&health_ratio_pct)
+            || health.width == 0
+            || health.height == 0
+            || health_ratio_pct < gate_threshold_pct
+          {
             return Err(ExecutionResult::GateFailed {
               step_id: step.id.clone(),
               message: format!(
-                "Strict window health check failed: non_black_ratio {:.2}% is below gate threshold {:.2}%",
+                "Strict window health check failed: non_black_ratio {:.2}% is invalid or below gate threshold {:.2}%",
                 health_ratio_pct, gate_threshold_pct
               ),
               consecutive_failures: 1,
             });
           }
+        } else if !health.alive {
+          return Err(ExecutionResult::GateFailed {
+            step_id: step.id.clone(),
+            message: format!("Strict window health check failed: window is not alive, non_black_ratio={}", health.non_black_ratio),
+            consecutive_failures: 1,
+          });
         }
         Ok(true)
       }
@@ -348,6 +389,21 @@ fn calculate_operation_confirmed(
   } else {
     true
   }
+}
+
+/// Applies the declared title gate to the broader media identity verdict.
+fn evaluate_step_track_change(gate: &VerificationGateDef, previous: &TrackIdentity, current: &TrackIdentity) -> TrackChangeVerdict {
+  if matches!(
+    gate,
+    VerificationGateDef::TitleChangeGate {
+      require_title_change: true,
+      ..
+    }
+  ) && (previous.title.is_empty() || current.title.is_empty() || previous.title == current.title)
+  {
+    return TrackChangeVerdict::Unchanged;
+  }
+  evaluate_track_change(previous, current, false).0
 }
 
 impl OperationExecutor for WindowsProductionExecutor {
@@ -441,21 +497,22 @@ impl OperationExecutor for WindowsProductionExecutor {
           steps_executed += 1;
         }
         StepKind::EnsurePlayingAndVolume => {
-          let (target_volume, volume_tolerance) = match &step.verification_gate {
+          let (target_volume, volume_tolerance, play_poll_timeout) = match &step.verification_gate {
             VerificationGateDef::StatusAndVolumeGate {
               expected_volume,
               volume_tolerance,
+              timeout_ms,
               ..
-            } => (*expected_volume, *volume_tolerance),
+            } => (*expected_volume, *volume_tolerance, Duration::from_millis(*timeout_ms)),
             _ => {
               let vol = step.action.get("volume").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(DEFAULT_TARGET_VOLUME);
-              (vol, DEFAULT_VOLUME_TOLERANCE)
+              (vol, DEFAULT_VOLUME_TOLERANCE, DEFAULT_PLAY_POLL_TIMEOUT)
             }
           };
           let step2_opts = Step2Options {
             target_volume,
             volume_tolerance,
-            play_poll_timeout: DEFAULT_PLAY_POLL_TIMEOUT,
+            play_poll_timeout,
             fire_and_forget_play: op.execution_mode == ExecutionMode::Fast,
           };
           let s2_res = match execute_step2_real_with_prestate(ctx.audio.as_ref(), &ctx.session, pre_vol, status, step2_opts) {
@@ -533,20 +590,27 @@ impl OperationExecutor for WindowsProductionExecutor {
               })
               .ok();
 
-            let s3_timeout = Duration::from_millis(3000);
+            let s3_timeout = match &step.verification_gate {
+              VerificationGateDef::TitleChangeGate { timeout_ms, .. } => Duration::from_millis(*timeout_ms),
+              _ => Duration::from_millis(3000),
+            };
             let mut change_verdict = TrackChangeVerdict::Unchanged;
             let mut backoff = Duration::from_millis(10);
 
             while t_s3_verif.elapsed() < s3_timeout {
-              let _ = rx.recv_timeout(backoff);
+              let remaining = s3_timeout.saturating_sub(t_s3_verif.elapsed());
+              let _ = rx.recv_timeout(backoff.min(remaining));
 
               if let Ok(curr_meta) = ctx.session.track_metadata() {
                 let curr_identity = TrackIdentity::from(&curr_meta);
-                let (verdict, _level) = evaluate_track_change(&prev_identity, &curr_identity, false);
+                let verdict = evaluate_step_track_change(&step.verification_gate, &prev_identity, &curr_identity);
                 change_verdict = verdict;
 
-                if verdict == TrackChangeVerdict::Changed {
+                if verdict == TrackChangeVerdict::Changed && t_s3_verif.elapsed() < s3_timeout {
                   break;
+                }
+                if t_s3_verif.elapsed() >= s3_timeout {
+                  change_verdict = TrackChangeVerdict::Unchanged;
                 }
               }
 
@@ -636,6 +700,200 @@ mod tests {
   use super::*;
   use auv_auto_loop::models::{CompilationMetadata, OPERATION_SCHEMA_VERSION, TargetMetadata};
   use std::collections::HashMap;
+
+  fn wgc_step(min_non_black_ratio: f64) -> OperationStepDef {
+    OperationStepDef {
+      id: "wgc_regression".to_string(),
+      name: "Check window pixels".to_string(),
+      description: "Check the declared non-black threshold".to_string(),
+      action: serde_json::json!({ "type": "wgc_capture" }),
+      verification_gate: VerificationGateDef::WgcAliveGate {
+        min_non_black_ratio,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    }
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  // ROOT CAUSE:
+  //
+  // If a frame met a lower threshold, verification failed because it used the fixed 50% alive flag.
+  // Before the fix, a fresh 40% frame failed a 30% gate.
+  // The fix uses the declared threshold and the producer's percentage units.
+  #[test]
+  fn pr423_wgc_uses_declared_threshold_instead_of_fixed_alive_flag() {
+    let result = execute_wgc_capture_step(&wgc_step(0.30), ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 800,
+        height: 600,
+        alive: false,
+        is_fresh: true,
+        non_black_ratio: 40.0,
+      })
+    });
+    assert_eq!(result, Ok(true));
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_wgc_percentage_below_one_is_not_treated_as_fraction() {
+    let result = execute_wgc_capture_step(&wgc_step(0.80), ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 800,
+        height: 600,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 0.95,
+      })
+    });
+    assert!(matches!(result, Err(ExecutionResult::GateFailed { .. })));
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_preflight_rejects_invalid_wgc_thresholds() {
+    for ratio in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.01, 80.0] {
+      let step = wgc_step(ratio);
+      let error = classify_step(&step).expect_err("invalid gate must fail before driver calls");
+      assert!(error.contains("min_non_black_ratio"), "{error}");
+    }
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_preflight_rejects_invalid_volume_gate_values() {
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 1.1] {
+      let mut step = wgc_step(0.5);
+      step.action = serde_json::json!({ "type": "ensure_playing_and_volume" });
+      step.verification_gate = VerificationGateDef::StatusAndVolumeGate {
+        expected_status: "Playing".to_string(),
+        expected_volume: invalid,
+        volume_tolerance: 0.05,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "none".to_string(),
+      };
+      let error = classify_step(&step).expect_err("invalid target must fail before driver calls");
+      assert!(error.contains("expected_volume"), "{error}");
+      if let VerificationGateDef::StatusAndVolumeGate {
+        expected_volume,
+        volume_tolerance,
+        ..
+      } = &mut step.verification_gate
+      {
+        *expected_volume = 0.4;
+        *volume_tolerance = invalid;
+      }
+      let error = classify_step(&step).expect_err("invalid tolerance must fail before driver calls");
+      assert!(error.contains("volume_tolerance"), "{error}");
+    }
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_preflight_rejects_invalid_trailing_gate_before_context_resolution() {
+    let mut operation = dummy_operation("invalid.trailing.gate", ExecutionMode::Verified);
+    operation.steps.push(wgc_step(80.0));
+    let result = WindowsProductionExecutor::new().execute(&operation, &dummy_request(Some(ExecutionMode::Verified)));
+    match result {
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        assert_eq!(step_id, "wgc_regression");
+        assert!(message.contains("min_non_black_ratio"), "{message}");
+      }
+      other => panic!("invalid gate must fail preflight: {other:?}"),
+    }
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_wgc_rejects_invalid_health_ratios_and_zero_timeout() {
+    for ratio in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 101.0] {
+      let result = execute_wgc_capture_step(&wgc_step(0.5), ExecutionMode::Verified, false, || {
+        Ok(WindowHealth {
+          width: 800,
+          height: 600,
+          alive: true,
+          is_fresh: true,
+          non_black_ratio: ratio,
+        })
+      });
+      assert!(matches!(result, Err(ExecutionResult::GateFailed { .. })), "invalid ratio {ratio} must not be confirmed");
+    }
+    let mut step = wgc_step(0.5);
+    if let VerificationGateDef::WgcAliveGate { timeout_ms, .. } = &mut step.verification_gate {
+      *timeout_ms = 0;
+    }
+    let error = classify_step(&step).expect_err("zero deadline must fail preflight");
+    assert!(error.contains("timeout_ms"), "{error}");
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_preflight_rejects_unsupported_playback_status() {
+    let mut step = wgc_step(0.5);
+    step.action = serde_json::json!({ "type": "ensure_playing_and_volume" });
+    step.verification_gate = VerificationGateDef::StatusAndVolumeGate {
+      expected_status: "Paused".to_string(),
+      expected_volume: 0.4,
+      volume_tolerance: 0.05,
+      timeout_ms: 2000,
+      escalate_on_mismatch: "none".to_string(),
+    };
+    let error = classify_step(&step).expect_err("executor only verifies Playing");
+    assert!(error.contains("expected_status"), "{error}");
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_title_gate_rejects_artist_only_identity_change() {
+    let previous = TrackIdentity {
+      title: "same song".to_string(),
+      artist: "first artist".to_string(),
+      ..Default::default()
+    };
+    let current = TrackIdentity {
+      artist: "second artist".to_string(),
+      ..previous.clone()
+    };
+    let gate = VerificationGateDef::TitleChangeGate {
+      require_title_change: true,
+      timeout_ms: 1000,
+      escalate_on_mismatch: "none".to_string(),
+    };
+    let verdict = evaluate_step_track_change(&gate, &previous, &current);
+    assert_ne!(verdict, TrackChangeVerdict::Changed, "artist changes cannot satisfy a required title change");
+    let changed_title = TrackIdentity {
+      title: "next song".to_string(),
+      ..current
+    };
+    assert_eq!(evaluate_step_track_change(&gate, &previous, &changed_title), TrackChangeVerdict::Changed);
+  }
+
+  // https://github.com/moeru-ai/auv/pull/423
+  #[test]
+  fn pr423_wgc_rejects_late_confirmation() {
+    let mut step = wgc_step(0.5);
+    if let VerificationGateDef::WgcAliveGate { timeout_ms, .. } = &mut step.verification_gate {
+      *timeout_ms = 1;
+    }
+    let result = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      std::thread::sleep(Duration::from_millis(5));
+      Ok(WindowHealth {
+        width: 800,
+        height: 600,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 95.0,
+      })
+    });
+    match result {
+      Err(ExecutionResult::GateFailed { message, .. }) => assert!(message.contains("timeout_ms=1"), "{message}"),
+      other => panic!("late sample must fail its gate: {other:?}"),
+    }
+  }
 
   fn dummy_operation(name: &str, mode: ExecutionMode) -> OperationDef {
     OperationDef {
@@ -1147,7 +1405,7 @@ mod tests {
         height: 600,
         alive: true,
         is_fresh: true,
-        non_black_ratio: 0.95,
+        non_black_ratio: 95.0,
       })
     });
     assert_eq!(ok_res, Ok(true));
@@ -1159,7 +1417,7 @@ mod tests {
         height: 600,
         alive: true,
         is_fresh: false,
-        non_black_ratio: 0.95,
+        non_black_ratio: 95.0,
       })
     });
     assert!(matches!(stale_res, Err(ExecutionResult::GateFailed { .. })));
@@ -1181,7 +1439,7 @@ mod tests {
       is_unverified: false,
     };
 
-    // Both 75.0% and 0.75 ratio satisfy 0.60 threshold
+    // WindowHealth ratios are always percentages.
     let res1 = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
       Ok(WindowHealth {
         width: 1024,
@@ -1202,7 +1460,7 @@ mod tests {
         non_black_ratio: 0.75,
       })
     });
-    assert_eq!(res2, Ok(true));
+    assert!(matches!(res2, Err(ExecutionResult::GateFailed { .. })), "0.75% is below 60%");
   }
 
   #[test]

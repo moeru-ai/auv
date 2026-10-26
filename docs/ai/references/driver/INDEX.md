@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **80**
+Count: **81**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -102,6 +102,8 @@ Count: **80**
 - [`2026-10-20-linux-window-text-ocr.md`](2026-10-20-linux-window-text-ocr.md): `window.findText` and `window.waitForText` wired on Linux through AT-SPI resolve, display crop, and Tesseract; visible-area and PaperWM boundaries, no support-matrix claim.
 - [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
 
+
+- [`2026-10-26-windows-operation-preflight.md`](2026-10-26-windows-operation-preflight.md): Explicit step admission, declared gate thresholds, title changes, timeout limits, and executor test evidence.
 
 ## Related
 

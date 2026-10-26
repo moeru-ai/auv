@@ -308,6 +308,7 @@ pub enum VerificationGateDef {
   },
   #[serde(rename = "wgc_alive_gate")]
   WgcAliveGate {
+    /// Minimum non-black pixel fraction in `0.0..=1.0` (0.5 means 50%).
     #[serde(deserialize_with = "deserialize_f64")]
     min_non_black_ratio: f64,
     timeout_ms: u64,
