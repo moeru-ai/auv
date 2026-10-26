@@ -139,36 +139,74 @@ enum StepKind {
 }
 
 fn classify_step(step: &OperationStepDef) -> Result<StepKind, String> {
-  if let Some(action_type_val) = step.action.get("type") {
-    if let Some(action_type) = action_type_val.as_str() {
-      match action_type {
-        "smtc_query" => return Ok(StepKind::SmtcQuery),
-        "ensure_playing_and_volume" | "volume" | "set_volume" => return Ok(StepKind::EnsurePlayingAndVolume),
-        "skip_next" | "next" => return Ok(StepKind::SkipNext),
-        "play" => return Ok(StepKind::Play),
-        "wgc_capture" | "capture" => return Ok(StepKind::WgcCapture),
-        unknown => return Err(format!("unrecognized action.type '{unknown}' in step '{}'", step.id)),
-      }
-    } else {
-      return Err(format!("action.type in step '{}' is not a string", step.id));
+  let action_type = match step.action.get("type") {
+    Some(val) => match val.as_str() {
+      Some(s) => s,
+      None => return Err(format!("action.type in step '{}' is not a string", step.id)),
+    },
+    None => {
+      return Err(format!(
+        "step '{}' is missing required 'action.type'; state-changing actions cannot be inferred from step ID or name",
+        step.id
+      ));
     }
+  };
+
+  let step_kind = match action_type {
+    "smtc_query" => StepKind::SmtcQuery,
+    "ensure_playing_and_volume" | "volume" | "set_volume" => StepKind::EnsurePlayingAndVolume,
+    "skip_next" | "next" => StepKind::SkipNext,
+    "play" => StepKind::Play,
+    "wgc_capture" | "capture" => StepKind::WgcCapture,
+    unknown => return Err(format!("unrecognized action.type '{unknown}' in step '{}'", step.id)),
+  };
+
+  // Preflight action and verification gate compatibility:
+  // Prevent incompatible action/gate pairings from claiming false confirmation or bypassing verification.
+  match (&step_kind, &step.verification_gate) {
+    (StepKind::Play, VerificationGateDef::StatusAndVolumeGate { .. }) => {
+      return Err(format!(
+        "step '{}' has action.type 'play' which is incompatible with StatusAndVolumeGate (requires volume verification; use 'ensure_playing_and_volume')",
+        step.id
+      ));
+    }
+    (StepKind::Play, VerificationGateDef::TitleChangeGate { .. }) => {
+      return Err(format!("step '{}' has action.type 'play' which is incompatible with TitleChangeGate", step.id));
+    }
+    (StepKind::Play, VerificationGateDef::WgcAliveGate { .. }) => {
+      return Err(format!("step '{}' has action.type 'play' which is incompatible with WgcAliveGate", step.id));
+    }
+    (StepKind::EnsurePlayingAndVolume, VerificationGateDef::TitleChangeGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with TitleChangeGate", step.id));
+    }
+    (StepKind::EnsurePlayingAndVolume, VerificationGateDef::WgcAliveGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with WgcAliveGate", step.id));
+    }
+    (StepKind::SkipNext, VerificationGateDef::StatusAndVolumeGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with StatusAndVolumeGate", step.id));
+    }
+    (StepKind::SkipNext, VerificationGateDef::WgcAliveGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with WgcAliveGate", step.id));
+    }
+    (StepKind::WgcCapture, VerificationGateDef::StatusAndVolumeGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with StatusAndVolumeGate", step.id));
+    }
+    (StepKind::WgcCapture, VerificationGateDef::TitleChangeGate { .. }) => {
+      return Err(format!("step '{}' has action.type '{action_type}' which is incompatible with TitleChangeGate", step.id));
+    }
+    (StepKind::SmtcQuery, VerificationGateDef::StatusAndVolumeGate { .. }) => {
+      return Err(format!("step '{}' has action.type 'smtc_query' which is incompatible with StatusAndVolumeGate", step.id));
+    }
+    (StepKind::SmtcQuery, VerificationGateDef::TitleChangeGate { .. }) => {
+      return Err(format!("step '{}' has action.type 'smtc_query' which is incompatible with TitleChangeGate", step.id));
+    }
+    (StepKind::SmtcQuery, VerificationGateDef::WgcAliveGate { .. }) => {
+      return Err(format!("step '{}' has action.type 'smtc_query' which is incompatible with WgcAliveGate", step.id));
+    }
+    _ => {}
   }
 
-  match &step.verification_gate {
-    VerificationGateDef::SmtcSessionPresent { .. } => Ok(StepKind::SmtcQuery),
-    VerificationGateDef::StatusAndVolumeGate { .. } => {
-      let id_lower = step.id.to_lowercase();
-      let name_lower = step.name.to_lowercase();
-      if (id_lower.contains("play") || name_lower.contains("play")) && !id_lower.contains("volume") && !name_lower.contains("volume") {
-        Ok(StepKind::Play)
-      } else {
-        Ok(StepKind::EnsurePlayingAndVolume)
-      }
-    }
-    VerificationGateDef::TitleChangeGate { .. } => Ok(StepKind::SkipNext),
-    VerificationGateDef::WgcAliveGate { .. } => Ok(StepKind::WgcCapture),
-    _ => Err(format!("step '{}' has no recognized action.type and verification_gate cannot authorize execution", step.id)),
-  }
+  Ok(step_kind)
 }
 
 #[cfg(target_os = "windows")]
@@ -713,7 +751,7 @@ mod tests {
       is_unverified: false,
     };
     let err = classify_step(&play_step).expect_err("substring 'play' must not authorize execution");
-    assert!(err.contains("has no recognized action.type"), "{err}");
+    assert!(err.contains("missing required 'action.type'"), "{err}");
 
     let next_step = OperationStepDef {
       id: "skip_to_next".to_string(),
@@ -728,7 +766,83 @@ mod tests {
       is_unverified: false,
     };
     let err = classify_step(&next_step).expect_err("substring 'next' must not authorize execution");
-    assert!(err.contains("has no recognized action.type"), "{err}");
+    assert!(err.contains("missing required 'action.type'"), "{err}");
+  }
+
+  #[test]
+  fn test_classify_step_rejects_missing_action_type_with_status_and_volume_gate() {
+    // A step named play... with missing action.type and StatusAndVolumeGate
+    // MUST NOT authorize real SMTC operations or false confirmation.
+    let step = OperationStepDef {
+      id: "play_music_untyped".to_string(),
+      name: "Play music step".to_string(),
+      description: "Step with play in name and no action.type".to_string(),
+      action: serde_json::json!({ "app_id": "QQMusic.exe" }),
+      verification_gate: VerificationGateDef::StatusAndVolumeGate {
+        expected_status: "Playing".to_string(),
+        expected_volume: 0.40,
+        volume_tolerance: 0.05,
+        timeout_ms: 2000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+    let err = classify_step(&step).expect_err("missing action.type must be rejected");
+    assert!(err.contains("missing required 'action.type'"), "{err}");
+
+    // In execution, preflight rejection yields GateFailed with steps_executed=0 and confirmed=false
+    let executor = WindowsProductionExecutor::default();
+    let req = dummy_request(Some(ExecutionMode::Verified));
+    let mut op = dummy_operation("custom.no_action_type_op", ExecutionMode::Verified);
+    op.steps = vec![step];
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        assert_eq!(step_id, "play_music_untyped");
+        assert!(message.contains("missing required 'action.type'"));
+      }
+      other => panic!("expected GateFailed, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_classify_step_rejects_explicit_play_with_status_and_volume_gate() {
+    // An explicit action.type=play combined with StatusAndVolumeGate MUST be rejected
+    // because Play arm does not verify volume and cannot bypass the gate.
+    let step = OperationStepDef {
+      id: "step_play_with_volume_gate".to_string(),
+      name: "Play action with volume gate".to_string(),
+      description: "Play action incompatible with volume gate".to_string(),
+      action: serde_json::json!({ "type": "play", "app_id": "QQMusic.exe" }),
+      verification_gate: VerificationGateDef::StatusAndVolumeGate {
+        expected_status: "Playing".to_string(),
+        expected_volume: 0.40,
+        volume_tolerance: 0.05,
+        timeout_ms: 2000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+    let err = classify_step(&step).expect_err("explicit play with volume gate must be rejected");
+    assert!(err.contains("is incompatible with StatusAndVolumeGate"), "{err}");
+
+    // In execution, preflight rejection yields GateFailed with steps_executed=0 and confirmed=false
+    let executor = WindowsProductionExecutor::default();
+    let req = dummy_request(Some(ExecutionMode::Verified));
+    let mut op = dummy_operation("custom.incompatible_gate_op", ExecutionMode::Verified);
+    op.steps = vec![step];
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        assert_eq!(step_id, "step_play_with_volume_gate");
+        assert!(message.contains("is incompatible with StatusAndVolumeGate"));
+      }
+      other => panic!("expected GateFailed, got {other:?}"),
+    }
   }
 
   #[test]
