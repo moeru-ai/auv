@@ -12,7 +12,7 @@
 
 ## 1. What Shipped
 
-- **PR #382 (Windows osu! injection bench)**: Squash-merged into `main` on 2026-10-16, merge commit `46b7523a`. Standalone SendInput-based bench: edge reconciliation, three statistical bases, 16.6 ms gate, zero outlier filtering, (c)=(d) same-formula disclosure. Offline-only by design.
+- **PR #382 (Windows osu! injection bench)**: Squash-merged into `main` on 2026-10-15T18:50:01Z (merge commit `46b7523a`). Standalone SendInput-based bench: edge reconciliation, three statistical bases, 16.6 ms gate, zero outlier filtering, (c)=(d) same-formula disclosure. Offline-only by design.
 - **`.osu` Parsing and Reconciliation**: On *Tear Rain [Normal]* (BeatmapID 351190), 295 objects reconciled exactly (120 circles, 173 sliders, 2 spinners).
 - **Projection Validation**: Formula B (640×480 playfield, 0.8 scale) validated, including against lazer source. The older formula A was **FALSIFIED** (corner difference 120.0 px). Formula A had never been corner-validated on the stable/macOS side and must not be cited as a verified asset.
 - **Parser Anchor Bug Fix**: A real parser bug was found and fixed during the review chain: slider control points in rosu-map are relative to the slider start; the original parser mixed absolute and relative coordinates.
@@ -21,13 +21,33 @@
 
 ## 2. Live Evidence (2026-10-15 Night Runs, 13 Runs) — With Evidence Levels
 
-Thirteen live runs were executed during the 2026-10-15 night session across Normal, Hard, and Insane difficulties:
+Thirteen live runs were executed during the 2026-10-15 night session across Normal, Hard, and Insane difficulties (anchored to `%APPDATA%\Roaming\osu\logs\1791992805.runtime.log`, replay captures, and `spike/osu-partb-liveplay:docs/ai/references/driver/2026-10-15-osu-partb-overnight-accounting.md`):
 
-- **Normal Difficulty**:
+### Complete 13-Run Table (Chronological Order)
+
+| # | Start Time (UTC) | Map & Difficulty | Duration | Outcome (Score / Grade / Acc / Miss / Combo) | Replay / Execution Notes |
+|---|---|---|---|---|---|
+| **1** | 16:06:44 | Tear Rain [Normal] | <1s | Aborted (Score 0, no hits) | `StopGameplayClock` called immediately; actuator process not yet bound. |
+| **2** | 16:18:45 | Tear Rain [Normal] | 9s | Failed (Score 0, 6 Misses, HP 0) | Cursor desync caused early misses, HP depleted at 16:18:54. |
+| **3** | 16:34:07 | Tear Rain [Normal] | 10s | Failed (Score 0, HP 0) | SendInput focus failure led to 0 hit registration; stopped at 16:34:17. |
+| **4** | 16:34:38 | Tear Rain [Normal] | 9s | Failed (Score 0, HP 0) | Immediate retry; failed after 9s at 16:34:47. |
+| **5** | 17:04:08 | Tear Rain [Normal] | 245s | Completed (Score 342,732 / Grade B / Acc 88.75% / Miss 0 / Combo 71) | Full run completed; replay `(2026-10-15_01-08).osr`. Combo dropped at 71 on slider tracking desync. |
+| **6** | 17:21:08 | Tear Rain [Normal] | 245s | Completed (Score 988,635 / Grade S / Acc 99.12% / Miss 0 / Combo 719/732) | Full run completed; replay `(2026-10-15_01-25).osr`. Single combo drop at Object 295 (upstream multi-bezier repeated red anchor bug). |
+| **7** | 17:26:23 | Tear Rain [Normal] | 245s | Replay watch | Replay loader (`ReplayPlayerLoader#626`) watched Run 6 replay; no live inputs dispatched. |
+| **8** | 17:43:34 | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard difficulty launcher test; cursor tracking desync failed after 9s at 17:43:43. |
+| **9** | 17:44:42 | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard retry; failed after 9s at 17:44:51. |
+| **10** | 17:57:06 | Tear Rain [Insane] | <2s | Aborted (<2s) | Stopped at 17:57:08 because actuator was not yet armed. |
+| **11** | 18:02:18 | Tear Rain [Insane] | 7s | Aborted (7s) | Test click verifying song select / retry coordinates; aborted at 18:02:25. |
+| **12** | 18:03:58 | Tear Rain [Insane] | 245s | Completed (Score 812,291 / Grade A / Acc 92.94% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-08).osr`. `AudioOffset = 0.0`. 595 300s, 90 100s, systematic offset +36.96ms landing on OD 7 38.0ms boundary. |
+| **13** | 18:14:58 | Tear Rain [Insane] | 245s | Completed (Score 1,000,820 / Grade SS / Acc 100.00% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-19).osr`. `AudioOffset = -37.0` (in-game compensation). 685 300s, 0 100s, 0 misses, offset +0.48ms. |
+
+### Key Run Highlights & Evidence Boundaries
+
+- **Normal Difficulty (Completed Runs)**:
   - Run 5: B rank, 88.75% accuracy (combo broken on slider tracking desync).
-  - Run 6: S rank, 99.12% accuracy (single miss at the final slider, object 295, caused by an upstream library deduplicating a repeated red anchor point).
-- **Insane Difficulty**:
-  - Run 12 (AudioOffset = 0.0): A rank, 92.94% accuracy, 1092/1092 FC (595 300s, 90 100s, 0 misses; systematic offset = +36.96 ms landing on the OD 7 38.0 ms window boundary).
+  - Run 6: S rank, 99.12% accuracy (single miss at final slider Object 295 due to repeated red anchor point).
+- **Insane Difficulty (Completed Runs)**:
+  - Run 12 (AudioOffset = 0.0): A rank, 92.94% accuracy, 1092/1092 FC (595 300s, 90 100s, 0 misses; systematic offset = +36.96 ms).
   - Run 13 (AudioOffset = -37.0): SS rank, 100.00% accuracy, 1092/1092 FC (685 300s, 0 100s, 0 misses; offset = +0.48 ms).
 - **Evaluation of the SS Run**: The SS run was obtained **AFTER** compensating a systematic +37 ms offset via the GAME-side offset setting (`game.ini`). The frozen calibration protocol forbids game-side compensation (offsets belong in the plan as a frozen constant $C_{\text{cal}}$). The SS therefore counts **ONLY** as execution-ceiling evidence (the bench can deliver inputs precisely enough), **NOT** as evidence of a general sight-read player and **NOT** as difficulty evidence.
 - **Clock Sync Implementation**: Clock sync in those runs polled lazer's `runtime.log` to lock $t_0$; it was **NOT** the approved WASAPI loopback cross-correlation design, and no drift tracking was implemented.
