@@ -209,6 +209,8 @@ pub struct InvokeFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
+  /// No input was delivered. Capture again before selecting another click.
+  RecaptureRequired,
   CommandFailed,
   InvalidTarget,
   NotFound,
@@ -281,6 +283,9 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
 
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
+    if matches!(error, auv::client::runner::CapabilityError::CapturePrecondition { .. }) {
+      return Self::new(FailureCode::RecaptureRequired, error.to_string());
+    }
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {
       failure.keyboard_progress = Some(progress);

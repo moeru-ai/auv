@@ -1,5 +1,8 @@
 # driver
 
+- [Click capture precondition](2026-10-26-click-capture-precondition-contract.md):
+  exact-state admission, typed refusal, shared frontends, and race limits.
+
 Platform drivers, input, window, capture, permissions
 
 Executable GUI evaluations live in

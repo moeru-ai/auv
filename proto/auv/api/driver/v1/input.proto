@@ -414,6 +414,29 @@ message ClickPointRequest {
   // Delivers to this window. A screen or display position is converted with
   // the window's current frame; a window position must name the same window.
   WindowRef window = 3;
+  // Optional binding to a full CaptureWindow or CaptureDisplay from this Runner.
+  // The Runner compares target geometry, visible windows and all captured pixels
+  // immediately before calling input delivery. Any change or unavailable check
+  // refuses input with FAILED_PRECONDITION and ClickPreconditionFailure details.
+  // Absence retains unguarded delivery. See docs/input.click.md for race limits.
+  CaptureRef capture_precondition = 4;
+}
+
+// Why a guarded click refused input. Every reason requires a new capture and
+// a new caller decision before retrying. No automatic replay is safe.
+enum ClickPreconditionFailureReason {
+  CLICK_PRECONDITION_FAILURE_REASON_UNSPECIFIED = 0;
+  CLICK_PRECONDITION_FAILURE_REASON_CAPTURE_UNAVAILABLE = 1;
+  CLICK_PRECONDITION_FAILURE_REASON_TARGET_MISMATCH = 2;
+  CLICK_PRECONDITION_FAILURE_REASON_STATE_CHANGED = 3;
+  CLICK_PRECONDITION_FAILURE_REASON_CHECK_UNAVAILABLE = 4;
+}
+
+// Encoded directly in ClickPoint's grpc-status-details-bin on refusal.
+// No pointer, button, modifier, focus or activation input was requested.
+message ClickPreconditionFailure {
+  string capture_id = 1;
+  ClickPreconditionFailureReason reason = 2;
 }
 
 message ClickPointResponse {

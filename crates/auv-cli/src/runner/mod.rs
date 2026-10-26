@@ -1,6 +1,7 @@
 //! First-party Runner process entrypoints hosted by the `auv` executable.
 
 mod capture_store;
+mod click_precondition;
 mod local_driver;
 mod recent_frames;
 mod recording;

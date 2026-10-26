@@ -576,6 +576,17 @@ async fn selected_click_point(
   input: &crate::InvokeCommandInput,
   runner: &auv::client::runner::RunnerClient,
 ) -> crate::InvokeExecutionResult {
+  let capture = input.inputs.get("capture").map(|id| auv::client::runner::CaptureRef::new(id.clone()));
+  // Failures while resolving a guarded target precede every input RPC. Keep
+  // the same recapture recovery when the frontend detects a missing target.
+  // Delivery failures are deliberately not mapped here: input may have begun.
+  let target_failure = |failure: crate::InvokeFailure| match &capture {
+    Some(capture) => crate::InvokeFailure::new(
+      crate::FailureCode::RecaptureRequired,
+      format!("capture {} target could not be checked: {}; take a new capture and select the target again", capture.id(), failure.message),
+    ),
+    None => failure,
+  };
   let requested = selected_screen_point(input, "input.clickPoint")?;
   let normalized = input
     .inputs
@@ -598,8 +609,11 @@ async fn selected_click_point(
   let click_options = selected_click_options(input)?;
   match basis {
     crate::commands::input::RelativeToArg::Screen if !crate::commands::input::targets_window(input.target.as_ref()) => {
-      let response =
-        runner.input().click(&requested, click_options).await.map_err(|error| step_failure("InputService/ClickPoint", error))?;
+      let response = runner
+        .input()
+        .click_with_capture(&requested, click_options, capture.as_ref())
+        .await
+        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),
@@ -615,15 +629,19 @@ async fn selected_click_point(
     crate::commands::input::RelativeToArg::Window | crate::commands::input::RelativeToArg::Screen => {
       let windows = runner.windows();
       let resolved = match input.target.as_ref().expect("window-relative target validated") {
-        crate::ExecutionTarget::Application { .. } => {
-          windows.resolve(selected_window_selector(input)).await.map_err(|error| step_failure("WindowService/ResolveWindow", error))?
+        crate::ExecutionTarget::Application { .. } => windows
+          .resolve(selected_window_selector(input))
+          .await
+          .map_err(|error| target_failure(step_failure("WindowService/ResolveWindow", error)))?,
+        crate::ExecutionTarget::Window { id } => {
+          windows.get(id).await.map_err(|error| target_failure(step_failure("WindowService/ListWindows", error)))?
         }
-        crate::ExecutionTarget::Window { id } => windows.get(id).await.map_err(|error| step_failure("WindowService/ListWindows", error))?,
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let window = resolved.resource();
       let target: auv::client::runner::PointerTarget = if basis == crate::commands::input::RelativeToArg::Screen {
-        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)?;
+        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)
+          .map_err(|error| target_failure(error.into()))?;
         // Send the screen point itself: the Runner converts it with the frame
         // it reads at delivery, so a window that moved since ResolveWindow
         // still gets the requested screen point.
@@ -636,10 +654,14 @@ async fn selected_click_point(
           normalized,
           window.frame.size,
           "window",
-        )?;
+        )
+        .map_err(|error| target_failure(error.into()))?;
         auv_driver::WindowPoint::new(point.x, point.y).into()
       };
-      let response = resolved.click(target, click_options).await.map_err(|error| step_failure("InputService/ClickPoint", error))?;
+      let response = resolved
+        .click_with_capture(target, click_options, capture.as_ref())
+        .await
+        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),
@@ -660,11 +682,11 @@ async fn selected_click_point(
         .displays()
         .list()
         .await
-        .map_err(|error| step_failure("DisplayService/ListDisplays", error))?
+        .map_err(|error| target_failure(step_failure("DisplayService/ListDisplays", error)))?
         .displays
         .into_iter()
         .find(|display| display.id == *id)
-        .ok_or_else(|| format!("input.clickPoint could not find display target {id:?}"))?;
+        .ok_or_else(|| target_failure(format!("input.clickPoint could not find display target {id:?}").into()))?;
       let point = crate::commands::input::resolve_local_point(
         "input.clickPoint",
         requested_point.x,
@@ -672,12 +694,17 @@ async fn selected_click_point(
         normalized,
         display.frame.size,
         "display",
-      )?;
+      )
+      .map_err(|error| target_failure(error.into()))?;
       let position = auv_driver::Position {
         point,
         coordinate_space: auv_driver::CoordinateSpace::Display(display.id.clone()),
       };
-      let response = runner.input().click(&position, click_options).await.map_err(|error| step_failure("InputService/ClickPoint", error))?;
+      let response = runner
+        .input()
+        .click_with_capture(&position, click_options, capture.as_ref())
+        .await
+        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),

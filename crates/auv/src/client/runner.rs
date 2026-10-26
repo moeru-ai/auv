@@ -15,6 +15,7 @@ mod capture;
 
 use capture::runner_capture_from_proto;
 pub use capture::{CaptureImage, CaptureImageEncoding, CaptureImageOptions, CaptureRef, CapturesClient, RecognitionSource, RunnerCapture};
+pub use proto::ClickPreconditionFailureReason;
 
 /// Message-size policy for Runner RPCs that carry raw image frames
 /// (`GetCaptureImage`, and `RecognizeText` over a caller-owned image).
@@ -27,6 +28,12 @@ pub const IMAGE_RPC_MESSAGE_SIZE_LIMIT: usize = auv_api_proto::GRPC_MESSAGE_SIZE
 /// Protocol-neutral failure from a routed Runner capability operation.
 #[derive(Debug, thiserror::Error)]
 pub enum CapabilityError {
+  /// No input was delivered. Take a new capture and select the target again.
+  #[error("click refused for capture {capture_id}: {reason:?}; take a new capture and select the target again")]
+  CapturePrecondition {
+    capture_id: String,
+    reason: ClickPreconditionFailureReason,
+  },
   /// The routed daemon client request failed.
   #[error(transparent)]
   Client(#[from] ClientError),
@@ -51,6 +58,23 @@ fn capability_status(status: tonic::Status) -> CapabilityError {
   ClientError::from_status("Runner capability RPC", status).into()
 }
 
+fn click_status(status: tonic::Status) -> CapabilityError {
+  use prost::Message as _;
+  if status.code() != tonic::Code::FailedPrecondition || status.details().is_empty() {
+    return capability_status(status);
+  }
+  match proto::ClickPreconditionFailure::decode(status.details()) {
+    Ok(failure) => match ClickPreconditionFailureReason::try_from(failure.reason) {
+      Ok(reason) if reason != ClickPreconditionFailureReason::Unspecified => CapabilityError::CapturePrecondition {
+        capture_id: failure.capture_id,
+        reason,
+      },
+      _ => CapabilityError::InvalidResponse("unknown click precondition failure reason".into()),
+    },
+    Err(error) => CapabilityError::InvalidResponse(format!("invalid ClickPreconditionFailure: {error}")),
+  }
+}
+
 impl CapabilityError {
   /// Returns the protocol-neutral transport category when the failure came
   /// from the remote capability service.
@@ -58,6 +82,7 @@ impl CapabilityError {
     match self {
       Self::Client(error) => Some(error.kind()),
       Self::KeyboardInput { source, .. } => Some(source.kind()),
+      Self::CapturePrecondition { .. } => Some(crate::error::ClientErrorKind::Conflict),
       Self::NotFound(_) => Some(crate::error::ClientErrorKind::NotFound),
       Self::InvalidArgument(_) | Self::InvalidResponse(_) => None,
     }
@@ -960,14 +985,28 @@ impl WindowClient {
     target: impl Into<PointerTarget>,
     options: auv_driver::ClickOptions,
   ) -> Result<WindowPointClick, CapabilityError> {
+    self.click_with_capture(target, options, None).await
+  }
+
+  /// Checks an optional Runner-owned capture immediately before delivery.
+  /// A failed check returns `CapabilityError::CapturePrecondition` with no input.
+  pub async fn click_with_capture(
+    &self,
+    target: impl Into<PointerTarget>,
+    options: auv_driver::ClickOptions,
+    capture: Option<&CaptureRef>,
+  ) -> Result<WindowPointClick, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
       .click_point(proto::ClickPointRequest {
         position: Some(self.pointer_position(target.into())),
         options: Some(click_options_to_proto(options)?),
         window: Some(self.window_ref.clone()),
+        capture_precondition: capture.map(|capture| proto::CaptureRef {
+          capture_id: capture.id().to_string(),
+        }),
       })
       .await
-      .map_err(capability_status)?
+      .map_err(click_status)?
       .into_inner();
     let point = required(response.window_point, "ClickPoint response omitted WindowPoint")?;
     let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
@@ -1713,6 +1752,17 @@ impl InputClient {
   /// position is a global click, which the Runner rejects when either differs
   /// from its default.
   pub async fn click(&self, target: &impl auv_driver::Positional, options: auv_driver::ClickOptions) -> Result<PointClick, CapabilityError> {
+    self.click_with_capture(target, options, None).await
+  }
+
+  /// Checks a full window or display capture on this Runner before delivery.
+  /// The capture reference must belong to this route. Pixels remain on the Runner.
+  pub async fn click_with_capture(
+    &self,
+    target: &impl auv_driver::Positional,
+    options: auv_driver::ClickOptions,
+    capture: Option<&CaptureRef>,
+  ) -> Result<PointClick, CapabilityError> {
     let position = target.position().map_err(|error| CapabilityError::InvalidArgument(error.to_string()))?;
     let global = !matches!(position.coordinate_space, auv_driver::CoordinateSpace::Window(_));
     // Default window options mean "not requested" for a global click; the
@@ -1732,9 +1782,12 @@ impl InputClient {
         position: Some(crate::protocol::position::encode(position)),
         options: Some(wire_options),
         window: None,
+        capture_precondition: capture.map(|capture| proto::CaptureRef {
+          capture_id: capture.id().to_string(),
+        }),
       })
       .await
-      .map_err(capability_status)?
+      .map_err(click_status)?
       .into_inner();
     let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
     Ok(PointClick {

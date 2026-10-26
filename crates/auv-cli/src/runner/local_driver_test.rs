@@ -1,5 +1,50 @@
 use super::*;
 
+// ROOT CAUSE:
+//
+// A click could use stale pixels because its request carried no capture binding.
+// The contract must preserve that binding through every generated frontend.
+#[test]
+fn click_request_preserves_capture_precondition() {
+  let pool = prost_reflect::DescriptorPool::decode(auv_api_proto::FILE_DESCRIPTOR_SET).unwrap();
+  let request = pool.get_message_by_name("auv.api.driver.v1.ClickPointRequest").unwrap();
+  assert!(request.get_field_by_name("capture_precondition").is_some());
+}
+
+#[tokio::test]
+async fn click_rpc_records_unknown_capture_refusal_across_the_blocking_boundary() {
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+  use prost::Message as _;
+  let records = std::sync::Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(records.clone()).build().unwrap();
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    captures: test_capture_store(),
+  };
+  let status = root
+    .instrument(service.click_point(Request::new(proto::ClickPointRequest {
+      position: Some(position_to_proto(auv_driver::Position {
+        point: auv_driver::Point::new(10.0, 20.0),
+        coordinate_space: auv_driver::CoordinateSpace::Screen,
+      })),
+      capture_precondition: Some(proto::CaptureRef {
+        capture_id: "unknown-capture".into(),
+      }),
+      ..Default::default()
+    })))
+    .await
+    .unwrap_err();
+  assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+  assert_eq!(
+    proto::ClickPreconditionFailure::decode(status.details()).unwrap().reason(),
+    proto::ClickPreconditionFailureReason::CaptureUnavailable
+  );
+  dispatch.flush().await.unwrap();
+  assert!(records.records().iter().any(|record| matches!(record,
+    TraceRecord::Event { schema, .. } if schema.name().as_str() == "auv.input.click_refused")));
+}
+
 fn test_capture_store() -> CaptureStore {
   CaptureStore::new(CaptureStoreOptions::default())
 }

@@ -15,10 +15,11 @@ export {
   TextSubmit,
   WindowClickStrategy,
 } from '../../gen/auv/api/driver/v1/input_pb'
+export { ClickPreconditionFailureReason } from '../../gen/auv/api/driver/v1/input_pb'
 export { BuiltInCursor, Easing } from '../../gen/auv/api/driver/v1/overlay_pb'
 export { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
-export { createAuv } from './client'
 
+export { createAuv } from './client'
 export type { AuvClient, CreateClientOptions } from './client'
 export { camelCaseName, discoverRunner } from './discover'
 export type {
@@ -32,6 +33,8 @@ export type {
   MethodPresentation,
 } from './discover'
 export { createRunnerClient, SCROLL_UNTIL_DEFAULTS, splitKeyCombination } from './driver'
+export { ClickPreconditionError } from './driver'
+export type { ClickOperationOptions } from './driver'
 export type {
   CaptureImage,
   CaptureImageOptions,

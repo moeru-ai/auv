@@ -95,6 +95,7 @@ fn route() -> auv_api_client::RunnerRoute {
 
 #[derive(Default)]
 struct InputFixture {
+  clicks: std::sync::Mutex<Vec<proto::ClickPointRequest>>,
   downs: std::sync::Mutex<Vec<proto::KeyDownRequest>>,
   ups: std::sync::Mutex<Vec<auv_driver::KeyboardHoldId>>,
   scrolls: std::sync::Mutex<Vec<proto::ScrollPointRequest>>,
@@ -119,6 +120,17 @@ macro_rules! input_fixture_impl {
   ($($name:ident($request:ty) -> $response:ty;)+) => {
     #[tonic::async_trait]
     impl proto::input_service_server::InputService for InputFixture {
+      async fn click_point(&self, request: tonic::Request<proto::ClickPointRequest>) -> Result<tonic::Response<proto::ClickPointResponse>, tonic::Status> {
+        self.clicks.lock().unwrap().push(request.into_inner());
+        if let Some(status) = self.statuses.lock().unwrap().pop_front() {
+          return Err(status);
+        }
+        Ok(tonic::Response::new(proto::ClickPointResponse {
+          screen_point: Some(proto::ScreenPoint { x: 10.0, y: 20.0 }),
+          action: Some(fixture_action(proto::InputDeliveryPath::ForegroundSystemEvents)),
+          ..Default::default()
+        }))
+      }
       async fn key_down(
         &self,
         request: tonic::Request<proto::KeyDownRequest>,
@@ -214,7 +226,6 @@ input_fixture_impl! {
     input_keyboard(proto::InputKeyboardRequest) -> proto::InputKeyboardResponse;
     press_keys(proto::PressKeysRequest) -> proto::PressKeysResponse;
     hold_keys(proto::HoldKeysRequest) -> proto::HoldKeysResponse;
-    click_point(proto::ClickPointRequest) -> proto::ClickPointResponse;
     scroll_window_point(proto::ScrollWindowPointRequest) -> proto::ScrollWindowPointResponse;
     type_text(proto::TypeTextRequest) -> proto::TypeTextResponse;
     paste_text(proto::PasteTextRequest) -> proto::PasteTextResponse;
@@ -277,6 +288,33 @@ async fn typed_key_holds_preserve_target_policy_timeout_id_and_release_results()
   assert_eq!(unknown.client_kind(), Some(crate::error::ClientErrorKind::NotFound));
   assert_eq!(*service.ups.lock().expect("up requests lock"), [42, 42, 43]);
 
+  server.abort();
+}
+
+#[tokio::test]
+async fn click_capture_binding_and_typed_refusal_survive_rpc() {
+  use prost::Message as _;
+  let service = std::sync::Arc::new(InputFixture::default());
+  let (input, server) = serve_input_fixture(service.clone()).await;
+  let capture = CaptureRef::new("cap-from-runner");
+  let point = auv_driver::ScreenPoint::new(10.0, 20.0);
+  input.click_with_capture(&point, Default::default(), Some(&capture)).await.unwrap();
+  assert_eq!(service.clicks.lock().unwrap()[0].capture_precondition.as_ref().unwrap().capture_id, capture.id());
+
+  let details = proto::ClickPreconditionFailure {
+    capture_id: capture.id().into(),
+    reason: proto::ClickPreconditionFailureReason::StateChanged as i32,
+  };
+  service.statuses.lock().unwrap().push_back(tonic::Status::with_details(
+    tonic::Code::FailedPrecondition,
+    "take a new capture",
+    details.encode_to_vec().into(),
+  ));
+  let error = input.click_with_capture(&point, Default::default(), Some(&capture)).await.unwrap_err();
+  assert!(
+    matches!(error, CapabilityError::CapturePrecondition { capture_id, reason: ClickPreconditionFailureReason::StateChanged } if capture_id == capture.id())
+  );
+  assert_eq!(service.clicks.lock().unwrap().len(), 2, "refusal must not cause automatic replay");
   server.abort();
 }
 

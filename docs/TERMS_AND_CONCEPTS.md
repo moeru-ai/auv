@@ -1499,6 +1499,12 @@ Across the Runner API, a capture frame stays in the Runner that produced it
 - **Capture image fetch** (`GetCaptureImage`): the explicit call that moves
   pixels to a client, optionally cropped to a relative region, fit inside a
   maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.
+- **Click capture precondition**: an optional binding from `ClickPointRequest`
+  to a full window or display capture on the same Runner. The Runner compares
+  geometry, visible windows, capture metadata, and pixels before input delivery.
+  A changed or uncheckable state refuses input and requests a new capture.
+  It does not establish semantic success or make the check and delivery atomic.
+  See the [click contract](../proto/auv/api/driver/v1/docs/input.click.md).
 - **Image evidence artifacts** (screenshots, OCR sources, overlays) are
   lossless WebP (`image/webp`), encoded by `auv_tracing::image_artifact`.
   Captures are stored at logical resolution (`ImageResolution::Logical`), so

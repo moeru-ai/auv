@@ -148,7 +148,9 @@ async fn runner_display_capture_reports_metadata_without_pixels() {
   assert_eq!(result["capture"]["pixel_dimensions"]["width"], 2880);
   assert_eq!(result["capture"]["pixel_dimensions"]["height"], 1800);
   assert_eq!(result["capture"]["backend"], "fixture-runner");
+  assert_eq!(result["capture"]["capture_id"], "cap-1-1");
   assert!(output.artifacts().is_empty(), "no artifact without pixels");
   let report = output.report.expect("capture output has a report");
+  assert!(report.fields.iter().any(|field| field.label == "Capture ID" && field.value == "cap-1-1"));
   assert!(report.fields.iter().any(|field| field.label == "Pixel size" && field.value == "2880x1800"), "{report:?}");
 }

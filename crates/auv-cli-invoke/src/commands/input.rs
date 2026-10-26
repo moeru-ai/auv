@@ -676,6 +676,10 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
   after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 640 360 --target app:com.apple.TextEdit --relative-to screen\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
 )]
 struct ClickPointArgs {
+  /// Runner-owned full window/display capture. Refuse input if its state changed or cannot be checked. Requires a selected Run.
+  #[arg(long, value_name = "CAPTURE_ID")]
+  #[serde(default)]
+  capture: Option<String>,
   /// Mouse button: left, right, or middle. Defaults to left.
   #[arg(long, default_value = "left", value_parser = ["left", "right", "middle"])]
   #[serde(default = "default_click_button")]
@@ -893,7 +897,15 @@ pub struct ClickPointResult {
   description = "Click a point relative to the screen, a target window, or a target display.",
   input = ClickPointArgs,
 )]
-async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeCommandResult {
+async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> crate::InvokeExecutionResult {
+  // NOTICE: Local execution has no Runner capture store. Never discard a
+  // requested precondition or turn it into an unguarded click.
+  if args.capture.is_some() {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::RecaptureRequired,
+      "--capture requires a selected Run on the Runner that produced the capture; capture again on that Run",
+    ));
+  }
   let basis = args.basis(input.target.as_ref())?;
   let click = args.click_options()?;
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -993,11 +1005,12 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
         })
       }
     }
+    .map_err(Into::into)
   }
   #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args, basis, click);
-    Err("input.clickPoint is unavailable on this platform".to_string())
+    Err("input.clickPoint is unavailable on this platform".to_string().into())
   }
 }
 

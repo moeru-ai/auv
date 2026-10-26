@@ -6,15 +6,51 @@ import { describe, expect, it } from 'vitest'
 import { ActivateApplicationRequestSchema, ActivateApplicationResponseSchema, ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPointRequestSchema, ClickPointResponseSchema, ClickPreconditionFailureReason, ClickPreconditionFailureSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { connect } from '../../node/index'
+import { AuvRpcError } from '../../transport/errors'
 import { createAuv } from './client'
-import { splitKeyCombination } from './driver'
+import { ClickPreconditionError, splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
+  it('binds window and global clicks to captures and preserves typed refusals without retrying', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          if (call.method.endsWith('/ResolveWindow')) {
+            return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, { window: { ref: { windowId: 'window-1' } } }))
+          }
+          const request = fromBinary(ClickPointRequestSchema, call.body)
+          throw new AuvRpcError(9, 'take a new capture', undefined, toBinary(ClickPreconditionFailureSchema, create(ClickPreconditionFailureSchema, { captureId: request.capturePrecondition!.captureId, reason: ClickPreconditionFailureReason.STATE_CHANGED })))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const window = await runner.windows.resolve({ applicationId: 'Editor' })
+    const frame = { ref: { captureId: 'window-capture' } }
+    await expect(window.click({ x: 1, y: 2 }, undefined, { capturePrecondition: frame })).rejects.toMatchObject({
+      captureId: 'window-capture',
+      name: 'ClickPreconditionError',
+      reason: ClickPreconditionFailureReason.STATE_CHANGED,
+      recovery: 'new_capture',
+    })
+    await expect(runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'display-capture' })).rejects.toBeInstanceOf(ClickPreconditionError)
+    const clicks = calls.filter(call => call.method.endsWith('/ClickPoint')).map(call => fromBinary(ClickPointRequestSchema, call.body))
+    expect(clicks).toHaveLength(2)
+    expect(clicks[0]?.window?.windowId).toBe('window-1')
+    expect(clicks.map(click => click.capturePrecondition?.captureId)).toEqual(['window-capture', 'display-capture'])
+    await connection.close()
+  })
+
   it('recognizes Runner captures by reference and fetches pixels only on request', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({

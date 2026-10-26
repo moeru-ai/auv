@@ -102,6 +102,17 @@ fn unknown_references_are_not_found() {
 }
 
 #[test]
+fn references_from_another_store_never_alias_local_captures() {
+  let first = store(1_000, Duration::from_secs(60));
+  let second = store(1_000, Duration::from_secs(60));
+  let first_id = first.insert(noise(10, 1));
+  let second_id = second.insert(noise(10, 1));
+  assert_ne!(first_id, second_id);
+  assert!(second.get(&first_id).is_none());
+  assert!(first.get(&second_id).is_none());
+}
+
+#[test]
 fn identical_captures_share_their_pixels() {
   // Polling an unchanged window stores the same pixels again and again.
   let store = store(1_000, Duration::from_secs(60));

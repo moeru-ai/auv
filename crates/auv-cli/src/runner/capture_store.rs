@@ -158,6 +158,7 @@ impl ImageKey {
 #[derive(Clone)]
 pub(super) struct CaptureStore {
   options: CaptureStoreOptions,
+  identity: uuid::Uuid,
   inner: Arc<Mutex<Inner>>,
 }
 
@@ -175,6 +176,7 @@ struct Inner {
 struct Entry {
   blob: BlobKey,
   last_used: Instant,
+  click_state: Option<super::click_precondition::CaptureState>,
 }
 
 struct Blob {
@@ -222,6 +224,7 @@ impl CaptureStore {
   pub(super) fn new(options: CaptureStoreOptions) -> Self {
     Self {
       options,
+      identity: uuid::Uuid::now_v7(),
       inner: Arc::new(Mutex::new(Inner::default())),
     }
   }
@@ -261,17 +264,32 @@ impl CaptureStore {
       }
     }
     inner.next += 1;
-    // The process ID keeps references from a restarted Runner from colliding.
-    let id = format!("cap-{}-{}", std::process::id(), inner.next);
+    // A store identity prevents old or foreign Runner references from matching
+    // after process ID reuse, including remote hosts with the same process ID.
+    let id = format!("cap-{}-{}", self.identity, inner.next);
     inner.entries.insert(
       id.clone(),
       Entry {
         blob: key,
         last_used: now,
+        click_state: None,
       },
     );
     inner.fit(self.options.budget_bytes, Some(key));
     id
+  }
+
+  /// Provenance belongs to the reference, not the deduplicated pixel blob.
+  pub(super) fn set_click_state(&self, id: &str, state: Option<super::click_precondition::CaptureState>) {
+    if let Some(entry) = self.inner.lock().expect("capture store lock").entries.get_mut(id) {
+      entry.click_state = state;
+    }
+  }
+
+  pub(super) fn click_state(&self, id: &str) -> Option<super::click_precondition::CaptureState> {
+    let mut inner = self.inner.lock().expect("capture store lock");
+    inner.expire(Instant::now(), self.options.idle);
+    inner.entries.get(id)?.click_state.clone()
   }
 
   /// Returns a stored capture and marks it used, or `None` once it was

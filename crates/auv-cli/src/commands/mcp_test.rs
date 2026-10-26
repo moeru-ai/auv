@@ -167,6 +167,20 @@ async fn click_point_mcp_defaults_to_screen_coordinates_without_optional_inputs(
   assert!(success.result["action"].is_null());
 }
 
+#[tokio::test]
+async fn click_point_mcp_preserves_capture_and_refuses_uncheckable_local_delivery() {
+  let registry = auv_cli_invoke::default_registry();
+  let metadata = super::invoke_command_metadata(registry.resolve("input.clickPoint").unwrap());
+  assert!(metadata["arguments"].as_array().unwrap().iter().any(|arg| arg["input_key"] == "capture"));
+  let adapters = core_invoke_adapters();
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickPoint").unwrap();
+  let error = adapter.invoke(McpInvokeInput {
+    target: None, inputs: pairs(&[("x", "120"), ("y", "80"), ("capture", "cap-test")]),
+    dry_run: false, cancellation: Default::default(),
+  }).await.unwrap_err();
+  assert_eq!(error.code, auv_cli_invoke::FailureCode::RecaptureRequired);
+}
+
 fn pairs(values: &[(&str, &str)]) -> BTreeMap<String, String> {
   values.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect()
 }
