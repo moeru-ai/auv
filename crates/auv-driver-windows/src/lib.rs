@@ -45,7 +45,7 @@ pub use background_session::{
 };
 pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
-pub use desktop::ensure_input_desktop;
+pub use desktop::{BoundDesktop, DesktopError, DesktopHandle, desktop_name, ensure_input_desktop, with_input_desktop};
 pub use driver::{WindowsDriver, WindowsDriverSession};
 pub use media::{
   AudioLookupStats, AudioLookupStatus, AudioVolumeController, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState, ProcessAudioVolume,
