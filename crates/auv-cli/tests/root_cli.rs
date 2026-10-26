@@ -1157,3 +1157,38 @@ fn selected_global_text_dry_run_returns_validation_without_delivery() {
   assert_eq!(response["status"], "completed", "{response}");
   assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
 }
+
+// https://github.com/moeru-ai/auv/pull/416
+// A missing selected Run used to exit before the JSON result renderer,
+// despite the shared Runner path already classifying RunNotFound as not_found.
+#[test]
+fn missing_selected_run_is_typed_in_cli_json_without_local_execution() {
+  let directory = tempfile::tempdir().unwrap();
+  let discovery = directory.path().join("missing-discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let selected_run = "0123456789abcdef0123456789abcdef";
+
+  let command = || {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_auv"));
+    cmd.current_dir(directory.path())
+      .env_remove("AUV_CONTEXT")
+      .env_remove("AUV_ENDPOINT")
+      .env("AUV_DISCOVERY_FILE", &discovery)
+      .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+      .args(["--run", selected_run, "invoke", "display.list"]);
+    cmd
+  };
+
+  let json_output = command().args(["--json"]).output().expect("invoke JSON subprocess");
+  assert_eq!(json_output.status.code(), Some(1), "stderr={}", stderr(&json_output));
+  let body: serde_json::Value = serde_json::from_slice(&json_output.stdout).expect("failure must have JSON stdout");
+  assert_eq!(body["status"], "failed");
+  assert_eq!(body["failure_details"]["code"], "not_found");
+  assert!(body["failure_details"]["message"].as_str().unwrap().contains(selected_run));
+
+  // Non-JSON callers retain the prior stderr message and exit code.
+  let human = command().output().expect("invoke human subprocess");
+  assert_eq!(human.status.code(), Some(1));
+  assert!(stderr(&human).contains(selected_run));
+  assert!(stdout(&human).is_empty(), "human error output must remain on stderr");
+}

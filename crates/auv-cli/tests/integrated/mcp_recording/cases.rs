@@ -242,3 +242,44 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   mcp.kill().await?;
   Ok(())
 }
+
+// Regression: selection failures must reach the real stdio MCP frontend with
+// their typed RunNotFound code. The child has private discovery/profiles and
+// cannot connect to the user's existing daemon.
+#[tokio::test]
+async fn mcp_missing_selected_run_preserves_not_found_without_local_fallback() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+  let directory = tempfile::tempdir()?;
+  let discovery = directory.path().join("missing-discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let selected_run = "0123456789abcdef0123456789abcdef";
+  let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["--run", selected_run, "mcp", "serve"])
+    .current_dir(directory.path())
+    .env_remove("AUV_CONTEXT")
+    .env_remove("AUV_ENDPOINT")
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true)
+    .spawn()?;
+
+  let transport = tokio::io::join(child.stdout.take().expect("MCP stdout"), child.stdin.take().expect("MCP stdin"));
+  let client = TestClient.serve(transport).await?;
+  let outcome = client
+    .call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: Some(serde_json::json!({ "command_id": "display.list" }).as_object().unwrap().clone()),
+    })
+    .await?;
+  assert_eq!(outcome.is_error, Some(true));
+  let body = outcome.structured_content.expect("structured selection failure");
+  assert_eq!(body["status"], "failed");
+  assert_eq!(body["failure_details"]["code"], "not_found");
+  assert!(body["failure_details"]["message"].as_str().unwrap().contains(selected_run));
+
+  client.cancel().await?;
+  let _ = child.wait().await?;
+  Ok(())
+}
