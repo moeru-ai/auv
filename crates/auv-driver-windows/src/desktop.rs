@@ -103,6 +103,7 @@ impl DesktopApi for Win32DesktopApi {
 pub(crate) struct DesktopState {
   original: Option<u64>,
   bound: Option<u64>,
+  unclosed: Vec<u64>,
   restoration_failed: bool,
 }
 
@@ -127,7 +128,27 @@ impl DesktopState {
     self.restoration_failed
   }
 
+  #[cfg(test)]
+  pub(crate) fn unclosed_handles(&self) -> &[u64] {
+    &self.unclosed
+  }
+
+  /// Explicitly transfers ownership of any unclosed handle IDs out of the state machine.
+  #[allow(dead_code)]
+  pub(crate) fn take_unclosed_handles(&mut self) -> Vec<u64> {
+    std::mem::take(&mut self.unclosed)
+  }
+
+  /// Retries cleanup of thread desktop and all tracked desktop handles.
+  #[allow(dead_code)]
+  pub(crate) fn retry_cleanup(&mut self, api: &impl DesktopApi) -> Result<(), DesktopError> {
+    self.cleanup(api)
+  }
+
   pub(crate) fn attach(&mut self, api: &impl DesktopApi) -> Result<(), DesktopError> {
+    // Opportunistically retry closing any lingering unclosed handles from previous transition errors
+    self.unclosed.retain(|&h| api.close_desktop(h).is_err());
+
     let opened = api.open_input_desktop()?;
 
     let current = match api.get_thread_desktop() {
@@ -135,7 +156,9 @@ impl DesktopState {
       Err(err) => {
         // Cannot query calling thread's current desktop. Without an identifiable original,
         // switching would create an un-restorable thread state. Fail closed and close opened handle.
-        let _ = api.close_desktop(opened);
+        if let Err(_) = api.close_desktop(opened) {
+          self.unclosed.push(opened);
+        }
         return Err(err);
       }
     };
@@ -148,14 +171,19 @@ impl DesktopState {
     if same_desktop {
       // Already on the input desktop. `opened` was never bound to the thread,
       // so close it immediately to prevent handle leaks.
-      api.close_desktop(opened)?;
+      if let Err(err) = api.close_desktop(opened) {
+        self.unclosed.push(opened);
+        return Err(err);
+      }
       return Ok(());
     }
 
     // Need to switch the calling thread to the input desktop.
     if let Err(err) = api.set_thread_desktop(opened) {
       // Switch failed. Thread desktop was unchanged; close opened handle immediately.
-      let _ = api.close_desktop(opened);
+      if let Err(_) = api.close_desktop(opened) {
+        self.unclosed.push(opened);
+      }
       return Err(err);
     }
 
@@ -163,7 +191,11 @@ impl DesktopState {
     if let Some(prev) = self.bound.replace(opened) {
       // Thread was previously assigned to `prev`, but is now on `opened`.
       // `prev` is no longer in use by the thread and can be safely closed.
-      api.close_desktop(prev)?;
+      if let Err(err) = api.close_desktop(prev) {
+        // Closing previous handle failed. Retain ownership in unclosed so it can be retried or transferred.
+        self.unclosed.push(prev);
+        return Err(err);
+      }
     } else {
       // First desktop transition on this thread: preserve initial desktop for restoration.
       self.original = Some(current);
@@ -175,21 +207,38 @@ impl DesktopState {
   pub(crate) fn cleanup(&mut self, api: &impl DesktopApi) -> Result<(), DesktopError> {
     if let Some(&bound) = self.bound.as_ref() {
       if let Some(&orig) = self.original.as_ref() {
-        if api.set_thread_desktop(orig).is_ok() {
-          // Successfully restored thread to original desktop.
-          // `bound` is no longer assigned to this thread, so close it.
-          let close_res = api.close_desktop(bound);
-          self.bound = None;
-          self.original = None;
-          self.restoration_failed = false;
-          close_res
-        } else {
-          // SetThreadDesktop(orig) failed (e.g. windows or hooks created on the thread).
-          // Because `bound` is still assigned to the thread, Win32 CloseDesktop would fail with ERROR_BUSY (170).
-          // Retain ownership and handle identities so state is not lost or corrupted.
+        if api.set_thread_desktop(orig).is_err() {
           self.restoration_failed = true;
-          Err(DesktopError::RestorationFailed)
+          return Err(DesktopError::RestorationFailed);
         }
+        self.restoration_failed = false;
+
+        // Successfully restored thread to original desktop.
+        // Now close the bound desktop handle. If closing fails, retain ownership in bound for retry.
+        if let Err(err) = api.close_desktop(bound) {
+          return Err(err);
+        }
+        self.bound = None;
+
+        // Close any lingering unclosed handles from previous transition close failures
+        let mut still_unclosed = Vec::new();
+        let mut close_err = None;
+        for &h in &self.unclosed {
+          if let Err(err) = api.close_desktop(h) {
+            still_unclosed.push(h);
+            if close_err.is_none() {
+              close_err = Some(err);
+            }
+          }
+        }
+        self.unclosed = still_unclosed;
+
+        if let Some(err) = close_err {
+          return Err(err);
+        }
+
+        self.original = None;
+        Ok(())
       } else {
         self.restoration_failed = true;
         Err(DesktopError::RestorationFailed)
@@ -212,6 +261,7 @@ thread_local! {
   static THREAD_DESKTOP_STATE: RefCell<DesktopState> = const { RefCell::new(DesktopState {
     original: None,
     bound: None,
+    unclosed: Vec::new(),
     restoration_failed: false,
   }) };
 }
@@ -419,11 +469,12 @@ mod tests {
   }
 
   #[test]
-  fn test_intermediate_handle_close_failure_reports_error() {
+  fn test_intermediate_handle_close_failure_retains_ownership_and_enables_retry() {
     let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
     let mut state = DesktopState::new();
 
     assert!(state.attach(&mock).is_ok());
+    assert_eq!(state.bound_handle(), Some(200));
 
     // Switch to Screensaver (201), but closing previous 200 fails
     *mock.input_desktop_name.borrow_mut() = "Screensaver".to_string();
@@ -431,6 +482,24 @@ mod tests {
 
     let res = state.attach(&mock);
     assert_eq!(res, Err(DesktopError::CloseFailed));
+    // Ownership of unclosed handle 200 is retained in state.unclosed, NOT lost!
+    assert_eq!(state.bound_handle(), Some(201));
+    assert_eq!(state.unclosed_handles(), &[200]);
+    assert_eq!(state.original_handle(), Some(100));
+
+    // Unblock 200: next transition to 202 opportunistically cleans up 200
+    mock.close_desktop_should_fail_for.borrow_mut().remove(&200);
+    *mock.input_desktop_name.borrow_mut() = "Admin".to_string();
+    assert!(state.attach(&mock).is_ok());
+    assert_eq!(state.bound_handle(), Some(202));
+    assert!(state.unclosed_handles().is_empty());
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200, 201]);
+
+    // Final cleanup restores back to 100 and closes 202
+    assert!(state.cleanup(&mock).is_ok());
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200, 201, 202]);
+    assert_eq!(state.bound_handle(), None);
+    assert_eq!(state.original_handle(), None);
   }
 
   #[test]
@@ -445,6 +514,61 @@ mod tests {
     assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
     assert_eq!(state.bound_handle(), None);
     assert_eq!(state.original_handle(), None);
+  }
+
+  #[test]
+  fn test_cleanup_close_failure_retains_handle_ownership_and_enables_retry() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+    assert_eq!(state.bound_handle(), Some(200));
+    assert_eq!(state.original_handle(), Some(100));
+
+    // Inject close failure for 200 during cleanup
+    mock.close_desktop_should_fail_for.borrow_mut().insert(200);
+
+    let res = state.cleanup(&mock);
+    assert_eq!(res, Err(DesktopError::CloseFailed));
+
+    // Crucial: Handle 200 and original 100 MUST NOT be cleared on close failure
+    assert_eq!(state.bound_handle(), Some(200));
+    assert_eq!(state.original_handle(), Some(100));
+
+    // Unblock 200 and retry cleanup
+    mock.close_desktop_should_fail_for.borrow_mut().remove(&200);
+    assert!(state.retry_cleanup(&mock).is_ok());
+
+    assert_eq!(state.bound_handle(), None);
+    assert_eq!(state.original_handle(), None);
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+  }
+
+  #[test]
+  fn test_take_unclosed_handles_transfers_ownership() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+
+    // Transition to 201 with 200 close failing
+    *mock.input_desktop_name.borrow_mut() = "Screensaver".to_string();
+    mock.close_desktop_should_fail_for.borrow_mut().insert(200);
+    assert_eq!(state.attach(&mock), Err(DesktopError::CloseFailed));
+    assert_eq!(state.unclosed_handles(), &[200]);
+
+    // Explicit transfer of ownership
+    let unclosed = state.take_unclosed_handles();
+    assert_eq!(unclosed, vec![200]);
+    assert!(state.unclosed_handles().is_empty());
+
+    // Cleanup now only manages 201 and 100
+    assert!(state.cleanup(&mock).is_ok());
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[201]);
+
+    // Caller explicitly closes the transferred handle
+    mock.close_desktop_should_fail_for.borrow_mut().remove(&200);
+    assert!(mock.close_desktop(unclosed[0]).is_ok());
   }
 
   #[test]
