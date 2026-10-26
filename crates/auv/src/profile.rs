@@ -46,6 +46,7 @@ impl ProfileStore {
         validate_required("config_profile", &config_profile)?;
         validate_required("device_id", &profile.device_id)?;
         profile.device_id.parse::<crate::resource::DeviceId>()?;
+        validate_device_credential(&profile.device_credential)?;
         let endpoint = validate_remote_endpoint(&profile.endpoint)?;
         Ok(ConfiguredDevice {
           config_profile,
@@ -115,6 +116,7 @@ impl ProfileStore {
     let (config_name, config) = select_config(&configs.profiles, context)?;
     config.device_id.parse::<crate::resource::DeviceId>()?;
     validate_context_matches(config_name, config, context)?;
+    validate_device_credential(&config.device_credential)?;
     Ok(ResolvedRemoteProfile {
       config_profile: config_name.to_string(),
       device_id: config.device_id.clone(),
@@ -276,6 +278,8 @@ pub enum ProfileError {
   },
   #[error("paired endpoint must be an http URI with an authority and no path or query: {0:?}")]
   InvalidEndpoint(String),
+  #[error("profile credential must be visible ASCII")]
+  InvalidCredential,
   #[error("profile field {0} must not be empty")]
   EmptyField(&'static str),
   #[error(transparent)]
@@ -389,6 +393,16 @@ pub(crate) fn validate_remote_endpoint(value: &str) -> Result<http::Uri, Profile
   Ok(uri)
 }
 
+pub(crate) fn validate_device_credential(credential: &str) -> Result<(), ProfileError> {
+  if credential.trim().is_empty() {
+    return Err(ProfileError::EmptyField("device_credential"));
+  }
+  if !credential.bytes().all(|byte| byte.is_ascii_graphic()) {
+    return Err(ProfileError::InvalidCredential);
+  }
+  Ok(())
+}
+
 fn validate_required(field: &'static str, value: &str) -> Result<(), ProfileError> {
   if value.trim().is_empty() {
     Err(ProfileError::EmptyField(field))
@@ -401,7 +415,7 @@ fn validate_profile_input(name: &str, input: &DeviceProfileInput) -> Result<(), 
   validate_required("config_profile", name)?;
   validate_required("device_id", &input.device_id)?;
   input.device_id.parse::<crate::resource::DeviceId>()?;
-  validate_required("device_credential", &input.device_credential)?;
+  validate_device_credential(&input.device_credential)?;
   validate_remote_endpoint(&input.endpoint)?;
   Ok(())
 }

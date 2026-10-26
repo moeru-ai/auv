@@ -93,3 +93,33 @@ fn damaged_profile_store_is_not_rewritten_by_cli() {
   assert!(!output.status.success());
   assert_eq!(fs::read(&config).unwrap(), b"damaged");
 }
+
+#[test]
+fn malformed_device_credential_is_rejected_by_cli() {
+  const DEVICE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  let directory = tempfile::tempdir().unwrap();
+  let config = directory.path().join("profiles.json");
+  let output = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "devices",
+      "profiles",
+      "create",
+      "studio",
+      "--device-id",
+      DEVICE_ID,
+      "--device-name",
+      "Studio",
+      "--endpoint",
+      "http://localhost:9847",
+      "--device-credential",
+      "malformed credential with spaces",
+    ])
+    .env("AUV_CONFIG_PROFILES_FILE", &config)
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("profile credential must be visible ASCII"));
+  assert!(!stderr.contains("malformed credential with spaces"));
+  assert!(!config.exists());
+}
