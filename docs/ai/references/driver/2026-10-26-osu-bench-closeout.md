@@ -20,33 +20,33 @@
 
 ---
 
-## 2. Live Evidence (2026-10-15 Night Runs, 13 Runs) — With Evidence Levels
+## 2. Live Evidence (2026-10-14 UTC / 2026-10-15 CST Night Session: 12 Play Attempts + 1 Replay Watch) — With Evidence Levels
 
-Thirteen live runs were executed during the 2026-10-15 night session across Normal, Hard, and Insane difficulties (anchored to `%APPDATA%\Roaming\osu\logs\1791992805.runtime.log`, replay captures, and `spike/osu-partb-liveplay:docs/ai/references/driver/2026-10-15-osu-partb-overnight-accounting.md`):
+Thirteen session entries (12 live gameplay attempts + 1 replay watch without live input dispatch) were recorded during the night session across Normal, Hard, and Insane difficulties (anchored to `%APPDATA%\Roaming\osu\logs\1791992805.runtime.log`, replay captures, and `spike/osu-partb-liveplay:docs/ai/references/driver/2026-10-15-osu-partb-overnight-accounting.md`). All runs occurred between 16:06 UTC and 18:19 UTC on 2026-10-14 (00:06 – 02:19 CST on 2026-10-15):
 
-### Complete 13-Run Table (Chronological Order)
+### Complete 13-Run Table (Chronological Order, 2026-10-14 UTC / 2026-10-15 CST)
 
-| # | Start Time (UTC) | Map & Difficulty | Duration | Outcome (Score / Grade / Acc / Miss / Combo) | Replay / Execution Notes |
+| # | Start Time (UTC / CST) | Map & Difficulty | Duration | Outcome (Score / Grade / Acc / Miss / Combo) | Replay / Execution Notes |
 |---|---|---|---|---|---|
-| **1** | 16:06:44 | Tear Rain [Normal] | <1s | Aborted (Score 0, no hits) | `StopGameplayClock` called immediately; actuator process not yet bound. |
-| **2** | 16:18:45 | Tear Rain [Normal] | 9s | Failed (Score 0, 6 Misses, HP 0) | Cursor desync caused early misses, HP depleted at 16:18:54. |
-| **3** | 16:34:07 | Tear Rain [Normal] | 10s | Failed (Score 0, HP 0) | SendInput focus failure led to 0 hit registration; stopped at 16:34:17. |
-| **4** | 16:34:38 | Tear Rain [Normal] | 9s | Failed (Score 0, HP 0) | Immediate retry; failed after 9s at 16:34:47. |
-| **5** | 17:04:08 | Tear Rain [Normal] | 245s | Completed (Score 342,732 / Grade B / Acc 88.75% / Miss 0 / Combo 71) | Full run completed; replay `(2026-10-15_01-08).osr`. Combo dropped at 71 on slider tracking desync. |
-| **6** | 17:21:08 | Tear Rain [Normal] | 245s | Completed (Score 988,635 / Grade S / Acc 99.12% / Miss 0 / Combo 719/732) | Full run completed; replay `(2026-10-15_01-25).osr`. Single combo drop at Object 295 (upstream multi-bezier repeated red anchor bug). |
-| **7** | 17:26:23 | Tear Rain [Normal] | 245s | Replay watch | Replay loader (`ReplayPlayerLoader#626`) watched Run 6 replay; no live inputs dispatched. |
-| **8** | 17:43:34 | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard difficulty launcher test; cursor tracking desync failed after 9s at 17:43:43. |
-| **9** | 17:44:42 | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard retry; failed after 9s at 17:44:51. |
-| **10** | 17:57:06 | Tear Rain [Insane] | <2s | Aborted (<2s) | Stopped at 17:57:08 because actuator was not yet armed. |
-| **11** | 18:02:18 | Tear Rain [Insane] | 7s | Aborted (7s) | Test click verifying song select / retry coordinates; aborted at 18:02:25. |
-| **12** | 18:03:58 | Tear Rain [Insane] | 245s | Completed (Score 812,291 / Grade A / Acc 92.94% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-08).osr`. `AudioOffset = 0.0`. 595 300s, 90 100s, systematic offset +36.96ms landing on OD 7 38.0ms boundary. |
-| **13** | 18:14:58 | Tear Rain [Insane] | 245s | Completed (Score 1,000,820 / Grade SS / Acc 100.00% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-19).osr`. `AudioOffset = -37.0` (in-game compensation). 685 300s, 0 100s, 0 misses, offset +0.48ms. |
+| **1** | 16:06:44 UTC (00:06 CST) | Tear Rain [Normal] | <1s | Aborted (Score 0, no hits) | `StopGameplayClock` called immediately; actuator process not yet bound. |
+| **2** | 16:18:45 UTC (00:18 CST) | Tear Rain [Normal] | 9s | Failed (Score 0, 6 Misses, HP 0) | Cursor desync caused early misses, HP depleted at 16:18:54. |
+| **3** | 16:34:07 UTC (00:34 CST) | Tear Rain [Normal] | 10s | Failed (Score 0, HP 0) | SendInput focus failure led to 0 hit registration; stopped at 16:34:17. |
+| **4** | 16:34:38 UTC (00:34 CST) | Tear Rain [Normal] | 9s | Failed (Score 0, HP 0) | Immediate retry; failed after 9s at 16:34:47. |
+| **5** | 17:04:08 UTC (01:04 CST) | Tear Rain [Normal] | 245s | Completed (Score 342,732 / Grade B / Acc 88.75% / Miss 0 / Combo 71) | Full run completed; replay `(2026-10-15_01-08).osr`. Combo broken at 71 on slider tracking desync. |
+| **6** | 17:21:08 UTC (01:21 CST) | Tear Rain [Normal] | 245s | Completed (Score 988,635 / Grade S / Acc 99.12% / Miss 0 / Combo 719/732) | Full run completed; replay `(2026-10-15_01-25).osr`. Single combo break (Miss 0): dropped 12 combo ticks at Object 295 due to upstream repeated red anchor deduplication. |
+| **7** | 17:26:23 UTC (01:26 CST) | Tear Rain [Normal] | 245s | Replay watch | Replay loader (`ReplayPlayerLoader#626`) watched Run 6 replay; no live inputs dispatched. |
+| **8** | 17:43:34 UTC (01:43 CST) | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard difficulty launcher test; cursor tracking desync failed after 9s at 17:43:43. |
+| **9** | 17:44:42 UTC (01:44 CST) | Tear Rain [Hard] | 9s | Failed (Score 0, HP 0) | Hard retry; failed after 9s at 17:44:51. |
+| **10** | 17:57:06 UTC (01:57 CST) | Tear Rain [Insane] | <2s | Aborted (<2s) | Stopped at 17:57:08 because actuator was not yet armed. |
+| **11** | 18:02:18 UTC (02:02 CST) | Tear Rain [Insane] | 7s | Aborted (7s) | Test click verifying song select / retry coordinates; aborted at 18:02:25. |
+| **12** | 18:03:58 UTC (02:03 CST) | Tear Rain [Insane] | 245s | Completed (Score 812,291 / Grade A / Acc 92.94% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-08).osr`. `AudioOffset = 0.0`. 595 300s, 90 100s, systematic offset +36.96ms landing on OD 7 38.0ms boundary. |
+| **13** | 18:14:58 UTC (02:14 CST) | Tear Rain [Insane] | 245s | Completed (Score 1,000,820 / Grade SS / Acc 100.00% / Miss 0 / Combo 1092/1092 FC) | Full run completed; replay `(2026-10-15_02-19).osr`. `AudioOffset = -37.0` (in-game compensation). 685 300s, 0 100s, 0 misses, offset +0.48ms. |
 
 ### Key Run Highlights & Evidence Boundaries
 
 - **Normal Difficulty (Completed Runs)**:
   - Run 5: B rank, 88.75% accuracy (combo broken on slider tracking desync).
-  - Run 6: S rank, 99.12% accuracy (single miss at final slider Object 295 due to repeated red anchor point).
+  - Run 6: S rank, 99.12% accuracy (Miss 0; single combo break at final slider Object 295, where 12 combo ticks were dropped due to upstream library deduplicating a repeated red anchor point).
 - **Insane Difficulty (Completed Runs)**:
   - Run 12 (AudioOffset = 0.0): A rank, 92.94% accuracy, 1092/1092 FC (595 300s, 90 100s, 0 misses; systematic offset = +36.96 ms).
   - Run 13 (AudioOffset = -37.0): SS rank, 100.00% accuracy, 1092/1092 FC (685 300s, 0 100s, 0 misses; offset = +0.48 ms).
@@ -63,7 +63,7 @@ The following planned phases were not executed:
 - **Stage-1 Calibration (Freezing $C_{\text{cal}}$)**: Protocol: 2 dedicated calibration maps × 2 runs, Theil-Sen intercept on circle down-edges, plus a stability factorial. **NEVER RAN**. It was blocked on:
   1. Calibration maps that were never obtained — the request to the map/methodology author was drafted but never sent; and
   2. Desktop-time approval for the live runs.
-- **Sight-Read Player Part B**: Never built. The spike branch `spike/osu-partb-liveplay` @ `f78d29a8` is frozen and kept as-is.
+- **Sight-Read Player Part B**: Experimental live-play was executed on the spike branch (`spike/osu-partb-liveplay` @ `f78d29a8`, which implemented `player.rs` and performed the experimental live runs above), but a general, production sight-read player was never built. The spike branch remains frozen as-is.
 - **Pure-Vision Map Reading (Later Phase)**: Never started.
 
 ---
