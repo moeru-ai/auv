@@ -22,7 +22,7 @@ use crate::playback_guard::{
   DEFAULT_PLAY_POLL_TIMEOUT, DEFAULT_TARGET_VOLUME, DEFAULT_VOLUME_TOLERANCE, Step2Options, execute_step2_real_with_prestate,
 };
 use crate::track_identity::{TrackChangeVerdict, TrackIdentity, evaluate_track_change};
-use crate::wgc::{capture_window_health_cached, capture_window_health_strict};
+use crate::wgc::{WindowHealth, capture_window_health_cached, capture_window_health_strict};
 use crate::window::list_windows;
 
 #[cfg(target_os = "windows")]
@@ -228,6 +228,57 @@ fn check_minimized_and_restore(window: &Window, allow_restore: bool) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn check_minimized_and_restore(_window: &Window, _allow_restore: bool) -> bool {
   false
+}
+
+fn execute_wgc_capture_step(
+  step: &OperationStepDef,
+  mode: ExecutionMode,
+  is_still_minimized: bool,
+  health_check: impl FnOnce() -> Result<WindowHealth, String>,
+) -> Result<bool, ExecutionResult> {
+  if is_still_minimized {
+    if mode == ExecutionMode::Verified {
+      return Err(ExecutionResult::GateFailed {
+        step_id: step.id.clone(),
+        message: "Target window is minimized; WGC capture verification cannot verify an iconic window".to_string(),
+        consecutive_failures: 1,
+      });
+    }
+    // In Fast mode, skipping a minimized window is not verified and does not count as an executed step.
+    return Ok(false);
+  }
+
+  match health_check() {
+    Ok(health) => {
+      if mode == ExecutionMode::Fast {
+        if health.alive {
+          Ok(true)
+        } else {
+          Err(ExecutionResult::GateFailed {
+            step_id: step.id.clone(),
+            message: format!("Fast window health check failed: alive={}, non_black_ratio={}", health.alive, health.non_black_ratio),
+            consecutive_failures: 1,
+          })
+        }
+      } else if health.alive && health.is_fresh {
+        Ok(true)
+      } else {
+        Err(ExecutionResult::GateFailed {
+          step_id: step.id.clone(),
+          message: format!(
+            "Strict window health check failed: alive={}, is_fresh={}, non_black_ratio={}",
+            health.alive, health.is_fresh, health.non_black_ratio
+          ),
+          consecutive_failures: 1,
+        })
+      }
+    }
+    Err(e) => Err(ExecutionResult::GateFailed {
+      step_id: step.id.clone(),
+      message: format!("Window health check error: {e}"),
+      consecutive_failures: 1,
+    }),
+  }
 }
 
 fn calculate_operation_confirmed(
@@ -508,55 +559,18 @@ impl OperationExecutor for WindowsProductionExecutor {
         }
         StepKind::WgcCapture => {
           let is_still_minimized = check_minimized_and_restore(&ctx.window, self.allow_restore);
-
-          if is_still_minimized {
-            // skipped_minimized, zero window mutation redline preserves user state
+          let executed = match execute_wgc_capture_step(step, op.execution_mode, is_still_minimized, || {
+            if op.execution_mode == ExecutionMode::Fast {
+              capture_window_health_cached(&ctx.window).map_err(|e| e.to_string())
+            } else {
+              capture_window_health_strict(&ctx.window).map_err(|e| e.to_string())
+            }
+          }) {
+            Ok(ex) => ex,
+            Err(failed) => return failed,
+          };
+          if executed {
             steps_executed += 1;
-          } else if op.execution_mode == ExecutionMode::Fast {
-            match capture_window_health_cached(&ctx.window) {
-              Ok(health) => {
-                if health.alive {
-                  steps_executed += 1;
-                } else {
-                  return ExecutionResult::GateFailed {
-                    step_id: step.id.clone(),
-                    message: format!("Fast window health check failed: alive={}, non_black_ratio={}", health.alive, health.non_black_ratio),
-                    consecutive_failures: 1,
-                  };
-                }
-              }
-              Err(e) => {
-                return ExecutionResult::GateFailed {
-                  step_id: step.id.clone(),
-                  message: format!("Fast window health check error: {e}"),
-                  consecutive_failures: 1,
-                };
-              }
-            }
-          } else {
-            match capture_window_health_strict(&ctx.window) {
-              Ok(health) => {
-                if health.alive && health.is_fresh {
-                  steps_executed += 1;
-                } else {
-                  return ExecutionResult::GateFailed {
-                    step_id: step.id.clone(),
-                    message: format!(
-                      "Strict window health check failed: alive={}, is_fresh={}, non_black_ratio={}",
-                      health.alive, health.is_fresh, health.non_black_ratio
-                    ),
-                    consecutive_failures: 1,
-                  };
-                }
-              }
-              Err(e) => {
-                return ExecutionResult::GateFailed {
-                  step_id: step.id.clone(),
-                  message: format!("Strict window health check error: {e}"),
-                  consecutive_failures: 1,
-                };
-              }
-            }
           }
         }
       }
@@ -1038,5 +1052,68 @@ mod tests {
     let confirmed_strong =
       calculate_operation_confirmed(ExecutionMode::Verified, &[make_step(false, strong_gate)], &[StepKind::SmtcQuery], false);
     assert!(confirmed_strong, "Fully verified steps in Verified mode must be confirmed");
+  }
+
+  #[test]
+  fn test_wgc_capture_minimized_in_verified_mode_fails_gate_without_confirmation() {
+    let step = OperationStepDef {
+      id: "step_wgc".to_string(),
+      name: "Capture window".to_string(),
+      description: "Verify window liveness via WGC".to_string(),
+      action: serde_json::json!({ "type": "wgc_capture" }),
+      verification_gate: VerificationGateDef::WgcAliveGate {
+        min_non_black_ratio: 0.5,
+        timeout_ms: 1000,
+        escalate_on_mismatch: "none".to_string(),
+      },
+      is_unverified: false,
+    };
+
+    // 1. Minimized window in Verified mode must FAIL the gate and never increment steps
+    let res = execute_wgc_capture_step(&step, ExecutionMode::Verified, true, || {
+      panic!("health check closure must NOT be invoked when target is minimized");
+    });
+    match res {
+      Err(ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      }) => {
+        assert_eq!(step_id, "step_wgc");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("minimized"), "message must explain window is minimized: {message}");
+      }
+      other => panic!("expected GateFailed, got {other:?}"),
+    }
+
+    // 2. Minimized window in Fast mode skips capture without counting as executed
+    let fast_res = execute_wgc_capture_step(&step, ExecutionMode::Fast, true, || {
+      panic!("health check closure must NOT be invoked when target is minimized");
+    });
+    assert_eq!(fast_res, Ok(false), "Fast mode on minimized target must return Ok(false) [not executed]");
+
+    // 3. Unminimized window with alive=true, is_fresh=true in Verified mode succeeds and counts as executed
+    let ok_res = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 800,
+        height: 600,
+        alive: true,
+        is_fresh: true,
+        non_black_ratio: 0.95,
+      })
+    });
+    assert_eq!(ok_res, Ok(true));
+
+    // 4. Unminimized window with is_fresh=false in Verified mode fails gate
+    let stale_res = execute_wgc_capture_step(&step, ExecutionMode::Verified, false, || {
+      Ok(WindowHealth {
+        width: 800,
+        height: 600,
+        alive: true,
+        is_fresh: false,
+        non_black_ratio: 0.95,
+      })
+    });
+    assert!(matches!(stale_res, Err(ExecutionResult::GateFailed { .. })));
   }
 }
