@@ -14,7 +14,11 @@
 
 <h1 align="center">AUV</h1>
 
-[![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
+[![github license](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
+[![crates.io version](https://badgen.net/crates/v/auv-cli)](https://crates.io/crates/auv-cli)
+[![crates.io downloads](https://badgen.net/crates/d/auv-cli)](https://crates.io/crates/auv-cli)
+[![npm version](https://badgen.net/npm/v/@auv-js/sdk)](https://npmx.dev/package/@auv-js/sdk)
+[![npm downloads](https://badgen.net/npm/dt/@auv-js/sdk)](https://npmx.dev/package/@auv-js/sdk)
 
 <p align="center">
   <a href="./README.md">English</a> | <b>简体中文</b>
