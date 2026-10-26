@@ -2,7 +2,7 @@
 //!
 //! Provides thread desktop attachment helpers to ensure background tasks,
 //! benchmarks, and capture sessions interact with the interactive desktop,
-//! backed by RAII handle management and thread desktop restoration.
+//! backed by deterministic handle ownership and safe thread desktop restoration.
 
 #[cfg(target_os = "windows")]
 use std::cell::RefCell;
@@ -16,148 +16,181 @@ use windows::Win32::System::StationsAndDesktops::{
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
-#[derive(Debug, thiserror::Error)]
-pub enum DesktopError {
-  #[error("Windows desktop is unavailable or cannot be accessed")]
-  DesktopUnavailable,
+#[cfg(target_os = "windows")]
+pub(crate) trait DesktopApi {
+  fn get_thread_desktop(&self) -> Result<u64, ()>;
+  fn open_input_desktop(&self) -> Result<u64, ()>;
+  fn desktop_name(&self, handle: u64) -> Result<String, ()>;
+  fn set_thread_desktop(&self, handle: u64) -> Result<(), ()>;
+  fn close_desktop(&self, handle: u64) -> Result<(), ()>;
+}
+
+#[cfg(target_os = "windows")]
+struct Win32DesktopApi;
+
+#[cfg(target_os = "windows")]
+impl DesktopApi for Win32DesktopApi {
+  fn get_thread_desktop(&self) -> Result<u64, ()> {
+    unsafe {
+      let hdesk = GetThreadDesktop(GetCurrentThreadId()).map_err(|_| ())?;
+      if hdesk.is_invalid() || hdesk.0.is_null() {
+        Err(())
+      } else {
+        Ok(hdesk.0 as usize as u64)
+      }
+    }
+  }
+
+  fn open_input_desktop(&self) -> Result<u64, ()> {
+    unsafe {
+      let hdesk = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)).map_err(|_| ())?;
+      if hdesk.is_invalid() || hdesk.0.is_null() {
+        Err(())
+      } else {
+        Ok(hdesk.0 as usize as u64)
+      }
+    }
+  }
+
+  fn desktop_name(&self, handle: u64) -> Result<String, ()> {
+    unsafe {
+      let mut units = [0u16; 64];
+      let mut needed = 0u32;
+      GetUserObjectInformationW(
+        HANDLE(handle as usize as *mut _),
+        UOI_NAME,
+        Some(units.as_mut_ptr().cast()),
+        std::mem::size_of_val(&units) as u32,
+        Some(&mut needed),
+      )
+      .map_err(|_| ())?;
+
+      if needed == 0 || needed as usize > std::mem::size_of_val(&units) || needed % 2 != 0 {
+        return Err(());
+      }
+
+      let end = units.iter().position(|unit| *unit == 0).ok_or(())?;
+      String::from_utf16(&units[..end]).map_err(|_| ())
+    }
+  }
+
+  fn set_thread_desktop(&self, handle: u64) -> Result<(), ()> {
+    unsafe { SetThreadDesktop(HDESK(handle as usize as *mut _)).map_err(|_| ()) }
+  }
+
+  fn close_desktop(&self, handle: u64) -> Result<(), ()> {
+    unsafe { CloseDesktop(HDESK(handle as usize as *mut _)).map_err(|_| ()) }
+  }
+}
+
+/// Internal state machine tracking thread desktop attachments and lifecycle.
+#[derive(Debug, Default)]
+pub(crate) struct DesktopState {
+  original: Option<u64>,
+  bound: Option<u64>,
+  restoration_failed: bool,
+}
+
+impl DesktopState {
+  #[cfg(test)]
+  pub(crate) fn new() -> Self {
+    Self::default()
+  }
+
+  #[cfg(test)]
+  pub(crate) fn bound_handle(&self) -> Option<u64> {
+    self.bound
+  }
+
+  #[cfg(test)]
+  pub(crate) fn original_handle(&self) -> Option<u64> {
+    self.original
+  }
+
+  #[cfg(test)]
+  pub(crate) fn is_restoration_failed(&self) -> bool {
+    self.restoration_failed
+  }
+
+  pub(crate) fn attach(&mut self, api: &impl DesktopApi) -> Result<(), ()> {
+    let Ok(opened) = api.open_input_desktop() else {
+      return Err(());
+    };
+
+    let Some(current) = api.get_thread_desktop().ok() else {
+      // Cannot query calling thread's current desktop. Without an identifiable original,
+      // switching would create an un-restorable thread state. Fail closed and close opened handle.
+      let _ = api.close_desktop(opened);
+      return Err(());
+    };
+
+    let same_desktop = match (api.desktop_name(current), api.desktop_name(opened)) {
+      (Ok(cur_name), Ok(input_name)) => cur_name.eq_ignore_ascii_case(&input_name),
+      _ => false,
+    };
+
+    if same_desktop {
+      // Already on the input desktop. `opened` was never bound to the thread,
+      // so close it immediately to prevent handle leaks.
+      let _ = api.close_desktop(opened);
+      return Ok(());
+    }
+
+    // Need to switch the calling thread to the input desktop.
+    if api.set_thread_desktop(opened).is_err() {
+      // Switch failed. Thread desktop was unchanged; close opened handle immediately.
+      let _ = api.close_desktop(opened);
+      return Err(());
+    }
+
+    // Switch succeeded.
+    if let Some(prev) = self.bound.replace(opened) {
+      // Thread was previously assigned to `prev`, but is now on `opened`.
+      // `prev` is no longer in use by the thread and can be safely closed.
+      let _ = api.close_desktop(prev);
+    } else {
+      // First desktop transition on this thread: preserve initial desktop for restoration.
+      self.original = Some(current);
+    }
+
+    Ok(())
+  }
+
+  pub(crate) fn cleanup(&mut self, api: &impl DesktopApi) {
+    if let Some(bound) = self.bound.take() {
+      if let Some(orig) = self.original.take() {
+        if api.set_thread_desktop(orig).is_ok() {
+          // Successfully restored thread to original desktop.
+          // `bound` is no longer assigned to this thread, so CloseDesktop is valid.
+          let _ = api.close_desktop(bound);
+        } else {
+          // SetThreadDesktop(orig) failed (e.g. windows or hooks created on the thread).
+          // Because `bound` is still assigned to the thread, Win32 CloseDesktop would fail with ERROR_BUSY (170).
+          // We MUST NOT call close_desktop; preserve ownership and flag restoration failure.
+          self.restoration_failed = true;
+        }
+      } else {
+        // No original desktop was recorded; thread remains on `bound`.
+        self.restoration_failed = true;
+      }
+    }
+  }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for DesktopState {
+  fn drop(&mut self) {
+    self.cleanup(&Win32DesktopApi);
+  }
 }
 
 #[cfg(target_os = "windows")]
 thread_local! {
-  static THREAD_DESKTOP_HOLDER: RefCell<Option<BoundDesktop>> = const { RefCell::new(None) };
-}
-
-/// An owned, RAII-guarded Windows desktop handle.
-///
-/// Calls `CloseDesktop` when dropped.
-#[derive(Debug)]
-pub struct DesktopHandle(#[cfg(target_os = "windows")] pub HDESK, #[cfg(not(target_os = "windows"))] pub ());
-
-impl DesktopHandle {
-  pub fn is_valid(&self) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-      !self.0.is_invalid() && !self.0.0.is_null()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-      false
-    }
-  }
-}
-
-impl Drop for DesktopHandle {
-  fn drop(&mut self) {
-    #[cfg(target_os = "windows")]
-    if self.is_valid() {
-      // SAFETY: self.0 is an owned HDESK allocated by OpenInputDesktop / OpenDesktop.
-      // Calling CloseDesktop releases the handle from the calling process's handle table.
-      let _ = unsafe { CloseDesktop(self.0) };
-    }
-  }
-}
-
-/// An RAII guard that attaches the calling thread to a desktop for a scoped duration,
-/// and restores the original thread desktop upon drop before closing the opened desktop handle.
-#[derive(Debug)]
-pub struct BoundDesktop {
-  #[cfg(target_os = "windows")]
-  original: HDESK,
-  #[cfg(target_os = "windows")]
-  opened: DesktopHandle,
-}
-
-impl BoundDesktop {
-  /// Binds the current thread to the input desktop with the specified access rights.
-  /// If the current thread is already on the input desktop, returns a guard that
-  /// preserves the current desktop and closes the newly opened handle cleanly upon drop.
-  #[cfg(target_os = "windows")]
-  pub fn bind_input(access: DESKTOP_ACCESS_FLAGS) -> Result<Self, DesktopError> {
-    unsafe {
-      let original = GetThreadDesktop(GetCurrentThreadId()).map_err(|_| DesktopError::DesktopUnavailable)?;
-
-      let opened = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, access).map_err(|_| DesktopError::DesktopUnavailable)?;
-      let opened = DesktopHandle(opened);
-
-      let original_name = desktop_name(original).ok();
-      let input_name = desktop_name(opened.0).ok();
-      let same_desktop = match (original_name.as_deref(), input_name.as_deref()) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        _ => false,
-      };
-      if same_desktop {
-        // Already on the input desktop: preserve current binding and close opened handle on drop.
-        return Ok(Self {
-          original: HDESK::default(),
-          opened,
-        });
-      }
-
-      SetThreadDesktop(opened.0).map_err(|_| DesktopError::DesktopUnavailable)?;
-
-      Ok(Self { original, opened })
-    }
-  }
-
-  /// Returns the desktop handle of the opened desktop.
-  #[cfg(target_os = "windows")]
-  pub fn desktop(&self) -> HDESK {
-    self.opened.0
-  }
-}
-
-impl Drop for BoundDesktop {
-  fn drop(&mut self) {
-    #[cfg(target_os = "windows")]
-    if !self.original.is_invalid() && !self.original.0.is_null() {
-      // SAFETY: Restoring the original thread desktop before dropping `self.opened`
-      // ensures that `opened` is no longer assigned to this thread, allowing
-      // `CloseDesktop` in `DesktopHandle::drop` to succeed.
-      let _ = unsafe { SetThreadDesktop(self.original) };
-    }
-  }
-}
-
-/// Retrieves the name of a desktop from its handle.
-#[cfg(target_os = "windows")]
-pub fn desktop_name(desktop: HDESK) -> Result<String, DesktopError> {
-  unsafe {
-    let mut units = [0u16; 64];
-    let mut needed = 0u32;
-    GetUserObjectInformationW(
-      HANDLE(desktop.0),
-      UOI_NAME,
-      Some(units.as_mut_ptr().cast()),
-      std::mem::size_of_val(&units) as u32,
-      Some(&mut needed),
-    )
-    .map_err(|_| DesktopError::DesktopUnavailable)?;
-
-    if needed == 0 || needed as usize > std::mem::size_of_val(&units) || needed % 2 != 0 {
-      return Err(DesktopError::DesktopUnavailable);
-    }
-
-    let end = units.iter().position(|unit| *unit == 0).ok_or(DesktopError::DesktopUnavailable)?;
-    String::from_utf16(&units[..end]).map_err(|_| DesktopError::DesktopUnavailable)
-  }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn desktop_name(_desktop: ()) -> Result<String, DesktopError> {
-  Err(DesktopError::DesktopUnavailable)
-}
-
-/// Executes a closure within the scope of the input desktop, restoring the thread's
-/// prior desktop upon completion or error.
-#[cfg(target_os = "windows")]
-pub fn with_input_desktop<R>(action: impl FnOnce() -> R) -> Result<R, DesktopError> {
-  let _guard = BoundDesktop::bind_input(DESKTOP_ACCESS_FLAGS(0x000F_01FF))?;
-  Ok(action())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn with_input_desktop<R>(action: impl FnOnce() -> R) -> Result<R, DesktopError> {
-  Ok(action())
+  static THREAD_DESKTOP_STATE: RefCell<DesktopState> = const { RefCell::new(DesktopState {
+    original: None,
+    bound: None,
+    restoration_failed: false,
+  }) };
 }
 
 /// Ensures the current thread is attached to the input desktop without leaking handles.
@@ -167,41 +200,10 @@ pub fn with_input_desktop<R>(action: impl FnOnce() -> R) -> Result<R, DesktopErr
 /// thread-local storage and closed when the thread completes or transitions again.
 #[cfg(target_os = "windows")]
 pub fn ensure_input_desktop() {
-  unsafe {
-    let current = GetThreadDesktop(GetCurrentThreadId());
-    let Ok(opened) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) else {
-      return;
-    };
-    let opened = DesktopHandle(opened);
-
-    if let Ok(current) = current {
-      let cur_name = desktop_name(current).ok();
-      let input_name = desktop_name(opened.0).ok();
-      let same_desktop = match (cur_name.as_deref(), input_name.as_deref()) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        _ => false,
-      };
-      if same_desktop {
-        // Already on the input desktop. `opened` is dropped here, closing the handle cleanly.
-        return;
-      }
-    }
-
-    THREAD_DESKTOP_HOLDER.with(|holder| {
-      let mut slot = holder.borrow_mut();
-      if SetThreadDesktop(opened.0).is_ok() {
-        if let Some(bound) = slot.as_mut() {
-          // Thread transitioned across desktops again: reassign `opened` while preserving
-          // the thread's true initial `original` desktop. Replacing `bound.opened` drops
-          // and closes the previous handle now that the thread is attached to the new one.
-          bound.opened = opened;
-        } else {
-          let original = current.unwrap_or_default();
-          *slot = Some(BoundDesktop { original, opened });
-        }
-      }
-    });
-  }
+  THREAD_DESKTOP_STATE.with(|state| {
+    let mut state = state.borrow_mut();
+    let _ = state.attach(&Win32DesktopApi);
+  });
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -210,87 +212,228 @@ pub fn ensure_input_desktop() {}
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::cell::RefCell;
+  use std::collections::{HashMap, HashSet};
 
-  #[test]
-  fn desktop_handle_invalid_does_not_panic_on_drop() {
-    #[cfg(target_os = "windows")]
-    let handle = DesktopHandle(HDESK::default());
-    #[cfg(not(target_os = "windows"))]
-    let handle = DesktopHandle(());
-    assert!(!handle.is_valid());
-    drop(handle);
+  struct MockDesktopApi {
+    current_desktop: RefCell<Option<u64>>,
+    next_input_handle: RefCell<u64>,
+    input_desktop_name: RefCell<String>,
+    desktop_names: RefCell<HashMap<u64, String>>,
+    open_should_fail: bool,
+    get_current_should_fail: bool,
+    set_desktop_should_fail_for: RefCell<HashSet<u64>>,
+    closed_handles: RefCell<Vec<u64>>,
+    set_desktop_calls: RefCell<Vec<u64>>,
   }
 
-  #[cfg(target_os = "windows")]
-  #[test]
-  fn ensure_input_desktop_multiple_calls_do_not_panic() {
-    // Calling ensure_input_desktop repeatedly must succeed without leaking or crashing.
-    for _ in 0..50 {
-      ensure_input_desktop();
-    }
-  }
-
-  #[cfg(target_os = "windows")]
-  #[test]
-  fn with_input_desktop_runs_action_and_returns_value() {
-    let res = with_input_desktop(|| 42);
-    if let Ok(value) = res {
-      assert_eq!(value, 42);
-    }
-  }
-
-  #[cfg(target_os = "windows")]
-  #[test]
-  fn bound_desktop_preserves_thread_desktop_after_drop() {
-    unsafe {
-      let before = GetThreadDesktop(GetCurrentThreadId());
-      if let Ok(before) = before {
-        let name_before = desktop_name(before).ok();
-        {
-          let guard = BoundDesktop::bind_input(DESKTOP_ACCESS_FLAGS(0x000F_01FF));
-          if let Ok(guard) = guard {
-            let active = GetThreadDesktop(GetCurrentThreadId());
-            if let Ok(active) = active {
-              let name_active = desktop_name(active).ok();
-              assert!(name_active.is_some());
-            }
-            drop(guard);
-          }
-        }
-        let after = GetThreadDesktop(GetCurrentThreadId());
-        if let Ok(after) = after {
-          let name_after = desktop_name(after).ok();
-          assert_eq!(name_before, name_after);
-        }
+  impl MockDesktopApi {
+    fn new(current: Option<u64>, current_name: &str, input_name: &str) -> Self {
+      let mut names = HashMap::new();
+      if let Some(cur) = current {
+        names.insert(cur, current_name.to_string());
+      }
+      Self {
+        current_desktop: RefCell::new(current),
+        next_input_handle: RefCell::new(200),
+        input_desktop_name: RefCell::new(input_name.to_string()),
+        desktop_names: RefCell::new(names),
+        open_should_fail: false,
+        get_current_should_fail: false,
+        set_desktop_should_fail_for: RefCell::new(HashSet::new()),
+        closed_handles: RefCell::new(Vec::new()),
+        set_desktop_calls: RefCell::new(Vec::new()),
       }
     }
   }
 
-  #[cfg(target_os = "windows")]
-  #[test]
-  fn bound_desktop_transition_preserves_initial_original_desktop() {
-    // Verify that consecutive desktop reassignments in BoundDesktop maintain
-    // the initial original desktop without leaking or using dangling handles.
-    let original = HDESK(0x1234 as _);
-    let mut bound = BoundDesktop {
-      original,
-      opened: DesktopHandle(HDESK::default()),
-    };
-    assert_eq!(bound.original, original);
+  impl DesktopApi for MockDesktopApi {
+    fn get_thread_desktop(&self) -> Result<u64, ()> {
+      if self.get_current_should_fail {
+        Err(())
+      } else {
+        self.current_desktop.borrow().ok_or(())
+      }
+    }
 
-    // Reassign opened handle simulating transition
-    bound.opened = DesktopHandle(HDESK::default());
-    assert_eq!(bound.original, original);
+    fn open_input_desktop(&self) -> Result<u64, ()> {
+      if self.open_should_fail {
+        Err(())
+      } else {
+        let handle = *self.next_input_handle.borrow();
+        *self.next_input_handle.borrow_mut() += 1;
+        self.desktop_names.borrow_mut().insert(handle, self.input_desktop_name.borrow().clone());
+        Ok(handle)
+      }
+    }
+
+    fn desktop_name(&self, handle: u64) -> Result<String, ()> {
+      self.desktop_names.borrow().get(&handle).cloned().ok_or(())
+    }
+
+    fn set_thread_desktop(&self, handle: u64) -> Result<(), ()> {
+      self.set_desktop_calls.borrow_mut().push(handle);
+      if self.set_desktop_should_fail_for.borrow().contains(&handle) {
+        Err(())
+      } else {
+        *self.current_desktop.borrow_mut() = Some(handle);
+        Ok(())
+      }
+    }
+
+    fn close_desktop(&self, handle: u64) -> Result<(), ()> {
+      // Assert Win32 invariant: CloseDesktop must never be called on a handle currently assigned to calling thread!
+      if *self.current_desktop.borrow() == Some(handle) {
+        panic!("Win32 ERROR_BUSY violation: Attempted CloseDesktop on handle {handle} currently assigned to calling thread");
+      }
+      self.closed_handles.borrow_mut().push(handle);
+      Ok(())
+    }
   }
 
   #[test]
-  fn desktop_name_case_insensitivity_contract() {
-    let a = "Default";
-    let b = "default";
-    assert!(a.eq_ignore_ascii_case(b));
-    let c = "Winlogon";
-    let d = "winlogon";
-    assert!(c.eq_ignore_ascii_case(d));
-    assert!(!a.eq_ignore_ascii_case(c));
+  fn test_already_on_input_desktop_closes_opened_immediately_without_switch() {
+    let mock = MockDesktopApi::new(Some(100), "Default", "Default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+
+    // Never called SetThreadDesktop
+    assert!(mock.set_desktop_calls.borrow().is_empty());
+    // Immediately closed opened probe handle
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    // State remains unattached
+    assert_eq!(state.bound_handle(), None);
+    assert_eq!(state.original_handle(), None);
+
+    // Cleanup is a no-op
+    state.cleanup(&mock);
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    assert!(mock.set_desktop_calls.borrow().is_empty());
+  }
+
+  #[test]
+  fn test_different_desktop_switches_and_restores_on_cleanup() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+
+    // Switched thread to opened handle 200
+    assert_eq!(mock.set_desktop_calls.borrow().as_slice(), &[200]);
+    // Handle 200 is NOT closed while active on thread
+    assert!(mock.closed_handles.borrow().is_empty());
+    assert_eq!(state.bound_handle(), Some(200));
+    assert_eq!(state.original_handle(), Some(100));
+
+    // Cleanup restores to original 100 and closes 200
+    state.cleanup(&mock);
+    assert_eq!(mock.set_desktop_calls.borrow().as_slice(), &[200, 100]);
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    assert!(!state.is_restoration_failed());
+  }
+
+  #[test]
+  fn test_restoration_failure_does_not_close_in_use_handle() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+
+    // Simulate windows or hooks created on thread: restoring to 100 fails
+    mock.set_desktop_should_fail_for.borrow_mut().insert(100);
+
+    state.cleanup(&mock);
+
+    // Restoration failed flagged
+    assert!(state.is_restoration_failed());
+    // Handle 200 was NOT closed, preventing Win32 ERROR_BUSY
+    assert!(mock.closed_handles.borrow().is_empty());
+  }
+
+  #[test]
+  fn test_initial_set_thread_desktop_failure_closes_opened_handle() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    mock.set_desktop_should_fail_for.borrow_mut().insert(200);
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_err());
+
+    // Opened handle was closed immediately upon switch failure
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    assert_eq!(state.bound_handle(), None);
+    assert_eq!(state.original_handle(), None);
+  }
+
+  #[test]
+  fn test_get_thread_desktop_failure_closes_opened_and_aborts() {
+    let mut mock = MockDesktopApi::new(None, "", "Default");
+    mock.get_current_should_fail = true;
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_err());
+
+    // Probe handle closed immediately
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    assert!(mock.set_desktop_calls.borrow().is_empty());
+    assert_eq!(state.bound_handle(), None);
+  }
+
+  #[test]
+  fn test_open_input_desktop_failure_fails_closed() {
+    let mut mock = MockDesktopApi::new(Some(100), "Default", "Default");
+    mock.open_should_fail = true;
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_err());
+    assert!(mock.closed_handles.borrow().is_empty());
+    assert!(mock.set_desktop_calls.borrow().is_empty());
+    assert_eq!(state.bound_handle(), None);
+  }
+
+  #[test]
+  fn test_successive_transitions_preserve_initial_original_and_close_intermediate() {
+    let mock = MockDesktopApi::new(Some(100), "Winlogon", "Default");
+    let mut state = DesktopState::new();
+
+    // First switch: Winlogon -> Default (handle 200)
+    assert!(state.attach(&mock).is_ok());
+    assert_eq!(state.original_handle(), Some(100));
+    assert_eq!(state.bound_handle(), Some(200));
+
+    // Input desktop transitions to Screensaver (handle 201)
+    *mock.input_desktop_name.borrow_mut() = "Screensaver".to_string();
+    assert!(state.attach(&mock).is_ok());
+
+    // Previous handle 200 was closed once thread moved to 201
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+    // Initial original handle 100 remains preserved
+    assert_eq!(state.original_handle(), Some(100));
+    assert_eq!(state.bound_handle(), Some(201));
+
+    // Cleanup restores back to initial 100 and closes 201
+    state.cleanup(&mock);
+    assert_eq!(mock.set_desktop_calls.borrow().as_slice(), &[200, 201, 100]);
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200, 201]);
+    assert!(!state.is_restoration_failed());
+  }
+
+  #[test]
+  fn test_case_insensitive_desktop_name_matching() {
+    let mock = MockDesktopApi::new(Some(100), "DEFAULT", "default");
+    let mut state = DesktopState::new();
+
+    assert!(state.attach(&mock).is_ok());
+
+    // Treated as same desktop: no switch, opened handle closed
+    assert!(mock.set_desktop_calls.borrow().is_empty());
+    assert_eq!(mock.closed_handles.borrow().as_slice(), &[200]);
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  #[ignore = "touches real host desktop"]
+  fn real_win32_ensure_input_desktop_smoke() {
+    ensure_input_desktop();
   }
 }
