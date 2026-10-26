@@ -81,3 +81,57 @@ fn route_interceptor_carries_the_callers_trace_context() {
   assert_eq!(request.metadata().get("auv-trace-run-id").unwrap(), run_id.to_string().as_str());
   assert_eq!(request.metadata().get("auv-trace-version").unwrap(), "1");
 }
+
+#[tokio::test]
+async fn connect_paired_rejects_malformed_credentials_without_panic() {
+  for malformed in [
+    "",
+    "   ",
+    "bearer token with spaces",
+    "token\nnewline",
+    "token\rreturn",
+    "token\0null",
+    "token\tspace",
+    "token-\u{1f600}-emoji",
+    "token-\u{4e2d}\u{6587}-chinese",
+  ] {
+    let result = super::Client::connect_paired(super::PairedConnectConfig {
+      endpoint: "http://127.0.0.1:9847".parse().unwrap(),
+      device_credential: malformed.to_string(),
+    })
+    .await;
+    match result {
+      Err(super::PairedConnectError::InvalidCredential) => {}
+      other => panic!("expected InvalidCredential for {malformed:?}, got {other:?}"),
+    }
+  }
+}
+
+#[tokio::test]
+async fn connect_with_credential_rejects_malformed_credentials() {
+  for malformed in [
+    "",
+    "   ",
+    "bearer token with spaces",
+    "token\nnewline",
+    "token\rreturn",
+    "token\0null",
+    "token\tspace",
+    "token-\u{1f600}-emoji",
+  ] {
+    let result = super::Client::connect_with_credential("http://127.0.0.1:9847".parse().unwrap(), malformed).await;
+    match result {
+      Err(super::CredentialConnectError::InvalidCredential) => {}
+      other => panic!("expected InvalidCredential for {malformed:?}, got {other:?}"),
+    }
+  }
+}
+
+#[test]
+fn paired_connect_error_display_and_debug_do_not_leak_credential() {
+  let err = super::PairedConnectError::InvalidCredential;
+  let display = format!("{err}");
+  let debug = format!("{err:?}");
+  assert_eq!(display, "credential must be visible ASCII");
+  assert!(!debug.contains("secret"));
+}

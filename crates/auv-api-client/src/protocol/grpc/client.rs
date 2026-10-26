@@ -126,6 +126,8 @@ impl fmt::Debug for PairedConnectConfig {
 pub enum PairedConnectError {
   #[error(transparent)]
   Transport(#[from] tonic::transport::Error),
+  #[error("credential must be visible ASCII")]
+  InvalidCredential,
 }
 
 /// Failure while connecting with a caller-supplied credential.
@@ -311,6 +313,9 @@ impl Client {
   /// Connects and presents `credential` as `authorization: Bearer` on every
   /// request: a launcher token on local IPC, or a paired Device bearer.
   pub async fn connect_with_credential(endpoint: ConnectEndpoint, credential: &str) -> Result<Self, CredentialConnectError> {
+    if credential.is_empty() || !credential.bytes().all(|byte| byte.is_ascii_graphic()) {
+      return Err(CredentialConnectError::InvalidCredential);
+    }
     let mut authorization =
       format!("Bearer {credential}").parse::<MetadataValue<Ascii>>().map_err(|_| CredentialConnectError::InvalidCredential)?;
     authorization.set_sensitive(true);
@@ -319,9 +324,11 @@ impl Client {
 
   /// Connects to a paired daemon and adds its opaque bearer to every gRPC request.
   pub async fn connect_paired(config: PairedConnectConfig) -> Result<Self, PairedConnectError> {
-    let mut authorization = format!("Bearer {}", config.device_credential)
-      .parse::<MetadataValue<Ascii>>()
-      .expect("opaque pairing credentials are generated from ASCII-safe encoding");
+    if config.device_credential.is_empty() || !config.device_credential.bytes().all(|byte| byte.is_ascii_graphic()) {
+      return Err(PairedConnectError::InvalidCredential);
+    }
+    let mut authorization =
+      format!("Bearer {}", config.device_credential).parse::<MetadataValue<Ascii>>().map_err(|_| PairedConnectError::InvalidCredential)?;
     authorization.set_sensitive(true);
     let channel = Endpoint::from_shared(config.endpoint.to_string())?.connect().await?;
     Ok(Self::from_channel_with_authorization(channel, Some(authorization)))

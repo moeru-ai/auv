@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use auv_auto_loop::runtime::FakeOperationExecutor;
 use rmcp::{
-  ClientHandler, ServiceExt,
+  ClientHandler, ServerHandler, ServiceExt,
   model::{CallToolRequestParam, ClientInfo, ErrorCode},
 };
 
@@ -13,6 +13,15 @@ use crate::commands::op::ExecutionModeArg;
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
+}
+
+#[test]
+fn mcp_handshake_names_the_auv_build_rather_than_the_transport_crate() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let info = server.get_info();
+
+  assert_eq!(info.server_info.name, "auv");
+  assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
 }
 
 #[test]
@@ -678,4 +687,134 @@ async fn invoke_description_lists_inputs_and_example_calls() {
   let schema = serde_json::to_value(&invoke.input_schema).unwrap();
   let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "screen.waitForText").unwrap();
   assert_eq!(wait["examples"][0]["call"], serde_json::json!({ "command_id": "screen.waitForText", "inputs": { "query": "Ready" } }));
+}
+
+#[test]
+fn invoke_tool_request_deserialization_handles_dry_run_and_rejects_unknown_fields() {
+  use super::InvokeToolRequest;
+
+  // 1. dry_run: true correctly decodes
+  let req: InvokeToolRequest = serde_json::from_value(serde_json::json!({
+    "command_id": "test.cmd",
+    "dry_run": true,
+  })).expect("dry_run: true should decode");
+  assert_eq!(req.command_id, "test.cmd");
+  assert!(req.dry_run);
+
+  // 2. dry_run: false correctly decodes
+  let req: InvokeToolRequest = serde_json::from_value(serde_json::json!({
+    "command_id": "test.cmd",
+    "dry_run": false,
+  })).expect("dry_run: false should decode");
+  assert!(!req.dry_run);
+
+  // 3. Omitting dry_run preserves existing default semantics (false)
+  let req: InvokeToolRequest = serde_json::from_value(serde_json::json!({
+    "command_id": "test.cmd",
+  })).expect("omitting dry_run should decode");
+  assert!(!req.dry_run);
+
+  // 4. inputs with arbitrary command-level keys is accepted
+  let req: InvokeToolRequest = serde_json::from_value(serde_json::json!({
+    "command_id": "input.typeText",
+    "inputs": { "text": "hello", "custom_key": "custom_val" },
+    "dry_run": true,
+  })).expect("inputs map should allow arbitrary command keys");
+  assert_eq!(req.inputs.get("text").map(String::as_str), Some("hello"));
+  assert_eq!(req.inputs.get("custom_key").map(String::as_str), Some("custom_val"));
+
+  // 5. camelCase dryRun is rejected as an unknown field
+  let err = serde_json::from_value::<InvokeToolRequest>(serde_json::json!({
+    "command_id": "test.cmd",
+    "dryRun": true,
+  })).expect_err("dryRun should be rejected");
+  assert!(err.to_string().contains("unknown field `dryRun`"), "error was: {err}");
+
+  // 6. camelCase storeRoot is rejected
+  let err = serde_json::from_value::<InvokeToolRequest>(serde_json::json!({
+    "command_id": "test.cmd",
+    "storeRoot": "/tmp",
+  })).expect_err("storeRoot should be rejected");
+  assert!(err.to_string().contains("unknown field `storeRoot`"), "error was: {err}");
+
+  // 7. Other unknown top-level fields are rejected
+  let err = serde_json::from_value::<InvokeToolRequest>(serde_json::json!({
+    "command_id": "test.cmd",
+    "unexpected_field": true,
+  })).expect_err("unexpected_field should be rejected");
+  assert!(err.to_string().contains("unknown field `unexpected_field`"), "error was: {err}");
+}
+
+#[test]
+fn invoke_tool_schema_rejects_additional_properties_matching_serde_contract() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let tools = server.tool_router.list_all();
+  let invoke = tools.iter().find(|tool| tool.name == "invoke").expect("invoke tool must be registered");
+  let schema = serde_json::to_value(&invoke.input_schema).unwrap();
+
+  assert_eq!(schema["additionalProperties"], false, "invoke input schema must deny additionalProperties to match Serde contract: {schema}");
+}
+
+#[tokio::test]
+async fn invoke_over_mcp_rejects_unknown_top_level_arguments_before_dispatch() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+  let (server_transport, client_transport) = tokio::io::duplex(65_536);
+  let server_handle = tokio::spawn(async move {
+    let service = server.serve(server_transport).await?;
+    service.waiting().await?;
+    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+
+  let bad_arguments = [
+    serde_json::json!({ "command_id": "display.list", "dryRun": true }),
+    serde_json::json!({ "command_id": "display.list", "storeRoot": "/custom/path" }),
+    serde_json::json!({ "command_id": "display.list", "unexpected": true }),
+    serde_json::json!({ "command_id": "display.list", "dry_run": true, "extra": "forbidden" }),
+  ];
+
+  for arguments in bad_arguments {
+    let outcome = client
+      .call_tool(CallToolRequestParam {
+        name: "invoke".into(),
+        arguments: arguments.as_object().cloned(),
+      })
+      .await;
+
+    match outcome {
+      Err(rmcp::service::ServiceError::McpError(error)) => {
+        assert_eq!(
+          error.code,
+          ErrorCode::INVALID_PARAMS,
+          "{arguments} must fail closed with INVALID_PARAMS, got: {error:?}"
+        );
+      }
+      other => panic!("{arguments} must fail closed with McpError(INVALID_PARAMS), got: {other:?}"),
+    }
+  }
+
+  assert_eq!(
+    local_calls.load(std::sync::atomic::Ordering::SeqCst),
+    0,
+    "rejected invoke requests with unknown fields must never reach the executor/adapter"
+  );
+
+  // Legitimate invoke with dry_run: true must succeed and dispatch
+  let accepted = client
+    .call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: serde_json::json!({ "command_id": "display.list", "dry_run": true }).as_object().cloned(),
+    })
+    .await
+    .expect("valid invoke with dry_run: true should be accepted");
+
+  assert_ne!(accepted.is_error, Some(true), "valid invoke must not report an error: {accepted:?}");
+  assert_eq!(
+    local_calls.load(std::sync::atomic::Ordering::SeqCst),
+    1,
+    "valid invoke must dispatch to the adapter exactly once"
+  );
+
+  client.cancel().await.unwrap();
+  server_handle.await.unwrap().unwrap();
 }

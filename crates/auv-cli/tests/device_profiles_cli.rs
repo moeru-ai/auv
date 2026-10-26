@@ -93,3 +93,69 @@ fn damaged_profile_store_is_not_rewritten_by_cli() {
   assert!(!output.status.success());
   assert_eq!(fs::read(&config).unwrap(), b"damaged");
 }
+
+#[test]
+fn malformed_device_credential_is_rejected_by_cli() {
+  const DEVICE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  let directory = tempfile::tempdir().unwrap();
+  let config = directory.path().join("profiles.json");
+  let output = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "devices",
+      "profiles",
+      "create",
+      "studio",
+      "--device-id",
+      DEVICE_ID,
+      "--device-name",
+      "Studio",
+      "--endpoint",
+      "http://localhost:9847",
+      "--device-credential",
+      "malformed credential with spaces",
+    ])
+    .env("AUV_CONFIG_PROFILES_FILE", &config)
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("profile credential must be visible ASCII"));
+  assert!(!stderr.contains("malformed credential with spaces"));
+  assert!(!config.exists());
+}
+
+#[test]
+fn mixed_profiles_with_malformed_credential_allows_cli_devices_list() {
+  let directory = tempfile::tempdir().unwrap();
+  let config = directory.path().join("profiles.json");
+  let discovery = directory.path().join("missing-discovery.json");
+  fs::write(
+    &config,
+    br#"{"profiles":{
+      "valid":{"device_id":"1111111111111111111111111111111111111111111111111111111111111111","device_name":"ValidStudio","endpoint":"http://localhost:9847","device_credential":"valid_secret_token"},
+      "corrupted":{"device_id":"2222222222222222222222222222222222222222222222222222222222222222","device_name":"CorruptedStudio","endpoint":"http://localhost:9848","device_credential":"invalid credential with spaces"}
+    }}"#,
+  )
+  .unwrap();
+
+  let output = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["devices", "list", "--json"])
+    .env("AUV_CONFIG_PROFILES_FILE", &config)
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .env_remove("AUV_ENDPOINT")
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+  let devices: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  assert_eq!(devices.as_array().unwrap().len(), 2);
+
+  // Individual profile metadata retrieval succeeds for valid profile.
+  let got_valid = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["devices", "profiles", "get", "valid", "--json"])
+    .env("AUV_CONFIG_PROFILES_FILE", &config)
+    .output()
+    .unwrap();
+  assert!(got_valid.status.success());
+  let valid_json: serde_json::Value = serde_json::from_slice(&got_valid.stdout).unwrap();
+  assert_eq!(valid_json["name"], "ValidStudio");
+}

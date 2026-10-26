@@ -24,6 +24,7 @@ pub const WGC_BACKEND: &str = "wgc.windows";
 pub struct WindowHealth {
   pub width: u32,
   pub height: u32,
+  /// Percentage of sampled non-black pixels in `0.0..=100.0`.
   pub non_black_ratio: f64,
   pub is_fresh: bool,
   pub alive: bool,
