@@ -144,7 +144,9 @@ pub(crate) async fn resolve_invoke_context(parent: &RootSelection) -> Result<Res
   resolve_selected_context(parent, None, true, AuvContext::default()).await.map_err(|error| match error {
     auv::selection::SelectedClientError::Placement(error) => error.into(),
     auv::selection::SelectedClientError::Context(error) => auv::client::PlacementError::Context(error).into(),
-    // SelectionError has no approved invoke failure-code policy yet.
+    // TODO(runner-placement-failure-codes): keep SelectionError as
+    // command_failed until the owner approves its failure-code policy,
+    // alongside the deferred PlacementError cases in InvokeFailure::from.
     auv::selection::SelectedClientError::Selection(error) => error.to_string().into(),
   })
 }

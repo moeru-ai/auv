@@ -437,7 +437,7 @@ mod frontend {
       let selected = if wants_device {
         match crate::commands::plugin::resolve_invoke_context(&selection).await {
           Ok(selected) => Some(selected),
-          Err(error) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(error.into()), None, &authority),
+          Err(failure) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(failure), None, &authority),
         }
       } else {
         None
