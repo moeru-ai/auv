@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::AuvContext;
+use crate::resource::DeviceId;
 
 const CONFIG_PROFILES_ENV: &str = "AUV_CONFIG_PROFILES_FILE";
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -37,15 +38,13 @@ impl ProfileStore {
   }
 
   pub fn list_devices(&self) -> Result<Vec<ConfiguredDevice>, ProfileError> {
-    let configs: ConfigDocument = read_json(&self.config_path, "config profile store")?;
-    validate_unique_device_ids(&configs.profiles)?;
+    let mut configs: ConfigDocument = read_json(&self.config_path, "config profile store")?;
+    normalize_device_ids(&mut configs.profiles)?;
     configs
       .profiles
       .into_iter()
       .map(|(config_profile, profile)| {
         validate_required("config_profile", &config_profile)?;
-        validate_required("device_id", &profile.device_id)?;
-        profile.device_id.parse::<crate::resource::DeviceId>()?;
         let endpoint = validate_remote_endpoint(&profile.endpoint)?;
         Ok(ConfiguredDevice {
           config_profile,
@@ -73,7 +72,7 @@ impl ProfileStore {
     }
     validate_profile_input(name, &input)?;
     configs.profiles.insert(name.to_string(), input.into());
-    validate_unique_device_ids(&configs.profiles)?;
+    normalize_device_ids(&mut configs.profiles)?;
     write_document(&self.config_path, &configs)
   }
 
@@ -85,7 +84,7 @@ impl ProfileStore {
     }
     validate_profile_input(name, &input)?;
     configs.profiles.insert(name.to_string(), input.into());
-    validate_unique_device_ids(&configs.profiles)?;
+    normalize_device_ids(&mut configs.profiles)?;
     write_document(&self.config_path, &configs)
   }
 
@@ -95,7 +94,7 @@ impl ProfileStore {
     let mut configs = read_document_for_write(&self.config_path)?;
     validate_profile_input(name, &input)?;
     configs.profiles.insert(name.to_string(), input.into());
-    validate_unique_device_ids(&configs.profiles)?;
+    normalize_device_ids(&mut configs.profiles)?;
     write_document(&self.config_path, &configs)
   }
 
@@ -110,10 +109,9 @@ impl ProfileStore {
 
   /// Resolves exactly one paired remote Device and its opaque bearer.
   pub fn resolve(&self, context: &AuvContext) -> Result<ResolvedRemoteProfile, ProfileError> {
-    let configs: ConfigDocument = read_json(&self.config_path, "config profile store")?;
-    validate_unique_device_ids(&configs.profiles)?;
+    let mut configs: ConfigDocument = read_json(&self.config_path, "config profile store")?;
+    normalize_device_ids(&mut configs.profiles)?;
     let (config_name, config) = select_config(&configs.profiles, context)?;
-    config.device_id.parse::<crate::resource::DeviceId>()?;
     validate_context_matches(config_name, config, context)?;
     validate_device_credential(&config.device_credential)?;
     Ok(ResolvedRemoteProfile {
@@ -348,10 +346,15 @@ fn select_config<'a>(
   }
 }
 
-fn validate_unique_device_ids(profiles: &BTreeMap<String, DeviceProfile>) -> Result<(), ProfileError> {
-  let mut owners = BTreeMap::<&str, Vec<&str>>::new();
+// Canonicalize before selection and duplicate reporting so downstream identity
+// comparisons use the same spelling as the daemon's typed Device IDs.
+fn normalize_device_ids(profiles: &mut BTreeMap<String, DeviceProfile>) -> Result<(), ProfileError> {
+  let mut owners = BTreeMap::<DeviceId, Vec<&str>>::new();
   for (name, profile) in profiles {
-    owners.entry(profile.device_id.as_str()).or_default().push(name.as_str());
+    validate_required("device_id", &profile.device_id)?;
+    let device_id = profile.device_id.parse::<DeviceId>()?;
+    profile.device_id = device_id.to_string();
+    owners.entry(device_id).or_default().push(name.as_str());
   }
   if let Some((device_id, profiles)) = owners.into_iter().find(|(_, profiles)| profiles.len() > 1) {
     return Err(ProfileError::DuplicateDeviceId {
@@ -413,7 +416,7 @@ fn validate_required(field: &'static str, value: &str) -> Result<(), ProfileErro
 fn validate_profile_input(name: &str, input: &DeviceProfileInput) -> Result<(), ProfileError> {
   validate_required("config_profile", name)?;
   validate_required("device_id", &input.device_id)?;
-  input.device_id.parse::<crate::resource::DeviceId>()?;
+  input.device_id.parse::<DeviceId>()?;
   validate_device_credential(&input.device_credential)?;
   validate_remote_endpoint(&input.endpoint)?;
   Ok(())

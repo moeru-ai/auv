@@ -49,7 +49,7 @@ fn duplicate_device_names_report_canonical_candidate_ids() {
   let path = directory.path().join("profiles.json");
   std::fs::write(
       &path,
-      br#"{"profiles":{"a":{"device_id":"device_a","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"device_b","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#,
+      br#"{"profiles":{"a":{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#,
     )
     .unwrap();
   let error = ProfileStore::from_path(path)
@@ -58,7 +58,162 @@ fn duplicate_device_names_report_canonical_candidate_ids() {
       ..Default::default()
     })
     .unwrap_err();
-  assert!(matches!(error, ProfileError::AmbiguousDevice(ids) if ids == "device_a, device_b"));
+  assert!(matches!(error, ProfileError::AmbiguousDevice(ids) if ids == format!("{}, {}", "a".repeat(64), "b".repeat(64))));
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// ROOT CAUSE:
+//
+// Selection reported same-name ambiguity before parsing the candidate IDs,
+// so malformed identities appeared in a canonical-candidate error.
+// Validate stored identities before selecting a profile.
+#[test]
+fn malformed_device_ids_are_rejected_before_name_ambiguity() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"a":{"device_id":"device_a","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"device_b","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  let error = store
+    .resolve(&AuvContext {
+      device_name: Some("Studio".into()),
+      ..Default::default()
+    })
+    .unwrap_err();
+  assert!(matches!(
+    error,
+    ProfileError::Identity(crate::resource::IdentityError::InvalidResourceId {
+      kind: "Device",
+      length: 64
+    })
+  ));
+  assert!(matches!(store.list_devices(), Err(ProfileError::Identity(_))));
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// ROOT CAUSE:
+//
+// Duplicate detection compared raw strings although DeviceId parsing folds
+// hexadecimal case. Two spellings of one Device passed the uniqueness gate.
+#[test]
+fn reading_profiles_rejects_case_variants_of_one_device_id() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"a":{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_name":"First","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","device_name":"Second","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  let error = store.list_devices().unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  let error = store
+    .resolve(&AuvContext {
+      config_profile: Some("a".into()),
+      ..Default::default()
+    })
+    .unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// Parsing accepted uppercase IDs but summaries and resolved profiles retained
+// them, breaking exact comparisons with canonical daemon identities.
+#[test]
+fn profile_reads_return_canonical_device_ids_without_rewriting_the_store() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"studio":{"device_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  assert_eq!(store.list_devices().unwrap()[0].device_id(), "a".repeat(64));
+  let resolved = store
+    .resolve(&AuvContext {
+      device_id: Some("AAAA".into()),
+      ..Default::default()
+    })
+    .unwrap();
+  assert_eq!(resolved.device_id(), "a".repeat(64));
+  assert_eq!(resolved.device_credential(), "secret");
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// All profile mutations must reject a duplicate canonical identity before
+// publishing the new document, regardless of the input's hexadecimal case.
+#[test]
+fn profile_writes_reject_case_variant_duplicates_without_changing_the_store() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+  let input = DeviceProfileInput {
+    device_id: "a".repeat(64),
+    device_name: "First".into(),
+    endpoint: "http://localhost:9847".into(),
+    device_credential: "secret".into(),
+  };
+  store.create("a", input.clone()).unwrap();
+  store
+    .create(
+      "b",
+      DeviceProfileInput {
+        device_id: "b".repeat(64),
+        ..input.clone()
+      },
+    )
+    .unwrap();
+  let before = std::fs::read(&path).unwrap();
+  let duplicate = DeviceProfileInput {
+    device_id: "A".repeat(64),
+    ..input
+  };
+
+  let error = store.create("new", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, new"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.update("b", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.upsert("b", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.upsert("new", duplicate).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, new"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// Canonical spelling must reach persistence as well as the read-side outputs.
+#[test]
+fn profile_writes_persist_canonical_device_ids() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+  let input = DeviceProfileInput {
+    device_id: "A".repeat(64),
+    device_name: "Studio".into(),
+    endpoint: "http://localhost:9847".into(),
+    device_credential: "secret".into(),
+  };
+  store.create("studio", input.clone()).unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "a".repeat(64));
+  store
+    .update(
+      "studio",
+      DeviceProfileInput {
+        device_id: "B".repeat(64),
+        ..input.clone()
+      },
+    )
+    .unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "b".repeat(64));
+  store.upsert("studio", input).unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "a".repeat(64));
 }
 
 // https://github.com/moeru-ai/auv/actions/runs/31051684740/job/92460058236
