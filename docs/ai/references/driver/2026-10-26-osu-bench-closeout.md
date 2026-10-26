@@ -1,7 +1,8 @@
 # Windows osu! Bench / Sight-Read Player Line Closeout
 
-**Status line:** The Windows osu! bench / sight-read player line is CLOSED as of 2026-10-26 by the owner's decision. The bench crate `auv-bench-osu` remains in `main` as shipped software; closing the line ends further development, it does not remove the code.
+**Status line:** The Windows osu! bench / sight-read player line is ARCHIVED (temporarily) as of 2026-10-26 by the owner's decision, with priority shifting to P1 tasks. The bench crate `auv-bench-osu` remains in `main` as shipped software; archiving the line ends further development for now, it does not remove the code.
 
+- **Status:** ARCHIVED (temporarily) (priority shifted to P1)
 - **Closeout Date:** 2026-10-26
 - **Component:** `crates/auv-bench-osu`
 - **Shipped PR:** PR #382 (squash-merged into `main` at `46b7523a`)
@@ -69,9 +70,11 @@ The following planned phases were not executed:
 
 ## 4. Known-Unfixed Follow-Ups (Slice 4, Found in Post-Merge Review)
 
+> **Source Note:** Identified during post-merge code review of PR #382 (Slice 4 commits `014fb0e8` / `ca443e9d`, squash-merged into `main` at `46b7523a`).
+
 Post-merge review identified the following unfixed items in the shipped crate:
 
-- **Desktop Handle Leak**: `attach_thread_to_input_desktop()` opens the input desktop on every send and never closes it (one desktop handle leaked per event; errors silently swallowed).
+- **Desktop Handle Leak (`F-RES-1`)**: `attach_thread_to_input_desktop()` opens the input desktop on every send and never closes it (one desktop handle leaked per event; errors silently swallowed).
 - **Coordinate Semantics Change**: Mouse events were switched to `MOUSEEVENTF_VIRTUALDESK`, changing coordinate semantics. Neither change was disclosed in the commit messages.
 - **Dead Code**: `send_mouse_absolute` has no caller in the merged crate.
 - **Trivial Self-Check Gate**: `evaluate_layout_self_check` returns `passed: true` on an empty sample.
@@ -99,4 +102,4 @@ The game-side `AudioOffset` in `%APPDATA%\osu\game.ini` used during the night ru
 
 ## 8. Reopening
 
-No reopening is scheduled. Reopening would start from the stage-1 calibration protocol as recorded in the line's plans; the calibration maps dependency is unchanged.
+No reopening is scheduled while priority remains on P1. If this ARCHIVED (temporarily) line is reopened in the future, work would resume from the stage-1 calibration protocol as recorded in the line's plans; the calibration maps dependency is unchanged.
