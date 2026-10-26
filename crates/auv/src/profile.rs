@@ -46,7 +46,6 @@ impl ProfileStore {
         validate_required("config_profile", &config_profile)?;
         validate_required("device_id", &profile.device_id)?;
         profile.device_id.parse::<crate::resource::DeviceId>()?;
-        validate_device_credential(&profile.device_credential)?;
         let endpoint = validate_remote_endpoint(&profile.endpoint)?;
         Ok(ConfiguredDevice {
           config_profile,

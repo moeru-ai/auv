@@ -223,19 +223,47 @@ fn profile_rejects_malformed_credentials_on_create_update_upsert() {
 }
 
 #[test]
-fn profile_store_rejects_corrupted_credential_on_resolve_and_list() {
+fn mixed_valid_and_malformed_profiles_allow_listing_but_reject_resolving_malformed() {
   let directory = tempfile::tempdir().unwrap();
   let path = directory.path().join("profiles.json");
   std::fs::write(
     &path,
-    br#"{"profiles":{"corrupted":{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"invalid credential with spaces"}}}"#,
+    br#"{"profiles":{
+      "valid":{"device_id":"1111111111111111111111111111111111111111111111111111111111111111","device_name":"ValidStudio","endpoint":"http://localhost:9847","device_credential":"valid_secret_token"},
+      "corrupted":{"device_id":"2222222222222222222222222222222222222222222222222222222222222222","device_name":"CorruptedStudio","endpoint":"http://localhost:9848","device_credential":"invalid credential with spaces"}
+    }}"#,
   )
   .unwrap();
 
   let store = ProfileStore::from_path(&path);
-  let list_err = store.list_devices().unwrap_err();
-  assert!(matches!(list_err, ProfileError::InvalidCredential));
 
+  // Listing devices succeeds even with a malformed credential in one profile,
+  // returning non-secret metadata summaries for all configured devices.
+  let devices = store.list_devices().unwrap();
+  assert_eq!(devices.len(), 2);
+  let valid_device = devices.iter().find(|d| d.config_profile == "valid").unwrap();
+  assert_eq!(valid_device.device_name, "ValidStudio");
+  let corrupted_device = devices.iter().find(|d| d.config_profile == "corrupted").unwrap();
+  assert_eq!(corrupted_device.device_name, "CorruptedStudio");
+
+  // Getting a valid device by name succeeds.
+  let got_valid = store.get_device("valid").unwrap();
+  assert_eq!(got_valid.device_id, "1111111111111111111111111111111111111111111111111111111111111111");
+
+  // Getting the corrupted device metadata also succeeds.
+  let got_corrupted = store.get_device("corrupted").unwrap();
+  assert_eq!(got_corrupted.device_id, "2222222222222222222222222222222222222222222222222222222222222222");
+
+  // Resolving the valid profile succeeds and yields the bearer token.
+  let resolved_valid = store
+    .resolve(&AuvContext {
+      config_profile: Some("valid".to_string()),
+      ..Default::default()
+    })
+    .unwrap();
+  assert_eq!(resolved_valid.device_credential, "valid_secret_token");
+
+  // Resolving the corrupted profile fails closed with typed InvalidCredential and does not dial.
   let resolve_err = store
     .resolve(&AuvContext {
       config_profile: Some("corrupted".to_string()),
