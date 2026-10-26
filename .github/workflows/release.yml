@@ -238,7 +238,6 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            binutils \
             build-essential \
             ca-certificates \
             curl \
@@ -259,7 +258,6 @@ jobs:
             pax-utils \
             pipewire-bin \
             pkg-config \
-            python3 \
             tesseract-ocr-eng
 
       - uses: actions/checkout@v6
@@ -289,23 +287,24 @@ jobs:
           pnpm exec napi build --platform --release --esm --js binding.js --dts binding.d.ts \
             --target '${{ matrix.target }}' -- --locked
           node -e "require('./${{ matrix.binding }}')"
-          ../../../scripts/tests/verify-elf-glibc-baseline 2.36 "${{ matrix.binding }}"
 
       - name: Build release binary
         run: |
           cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
           cargo build --locked --release --package auv-driver-linux --example release_ocr_probe --example release_pipewire_probe --target "${{ matrix.target }}"
+          cargo build --locked --release --package auv-release
 
       - name: Create and verify full Linux archive
         run: |
           version="$(node -p "require('./js/packages/cli/package.json').version")"
-          scripts/package-linux-release \
+          target/release/auv-release verify-glibc-baseline "js/packages/cli/${{ matrix.binding }}"
+          target/release/auv-release package-linux \
             --binary "target/${{ matrix.target }}/release/auv" \
             --archive "${{ matrix.archive }}" \
             --target "${{ matrix.target }}" \
             --version "$version" \
             --project-license LICENSE
-          scripts/tests/verify-linux-release-archive "${{ matrix.archive }}" "${{ matrix.target }}" "$version"
+          target/release/auv-release verify-linux-archive --archive "${{ matrix.archive }}" --target "${{ matrix.target }}" --version "$version"
           cp "target/${{ matrix.target }}/release/examples/release_ocr_probe" release-ocr-probe
           patchelf --set-rpath '$ORIGIN/lib/auv' release-ocr-probe
           cp "target/${{ matrix.target }}/release/examples/release_pipewire_probe" release-pipewire-probe
@@ -319,7 +318,7 @@ jobs:
           cd js/packages/cli
           pnpm exec tsx ./scripts/stage-platform-packages.ts "$GITHUB_WORKSPACE/target/release-artifacts" "${{ matrix.package_dir }}"
           cd "$GITHUB_WORKSPACE"
-          scripts/tests/verify-staged-linux-npm-package "js/packages/cli/npm/${{ matrix.package_dir }}"
+          target/release/auv-release verify-npm-package "js/packages/cli/npm/${{ matrix.package_dir }}"
           package_tarball="$(cd "js/packages/cli/npm/${{ matrix.package_dir }}" && npm pack --pack-destination "$GITHUB_WORKSPACE" --silent)"
           mv "$package_tarball" release-platform-package.tgz
 
@@ -549,10 +548,13 @@ jobs:
           AUV_RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: pnpm artifacts
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Verify staged Linux npm bundles
         run: |
-          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-x64-gnu
-          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-arm64-gnu
+          cargo build --locked --release --package auv-release
+          target/release/auv-release verify-npm-package js/packages/cli/npm/linux-x64-gnu
+          target/release/auv-release verify-npm-package js/packages/cli/npm/linux-arm64-gnu
 
       - name: Verify npm package contents
         working-directory: js/packages/cli

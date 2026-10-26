@@ -33,6 +33,7 @@ name = "release_pipewire_probe"
 path = "examples/release_pipewire_probe.rs"
 
 [dependencies]
+auv-bundle-layout = { version = "0.0.38", path = "../auv-bundle-layout" }
 auv-driver-common = { version = "0.0.38", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }

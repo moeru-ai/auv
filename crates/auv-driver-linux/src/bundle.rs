@@ -17,6 +17,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use auv_bundle_layout as layout;
+
 /// Lists the PipeWire variables this process injected, so child launches can
 /// remove exactly those and keep values the user set.
 pub const INJECTED_ENV: &str = "AUV_BUNDLED_PIPEWIRE_ENV";
@@ -68,12 +70,11 @@ fn injected_variables_from(marker: Option<OsString>) -> Vec<OsString> {
   names
 }
 
-/// Variables libpipewire 0.3 reads, and the bundle directory each one names,
-/// relative to the directory that contains the executable.
+/// Variables libpipewire 0.3 reads, and the bundle directory each one names.
 const PIPEWIRE_VARIABLES: [(&str, &[&str]); 3] = [
-  ("PIPEWIRE_MODULE_DIR", &["lib", "auv", "pipewire-0.3"]),
-  ("SPA_PLUGIN_DIR", &["lib", "auv", "spa-0.2"]),
-  ("PIPEWIRE_CONFIG_DIR", &["share", "auv", "pipewire"]),
+  ("PIPEWIRE_MODULE_DIR", layout::PIPEWIRE_MODULE_DIR),
+  ("SPA_PLUGIN_DIR", layout::SPA_PLUGIN_DIR),
+  ("PIPEWIRE_CONFIG_DIR", layout::PIPEWIRE_CONFIG_DIR),
 ];
 
 fn pipewire_environment(
@@ -84,18 +85,17 @@ fn pipewire_environment(
   let Some(root) = executable.parent() else {
     return Vec::new();
   };
-  let bundle_path = |components: &[&str]| components.iter().fold(root.to_path_buf(), |path, component| path.join(component));
   // A bundle without the native protocol module or the client configuration
   // cannot start a PipeWire context, so it is not treated as a bundle at all.
-  let modules = bundle_path(PIPEWIRE_VARIABLES[0].1);
-  let config = bundle_path(PIPEWIRE_VARIABLES[2].1);
-  if !is_file(&modules.join("libpipewire-module-protocol-native.so")) || !is_file(&config.join("client.conf")) {
+  let modules = layout::path(root, layout::PIPEWIRE_MODULE_DIR);
+  let config = layout::path(root, layout::PIPEWIRE_CONFIG_DIR);
+  if !is_file(&modules.join(layout::PIPEWIRE_NATIVE_PROTOCOL_MODULE)) || !is_file(&config.join(layout::PIPEWIRE_CLIENT_CONF)) {
     return Vec::new();
   }
   PIPEWIRE_VARIABLES
     .iter()
     .filter(|(name, _)| existing(name).is_none_or(|value| value.is_empty()))
-    .map(|(name, components)| (*name, bundle_path(components)))
+    .map(|(name, components)| (*name, layout::path(root, components)))
     .collect()
 }
 
