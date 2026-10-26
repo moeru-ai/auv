@@ -243,6 +243,7 @@ jobs:
             ca-certificates \
             curl \
             git \
+            jq \
             libclang-dev \
             libdbus-1-dev \
             libegl-dev \
@@ -256,10 +257,8 @@ jobs:
             libxkbcommon-dev \
             libxrandr-dev \
             patchelf \
-            pax-utils \
             pipewire-bin \
             pkg-config \
-            python3 \
             tesseract-ocr-eng
 
       - uses: actions/checkout@v6

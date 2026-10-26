@@ -30,7 +30,7 @@ while (($#)); do
   esac
 done
 
-for command in dpkg-query lddtree patchelf python3 sha256sum tar; do
+for command in dpkg-query jq ldd patchelf sha256sum tar; do
   command -v "$command" >/dev/null || { echo "required command not found: $command" >&2; exit 1; }
 done
 for required in "$binary" "$project_license"; do
@@ -38,8 +38,12 @@ for required in "$binary" "$project_license"; do
 done
 test -n "$archive" && test -n "$target" && test -n "$version" || { usage >&2; exit 2; }
 
-package_root="$(mktemp -d)"
-trap 'rm -rf "$package_root"' EXIT
+work_root="$(mktemp -d)"
+trap 'rm -rf "$work_root"' EXIT
+# The archive root is the install directory, so it gets 0755 rather than
+# `mktemp -d`'s 0700.
+package_root="$work_root/package"
+mkdir -m 0755 "$package_root"
 mkdir -p "$package_root/lib/auv" "$package_root/share/auv/tessdata" "$package_root/licenses/auv" "$package_root/licenses/system"
 install -m 0755 "$binary" "$package_root/auv"
 install -m 0644 "$project_license" "$package_root/licenses/auv/LICENSE"
@@ -67,12 +71,32 @@ copy_package_license() {
   install -m 0644 "$copyright" "$package_root/licenses/system/$package.copyright"
 }
 
-library_metadata="$package_root/.library-packages.tsv"
+# Lists the shared-library closure of one ELF file as this host's dynamic
+# loader resolves it, one path per line.
+# NOTICE: this uses glibc's `ldd`, not `lddtree`. Debian 12 ships `lddtree` in
+# `pax-utils` as a Python script, which would bring Python back into the release
+# build. `ldd` runs the loader on the file, so only use it on trusted ELF files,
+# which our own build and Debian's packages are.
+library_closure() {
+  local output line
+  output="$(ldd "$1")" || { echo "ldd failed on $1" >&2; return 1; }
+  while read -r line; do
+    case "$line" in
+      *'=> not found'*) echo "$1 has an unresolved dependency: $line" >&2; return 1 ;;
+      *' => /'*) line="${line#* => }"; printf '%s\n' "${line% (0x*}" ;;
+      # The dynamic loader is listed by path alone.
+      /*) printf '%s\n' "${line% (0x*}" ;;
+    esac
+  done <<< "$output"
+}
+
+library_metadata="$work_root/library-packages.tsv"
 : > "$library_metadata"
 # Copies the shared-library closure of one ELF file into lib/auv.
 bundle_dependencies() {
   local elf="$1"
-  local dependency resolved name destination package
+  local closure dependency resolved name destination package
+  closure="$(library_closure "$elf")"
   while IFS= read -r dependency; do
     test -f "$dependency" || continue
     resolved="$(readlink -f "$dependency")"
@@ -96,7 +120,7 @@ bundle_dependencies() {
     package="$(package_for_file "$resolved" || package_for_file "$dependency")"
     copy_package_license "$package"
     printf '%s\t%s\t%s\n' "lib/auv/$name" "$package" "licenses/system/$package.copyright" >> "$library_metadata"
-  done < <(lddtree -l "$elf")
+  done <<< "$closure"
 }
 bundle_dependencies "$binary"
 
@@ -107,7 +131,7 @@ bundle_dependencies "$binary"
 # the matching client files and let `auv_driver_linux::bundle` point
 # libpipewire at them. The bundle still talks to the host daemon through its
 # socket protocol, as Flatpak runtimes do.
-pipewire_library="$(lddtree -l "$binary" | awk '/\/libpipewire-0\.3\.so\.0$/ { print; exit }')"
+pipewire_library="$(library_closure "$binary" | awk '/\/libpipewire-0\.3\.so\.0$/ { print; exit }')"
 test -n "$pipewire_library" || { echo 'auv does not link libpipewire-0.3.so.0' >&2; exit 1; }
 pipewire_lib_dir="$(dirname "$(readlink -f "$pipewire_library")")"
 client_conf=/usr/share/pipewire/client.conf
@@ -154,49 +178,40 @@ find "$package_root/lib/auv/pipewire-0.3" -type f -exec patchelf --set-rpath '$O
 # shellcheck disable=SC2016
 find "$package_root/lib/auv/spa-0.2" -mindepth 2 -type f -exec patchelf --set-rpath '$ORIGIN/../..' {} +
 
-python3 - "$package_root" "$version" "$target" "$model_package" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-libraries = []
-metadata = root / '.library-packages.tsv'
-for line in metadata.read_text().splitlines():
-    path, package, license_path = line.split('\t')
-    libraries.append({'path': path, 'package': package, 'license': license_path})
-metadata.unlink()
-files = []
-for path in sorted(candidate for candidate in root.rglob('*') if candidate.is_file()):
-    files.append({
-        'path': path.relative_to(root).as_posix(),
-        'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-        'size': path.stat().st_size,
-    })
-
-manifest = {
-    'schemaVersion': 1,
-    'name': 'auv',
-    'version': sys.argv[2],
-    'target': sys.argv[3],
-    'glibcBaseline': '2.36',
-    'layout': {
-        'executable': 'auv',
-        'libraryDirectory': 'lib/auv',
-        'tessdataDirectory': 'share/auv/tessdata',
+file_metadata="$work_root/files.tsv"
+(
+  cd "$package_root"
+  find . -type f -printf '%P\n' | LC_ALL=C sort | while IFS= read -r path; do
+    printf '%s\t%s\t%s\n' "$path" "$(sha256sum "$path" | cut -d ' ' -f 1)" "$(stat -c %s "$path")"
+  done
+) > "$file_metadata"
+jq -n \
+  --arg version "$version" \
+  --arg target "$target" \
+  --arg model_package "$model_package" \
+  --rawfile libraries "$library_metadata" \
+  --rawfile files "$file_metadata" '
+  def rows($tsv): $tsv | split("\n") | map(select(length > 0) | split("\t"));
+  {
+    schemaVersion: 1,
+    name: "auv",
+    version: $version,
+    target: $target,
+    glibcBaseline: "2.36",
+    layout: {
+      executable: "auv",
+      libraryDirectory: "lib/auv",
+      tessdataDirectory: "share/auv/tessdata"
     },
-    'libraries': sorted(libraries, key=lambda library: library['path']),
-    'models': [{
-        'language': 'eng',
-        'path': 'share/auv/tessdata/eng.traineddata',
-        'package': sys.argv[4],
-        'license': f'licenses/system/{sys.argv[4]}.copyright',
+    libraries: (rows($libraries) | map({path: .[0], package: .[1], license: .[2]}) | sort_by(.path)),
+    models: [{
+      language: "eng",
+      path: "share/auv/tessdata/eng.traineddata",
+      package: $model_package,
+      license: "licenses/system/\($model_package).copyright"
     }],
-    'files': files,
-}
-(root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-PY
+    files: (rows($files) | map({path: .[0], sha256: .[1], size: (.[2] | tonumber)}))
+  }' > "$package_root/manifest.json"
 
 # TODO(linux-minimal-artifact): keep the default archive self-contained; add a
 # separate auv-minimal artifact only after its distro dependency contract and

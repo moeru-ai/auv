@@ -17,69 +17,54 @@ test -n "$(find "$root/lib/auv" -type f -print -quit)"
 test -s "$root/licenses/auv/LICENSE"
 test -n "$(find "$root/licenses/system" -type f -name '*.copyright' -print -quit)"
 
-python3 - "$root" "$target" "$version" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
+manifest="$root/manifest.json"
+manifest_errors="$(jq -r --arg target "$target" --arg version "$version" '
+  def expect($name; $actual; $expected):
+    if $actual == $expected then empty else "\($name) is \($actual | tojson), expected \($expected | tojson)" end;
+  expect("schemaVersion"; .schemaVersion; 1),
+  expect("target"; .target; $target),
+  expect("version"; .version; $version),
+  expect("glibcBaseline"; .glibcBaseline; "2.36"),
+  expect("layout"; .layout; {executable: "auv", libraryDirectory: "lib/auv", tessdataDirectory: "share/auv/tessdata"}),
+  expect("models"; .models | map(del(.package, .license)); [{language: "eng", path: "share/auv/tessdata/eng.traineddata"}]),
+  (.libraries[], .models[] | select((.package // "") == "") | "\(.path) has no package")
+' "$manifest")"
+test -z "$manifest_errors" || { printf 'manifest.json: %s\n' "$manifest_errors" >&2; exit 1; }
+while IFS= read -r license; do
+  test -f "$root/$license" || { echo "manifest.json names missing license $license" >&2; exit 1; }
+done < <(jq -r '.libraries[].license, .models[].license' "$manifest")
+# PipeWire modules and SPA plugins live in subdirectories and are listed only
+# in `files`.
+diff -u \
+  <(jq -r '.libraries[].path' "$manifest" | LC_ALL=C sort) \
+  <(find "$root/lib/auv" -maxdepth 1 -type f -printf 'lib/auv/%f\n' | LC_ALL=C sort) \
+  || { echo 'manifest.json libraries do not match lib/auv' >&2; exit 1; }
+diff -u \
+  <(jq -r '.files[] | "\(.path)\t\(.size)"' "$manifest" | LC_ALL=C sort) \
+  <(cd "$root" && find . -type f ! -path ./manifest.json -printf '%P\t%s\n' | LC_ALL=C sort) \
+  || { echo 'manifest.json files do not match the archive' >&2; exit 1; }
+jq -r '.files[] | "\(.sha256)  \(.path)"' "$manifest" | (cd "$root" && sha256sum --check --quiet --strict)
 
-root = pathlib.Path(sys.argv[1])
-manifest = json.loads((root / 'manifest.json').read_text())
-assert manifest['schemaVersion'] == 1
-assert manifest['target'] == sys.argv[2]
-assert manifest['version'] == sys.argv[3]
-assert manifest['glibcBaseline'] == '2.36'
-assert manifest['layout']['executable'] == 'auv'
-assert manifest['layout']['libraryDirectory'] == 'lib/auv'
-assert manifest['layout']['tessdataDirectory'] == 'share/auv/tessdata'
-
-actual_libraries = {
-    path.relative_to(root).as_posix()
-    for path in (root / 'lib' / 'auv').iterdir()
-    if path.is_file()
-}  # PipeWire modules and SPA plugins live in subdirectories and are listed in `files`.
-recorded_libraries = {entry['path'] for entry in manifest['libraries']}
-assert recorded_libraries == actual_libraries, recorded_libraries ^ actual_libraries
-for library in manifest['libraries']:
-    assert library['package']
-    assert (root / library['license']).is_file(), library
-
-assert manifest['models'] == [{
-    'language': 'eng',
-    'path': 'share/auv/tessdata/eng.traineddata',
-    'package': manifest['models'][0]['package'],
-    'license': manifest['models'][0]['license'],
-}]
-assert manifest['models'][0]['package']
-assert (root / manifest['models'][0]['license']).is_file()
-
-recorded = {entry['path']: entry for entry in manifest['files']}
-actual = {
-    path.relative_to(root).as_posix(): path
-    for path in root.rglob('*')
-    if path.is_file() and path.name != 'manifest.json'
+# Checks that one ELF file has the run path its location in the bundle needs.
+expect_rpath() {
+  local elf="$1" expected="$2" actual
+  actual="$(patchelf --print-rpath "$elf")"
+  test "$actual" = "$expected" || { echo "${elf#"$root"/} has run path '$actual', expected '$expected'" >&2; exit 1; }
 }
-assert recorded.keys() == actual.keys(), (recorded.keys() ^ actual.keys())
-for relative, path in actual.items():
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert recorded[relative]['sha256'] == digest, relative
-    assert recorded[relative]['size'] == path.stat().st_size, relative
-PY
-
 # Keep the dynamic-loader token literal; the shell must not expand it.
 # shellcheck disable=SC2016
-test "$(patchelf --print-rpath "$root/auv")" = '$ORIGIN/lib/auv'
+expect_rpath "$root/auv" '$ORIGIN/lib/auv'
 while IFS= read -r -d '' library; do
   # shellcheck disable=SC2016
-  test "$(patchelf --print-rpath "$library")" = '$ORIGIN'
+  expect_rpath "$library" '$ORIGIN'
 done < <(find "$root/lib/auv" -maxdepth 1 -type f -print0)
 while IFS= read -r -d '' module; do
   # shellcheck disable=SC2016
-  test "$(patchelf --print-rpath "$module")" = '$ORIGIN:$ORIGIN/..'
+  expect_rpath "$module" '$ORIGIN:$ORIGIN/..'
 done < <(find "$root/lib/auv/pipewire-0.3" -type f -print0)
 while IFS= read -r -d '' plugin; do
   # shellcheck disable=SC2016
-  test "$(patchelf --print-rpath "$plugin")" = '$ORIGIN/../..'
+  expect_rpath "$plugin" '$ORIGIN/../..'
 done < <(find "$root/lib/auv/spa-0.2" -mindepth 2 -type f -print0)
 # The bundled client configuration must only name modules and plugins the
 # bundle ships; libpipewire cannot start a context otherwise.

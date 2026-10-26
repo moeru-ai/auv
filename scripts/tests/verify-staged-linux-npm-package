@@ -10,26 +10,20 @@ test -s "$package_root/bin/share/auv/tessdata/eng.traineddata"
 test -n "$(find "$package_root/bin/lib/auv" -type f -print -quit)"
 test -n "$(find "$package_root/bin/licenses/system" -type f -name '*.copyright' -print -quit)"
 
-python3 - "$package_root" <<'PY'
-import json
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-package = json.loads((root / 'package.json').read_text())
-assert 'bin' in package['files']
-assert 'bin/auv' not in package['files']
-
-release = json.loads((root / 'bin/manifest.json').read_text())
-assert release['layout']['executable'] == 'auv'
-assert release['layout']['libraryDirectory'] == 'lib/auv'
-assert release['layout']['tessdataDirectory'] == 'share/auv/tessdata'
-PY
+jq -e '(.files | index("bin")) != null and (.files | index("bin/auv")) == null' "$package_root/package.json" >/dev/null \
+  || { echo 'package.json must publish the whole bin directory' >&2; exit 1; }
+jq -e '.layout == {executable: "auv", libraryDirectory: "lib/auv", tessdataDirectory: "share/auv/tessdata"}' \
+  "$package_root/bin/manifest.json" >/dev/null \
+  || { echo 'bin/manifest.json has an unexpected layout' >&2; exit 1; }
 
 pack_root="$(mktemp -d)"
 trap 'rm -rf "$pack_root"' EXIT
 tarball="$(cd "$package_root" && npm pack --pack-destination "$pack_root" --silent)"
-tar -tzf "$pack_root/$tarball" | grep -Fq 'package/bin/auv'
-tar -tzf "$pack_root/$tarball" | grep -Fq 'package/bin/lib/auv/'
-tar -tzf "$pack_root/$tarball" | grep -Fq 'package/bin/share/auv/tessdata/eng.traineddata'
-tar -tzf "$pack_root/$tarball" | grep -Fq 'package/bin/licenses/system/'
+# NOTICE: list the tarball once into a file. Piping `tar -tzf` into `grep -q`
+# under `pipefail` fails with exit 141: `grep -q` exits at the first match and
+# `tar` gets SIGPIPE on the 135 MB package.
+listing="$pack_root/listing"
+tar -tzf "$pack_root/$tarball" > "$listing"
+for entry in package/bin/auv package/bin/lib/auv/ package/bin/share/auv/tessdata/eng.traineddata package/bin/licenses/system/; do
+  grep -Fq "$entry" "$listing" || { echo "npm package is missing $entry" >&2; exit 1; }
+done
