@@ -3,7 +3,7 @@
 //! are not an atomic OS focus lease. No failed or uncertain input action is retried.
 
 use std::os::windows::process::CommandExt;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
 use auv_driver_common::capture::CaptureOptions;
 use auv_driver_common::geometry::RelativeRect;
@@ -44,6 +44,13 @@ fn quiet_verified(tally: &Tally, observe_only: bool, phase_verdict: &Verdict, st
     && (!observe_only || (matches!(phase_verdict, Verdict::Held) && no_global_input))
 }
 
+fn runner_cleanup_verified(receipt: &Value) -> bool {
+  receipt["run_stop_exit"] == 0
+    && receipt["owned_tree_kill_exit"] == 0
+    && receipt["fallback_root_kill"] == false
+    && receipt["daemon_exited"] == true
+}
+
 /// CLI calls are external process/I/O boundaries. A disconnected daemon must not hang the
 /// evaluation or its cleanup indefinitely. Tokio kills the owned CLI child on timeout.
 fn command_output(command: Command, limit: Duration) -> Result<Output> {
@@ -69,7 +76,61 @@ struct Runner {
   evidence: PathBuf,
 }
 
+struct DaemonTermination {
+  exit: ExitStatus,
+  tree_kill_exit: Option<i32>,
+  tree_kill_error: Option<String>,
+  fallback_root_kill: bool,
+}
+
 impl Runner {
+  /// Bounds the external tree kill and process wait. A root-only fallback never proves that
+  /// descendants exited, so the taskkill outcome remains in the receipt.
+  fn terminate(&mut self) -> Result<DaemonTermination> {
+    if let Some(exit) = self.child.try_wait()? {
+      return Ok(DaemonTermination {
+        exit,
+        tree_kill_exit: None,
+        tree_kill_error: None,
+        fallback_root_kill: false,
+      });
+    }
+    let mut command = Command::new("taskkill.exe");
+    command
+      .args(["/PID", &self.child.id().to_string(), "/T", "/F"])
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .creation_flags(0x0800_0000);
+    let killed = command_output(command, Duration::from_secs(3));
+    let tree_kill_exit = killed.as_ref().ok().and_then(|output| output.status.code());
+    let tree_kill_error = killed.as_ref().err().map(ToString::to_string);
+    let mut fallback_root_kill = false;
+    if !killed.as_ref().is_ok_and(|output| output.status.success()) && self.child.try_wait()?.is_none() {
+      self.child.kill().context("terminate the workflow daemon after taskkill failed")?;
+      fallback_root_kill = true;
+    }
+    let started = Instant::now();
+    loop {
+      if let Some(exit) = self.child.try_wait()? {
+        return Ok(DaemonTermination {
+          exit,
+          tree_kill_exit,
+          tree_kill_error,
+          fallback_root_kill,
+        });
+      }
+      if started.elapsed() >= Duration::from_secs(3) {
+        bail!("workflow daemon did not exit within the cleanup deadline");
+      }
+      if !fallback_root_kill && started.elapsed() >= Duration::from_secs(1) {
+        self.child.kill().context("terminate the workflow daemon after taskkill reported success without an exit")?;
+        fallback_root_kill = true;
+      }
+      std::thread::sleep(Duration::from_millis(20));
+    }
+  }
+
   fn finish(&mut self) -> Result<Value> {
     let mut command = self.command();
     // NOTICE: the Run is always stopped as `canceled` because this harness-owned Run is torn down
@@ -86,19 +147,14 @@ impl Runner {
       "--json",
     ]);
     let stopped = command_output(command, Duration::from_secs(10));
-    let killed = Command::new("taskkill.exe")
-      .args(["/PID", &self.child.id().to_string(), "/T", "/F"])
-      .stdin(Stdio::null())
-      .stdout(Stdio::null())
-      .stderr(Stdio::null())
-      .creation_flags(0x0800_0000)
-      .status()?;
-    let exited = self.child.wait()?;
+    let terminated = self.terminate();
     self.keep_logs();
+    let terminated = terminated?;
     Ok(json!({"daemon_pid": self.child.id(), "run_stop_exit": stopped.as_ref().ok().and_then(|output| output.status.code()),
       "run_stop_error": stopped.as_ref().err().map(ToString::to_string),
-      "stopped_run": stopped.as_ref().ok().and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok()), "owned_tree_kill_exit": killed.code(),
-      "daemon_exit": exited.code(), "daemon_exited": self.child.try_wait()?.is_some()}))
+      "stopped_run": stopped.as_ref().ok().and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok()),
+      "owned_tree_kill_exit": terminated.tree_kill_exit, "owned_tree_kill_error": terminated.tree_kill_error,
+      "fallback_root_kill": terminated.fallback_root_kill, "daemon_exit": terminated.exit.code(), "daemon_exited": true}))
   }
 
   fn keep_logs(&self) {
@@ -257,14 +313,7 @@ impl Drop for Runner {
     // bounded Run stop first; the error/unwind fallback only ends this owned process tree.
     // End only the process tree we spawned, including an idle Runner. Stopping a Run alone releases
     // its attachment but does not guarantee termination of every child process.
-    let _ = Command::new("taskkill.exe")
-      .args(["/PID", &self.child.id().to_string(), "/T", "/F"])
-      .stdin(Stdio::null())
-      .stdout(Stdio::null())
-      .stderr(Stdio::null())
-      .creation_flags(0x0800_0000)
-      .status();
-    let _ = self.child.wait();
+    let _ = self.terminate();
     self.keep_logs();
   }
 }
@@ -1045,8 +1094,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
   let mut runner_closed = true;
   if let Some(runner) = runner.as_mut() {
     let closed = runner.finish();
-    runner_closed =
-      closed.as_ref().is_ok_and(|value| value["run_stop_exit"] == 0 && value["owned_tree_kill_exit"] == 0 && value["daemon_exited"] == true);
+    runner_closed = closed.as_ref().is_ok_and(runner_cleanup_verified);
     scenario.records.write(
       "runner_cleanup",
       json!({"receipt": closed.as_ref().ok(), "error": closed.as_ref().err().map(ToString::to_string), "verified": runner_closed}),
@@ -1155,6 +1203,67 @@ mod tests {
     assert_eq!(ReceiverCleanup::NotCreated.record()["state"], "not_created");
     assert_eq!(ReceiverCleanup::Closed(Ok(())).record()["state"], "verified");
     assert_eq!(ReceiverCleanup::Closed(Err(anyhow::anyhow!("termination denied"))).record()["state"], "unknown");
+  }
+
+  #[test]
+  fn runner_cleanup_is_bounded_when_taskkill_fails() {
+    // ROOT CAUSE:
+    //
+    // If taskkill returned an error without ending the daemon, Runner::finish
+    // waited for the daemon with no deadline. Drop had the same unbounded wait.
+    const TEST_CHILD: &str = "AUV_TEST_RUNNER_TASKKILL_FAILURE";
+    if std::env::var_os(TEST_CHILD).is_some() {
+      let root = std::env::current_dir().expect("test directory");
+      let child = Command::new("powershell.exe")
+        .args([
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Start-Sleep -Seconds 8",
+        ])
+        .stdin(Stdio::null())
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .expect("spawn a hidden owned process");
+      let mut runner = Runner {
+        child,
+        auv: PathBuf::from(std::env::var_os("ComSpec").expect("ComSpec")),
+        root: root.clone(),
+        endpoint: "unused".into(),
+        run: "unused".into(),
+        evidence: root,
+      };
+      let started = Instant::now();
+      let result = runner.finish();
+      assert!(started.elapsed() < Duration::from_secs(6), "cleanup waited for the sleeping process");
+      let mut receipt = result.expect("the root fallback should end the owned process");
+      assert_eq!(receipt["fallback_root_kill"], true);
+      assert_eq!(receipt["daemon_exited"], true);
+      receipt["run_stop_exit"] = json!(0);
+      receipt["owned_tree_kill_exit"] = json!(0);
+      assert!(!runner_cleanup_verified(&receipt), "a root-only fallback does not verify descendant cleanup");
+      return;
+    }
+
+    let root = tempfile::tempdir().expect("test directory");
+    // Windows searches the test executable's directory before System32.
+    // This copy exits on taskkill's arguments without terminating the process.
+    std::fs::copy(std::env::var_os("ComSpec").expect("ComSpec"), root.path().join("taskkill.exe")).expect("copy the failing command");
+    let test_exe = root.path().join("cleanup-test.exe");
+    std::fs::copy(std::env::current_exe().expect("test executable"), &test_exe).expect("copy the test executable");
+    let mut command = Command::new(test_exe);
+    command
+      .args([
+        "--exact",
+        "desktop_windows::foreground_commands::workflow::tests::runner_cleanup_is_bounded_when_taskkill_fails",
+        "--nocapture",
+      ])
+      .current_dir(root.path())
+      .env(TEST_CHILD, "1")
+      .stdin(Stdio::null())
+      .creation_flags(0x0800_0000);
+    let output = command_output(command, Duration::from_secs(20)).expect("cleanup test process must end");
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
   }
 
   #[test]

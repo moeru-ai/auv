@@ -152,3 +152,12 @@ The summary now records `unknown` because the early termination has no receipt.
 The receiver also verifies process exit after forced termination.
 A no-desktop test opens a wait-only process handle that cannot terminate the process.
 The original test-only reproduction returned success before the fix.
+
+## Runner cleanup review
+
+If `taskkill` failed to end the daemon, the old cleanup waited without a deadline.
+The tree-kill command and daemon exit wait now have deadlines.
+The harness attempts root-only termination if the tree kill fails or the daemon remains alive.
+The cleanup receipt records that fallback and does not claim that the descendants exited.
+A no-desktop test used a substitute command that reported success without terminating the daemon.
+The original test-only reproduction waited for the sleeping process and failed.

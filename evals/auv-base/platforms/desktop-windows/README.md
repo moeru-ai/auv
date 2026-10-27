@@ -142,6 +142,9 @@ on normal/error return. Run stop and private daemon process-tree termination are
 before store removal; serve logs remain outside the temporary store. No default daemon or
 paired Device configuration is changed. If the harness process itself is force-killed, its
 detached receiver windows can outlive it and must be closed by hand in that session.
+The daemon tree kill and exit wait have deadlines. If the tree kill fails or the daemon does
+not exit promptly, the harness attempts a root-only termination. A root-only fallback does not
+verify that descendant processes exited, so it prevents overall acceptance.
 
 The [2026-10-24 evidence](../../../../docs/ai/references/driver/2026-10-24-windows-gui-workflow-evidence.md)
 records measured effects and the per-route runs behind this evaluation.
