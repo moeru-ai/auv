@@ -2,8 +2,9 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **30**
+Count: **31**
 
+- [`2026-10-27-mcp-image-artifacts.md`](2026-10-27-mcp-image-artifacts.md) — explicit MCP image reads from invoke artifact receipts, size limits, integrity checks, and automated fixture evidence
 - [`2026-10-26-selected-run-failure-evidence.md`](2026-10-26-selected-run-failure-evidence.md) — CLI JSON and MCP preselection errors retain typed failure codes; isolated subprocess regressions and no local execution evidence
 - [`2026-10-13-runner-route-support-design.md`](2026-10-13-runner-route-support-design.md) — proposal (not implemented): typed refusals and `runner` support cells for the selected-Runner route; where it differs from the direct cells today
 - [`2026-10-13-windows-parity-consolidation-review.md`](2026-10-13-windows-parity-consolidation-review.md) — owner-adopted review of the Windows #211 slices: one Windows capability matrix with evidence levels, the cell decisions and change set (C1 to C6), evidence that cannot back a claim, the minimized-window rule, the four central principles, and the priority list of missing work

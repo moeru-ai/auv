@@ -955,6 +955,13 @@ An `ArtifactUri` is the transport-independent identity of an artifact. Spans
 and events may add diagnostic links, but they do not own artifacts; large
 payloads remain store-owned bytes rather than embedded event data.
 
+The MCP frontend exposes `artifact_read_image` for explicit image access by
+`run_id` and `artifact_id` from an `ArtifactUri`. It accepts receipts from
+successful, flushed `invoke` results on the same MCP server instance. The tool
+returns a bounded PNG and its dimensions. It does not scan a store or accept a
+caller-selected file path. See the
+[MCP image artifact contract](ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md).
+
 ## View Memory (retired experimental contract)
 
 `ViewMemory` previously named an app-neutral structured payload derived from a

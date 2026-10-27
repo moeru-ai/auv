@@ -1,5 +1,8 @@
 use clap::{Args, Subcommand};
 
+#[path = "mcp_image.rs"]
+mod artifact_image;
+
 /// Expose core AUV capabilities through MCP.
 #[derive(Clone, Debug, Args)]
 pub struct McpArgs {
@@ -148,6 +151,8 @@ mod frontend {
     op_executor: Arc<dyn OperationExecutor>,
     /// Root `--device`, `--device-id`, and `--run` for `invoke` calls that select no Device.
     default_selection: auv::selection::RootSelection,
+    /// Image receipts returned by this MCP server instance, shared with its worker threads.
+    image_artifacts: Arc<super::artifact_image::ImageArtifacts>,
   }
 
   impl McpServer {
@@ -184,6 +189,7 @@ mod frontend {
         invoke_dispatch,
         op_executor: default_executor(),
         default_selection: auv::selection::RootSelection::default(),
+        image_artifacts: Arc::new(super::artifact_image::ImageArtifacts::default()),
       })
     }
 
@@ -344,7 +350,7 @@ mod frontend {
     })
   }
 
-  /// Presents one invoke outcome; artifacts carry store paths so clients can read evidence themselves.
+  /// Presents one invoke outcome. Image references can be fetched through `artifact_read_image`.
   fn invoke_tool_result(
     run_id: auv_tracing::RunId,
     command_id: String,
@@ -479,7 +485,25 @@ mod frontend {
         direct_result = Err(error.into());
       }
       let recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+      if recording_failure.is_none()
+        && let Ok(success) = &direct_result
+      {
+        self.image_artifacts.register(&success.artifacts, &authority.store).map_err(invalid_params)?;
+      }
       invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
+    }
+
+    #[tool(
+      description = "Read an AUV image artifact returned by invoke through this MCP server instance. Supply run_id and artifact_id from its artifact URI, never a file path. Returns PNG image content with its aspect ratio preserved. The default size limit is 2048x2048; each requested dimension must be 1..=4096. Source bytes and decoded pixels are bounded. Unknown, expired, non-image or modified artifacts are refused."
+    )]
+    async fn artifact_read_image(&self, Parameters(req): Parameters<ArtifactReadImageRequest>) -> Result<CallToolResult, McpError> {
+      let images = Arc::clone(&self.image_artifacts);
+      // NOTICE(mcp-image-concurrency): limits apply per request. Aggregate read budgets
+      // require a separate owner-approved MCP scheduling contract.
+      tokio::task::spawn_blocking(move || images.read(&req.run_id, &req.artifact_id, req.max_width, req.max_height))
+        .await
+        .map_err(|_| McpError::internal_error("image reader did not complete", None::<Value>))?
+        .map_err(invalid_params)
     }
 
     /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this
@@ -932,6 +956,25 @@ mod frontend {
       }
       Ok(Some(target))
     }
+  }
+
+  #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
+  struct ArtifactReadImageRequest {
+    /// Run ID from an image artifact URI returned by `invoke` on this server instance.
+    run_id: String,
+    /// Artifact ID from that URI.
+    artifact_id: String,
+    /// Maximum output width in pixels. Defaults to 2048.
+    #[serde(default = "default_image_edge")]
+    max_width: u32,
+    /// Maximum output height in pixels. Defaults to 2048.
+    #[serde(default = "default_image_edge")]
+    max_height: u32,
+  }
+
+  fn default_image_edge() -> u32 {
+    2048
   }
 
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]

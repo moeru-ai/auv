@@ -15,6 +15,105 @@ fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
 }
 
+#[tokio::test]
+async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
+  use base64::Engine as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let mut adapters = core_invoke_adapters().into_iter().filter(|adapter| adapter.command_id != "display.capture").collect::<Vec<_>>();
+  adapters.push(super::McpInvokeAdapter::new("display.capture", |_| async {
+    let pixels = image::RgbImage::from_pixel(12, 6, image::Rgb([42, 84, 126]));
+    let artifact = auv_tracing::image_artifact(
+      auv_tracing::EmitBytesOptions::new().with_purpose("test.mcp.image"),
+      &pixels,
+      auv_tracing::ImageResolution::Native,
+    )
+    .unwrap();
+    let metadata = auv_tracing::emit_artifact(artifact).await.unwrap().unwrap();
+    Ok(super::McpInvokeSuccess {
+      result: serde_json::Value::Null,
+      artifacts: vec![metadata],
+    })
+  }));
+  let server = McpServer::with_registry(directory.path().into(), Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap();
+  let (server_transport, client_transport) = tokio::io::duplex(65_536);
+  let server_handle = tokio::spawn(async move {
+    let service = server.serve(server_transport).await.unwrap();
+    service.waiting().await.unwrap();
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+  let tools = client.list_all_tools().await.unwrap();
+  let tool = tools.iter().find(|tool| tool.name == "artifact_read_image").expect("image tool must be discoverable");
+  let schema = serde_json::to_value(&tool.input_schema).unwrap();
+  assert_eq!(schema["additionalProperties"], false);
+  assert_eq!(
+    schema["properties"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(),
+    ["artifact_id", "max_height", "max_width", "run_id"]
+  );
+  assert_eq!(schema["properties"]["max_width"]["default"], 2048);
+  assert_eq!(schema["properties"]["max_height"]["default"], 2048);
+  let invoke = client
+    .call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: serde_json::json!({ "command_id": "display.capture" }).as_object().cloned(),
+    })
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(&invoke).unwrap();
+  assert!(wire["content"].as_array().unwrap().iter().all(|content| content["type"] != "image"));
+  let output = invoke.structured_content.unwrap();
+  let mut artifact = output["artifacts"][0].clone();
+  artifact.as_object_mut().unwrap().remove("file_path");
+  let metadata: auv_tracing::ArtifactMetadata = serde_json::from_value(artifact).unwrap();
+  let ids = serde_json::json!({ "run_id": metadata.uri().run_id(), "artifact_id": metadata.uri().artifact_id() });
+  let fetched = client
+    .call_tool(CallToolRequestParam {
+      name: "artifact_read_image".into(),
+      arguments: ids.as_object().cloned(),
+    })
+    .await
+    .unwrap();
+  let fetched = serde_json::to_value(fetched).unwrap();
+  assert_eq!(fetched["content"][1]["type"], "image");
+  assert_eq!(fetched["content"][1]["mimeType"], "image/png");
+  let bytes = base64::engine::general_purpose::STANDARD.decode(fetched["content"][1]["data"].as_str().unwrap()).unwrap();
+  let pixels = image::load_from_memory(&bytes).unwrap().to_rgb8();
+  assert_eq!(pixels.dimensions(), (12, 6));
+  assert_eq!(pixels.get_pixel(0, 0).0, [42, 84, 126]);
+  let mut invalid = ids.clone();
+  invalid["path"] = "C:/private.png".into();
+  let error = client
+    .call_tool(CallToolRequestParam {
+      name: "artifact_read_image".into(),
+      arguments: invalid.as_object().cloned(),
+    })
+    .await
+    .unwrap_err();
+  assert!(matches!(error, rmcp::service::ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS));
+
+  // The same store and known IDs do not grant access through another server instance.
+  let other_server = McpServer::new(directory.path().into()).unwrap();
+  let (other_transport, other_client_transport) = tokio::io::duplex(65_536);
+  let other_handle = tokio::spawn(async move {
+    let service = other_server.serve(other_transport).await.unwrap();
+    service.waiting().await.unwrap();
+  });
+  let other_client = TestClient.serve(other_client_transport).await.unwrap();
+  let error = other_client
+    .call_tool(CallToolRequestParam {
+      name: "artifact_read_image".into(),
+      arguments: ids.as_object().cloned(),
+    })
+    .await
+    .unwrap_err();
+  assert!(matches!(error, rmcp::service::ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS));
+
+  other_client.cancel().await.unwrap();
+  other_handle.await.unwrap();
+  client.cancel().await.unwrap();
+  server_handle.await.unwrap();
+}
+
 #[test]
 fn mcp_handshake_names_the_auv_build_rather_than_the_transport_crate() {
   let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
