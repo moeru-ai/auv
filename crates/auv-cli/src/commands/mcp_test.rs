@@ -101,6 +101,304 @@ async fn mcp_pr430_fetch_dimensions_distinguish_stored_and_native_capture_pixels
   assert_eq!(image.get_pixel(3, 1).0, [42, 84, 126]);
 }
 
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_reads_high_entropy_4k_capture_through_production_artifact_pipeline() {
+  use base64::Engine as _;
+
+  // ROOT CAUSE:
+  //
+  // If a high-entropy 4K capture produced more than 16 MiB of lossless WebP,
+  // the reader refused it before the requested output resizing could run.
+  //
+  // Before the fix, a successful capture could not be fetched even at 512x512.
+  // The fix admits this production encoder output within a bounded source budget.
+  let directory = tempfile::tempdir().unwrap();
+  let mut adapters = core_invoke_adapters().into_iter().filter(|adapter| adapter.command_id != "display.capture").collect::<Vec<_>>();
+  adapters.push(super::McpInvokeAdapter::new("display.capture", |_| async {
+    let mut image = image::RgbaImage::new(3840, 2160);
+    let mut state = 0x1234_5678_u32;
+    for pixel in image.pixels_mut() {
+      for channel in &mut pixel.0[..3] {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *channel = (state >> 24) as u8;
+      }
+      pixel.0[3] = 255;
+    }
+    let capture = auv_driver::Capture {
+      image,
+      scale_factor: 1.0,
+      bounds: auv_driver::Rect::new(0.0, 0.0, 3840.0, 2160.0),
+      origin: None,
+      backend: "fixture".into(),
+      fallback_reason: None,
+    };
+    let artifact = auv_cli_invoke::artifact::capture_evidence("test.mcp.high_entropy_4k", &capture, None).unwrap();
+    let metadata = auv_tracing::emit_artifact(artifact).await.unwrap().unwrap();
+    Ok(super::McpInvokeSuccess {
+      result: serde_json::json!({ "capture_ready": true }),
+      artifacts: vec![metadata],
+    })
+  }));
+  let server = McpServer::with_registry(directory.path().into(), Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap();
+  let (server_transport, client_transport) = tokio::io::duplex(65_536);
+  let server_handle = tokio::spawn(async move {
+    server.serve(server_transport).await.unwrap().waiting().await.unwrap();
+  });
+  let client = TestClient.serve(client_transport).await.unwrap();
+  let result = client
+    .call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: serde_json::json!({ "command_id": "display.capture" }).as_object().cloned(),
+    })
+    .await
+    .unwrap();
+  let output = result.structured_content.unwrap();
+  assert_eq!(output["status"], "completed");
+  assert!(output.get("recording_failure").is_none());
+  let artifact = &output["artifacts"][0];
+  assert_eq!(artifact["content_type"], "image/webp");
+  let source_bytes = artifact["byte_length"].as_u64().unwrap();
+  eprintln!("PR #430 high-entropy 3840x2160 capture: {source_bytes} source bytes");
+  assert!(source_bytes > 16 * 1024 * 1024);
+  assert_eq!(std::fs::metadata(artifact["file_path"].as_str().unwrap()).unwrap().len(), source_bytes);
+  let uri: auv_tracing::ArtifactUri = artifact["uri"].as_str().unwrap().parse().unwrap();
+  let result = client
+    .call_tool(CallToolRequestParam {
+      name: "artifact_read_image".into(),
+      arguments: serde_json::json!({
+        "run_id": uri.run_id(), "artifact_id": uri.artifact_id(),
+        "max_width": 512, "max_height": 512
+      })
+      .as_object()
+      .cloned(),
+    })
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let dimensions: serde_json::Value = serde_json::from_str(wire["content"][0]["text"].as_str().unwrap()).unwrap();
+  assert_eq!(dimensions["source_width"], 3840);
+  assert_eq!(dimensions["source_height"], 2160);
+  assert_eq!(dimensions["width"], 512);
+  assert_eq!(dimensions["height"], 288);
+  let bytes = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  assert!(bytes.len() <= 8 * 1024 * 1024);
+  assert_eq!(image::load_from_memory(&bytes).unwrap().to_rgb8().dimensions(), (512, 288));
+  client.cancel().await.unwrap();
+  server_handle.await.unwrap();
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn mcp_pr430_bounds_concurrent_reads_after_waiter_cancellation() {
+  use rmcp::handler::server::wrapper::Parameters;
+  use std::time::Duration;
+
+  // ROOT CAUSE:
+  //
+  // If callers flooded image reads, every request queued another blocking job.
+  // Cancelling its async waiter did not cancel the underlying blocking job.
+  //
+  // Before the fix, neither submitted work nor detached work had an admission cap.
+  // The fix keeps two shared slots owned by their blocking jobs until completion.
+  let runtime = tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(1).build().unwrap();
+  runtime.block_on(async {
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let blocker = tokio::task::spawn_blocking(move || {
+      started.send(()).unwrap();
+      let _ = blocked.recv_timeout(Duration::from_secs(10));
+    });
+    ready.await.unwrap();
+    let server = McpServer::new(std::path::PathBuf::from("unused")).unwrap();
+    let request = || {
+      Parameters(super::ArtifactReadImageRequest {
+        run_id: "10000000-0000-4000-8000-000000000001".into(),
+        artifact_id: "10000000-0000-4000-8000-000000000002".into(),
+        max_width: 8,
+        max_height: 8,
+      })
+    };
+    let mut readers = Vec::new();
+    for _ in 0..2 {
+      let reader = server.clone();
+      let input = request();
+      let (started, ready) = tokio::sync::oneshot::channel();
+      readers.push(tokio::spawn(async move {
+        started.send(()).unwrap();
+        reader.artifact_read_image(input).await
+      }));
+      ready.await.unwrap();
+    }
+    assert!(readers.iter().all(|reader| !reader.is_finished()));
+    let mut excess = Vec::new();
+    for _ in 0..32 {
+      let reader = server.clone();
+      let input = request();
+      excess.push(tokio::spawn(async move {
+        let error = tokio::time::timeout(Duration::from_secs(2), reader.artifact_read_image(input))
+          .await
+          .expect("excess reads must be rejected without queuing another blocking job")
+          .unwrap_err();
+        assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
+        assert!(error.message.contains("busy"));
+      }));
+    }
+    for reader in excess {
+      reader.await.unwrap();
+    }
+    for reader in readers {
+      reader.abort();
+      assert!(reader.await.unwrap_err().is_cancelled());
+    }
+    let error = tokio::time::timeout(Duration::from_secs(2), server.artifact_read_image(request())).await.unwrap().unwrap_err();
+    assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
+    assert!(error.message.contains("busy"), "cancelled waiters must not release their queued workers' slots");
+    release.send(()).unwrap();
+    blocker.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+      loop {
+        let error = server.artifact_read_image(request()).await.unwrap_err();
+        if error.code == ErrorCode::INVALID_PARAMS {
+          assert!(error.message.contains("not available"));
+          break;
+        }
+        assert!(error.message.contains("busy"));
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .expect("completed workers must release their slots for later requests");
+  });
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_rejects_image_requests_cancelled_before_admission() {
+  let server = McpServer::new(std::path::PathBuf::from("unused")).unwrap();
+  let cancellation = auv_cli_invoke::InvokeCancellation::new();
+  cancellation.cancel();
+  let error = super::MCP_REQUEST_CANCELLATION
+    .scope(
+      cancellation,
+      server.artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+        run_id: "10000000-0000-4000-8000-000000000001".into(),
+        artifact_id: "10000000-0000-4000-8000-000000000002".into(),
+        max_width: 8,
+        max_height: 8,
+      })),
+    )
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
+  assert!(error.message.contains("cancelled"));
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn mcp_pr430_wire_cancellation_keeps_queued_worker_admission_until_completion() {
+  use std::time::Duration;
+
+  // Witness the real MCP handler returning after a cancellation notification,
+  // independently of the client's immediate local cancellation result.
+  struct Witness {
+    server: McpServer,
+    completed: Arc<tokio::sync::Notify>,
+  }
+  impl ServerHandler for Witness {
+    fn get_info(&self) -> rmcp::model::ServerInfo {
+      self.server.get_info()
+    }
+
+    async fn call_tool(
+      &self,
+      request: CallToolRequestParam,
+      context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+      let result = self.server.call_tool(request, context).await;
+      self.completed.notify_one();
+      result
+    }
+  }
+
+  let runtime = tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(1).build().unwrap();
+  runtime.block_on(async {
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let blocker = tokio::task::spawn_blocking(move || {
+      started.send(()).unwrap();
+      let _ = blocked.recv_timeout(Duration::from_secs(10));
+    });
+    ready.await.unwrap();
+    let server = McpServer::new(std::path::PathBuf::from("unused")).unwrap();
+    let completed = Arc::new(tokio::sync::Notify::new());
+    let witness = Witness {
+      server: server.clone(),
+      completed: completed.clone(),
+    };
+    let (server_transport, client_transport) = tokio::io::duplex(65_536);
+    let server_handle = tokio::spawn(async move {
+      witness.serve(server_transport).await.unwrap().waiting().await.unwrap();
+    });
+    let client = TestClient.serve(client_transport).await.unwrap();
+    let arguments = serde_json::json!({
+      "run_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_id": "10000000-0000-4000-8000-000000000002"
+    });
+    let request = client
+      .send_cancellable_request(
+        rmcp::model::CallToolRequest::new(CallToolRequestParam {
+          name: "artifact_read_image".into(),
+          arguments: arguments.as_object().cloned(),
+        })
+        .into(),
+        rmcp::service::PeerRequestOptions::no_options(),
+      )
+      .await
+      .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+      while server.image_read_slots.available_permits() != 1 {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .expect("the wire request must reserve one image slot");
+    client
+      .notify_cancelled(rmcp::model::CancelledNotificationParam {
+        request_id: request.id.clone(),
+        reason: Some("test cancellation".into()),
+      })
+      .await
+      .unwrap();
+    assert!(matches!(request.await_response().await, Err(rmcp::service::ServiceError::Cancelled { .. })));
+    tokio::time::timeout(Duration::from_secs(2), completed.notified())
+      .await
+      .expect("server cancellation must not wait for the blocked worker pool");
+    assert_eq!(server.image_read_slots.available_permits(), 1, "the queued closure still owns its slot after the handler returns");
+    release.send(()).unwrap();
+    blocker.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+      while server.image_read_slots.available_permits() != 2 {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .expect("the cancelled worker must release its slot after it is drained");
+    let error = client
+      .call_tool(CallToolRequestParam {
+        name: "artifact_read_image".into(),
+        arguments: arguments.as_object().cloned(),
+      })
+      .await
+      .unwrap_err();
+    assert!(matches!(error, rmcp::service::ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS));
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+  });
+}
+
 #[tokio::test]
 async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
   use base64::Engine as _;

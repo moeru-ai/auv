@@ -53,6 +53,9 @@ The text contains `run_id`, `artifact_id`, `source_width`, `source_height`,
 `width`, and `height`. The output preserves the aspect ratio. Small images
 retain their original dimensions.
 
+Output dimensions apply after source admission. A smaller output request does
+not override the source byte, dimension, pixel-count, or allocation limits.
+
 `source_width` and `source_height` describe the stored artifact before this
 fetch resizes it. `width` and `height` describe the returned PNG.
 For capture artifacts, the receipt attributes `image.source_width` and
@@ -91,6 +94,8 @@ PNG encoding failures produce an internal-error response. These storage checks
 compare a registered file with its verified write receipt. A mismatch describes
 server state, rather than an invalid client parameter. The handler preserves
 these categories from the reader.
+An overloaded reader returns an internal-error response with a busy message.
+Clients can retry after current reads finish.
 
 ## Invoke filesystem authority
 
@@ -150,17 +155,23 @@ request:
 
 | Resource | Limit |
 | --- | --- |
-| Encoded source | 16 MiB |
+| Encoded source | 64 MiB |
 | Source dimension | 8192 pixels on each axis |
 | Source pixel count | 16,777,216 pixels |
 | Decoder internal allocation budget | 128 MiB, best effort |
 | External decoded pixel buffer | 128 MiB |
 | Encoded output PNG | 8 MiB |
 
+The encoded-source budget admits the tested high-entropy 4K capture from the
+production lossless WebP encoder. Its 24,887,280-byte output exceeded the former
+16 MiB limit. The reader now admits that source and returns a 512×288 PNG for
+a 512×512 request. The source budget remains separate from decoded and returned
+image budgets. It does not promise that every image can be fetched.
+
 One decoder reads both the header and the pixels. For PNG, its constructor
 receives limits before header parsing, because compressed metadata can expand
 during this step. In image 0.25.10, JPEG and WebP receive limits after header
-parsing. The 16 MiB encoded-source limit applies before every decoder constructor.
+parsing. The 64 MiB encoded-source limit applies before every decoder constructor.
 The reader checks the external pixel buffer size separately before pixel
 decoding. These checks do not share a remaining allocation balance. Metadata
 and pixel buffers can coexist and exceed 128 MiB together. Source bytes,
@@ -196,9 +207,29 @@ An output-size error asks the client to request a smaller image. File reads,
 decoding, scaling, and encoding run on a blocking worker. Catalog locks cover
 receipt access only.
 
+## Read admission and cancellation
+
+Each `McpServer` admits at most two queued or running image workers. Server
+clones share these slots. Admission occurs before `spawn_blocking`; excess
+requests receive a busy error without entering another work queue.
+
+The blocking closure owns its slot until it finishes or unwinds. Dropping or
+cancelling its async waiter therefore does not admit another worker early.
+A request cancelled before admission starts no worker. A queued worker checks
+the request token before reading the file. Protocol cancellation returns from
+the handler without waiting for a running codec. The codec can finish while
+retaining its slot.
+See the [Tokio blocking-task contract](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html).
+
+The two-worker limit bounds heavy work per server instance. It does not bound
+completed response buffers, all server instances, or total process memory.
+The 8 MiB PNG limit applies after encoding and bounds returned data. A strict
+encoder allocation limit requires a separate codec output policy.
+
 Durable lookup across server restarts requires a separate authorized store
-reader contract. Aggregate concurrent-read budgets require a separate MCP
-scheduling contract. Both remain deferred for an owner-approved slice.
+reader contract. Byte-weighted admission and response-buffer budgets require
+a separate MCP scheduling contract. These remain deferred for an owner-approved
+slice.
 
 ## Verification
 
@@ -220,13 +251,25 @@ write and verifies the omitted receipt, preserved result, and fetch refusal.
 An explicit-path fixture verifies the existing authority boundary through
 `invoke(scan.frame)` and `artifact_read_image`, using temporary files outside
 the project directory.
+The 4K regression uses `Capture` → shared capture evidence → production WebP
+encoding → file-store write and flush → MCP `invoke` receipt → MCP image fetch.
+It generates deterministic high-entropy pixels without capturing a live desktop.
+The test verifies the source length, source and output dimensions, and decodable
+PNG content through the real MCP transport.
+
+Admission tests hold the blocking pool while two reads reserve their slots.
+They submit 32 excess requests through server clones and require immediate busy
+errors. They also cancel both waiters and verify that submitted jobs retain
+their slots until completion. A separate real MCP cancellation test witnesses
+the server handler returning before the blocked pool resumes, then verifies
+slot recovery and a later request on the same connection.
 
 Windows verification of the current reader, based on `main@8bf7e4f1`:
 
 | Command | Result |
 | --- | --- |
 | `cargo build --locked -p auv-device-helper-windows --bin auv-helper` | Passed |
-| `cargo test --workspace --locked --no-fail-fast` | 1,640 passed, 25 ignored, 0 failed |
+| `cargo test --workspace --locked --no-fail-fast` | 1,644 passed, 25 ignored, 0 failed |
 | `cargo check --locked` | Passed |
 | `cargo fmt --all -- --check` | Passed |
 | `cargo run --quiet --locked -- invoke --help` | Passed |
@@ -234,7 +277,7 @@ Windows verification of the current reader, based on `main@8bf7e4f1`:
 | `git diff --check` | Passed |
 
 The workspace run used `AUV_WINDOWS_HELPER_EXE_PATH` to select the built helper.
-It includes 48 MCP tests. The cache regression first failed with UUID-ordered
+It includes 52 MCP tests. The cache regression first failed with UUID-ordered
 eviction. It passes after receipt-ordered eviction.
 
 Header and 16-bit resizing regressions first failed against `d85ea044`.
@@ -261,6 +304,11 @@ path. With the fix,
 assignment releases the original image before PNG encoding, and explicit drop
 releases the final image before Base64 encoding. This checks destruction order,
 not allocator or operating-system memory return.
+
+High-entropy 4K admission, concurrent submission, and pre-admission cancellation
+regressions first failed against `1938f703`. All pass with the current reader.
+These fixtures verify the image pipeline and admission policy; they do not
+claim coverage of every native desktop capture backend or reproduce an OOM.
 
 Additional real MCP stdio checks at `0990c064` used `scan.frame` fixtures:
 

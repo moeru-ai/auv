@@ -51,6 +51,8 @@ mod frontend {
 
   use crate::commands::op::{ExecutionModeArg, OpRunArgs, default_executor, run_with_executor_inner};
 
+  const MAX_IMAGE_READS: usize = 2;
+
   tokio::task_local! {
     static MCP_REQUEST_CANCELLATION: InvokeCancellation;
   }
@@ -153,6 +155,8 @@ mod frontend {
     default_selection: auv::selection::RootSelection,
     /// Image receipts returned by this MCP server instance, shared with its worker threads.
     image_artifacts: Arc<super::artifact_image::ImageArtifacts>,
+    /// Shared admission slots for queued or running image workers.
+    image_read_slots: Arc<tokio::sync::Semaphore>,
   }
 
   impl McpServer {
@@ -190,6 +194,7 @@ mod frontend {
         op_executor: default_executor(),
         default_selection: auv::selection::RootSelection::default(),
         image_artifacts: Arc::new(super::artifact_image::ImageArtifacts::default()),
+        image_read_slots: Arc::new(tokio::sync::Semaphore::new(MAX_IMAGE_READS)),
       })
     }
 
@@ -511,15 +516,36 @@ mod frontend {
         For capture artifacts, image.source_width/image.source_height in the invoke receipt instead describe native captured pixels before logical downscaling. \
         Capture evidence is already at logical resolution. Undo this fetch's resize before adding the capture bounds origin for screen coordinates. \
         The default size limit is 2048x2048. Each requested dimension must be 1..=4096. Source bytes and decoded pixels are bounded. \
+        Source files are limited to 64 MiB; output size requests do not override source limits. \
+        Each server instance admits at most two image reads. A busy error asks you to retry after current reads finish. \
         Unknown, expired, non-image or modified artifacts are refused."
     )]
     async fn artifact_read_image(&self, Parameters(req): Parameters<ArtifactReadImageRequest>) -> Result<CallToolResult, McpError> {
+      let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
+      if cancellation.is_cancelled() {
+        return Err(McpError::internal_error("image read cancelled", None));
+      }
+      let permit = Arc::clone(&self.image_read_slots)
+        .try_acquire_owned()
+        .map_err(|_| McpError::internal_error("image reader busy; retry after current reads finish", None))?;
       let images = Arc::clone(&self.image_artifacts);
-      // NOTICE(mcp-image-concurrency): limits apply per request. Aggregate read budgets
-      // require a separate owner-approved MCP scheduling contract.
-      tokio::task::spawn_blocking(move || images.read(&req.run_id, &req.artifact_id, req.max_width, req.max_height))
-        .await
-        .map_err(|_| McpError::internal_error("image reader did not complete", None::<Value>))?
+      let worker_cancellation = cancellation.clone();
+      let work = tokio::task::spawn_blocking(move || {
+        // The worker owns admission, even if its waiter is cancelled or dropped.
+        let _permit = permit;
+        if worker_cancellation.is_cancelled() {
+          return Err(McpError::internal_error("image read cancelled", None));
+        }
+        images.read(&req.run_id, &req.artifact_id, req.max_width, req.max_height)
+      });
+      // NOTICE(mcp-image-concurrency): running codecs finish while retaining their
+      // slots. Byte-weighted budgets and response buffering remain deferred to a
+      // separately approved MCP scheduling contract.
+      tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(McpError::internal_error("image read cancelled", None)),
+        result = work => result.map_err(|_| McpError::internal_error("image reader did not complete", None::<Value>))?,
+      }
     }
 
     /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this

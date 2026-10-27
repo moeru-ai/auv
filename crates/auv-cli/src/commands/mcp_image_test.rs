@@ -233,7 +233,7 @@ fn image_fetch_limits_source_bytes_and_dimensions_before_decode() {
       .read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10)
       .unwrap_err()
       .message
-      .contains("16 MiB")
+      .contains("64 MiB")
   );
 }
 

@@ -13,7 +13,9 @@ use rmcp::{
 };
 use sha2::{Digest, Sha256};
 
-const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
+// High-entropy 4K RGBA captures can exceed 16 MiB as lossless WebP. Keep a
+// separate encoded-source budget alongside the decoded pixel and output limits.
+const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 16 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SESSION_IMAGES: usize = 128;
@@ -74,7 +76,7 @@ impl ImageArtifacts {
       .cloned()
       .ok_or_else(|| McpError::invalid_params("image artifact not available in this MCP server instance", None))?;
     if metadata.byte_length().get() > MAX_SOURCE_BYTES {
-      return Err(McpError::invalid_params("source image exceeds 16 MiB", None));
+      return Err(McpError::invalid_params("source image exceeds 64 MiB", None));
     }
     let file = std::fs::File::open(path).map_err(|_| McpError::internal_error("image artifact cannot be opened", None))?;
     let info = file.metadata().map_err(|_| McpError::internal_error("image artifact metadata unavailable", None))?;
@@ -124,6 +126,9 @@ impl ImageArtifacts {
     }
     let dimensions = (image.width(), image.height());
     let mut output = Cursor::new(Vec::new());
+    // NOTICE(mcp-image-output-memory): the output cap is checked after encoding;
+    // bounding encoder allocations needs a separate codec output policy. See
+    // docs/ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md.
     image.write_to(&mut output, ImageFormat::Png).map_err(|_| McpError::internal_error("image encoding failed", None))?;
     // Encoding is complete; release decoded pixels before Base64 allocation.
     drop(image);
