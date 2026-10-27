@@ -471,6 +471,9 @@ impl Receiver {
       std::thread::sleep(Duration::from_millis(20));
     }
     self.kill();
+    if !self.exited() {
+      bail!("the receiver process did not exit after forced termination");
+    }
     Ok(())
   }
 }
@@ -486,5 +489,62 @@ impl Drop for Receiver {
       std::thread::sleep(Duration::from_millis(20));
     }
     self.kill();
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use windows::Win32::System::Threading::PROCESS_SYNCHRONIZE;
+
+  #[test]
+  fn close_does_not_report_success_when_termination_is_denied() {
+    // ROOT CAUSE:
+    //
+    // If forced termination failed, close still returned Ok because it never
+    // checked the process after kill. Setup cleanup then reported a verified
+    // receiver even though the process was still alive.
+    // SAFETY: this opens the current process only for synchronization. It has
+    // no terminate right, and OwnedProcess closes the returned handle once.
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, std::process::id()) }.expect("open wait-only process handle");
+    let (_sender, lines) = mpsc::channel();
+    let mut receiver = Receiver {
+      spec: ReceiverSpec {
+        index: 0,
+        title: String::new(),
+        left: 0,
+        top: 0,
+        width: 1,
+        height: 1,
+        color: String::new(),
+        sink: false,
+      },
+      layout: Layout {
+        hwnd: "0".into(),
+        strip: Strip {
+          origin: [0, 0],
+          cell: [1, 1],
+          cells: 1,
+        },
+        pid: std::process::id(),
+        button_hwnd: "0".into(),
+        edit_hwnd: "0".into(),
+        window_rect: [0, 0, 1, 1],
+        button_center: [0, 0],
+        edit_center: [0, 0],
+        button_rect: [0, 0, 1, 1],
+        label_rect: [0, 0, 1, 1],
+        edit_rect: [0, 0, 1, 1],
+        typing_rect: [0, 0, 1, 1],
+        typing_center: [0, 0],
+      },
+      link: Link::Detached {
+        process: OwnedProcess(handle),
+        stream: None,
+      },
+      lines,
+    };
+    let result = receiver.close();
+    assert!(result.is_err(), "a running process with no terminate right must not be reported closed");
   }
 }

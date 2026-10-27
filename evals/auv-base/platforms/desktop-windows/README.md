@@ -123,6 +123,8 @@ cleanup, and pointer and foreground restoration. Consumers must gate on `passed`
 cleanup contract failed. A fixture or environment failure after the record file exists is
 written as a `setup_failed` entry plus a `passed: false` summary whose structured `cleanup`
 fields separate verified receipts from unknown drop-only attempts and resources never created.
+If receiver spawn fails, the cleanup state is `unknown` because a process can exist without a receipt.
+Receiver cleanup is verified only after the process exits.
 So, whenever the record medium is usable and normal error handling can run, `workflow.jsonl`
 ends with an explicit outcome; a forced process kill or an unwritable volume can still truncate
 it. Global misconfigurations (output directory, missing `auv`, temp space) still stop the run
