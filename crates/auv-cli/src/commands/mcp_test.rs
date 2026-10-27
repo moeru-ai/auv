@@ -1330,7 +1330,26 @@ async fn mcp_invoke_dry_run_with_a_device_selection_runs_locally() {
 
 #[tokio::test]
 async fn mcp_invoke_keyboard_dry_run_still_selects_the_device() {
-  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+  // The rule under test decides whether this very command dispatches locally,
+  // so the local `input.key` adapter itself must be the counter. A
+  // `display.list` counter would stay at zero even if a broken selection rule
+  // ran `input.key` locally and the run failed on its missing `key` argument,
+  // which would let both assertions below pass with the rule broken.
+  let local_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  let counter = Arc::clone(&local_calls);
+  let adapters = core_invoke_adapters()
+    .into_iter()
+    .filter(|adapter| adapter.command_id != "input.key")
+    .chain([super::McpInvokeAdapter::new("input.key", move |_input| {
+      let counter = Arc::clone(&counter);
+      async move {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(super::McpInvokeSuccess::empty())
+      }
+    })])
+    .collect::<Vec<_>>();
+  let store_root = tempfile::tempdir().unwrap().keep();
+  let server = McpServer::with_registry(store_root, Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap();
 
   let result = call_invoke(
     server,
