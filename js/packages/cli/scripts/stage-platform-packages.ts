@@ -61,20 +61,15 @@ const targets: readonly Target[] = [
 ]
 
 const artifactsRoot = resolve(process.argv[2] ?? join(cliRoot, 'artifacts'))
-const requestedPackage = process.argv[3]
 const rootManifest = JSON.parse(await readFile(join(cliRoot, 'package.json'), 'utf8')) as PackageManifest
 
 const artifactFiles = await collectFiles(artifactsRoot)
-const selectedTargets = requestedPackage ? targets.filter(target => target.packageDir === requestedPackage) : targets
-if (selectedTargets.length === 0) {
-  throw new Error(`Unknown AUV platform package ${requestedPackage}`)
-}
-for (const target of selectedTargets) {
+for (const target of targets) {
   await stageTarget(target, artifactFiles, rootManifest.version)
 }
 
 await copyFile(join(await findWorkspaceDir(cliRoot) ?? cliRoot, 'LICENSE'), join(cliRoot, 'LICENSE'))
-console.info(`Staged ${selectedTargets.length} AUV platform packages from ${artifactsRoot}`)
+console.info(`Staged ${targets.length} AUV platform packages from ${artifactsRoot}`)
 
 async function collectFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
@@ -129,8 +124,8 @@ async function stageTarget(
 
   const relativeExecutable = `bin/${target.executable}`
   const packagedPath = target.bundled ? 'bin' : relativeExecutable
-  if (!manifest.files?.includes(packagedPath) || (target.bundled && manifest.files.includes(relativeExecutable))) {
-    manifest.files = [...new Set([...(manifest.files ?? []).filter(file => file !== relativeExecutable), packagedPath])]
+  if (!manifest.files?.includes(packagedPath)) {
+    manifest.files = [...new Set([...(manifest.files ?? []), packagedPath])]
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 

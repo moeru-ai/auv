@@ -171,10 +171,12 @@ provider boundary in this slice. The contract is:
 3. Make the existing Linux archive names self-contained. Each archive keeps
    `auv` at its root and includes a private ELF dependency closure under
    `lib/auv`, English trained data under `share/auv/tessdata`, dependency
-   copyright files, and a checksummed manifest.
-4. Keep glibc and the ELF loader as the host ABI boundary. A release check must
-   reject any executable or bundled library that requires a newer glibc symbol
-   than 2.36.
+   and dependency copyright files. (Amended 2026-10-27: the checksummed
+   manifest was dropped because nothing read it.)
+4. Keep glibc and the ELF loader as the host ABI boundary. No executable or
+   bundled library may require a newer glibc symbol than 2.36. The release
+   check is running the archive on clean Debian 12 (glibc 2.36). (Amended
+   2026-10-27: this replaced a separate ELF symbol scan.)
 5. Preserve `TESSDATA_PREFIX` as an explicit override. Otherwise, AUV uses the
    bundled tessdata directory only when it contains every requested language
    model; this prevents the bundled English baseline from hiding additional
@@ -182,8 +184,10 @@ provider boundary in this slice. The contract is:
 6. Stage the complete Linux archive directory in the OS/CPU/glibc-specific npm
    platform package. Copying only `bin/auv` would break its relative library and
    tessdata lookup.
-7. Exercise the final archives on clean Debian 12, Debian 13, Ubuntu 24.04, and
-   Ubuntu 26.04 containers with no Tesseract or Leptonica packages installed.
+7. Exercise the final archives on clean containers with no Tesseract or
+   Leptonica packages installed. Release CI runs the oldest and newest supported
+   runtimes, Debian 12 and Ubuntu 26.04; Debian 13 and Ubuntu 24.04 fall
+   between them and were checked once by hand. (Amended 2026-10-27.)
 8. Ship the PipeWire client files that match the bundled `libpipewire`: the
    modules and SPA plugins named by Debian 12's `client.conf` (under
    `lib/auv/pipewire-0.3` and `lib/auv/spa-0.2`) and `client.conf` itself

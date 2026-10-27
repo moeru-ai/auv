@@ -76,8 +76,8 @@ that copied path at runtime.
 - Windows: copy it to `resources/bin/auv.exe` through `extraResources`.
 - Linux: copy the complete directory containing the path returned by
   `binaryPath()` to `resources/bin` through `extraResources`. The sibling
-  `lib/`, `share/`, `licenses/`, and `manifest.json` entries are part of the
-  executable's runtime bundle; copying only `auv` is unsupported.
+  `lib/`, `share/`, and `licenses/` entries are part of the executable's
+  runtime bundle; copying only `auv` is unsupported.
 
 The Electron main process should own the child process and pass the resulting
 absolute path to `startAuv()`. Importing `@auv-js/cli/binary` during staging

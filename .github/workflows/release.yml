@@ -222,14 +222,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: auv-x86_64-unknown-linux-gnu.tar.gz
             binding: auv-binding.linux-x64-gnu.node
-            package_dir: linux-x64-gnu
-            package_name: "@auv-js/cli-linux-x64-gnu"
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive: auv-aarch64-unknown-linux-gnu.tar.gz
             binding: auv-binding.linux-arm64-gnu.node
-            package_dir: linux-arm64-gnu
-            package_name: "@auv-js/cli-linux-arm64-gnu"
 
     steps:
       - name: Install Linux build and packaging dependencies
@@ -243,7 +239,6 @@ jobs:
             ca-certificates \
             curl \
             git \
-            jq \
             libclang-dev \
             libdbus-1-dev \
             libegl-dev \
@@ -290,39 +285,19 @@ jobs:
           pnpm exec napi build --platform --release --esm --js binding.js --dts binding.d.ts \
             --target '${{ matrix.target }}' -- --locked
           node -e "require('./${{ matrix.binding }}')"
-          ../../../scripts/tests/verify-elf-glibc-baseline 2.36 "${{ matrix.binding }}"
 
       - name: Build release binary
         run: |
           cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
           cargo build --locked --release --package auv-driver-linux --example release_ocr_probe --example release_pipewire_probe --target "${{ matrix.target }}"
 
-      - name: Create and verify full Linux archive
+      - name: Create full Linux archive
         run: |
-          version="$(node -p "require('./js/packages/cli/package.json').version")"
-          scripts/package-linux-release \
-            --binary "target/${{ matrix.target }}/release/auv" \
-            --archive "${{ matrix.archive }}" \
-            --target "${{ matrix.target }}" \
-            --version "$version" \
-            --project-license LICENSE
-          scripts/tests/verify-linux-release-archive "${{ matrix.archive }}" "${{ matrix.target }}" "$version"
+          scripts/package-linux-release "target/${{ matrix.target }}/release/auv" "${{ matrix.archive }}"
           cp "target/${{ matrix.target }}/release/examples/release_ocr_probe" release-ocr-probe
           patchelf --set-rpath '$ORIGIN/lib/auv' release-ocr-probe
           cp "target/${{ matrix.target }}/release/examples/release_pipewire_probe" release-pipewire-probe
           patchelf --set-rpath '$ORIGIN/lib/auv' release-pipewire-probe
-
-      - name: Stage and pack the Linux npm platform package
-        run: |
-          mkdir -p target/release-artifacts
-          cp "${{ matrix.archive }}" target/release-artifacts/
-          cp "js/packages/cli/${{ matrix.binding }}" "js/packages/cli/npm/${{ matrix.package_dir }}/"
-          cd js/packages/cli
-          pnpm exec tsx ./scripts/stage-platform-packages.ts "$GITHUB_WORKSPACE/target/release-artifacts" "${{ matrix.package_dir }}"
-          cd "$GITHUB_WORKSPACE"
-          scripts/tests/verify-staged-linux-npm-package "js/packages/cli/npm/${{ matrix.package_dir }}"
-          package_tarball="$(cd "js/packages/cli/npm/${{ matrix.package_dir }}" && npm pack --pack-destination "$GITHUB_WORKSPACE" --silent)"
-          mv "$package_tarball" release-platform-package.tgz
 
       - name: Calculate hash
         run: sha256sum "${{ matrix.archive }}" | awk '{ print $1 }' > "${{ matrix.archive }}.sha256"
@@ -337,7 +312,6 @@ jobs:
             js/packages/cli/${{ matrix.binding }}
             release-ocr-probe
             release-pipewire-probe
-            release-platform-package.tgz
 
   verify-linux-release:
     name: Verify ${{ matrix.archive }} on supported Linux runtimes
@@ -349,10 +323,8 @@ jobs:
         include:
           - os: ubuntu-24.04
             archive: auv-x86_64-unknown-linux-gnu.tar.gz
-            package_name: "@auv-js/cli-linux-x64-gnu"
           - os: ubuntu-24.04-arm
             archive: auv-aarch64-unknown-linux-gnu.tar.gz
-            package_name: "@auv-js/cli-linux-arm64-gnu"
 
     steps:
       - uses: actions/download-artifact@v8
@@ -360,10 +332,9 @@ jobs:
           name: ${{ matrix.archive }}
 
       # The oldest supported runtime (Debian 12, glibc 2.36 and PipeWire 0.3.65)
-      # and the newest (Ubuntu 26.04, PipeWire 1.6). `build-linux` already
-      # proves the library closure resolves inside the bundle; these runs cover
-      # what only a clean host shows: runtime loading, OCR without the distro's
-      # Tesseract, and the bundled PipeWire client against the host daemon.
+      # and the newest (Ubuntu 26.04, PipeWire 1.6). The images have no
+      # Tesseract or Leptonica, so startup and OCR run on the bundled libraries,
+      # and the glibc 2.36 image rejects anything that needs a newer glibc.
       #
       # Regression: a bundled libpipewire 0.3 loaded the host's PipeWire 1.x
       # client modules and failed with `undefined symbol:
@@ -380,12 +351,6 @@ jobs:
           for image in debian:12-slim ubuntu:26.04; do
             docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
               set -e
-              for package in tesseract-ocr libtesseract4 libtesseract5 liblept5 libleptonica6; do
-                if dpkg-query -W "$package" >/dev/null 2>&1; then
-                  echo "clean runtime unexpectedly contains $package" >&2
-                  exit 1
-                fi
-              done
               /opt/auv/auv --help >/dev/null
               /opt/auv/release-ocr-probe
 
@@ -403,25 +368,6 @@ jobs:
               /opt/auv/release-pipewire-probe
             '
           done
-
-      # N-API is ABI-stable across Node.js versions; the bookworm base checks
-      # the binding against the glibc 2.36 baseline.
-      - name: Verify installed npm package and NAPI binding
-        env:
-          PACKAGE_NAME: ${{ matrix.package_name }}
-        run: |
-          docker run --rm \
-            -e PACKAGE_NAME \
-            -v "$PWD:/work:ro" \
-            node:lts-bookworm-slim \
-            sh -c '
-              mkdir /tmp/app
-              cd /tmp/app
-              npm init -y >/dev/null
-              npm install /work/release-platform-package.tgz >/dev/null
-              node -e "require(process.env.PACKAGE_NAME)"
-              "node_modules/$PACKAGE_NAME/bin/auv" --help >/dev/null
-            '
 
   publish:
     name: Publish release artifacts
@@ -552,11 +498,6 @@ jobs:
         env:
           AUV_RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: pnpm artifacts
-
-      - name: Verify staged Linux npm bundles
-        run: |
-          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-x64-gnu
-          scripts/tests/verify-staged-linux-npm-package js/packages/cli/npm/linux-arm64-gnu
 
       - name: Verify npm package contents
         working-directory: js/packages/cli

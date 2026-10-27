@@ -1,42 +1,16 @@
 #!/usr/bin/env bash
+# Packages a glibc Linux `auv` as the self-contained release archive.
+#
+# Usage: scripts/package-linux-release <auv-binary> <archive>
+#
+# Run on the Debian 12 build host: the bundled libraries, PipeWire client files
+# and tessdata are copied from its packages.
 
 set -euo pipefail
 
-usage() {
-  cat <<'EOF'
-Usage: scripts/package-linux-release \
-  --binary <path> \
-  --archive <path> \
-  --target <rust-target> \
-  --version <version> \
-  --project-license <path>
-EOF
-}
-
-binary=''
-archive=''
-target=''
-version=''
-project_license=''
-while (($#)); do
-  case "$1" in
-    --binary) binary="$2"; shift 2 ;;
-    --archive) archive="$2"; shift 2 ;;
-    --target) target="$2"; shift 2 ;;
-    --version) version="$2"; shift 2 ;;
-    --project-license) project_license="$2"; shift 2 ;;
-    --help|-h) usage; exit 0 ;;
-    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
-  esac
-done
-
-for command in dpkg-query jq ldd patchelf sha256sum tar; do
-  command -v "$command" >/dev/null || { echo "required command not found: $command" >&2; exit 1; }
-done
-for required in "$binary" "$project_license"; do
-  test -f "$required" || { echo "required file not found: $required" >&2; exit 1; }
-done
-test -n "$archive" && test -n "$target" && test -n "$version" || { usage >&2; exit 2; }
+binary="${1:?usage: scripts/package-linux-release <auv-binary> <archive>}"
+archive="${2:?missing archive path}"
+repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 work_root="$(mktemp -d)"
 trap 'rm -rf "$work_root"' EXIT
@@ -44,83 +18,44 @@ trap 'rm -rf "$work_root"' EXIT
 # `mktemp -d`'s 0700.
 package_root="$work_root/package"
 mkdir -m 0755 "$package_root"
-mkdir -p "$package_root/lib/auv" "$package_root/share/auv/tessdata" "$package_root/licenses/auv" "$package_root/licenses/system"
+mkdir -p "$package_root/lib/auv/pipewire-0.3" "$package_root/lib/auv/spa-0.2" \
+  "$package_root/share/auv/pipewire" "$package_root/share/auv/tessdata" \
+  "$package_root/licenses/auv" "$package_root/licenses/system"
 install -m 0755 "$binary" "$package_root/auv"
-install -m 0644 "$project_license" "$package_root/licenses/auv/LICENSE"
+install -m 0644 "$repository_root/LICENSE" "$package_root/licenses/auv/LICENSE"
 
-is_runtime_provided_library() {
-  case "$1" in
-    ld-linux*.so*|libanl.so*|libc.so*|libdl.so*|libm.so*|libnss_*.so*|libpthread.so*|libresolv.so*|librt.so*|libthread_db.so*|libutil.so*) return 0 ;;
-    *) return 1 ;;
-  esac
+# Copies the Debian copyright file of the package that installed a file.
+copy_license_for() {
+  local package
+  package="$(dpkg-query -S "$1" | head -n 1)"
+  package="${package%%:*}"
+  install -m 0644 "/usr/share/doc/$package/copyright" "$package_root/licenses/system/$package.copyright"
 }
 
-package_for_file() {
-  local installed_file="$1"
-  local ownership
-  ownership="$(dpkg-query -S "$installed_file" 2>/dev/null | head -n 1 || true)"
-  test -n "$ownership" || return 1
-  printf '%s\n' "${ownership%%:*}"
-}
-
-copy_package_license() {
-  local package="$1"
-  local copyright
-  copyright="/usr/share/doc/$package/copyright"
-  test -f "$copyright" || { echo "copyright file not found for package $package" >&2; exit 1; }
-  install -m 0644 "$copyright" "$package_root/licenses/system/$package.copyright"
-}
-
-# Lists the shared-library closure of one ELF file as this host's dynamic
-# loader resolves it, one path per line.
+# Copies the shared-library closure of one ELF file into lib/auv, leaving out
+# glibc and the loader, which are the host ABI boundary.
 # NOTICE: this uses glibc's `ldd`, not `lddtree`. Debian 12 ships `lddtree` in
-# `pax-utils` as a Python script, which would bring Python back into the release
-# build. `ldd` runs the loader on the file, so only use it on trusted ELF files,
-# which our own build and Debian's packages are.
-library_closure() {
-  local output line
-  output="$(ldd "$1")" || { echo "ldd failed on $1" >&2; return 1; }
+# `pax-utils` as a Python script. `ldd` runs the loader on the file, which is
+# fine for our own build and Debian's packages.
+bundle_dependencies() {
+  local output line path name
+  output="$(ldd "$1")"
   while read -r line; do
     case "$line" in
-      *'=> not found'*) echo "$1 has an unresolved dependency: $line" >&2; return 1 ;;
-      *' => /'*) line="${line#* => }"; printf '%s\n' "${line% (0x*}" ;;
-      # The dynamic loader is listed by path alone.
-      /*) printf '%s\n' "${line% (0x*}" ;;
+      *'=> not found'*) echo "$1 has an unresolved dependency: $line" >&2; exit 1 ;;
+      *' => /'*) path="${line#* => }"; path="${path% (0x*}" ;;
+      *) continue ;;
     esac
-  done <<< "$output"
-}
-
-library_metadata="$work_root/library-packages.tsv"
-: > "$library_metadata"
-# Copies the shared-library closure of one ELF file into lib/auv.
-bundle_dependencies() {
-  local elf="$1"
-  local closure dependency resolved name destination package
-  closure="$(library_closure "$elf")"
-  while IFS= read -r dependency; do
-    test -f "$dependency" || continue
-    resolved="$(readlink -f "$dependency")"
-    name="$(basename "$dependency")"
-    test "$resolved" != "$(readlink -f "$elf")" || continue
-    is_runtime_provided_library "$name" && continue
+    name="$(basename "$path")"
+    case "$name" in
+      ld-linux*.so*|libanl.so*|libc.so*|libdl.so*|libm.so*|libnss_*.so*|libpthread.so*|libresolv.so*|librt.so*|libthread_db.so*|libutil.so*) continue ;;
+    esac
     # A PipeWire module that links another module finds it beside itself.
-    case "$resolved" in
-      */pipewire-0.3/libpipewire-module-*.so)
-        test -f "$package_root/lib/auv/pipewire-0.3/$name" || { echo "$elf needs PipeWire module $name, which client.conf does not load" >&2; exit 1; }
-        continue
-        ;;
-    esac
-
-    destination="$package_root/lib/auv/$name"
-    if test -e "$destination"; then
-      cmp -s "$resolved" "$destination" || { echo "dependency basename collision for $name" >&2; exit 1; }
-      continue
-    fi
-    install -m 0644 "$resolved" "$destination"
-    package="$(package_for_file "$resolved" || package_for_file "$dependency")"
-    copy_package_license "$package"
-    printf '%s\t%s\t%s\n' "lib/auv/$name" "$package" "licenses/system/$package.copyright" >> "$library_metadata"
-  done <<< "$closure"
+    case "$path" in */pipewire-0.3/libpipewire-module-*.so) continue ;; esac
+    test -e "$package_root/lib/auv/$name" && continue
+    install -m 0644 "$(readlink -f "$path")" "$package_root/lib/auv/$name"
+    copy_license_for "$(readlink -f "$path")" 2>/dev/null || copy_license_for "$path"
+  done <<< "$output"
 }
 bundle_dependencies "$binary"
 
@@ -131,40 +66,26 @@ bundle_dependencies "$binary"
 # the matching client files and let `auv_driver_linux::bundle` point
 # libpipewire at them. The bundle still talks to the host daemon through its
 # socket protocol, as Flatpak runtimes do.
-pipewire_library="$(library_closure "$binary" | awk '/\/libpipewire-0\.3\.so\.0$/ { print; exit }')"
-test -n "$pipewire_library" || { echo 'auv does not link libpipewire-0.3.so.0' >&2; exit 1; }
-pipewire_lib_dir="$(dirname "$(readlink -f "$pipewire_library")")"
+pipewire_lib_dir="$(dirname "$(readlink -f "$(ldd "$binary" | awk '/libpipewire-0\.3\.so\.0 => / { print $3; exit }')")")"
 client_conf=/usr/share/pipewire/client.conf
-test -f "$client_conf" || { echo "PipeWire client configuration not found: $client_conf" >&2; exit 1; }
-mkdir -p "$package_root/share/auv/pipewire" "$package_root/lib/auv/pipewire-0.3" "$package_root/lib/auv/spa-0.2"
 install -m 0644 "$client_conf" "$package_root/share/auv/pipewire/client.conf"
-copy_package_license "$(package_for_file "$client_conf")"
+copy_license_for "$client_conf"
 active_client_conf="$(sed 's/#.*//' "$client_conf")"
-mapfile -t pipewire_modules < <(grep -oE 'libpipewire-module-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
-mapfile -t spa_plugins < <(grep -oE '[a-z0-9-]+/libspa-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
-test "${#pipewire_modules[@]}" -gt 0 || { echo "no PipeWire modules found in $client_conf" >&2; exit 1; }
-for module in "${pipewire_modules[@]}"; do
-  source_file="$pipewire_lib_dir/pipewire-0.3/$module.so"
-  test -f "$source_file" || { echo "PipeWire module not found: $source_file" >&2; exit 1; }
-  install -m 0644 "$source_file" "$package_root/lib/auv/pipewire-0.3/$module.so"
-  copy_package_license "$(package_for_file "$source_file")"
-done
-for module in "${pipewire_modules[@]}"; do
-  bundle_dependencies "$pipewire_lib_dir/pipewire-0.3/$module.so"
-done
-for plugin in "${spa_plugins[@]}"; do
-  source_file="$pipewire_lib_dir/spa-0.2/$plugin.so"
-  test -f "$source_file" || { echo "SPA plugin not found: $source_file" >&2; exit 1; }
-  install -D -m 0644 "$source_file" "$package_root/lib/auv/spa-0.2/$plugin.so"
-  copy_package_license "$(package_for_file "$source_file")"
-  bundle_dependencies "$source_file"
-done
+while read -r module; do
+  install -m 0644 "$pipewire_lib_dir/pipewire-0.3/$module.so" "$package_root/lib/auv/pipewire-0.3/"
+  copy_license_for "$pipewire_lib_dir/pipewire-0.3/$module.so"
+done < <(grep -oE 'libpipewire-module-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
+while read -r plugin; do
+  install -D -m 0644 "$pipewire_lib_dir/spa-0.2/$plugin.so" "$package_root/lib/auv/spa-0.2/$plugin.so"
+  copy_license_for "$pipewire_lib_dir/spa-0.2/$plugin.so"
+done < <(grep -oE '[a-z0-9-]+/libspa-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
+while IFS= read -r -d '' client_file; do
+  bundle_dependencies "$client_file"
+done < <(find "$package_root/lib/auv/pipewire-0.3" "$package_root/lib/auv/spa-0.2" -type f -print0)
 
-eng_model="$(dpkg-query -L tesseract-ocr-eng | awk '/\/eng\.traineddata$/ { print; exit }')"
-test -f "$eng_model" || { echo 'tesseract-ocr-eng did not provide eng.traineddata' >&2; exit 1; }
+eng_model="$(dpkg-query -L tesseract-ocr-eng | grep '/eng\.traineddata$' | head -n 1)"
 install -m 0644 "$eng_model" "$package_root/share/auv/tessdata/eng.traineddata"
-model_package="$(package_for_file "$eng_model")"
-copy_package_license "$model_package"
+copy_license_for "$eng_model"
 
 # Keep the dynamic-loader token literal; the shell must not expand it.
 # shellcheck disable=SC2016
@@ -177,41 +98,6 @@ find "$package_root/lib/auv" -maxdepth 1 -type f -exec patchelf --set-rpath '$OR
 find "$package_root/lib/auv/pipewire-0.3" -type f -exec patchelf --set-rpath '$ORIGIN:$ORIGIN/..' {} +
 # shellcheck disable=SC2016
 find "$package_root/lib/auv/spa-0.2" -mindepth 2 -type f -exec patchelf --set-rpath '$ORIGIN/../..' {} +
-
-file_metadata="$work_root/files.tsv"
-(
-  cd "$package_root"
-  find . -type f -printf '%P\n' | LC_ALL=C sort | while IFS= read -r path; do
-    printf '%s\t%s\t%s\n' "$path" "$(sha256sum "$path" | cut -d ' ' -f 1)" "$(stat -c %s "$path")"
-  done
-) > "$file_metadata"
-jq -n \
-  --arg version "$version" \
-  --arg target "$target" \
-  --arg model_package "$model_package" \
-  --rawfile libraries "$library_metadata" \
-  --rawfile files "$file_metadata" '
-  def rows($tsv): $tsv | split("\n") | map(select(length > 0) | split("\t"));
-  {
-    schemaVersion: 1,
-    name: "auv",
-    version: $version,
-    target: $target,
-    glibcBaseline: "2.36",
-    layout: {
-      executable: "auv",
-      libraryDirectory: "lib/auv",
-      tessdataDirectory: "share/auv/tessdata"
-    },
-    libraries: (rows($libraries) | map({path: .[0], package: .[1], license: .[2]}) | sort_by(.path)),
-    models: [{
-      language: "eng",
-      path: "share/auv/tessdata/eng.traineddata",
-      package: $model_package,
-      license: "licenses/system/\($model_package).copyright"
-    }],
-    files: (rows($files) | map({path: .[0], sha256: .[1], size: (.[2] | tonumber)}))
-  }' > "$package_root/manifest.json"
 
 # TODO(linux-minimal-artifact): keep the default archive self-contained; add a
 # separate auv-minimal artifact only after its distro dependency contract and
