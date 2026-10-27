@@ -1,5 +1,14 @@
 use super::*;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4382693068
+#[test]
+fn unrelated_click_status_preserves_the_original_server_error() {
+  let status = tonic::Status::with_details(tonic::Code::FailedPrecondition, "original failure", vec![255].into());
+  let error = click_status(status);
+  assert!(matches!(error, CapabilityError::Client(_)));
+  assert!(error.to_string().contains("original failure"));
+}
+
 #[derive(Debug)]
 struct LargeCaptureService;
 
@@ -96,6 +105,8 @@ fn route() -> auv_api_client::RunnerRoute {
 #[derive(Default)]
 struct InputFixture {
   clicks: std::sync::Mutex<Vec<proto::ClickPointRequest>>,
+  guarded: std::sync::Mutex<Vec<proto::ClickPointWithCaptureRequest>>,
+  legacy: bool,
   downs: std::sync::Mutex<Vec<proto::KeyDownRequest>>,
   ups: std::sync::Mutex<Vec<auv_driver::KeyboardHoldId>>,
   scrolls: std::sync::Mutex<Vec<proto::ScrollPointRequest>>,
@@ -120,6 +131,18 @@ macro_rules! input_fixture_impl {
   ($($name:ident($request:ty) -> $response:ty;)+) => {
     #[tonic::async_trait]
     impl proto::input_service_server::InputService for InputFixture {
+      async fn click_point_with_capture(&self, request: tonic::Request<proto::ClickPointWithCaptureRequest>) -> Result<tonic::Response<proto::ClickPointWithCaptureResponse>, tonic::Status> {
+        if self.legacy { return Err(tonic::Status::unimplemented("unknown method")); }
+        self.guarded.lock().unwrap().push(request.into_inner());
+        if let Some(status) = self.statuses.lock().unwrap().pop_front() { return Err(status); }
+        Ok(tonic::Response::new(proto::ClickPointWithCaptureResponse {
+          result: Some(proto::ClickPointResponse {
+            screen_point: Some(proto::ScreenPoint { x: 10.0, y: 20.0 }),
+            action: Some(fixture_action(proto::InputDeliveryPath::ForegroundSystemEvents)),
+            ..Default::default()
+          }),
+        }))
+      }
       async fn click_point(&self, request: tonic::Request<proto::ClickPointRequest>) -> Result<tonic::Response<proto::ClickPointResponse>, tonic::Status> {
         self.clicks.lock().unwrap().push(request.into_inner());
         if let Some(status) = self.statuses.lock().unwrap().pop_front() {
@@ -293,28 +316,41 @@ async fn typed_key_holds_preserve_target_policy_timeout_id_and_release_results()
 
 #[tokio::test]
 async fn click_capture_binding_and_typed_refusal_survive_rpc() {
-  use prost::Message as _;
   let service = std::sync::Arc::new(InputFixture::default());
   let (input, server) = serve_input_fixture(service.clone()).await;
   let capture = CaptureRef::new("cap-from-runner");
   let point = auv_driver::ScreenPoint::new(10.0, 20.0);
   input.click_with_capture(&point, Default::default(), Some(&capture)).await.unwrap();
-  assert_eq!(service.clicks.lock().unwrap()[0].capture_precondition.as_ref().unwrap().capture_id, capture.id());
+  assert_eq!(service.guarded.lock().unwrap()[0].capture.as_ref().unwrap().capture_id, capture.id());
 
-  let details = proto::ClickPreconditionFailure {
-    capture_id: capture.id().into(),
-    reason: proto::ClickPreconditionFailureReason::StateChanged as i32,
-  };
-  service.statuses.lock().unwrap().push_back(tonic::Status::with_details(
-    tonic::Code::FailedPrecondition,
-    "take a new capture",
-    details.encode_to_vec().into(),
+  service.statuses.lock().unwrap().push_back(auv_api_proto::click_precondition::status(
+    capture.id(),
+    proto::ClickPreconditionFailureReason::StateChanged,
+    "pixels changed",
   ));
   let error = input.click_with_capture(&point, Default::default(), Some(&capture)).await.unwrap_err();
   assert!(
     matches!(error, CapabilityError::CapturePrecondition { capture_id, reason: ClickPreconditionFailureReason::StateChanged } if capture_id == capture.id())
   );
-  assert_eq!(service.clicks.lock().unwrap().len(), 2, "refusal must not cause automatic replay");
+  assert_eq!(service.guarded.lock().unwrap().len(), 2, "refusal must not cause automatic replay");
+  assert!(service.clicks.lock().unwrap().is_empty());
+  server.abort();
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4383986620
+#[tokio::test]
+async fn old_runner_rejects_guarded_calls_without_unguarded_fallback() {
+  let service = std::sync::Arc::new(InputFixture {
+    legacy: true,
+    ..Default::default()
+  });
+  let (input, server) = serve_input_fixture(service.clone()).await;
+  let error = input
+    .click_with_capture(&auv_driver::ScreenPoint::new(10.0, 20.0), Default::default(), Some(&CaptureRef::new("capture")))
+    .await
+    .unwrap_err();
+  assert!(error.to_string().contains("unknown method"));
+  assert!(service.clicks.lock().unwrap().is_empty());
   server.abort();
 }
 

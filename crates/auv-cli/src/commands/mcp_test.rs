@@ -178,7 +178,7 @@ async fn click_point_mcp_preserves_capture_and_refuses_uncheckable_local_deliver
     target: None, inputs: pairs(&[("x", "120"), ("y", "80"), ("capture", "cap-test")]),
     dry_run: false, cancellation: Default::default(),
   }).await.unwrap_err();
-  assert_eq!(error.code, auv_cli_invoke::FailureCode::RecaptureRequired);
+  assert_eq!(error.code, auv_cli_invoke::FailureCode::InvalidTarget);
 }
 
 fn pairs(values: &[(&str, &str)]) -> BTreeMap<String, String> {

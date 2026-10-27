@@ -1,7 +1,7 @@
 # driver
 
 - [Click capture precondition](2026-10-26-click-capture-precondition-contract.md):
-  exact-state admission, typed refusal, shared frontends, and race limits.
+  guarded RPC admission, typed refusal, shared frontends, and platform evidence.
 
 Platform drivers, input, window, capture, permissions
 

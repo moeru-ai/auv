@@ -7,14 +7,13 @@ use super::*;
 #[test]
 fn click_request_preserves_capture_precondition() {
   let pool = prost_reflect::DescriptorPool::decode(auv_api_proto::FILE_DESCRIPTOR_SET).unwrap();
-  let request = pool.get_message_by_name("auv.api.driver.v1.ClickPointRequest").unwrap();
-  assert!(request.get_field_by_name("capture_precondition").is_some());
+  let request = pool.get_message_by_name("auv.api.driver.v1.ClickPointWithCaptureRequest").unwrap();
+  assert!(request.get_field_by_name("capture").is_some());
 }
 
 #[tokio::test]
 async fn click_rpc_records_unknown_capture_refusal_across_the_blocking_boundary() {
   use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
-  use prost::Message as _;
   let records = std::sync::Arc::new(MemoryTracingStore::new());
   let dispatch = configure().tracing_store(records.clone()).build().unwrap();
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -23,12 +22,15 @@ async fn click_rpc_records_unknown_capture_refusal_across_the_blocking_boundary(
     captures: test_capture_store(),
   };
   let status = root
-    .instrument(service.click_point(Request::new(proto::ClickPointRequest {
-      position: Some(position_to_proto(auv_driver::Position {
-        point: auv_driver::Point::new(10.0, 20.0),
-        coordinate_space: auv_driver::CoordinateSpace::Screen,
-      })),
-      capture_precondition: Some(proto::CaptureRef {
+    .instrument(service.click_point_with_capture(Request::new(proto::ClickPointWithCaptureRequest {
+      click: Some(proto::ClickPointRequest {
+        position: Some(position_to_proto(auv_driver::Position {
+          point: auv_driver::Point::new(10.0, 20.0),
+          coordinate_space: auv_driver::CoordinateSpace::Screen,
+        })),
+        ..Default::default()
+      }),
+      capture: Some(proto::CaptureRef {
         capture_id: "unknown-capture".into(),
       }),
       ..Default::default()
@@ -37,7 +39,7 @@ async fn click_rpc_records_unknown_capture_refusal_across_the_blocking_boundary(
     .unwrap_err();
   assert_eq!(status.code(), tonic::Code::FailedPrecondition);
   assert_eq!(
-    proto::ClickPreconditionFailure::decode(status.details()).unwrap().reason(),
+    auv_api_proto::click_precondition::failure(&status).unwrap().reason(),
     proto::ClickPreconditionFailureReason::CaptureUnavailable
   );
   dispatch.flush().await.unwrap();

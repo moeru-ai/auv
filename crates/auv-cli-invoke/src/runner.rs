@@ -580,6 +580,9 @@ async fn selected_click_point(
   // Failures while resolving a guarded target precede every input RPC. Keep
   // the same recapture recovery when the frontend detects a missing target.
   // Delivery failures are deliberately not mapped here: input may have begun.
+  // TODO(click-frontend-refusal-event): these failures stay in the command
+  // record but have no Runner RPC/event. Unify admission recording when an
+  // owner-approved shared frontend/Runner refusal boundary is available.
   let target_failure = |failure: crate::InvokeFailure| match &capture {
     Some(capture) => crate::InvokeFailure::new(
       crate::FailureCode::RecaptureRequired,

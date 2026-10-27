@@ -902,8 +902,8 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> crate::
   // requested precondition or turn it into an unguarded click.
   if args.capture.is_some() {
     return Err(crate::InvokeFailure::new(
-      crate::FailureCode::RecaptureRequired,
-      "--capture requires a selected Run on the Runner that produced the capture; capture again on that Run",
+      crate::FailureCode::InvalidTarget,
+      "--capture requires a selected Run on the Runner that produced the capture; select that Run with --run",
     ));
   }
   let basis = args.basis(input.target.as_ref())?;

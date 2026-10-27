@@ -152,6 +152,18 @@ service InputService {
       description: "Clicks at a position in screen, display or window coordinates. A window position, or any position with a target window, is delivered to that window, in the background when the policy allows; a screen or display position is a global click."
     };
   }
+
+  // A distinct method prevents older Runners from silently ignoring a guard.
+  // Unknown methods return UNIMPLEMENTED before input delivery.
+  rpc ClickPointWithCapture(ClickPointWithCaptureRequest) returns (ClickPointWithCaptureResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "input.clickWithCapture"
+      title: "Click with a capture precondition"
+      description: "Checks a Runner-owned capture before input delivery. Refuses stale or uncheckable state without input."
+    };
+  }
   // Wheel-style scroll at a screen or display position, with no target
   // window. Delivered in the foreground; a window position is rejected, use
   // ScrollWindowPoint for that. Delivery evidence only: a delivered wheel event
@@ -414,12 +426,23 @@ message ClickPointRequest {
   // Delivers to this window. A screen or display position is converted with
   // the window's current frame; a window position must name the same window.
   WindowRef window = 3;
-  // Optional binding to a full CaptureWindow or CaptureDisplay from this Runner.
-  // The Runner compares target geometry, visible windows and all captured pixels
-  // immediately before calling input delivery. Any change or unavailable check
-  // refuses input with FAILED_PRECONDITION and ClickPreconditionFailure details.
-  // Absence retains unguarded delivery. See docs/input.click.md for race limits.
-  CaptureRef capture_precondition = 4;
+  // The unreleased field-based guard moved to ClickPointWithCapture so an
+  // older Runner cannot silently ignore it. Ordinary ClickPoint is unguarded.
+  reserved 4;
+  reserved "capture_precondition";
+}
+
+message ClickPointWithCaptureRequest {
+  // Required click, with the same coordinate and delivery semantics as ClickPoint.
+  ClickPointRequest click = 1;
+  // Required full CaptureWindow or CaptureDisplay reference from this Runner.
+  // Refusal sends no input. See docs/input.click.md for policy and race limits.
+  CaptureRef capture = 2;
+}
+
+message ClickPointWithCaptureResponse {
+  // Delivery result after the capture precondition passed.
+  ClickPointResponse result = 1;
 }
 
 // Why a guarded click refused input. Every reason requires a new capture and
@@ -432,7 +455,7 @@ enum ClickPreconditionFailureReason {
   CLICK_PRECONDITION_FAILURE_REASON_CHECK_UNAVAILABLE = 4;
 }
 
-// Encoded directly in ClickPoint's grpc-status-details-bin on refusal.
+// Packed in google.rpc.Status.details as Any on guarded-click refusal.
 // No pointer, button, modifier, focus or activation input was requested.
 message ClickPreconditionFailure {
   string capture_id = 1;

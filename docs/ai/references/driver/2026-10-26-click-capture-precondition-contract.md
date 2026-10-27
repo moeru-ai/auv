@@ -1,7 +1,8 @@
 # Click capture precondition
 
-Classification: bug fix. Evidence: source inspection and automated fixtures.
-No live desktop reproduction or platform support claim accompanies this change.
+Classification: bug fix. Evidence: source inspection, automated fixtures, and
+maintainer-reported live results from PR #429. Those results describe the original
+revision, not live validation of the review fixes. No platform support claim is made.
 
 ## Problem and contract
 
@@ -10,10 +11,14 @@ Refreshing a window reference corrected coordinates but could not reject stale p
 The [reported source](https://github.com/moeru-ai/auv/blob/739fe399311ae72b77ffeea530b231c3bb6c34ea/proto/auv/api/driver/v1/input.proto#L409)
 documents that request shape.
 
-The optional `capture_precondition` now names an AUV-owned `CaptureRef`.
+`ClickPointWithCapture` requires a `click` and an AUV-owned `capture` reference.
+Its response wraps the ordinary click result in `result`.
+SDK capture options and CLI `--capture` select this dedicated method.
+Older Runners return `UNIMPLEMENTED`; callers never downgrade to ordinary `ClickPoint`.
+The unreleased `ClickPointRequest.capture_precondition` field 4 is reserved.
 Full window and display captures retain provenance beside their stored reference.
-Provenance includes the resolved resource, resolution, and a hash of visible windows.
-The baseline requires equal window lists before and after capture.
+Provenance includes the resolved resource, resolution, and visible window snapshots.
+The baseline retains snapshots from before and after capture, including failure causes.
 Identical pixel blobs can share storage without sharing provenance.
 Store-specific UUIDs prevent references from aliasing across Runner restarts or hosts.
 
@@ -25,14 +30,18 @@ The input result remains the existing `InputActionResult`.
 ## Detection policy
 
 The first policy requires exact equality. It compares the resolved resource,
-visible window metadata and order, capture origin, bounds, scale, backend,
+relevant window metadata and order, capture origin, bounds, scale, backend,
 fallback metadata, dimensions, and all RGBA bytes at the original resolution.
 
 Movement and resize invalidate window captures, including window-relative clicks.
 Changed pixels invalidate scrolling, navigation, and dialogs rendered inside a window.
-A changed visible window list invalidates separate dialogs even when window pixels match.
+A window capture compares windows that intersect the captured window.
+A display capture compares windows that contain the click point.
+Changes within these groups invalidate separate dialogs even when pixels match.
+Windows outside these groups do not affect the metadata comparison.
 The click must also remain inside the stored capture extent and name the correct target.
-Unrelated visible window changes and animation can cause conservative refusals.
+Full-frame pixel comparison remains exact, so unrelated animation can still cause refusal.
+Tolerance and region-only pixel comparison need a separate accepted detection policy.
 
 Failure reasons are `CAPTURE_UNAVAILABLE`, `TARGET_MISMATCH`, `STATE_CHANGED`,
 and `CHECK_UNAVAILABLE`. Every reason requests a new capture and caller decision.
@@ -51,12 +60,49 @@ JavaScript exposes `capturePrecondition` and `ClickPreconditionError`.
 Invoke exposes `--capture`, which also supplies MCP metadata and replay inputs.
 Runner capture results expose `capture.capture_id` for this next operation.
 CLI and MCP preserve the `recapture_required` failure code.
-Local execution cannot access a Runner capture store and refuses guarded clicks.
+Local execution returns `invalid_target` with instructions to select a Run through `--run`.
+Recapture alone cannot fix an absent Runner route.
 
-The Runner returns `FAILED_PRECONDITION` with method-specific Protobuf details.
+The Runner returns `FAILED_PRECONDITION` with a standard `google.rpc.Status` envelope.
+Its `details` packs `ClickPreconditionFailure` in `Any`.
+Rust and JavaScript preserve the original RPC error for unknown or malformed details.
 Traced refusals emit `auv.input.click_refused`, and RPC recording retains the
-request and failed status. The event includes the reference, reason, recovery,
-and `input_delivered: false`. No pixels travel through the caller.
+request and failed status. The event includes the reference, reason, cause, recovery,
+and `input_delivered: false`. The status message also carries the cause, bounded to 512 characters.
+No pixels travel through the caller.
+
+Frontend target-resolution refusals remain in the command failure record.
+They do not reach the Runner and currently emit no `auv.input.click_refused` event.
+The inline TODO in `selected_click_point` records this admission-recording gap.
+
+## Review evidence and limits
+
+The following measurements came from the maintainer's review of the original PR revision.
+They are small samples, not general failure rates or new measurements of the fixes.
+
+| Platform | Reported result | Review response |
+| --- | --- | --- |
+| macOS | 0/16 unchanged clicks delivered. Ignoring Window Server improved this to 7/10. | Scope window metadata to the target or click point. No process-name exceptions. |
+| Windows display | 5/12 unchanged clicks refused, with 171–252 differing bytes and equal metadata. | Retain exact pixels and document the observed false refusals. |
+| GNOME display | 1/10 unchanged clicks refused, possibly from caret blinking. | Retain exact pixels and document the observed false refusal. |
+| GNOME Wayland window | GTK4 AT-SPI extents stayed at `(0,0)` after movement, so a moved window passed. | Refuse AT-SPI window crops and Linux window-targeted guards with `CHECK_UNAVAILABLE`. |
+
+Sources: [macOS window churn](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693014),
+[pixel false refusals](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693024),
+[Wayland placement](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693034).
+
+The macOS recording indicator previously invalidated the full desktop window list.
+The metadata fix ignores indicators outside the relevant area.
+An indicator that intersects that area or changes captured pixels can still cause refusal.
+
+The Linux placement restriction is conservative: the current driver exposes no reliable placement capability.
+Display captures with screen or display coordinates remain available.
+Window-targeted guards require a driver contract that establishes reliable placement before they can be enabled.
+
+Recapture runs inside the input task, so other input RPCs can wait behind it.
+Reported latency was 0.1–3.3 seconds on macOS and 1.6–2.7 seconds for a Windows 4K display.
+GNOME guarded clicks took 4–5 times as long as unguarded clicks.
+See the [latency report](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693086).
 
 ## Remaining race and evidence limits
 
@@ -67,8 +113,8 @@ Pixel-identical semantic changes cannot be detected.
 Window enumeration does not prove that every platform occluder is represented.
 Separate application verification remains necessary for semantic success.
 
-Callers must use a Runner that implements the new field. An older Protobuf
-server can ignore unknown fields. Unguarded requests retain their existing behavior.
+Guarded callers use the dedicated method, so older Runners refuse before input.
+Unguarded requests retain their existing behavior.
 
 Automated evidence includes:
 
@@ -84,16 +130,19 @@ Other tests cover typed transport failures, reference isolation, and refusal rec
 
 ## Validation
 
-Validated on Windows with automated fixtures:
+Original validation commands appear below. Current review-fix results are recorded
+in the PR description and thread replies at the tested revision.
 
-- `cargo test`
+- The original unfiltered platform suite failed the live WGC/GDI pixel comparison.
+  The remaining suites passed with that test explicitly excluded. This was not
+  a fully green unfiltered run; see PR #429 validation history.
 - `cargo test -p auv-cli -p auv-core -p auv-cli-invoke --lib`
 - `cargo check`
 - `cargo fmt --check`
 - `cargo run --quiet -- invoke --help`
 - `git diff --check`
 - `pnpm --filter @auv-js/sdk typecheck`
-- `pnpm --filter @auv-js/sdk test:run src/apis/auv/driver.test.ts` (21 tests)
+- `pnpm --filter @auv-js/sdk test:run src/apis/auv/driver.test.ts`
 - ESLint on the three changed SDK files
 - Buf lint, generation, and breaking checks against `main`
 - Buf formatting check on `input.proto`

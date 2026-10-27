@@ -59,19 +59,12 @@ fn capability_status(status: tonic::Status) -> CapabilityError {
 }
 
 fn click_status(status: tonic::Status) -> CapabilityError {
-  use prost::Message as _;
-  if status.code() != tonic::Code::FailedPrecondition || status.details().is_empty() {
-    return capability_status(status);
-  }
-  match proto::ClickPreconditionFailure::decode(status.details()) {
-    Ok(failure) => match ClickPreconditionFailureReason::try_from(failure.reason) {
-      Ok(reason) if reason != ClickPreconditionFailureReason::Unspecified => CapabilityError::CapturePrecondition {
-        capture_id: failure.capture_id,
-        reason,
-      },
-      _ => CapabilityError::InvalidResponse("unknown click precondition failure reason".into()),
+  match auv_api_proto::click_precondition::failure(&status) {
+    Some(failure) => CapabilityError::CapturePrecondition {
+      capture_id: failure.capture_id,
+      reason: ClickPreconditionFailureReason::try_from(failure.reason).expect("wire decoder checked reason"),
     },
-    Err(error) => CapabilityError::InvalidResponse(format!("invalid ClickPreconditionFailure: {error}")),
+    None => capability_status(status),
   }
 }
 
@@ -476,6 +469,32 @@ impl RunnerClient {
 
   pub(super) fn transport(&self) -> Result<auv_api_client::RoutedTransport, CapabilityError> {
     self.extension_transport()
+  }
+
+  /// Guarded calls use a separate method: an old Runner must fail before
+  /// delivery, rather than ignore an unknown Protobuf field. Never downgrade.
+  async fn click(
+    &self,
+    request: proto::ClickPointRequest,
+    capture: Option<&CaptureRef>,
+  ) -> Result<proto::ClickPointResponse, CapabilityError> {
+    let mut client = proto::input_service_client::InputServiceClient::new(self.transport()?);
+    match capture {
+      Some(capture) => {
+        let response = client
+          .click_point_with_capture(proto::ClickPointWithCaptureRequest {
+            click: Some(request),
+            capture: Some(proto::CaptureRef {
+              capture_id: capture.id().into(),
+            }),
+          })
+          .await
+          .map_err(click_status)?
+          .into_inner();
+        required(response.result, "ClickPointWithCapture response omitted result")
+      }
+      None => Ok(client.click_point(request).await.map_err(click_status)?.into_inner()),
+    }
   }
 
   /// Returns display inspection and capture capabilities.
@@ -996,18 +1015,17 @@ impl WindowClient {
     options: auv_driver::ClickOptions,
     capture: Option<&CaptureRef>,
   ) -> Result<WindowPointClick, CapabilityError> {
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .click_point(proto::ClickPointRequest {
-        position: Some(self.pointer_position(target.into())),
-        options: Some(click_options_to_proto(options)?),
-        window: Some(self.window_ref.clone()),
-        capture_precondition: capture.map(|capture| proto::CaptureRef {
-          capture_id: capture.id().to_string(),
-        }),
-      })
-      .await
-      .map_err(click_status)?
-      .into_inner();
+    let response = self
+      .runner
+      .click(
+        proto::ClickPointRequest {
+          position: Some(self.pointer_position(target.into())),
+          options: Some(click_options_to_proto(options)?),
+          window: Some(self.window_ref.clone()),
+        },
+        capture,
+      )
+      .await?;
     let point = required(response.window_point, "ClickPoint response omitted WindowPoint")?;
     let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
     Ok(WindowPointClick {
@@ -1777,18 +1795,17 @@ impl InputClient {
     if global && default_strategy {
       wire_options.window_strategy = proto::WindowClickStrategy::Unspecified as i32;
     }
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .click_point(proto::ClickPointRequest {
-        position: Some(crate::protocol::position::encode(position)),
-        options: Some(wire_options),
-        window: None,
-        capture_precondition: capture.map(|capture| proto::CaptureRef {
-          capture_id: capture.id().to_string(),
-        }),
-      })
-      .await
-      .map_err(click_status)?
-      .into_inner();
+    let response = self
+      .runner
+      .click(
+        proto::ClickPointRequest {
+          position: Some(crate::protocol::position::encode(position)),
+          options: Some(wire_options),
+          window: None,
+        },
+        capture,
+      )
+      .await?;
     let screen_point = required(response.screen_point, "ClickPoint response omitted ScreenPoint")?;
     Ok(PointClick {
       window: response.window.map(window_from_proto).transpose()?,

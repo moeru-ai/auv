@@ -67,7 +67,8 @@ fn local_click_refuses_capture_that_only_a_runner_can_check() {
     cancellation: Default::default(),
   };
   let failure = futures_executor::block_on(click_point_invoke_command().invoke(input)).unwrap_err();
-  assert_eq!(failure.code, crate::FailureCode::RecaptureRequired);
+  assert_eq!(failure.code, crate::FailureCode::InvalidTarget);
+  assert!(failure.message.contains("--run"));
 }
 
 #[test]

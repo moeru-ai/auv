@@ -48,7 +48,7 @@ import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 import type { WithMillis } from './duration'
 
-import { create, fromBinary } from '@bufbuild/protobuf'
+import { create } from '@bufbuild/protobuf'
 
 import { AccessibilityService } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
 import { MediaControlService } from '../../gen/auv/api/driver/macos/v1/media_control_pb'
@@ -61,6 +61,7 @@ import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
+import { rpcDetail } from '../../transport/rpc-details'
 import { durationsFromMillis } from './duration'
 import { center } from './geometry'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
@@ -423,6 +424,24 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     service: method.parent.typeName,
     ...callOptions(options),
   })
+  // Method selection is an admission guarantee: never retry an unsupported
+  // guarded method through ClickPoint on an older Runner.
+  const click = async (request: Init<typeof InputService.method.clickPoint.input>, options?: ClickOperationOptions) => {
+    try {
+      if (options?.capturePrecondition === undefined)
+        return await unary(InputService.method.clickPoint, request, options)
+      const response = await unary(InputService.method.clickPointWithCapture, {
+        capture: captureRefOf(options.capturePrecondition),
+        click: request,
+      }, options)
+      if (!response.result)
+        throw new AuvProtocolError('ClickPointWithCapture response omitted result')
+      return response.result
+    }
+    catch (error) {
+      return clickFailure(error)
+    }
+  }
   const serverStream = <I extends DescMessage, O extends DescMessage>(
     method: DescMethodServerStreaming<I, O>,
     request: Init<I>,
@@ -489,12 +508,11 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     const local = { case: 'windowId', value: id } as const
     return {
       capture: ({ resolution, ...options } = {}) => unary(CaptureService.method.captureWindow, { resolution, window: { windowId: id } }, options),
-      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
-        capturePrecondition: options?.capturePrecondition === undefined ? undefined : captureRefOf(options.capturePrecondition),
+      click: (target, clickOptions, options) => click({
         options: clickOptions,
         position: positionOf(target, local),
         window: { windowId: id },
-      }, options).catch(clickFailure),
+      }, options),
       findText: (query, options = {}) => {
         const { signal, ...request } = options
         return unary(TextRecognitionService.method.findWindowText, {
@@ -608,11 +626,10 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       list: async options => (await unary(DisplayService.method.listDisplays, {}, options)).displays,
     },
     input: {
-      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
-        capturePrecondition: options?.capturePrecondition === undefined ? undefined : captureRefOf(options.capturePrecondition),
+      click: (target, clickOptions, options) => click({
         options: clickOptions,
         position: positionOf(target, { case: 'screen', value: true }),
-      }, options).catch(clickFailure),
+      }, options),
       createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
       dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
       holdKeys: (request, options) => unary(InputService.method.holdKeys, request, options),
@@ -693,20 +710,13 @@ function captureRefOf(target: CaptureTarget): Init<typeof CaptureRefSchema> {
   return { captureId: target.ref.captureId }
 }
 
-/** ClickPoint carries its method-specific typed refusal in the status details. */
+/** A recognized rich-error detail adds recovery information; all others pass through. */
 function clickFailure(error: unknown): never {
   if (error instanceof AuvRpcError && error.rpcCode === 9 && error.details?.length) {
-    let failure
-    try {
-      failure = fromBinary(ClickPreconditionFailureSchema, error.details)
-    }
-    catch (cause) {
-      throw new AuvProtocolError('Invalid ClickPreconditionFailure', cause)
-    }
-    if (![ClickPreconditionFailureReason.CAPTURE_UNAVAILABLE, ClickPreconditionFailureReason.CHECK_UNAVAILABLE, ClickPreconditionFailureReason.STATE_CHANGED, ClickPreconditionFailureReason.TARGET_MISMATCH].includes(failure.reason)) {
-      throw new AuvProtocolError('Unknown click precondition failure reason')
-    }
-    throw new ClickPreconditionError(failure.captureId, failure.reason, error)
+    const failure = rpcDetail(error.details, ClickPreconditionFailureSchema, detail =>
+      [ClickPreconditionFailureReason.CAPTURE_UNAVAILABLE, ClickPreconditionFailureReason.CHECK_UNAVAILABLE, ClickPreconditionFailureReason.STATE_CHANGED, ClickPreconditionFailureReason.TARGET_MISMATCH].includes(detail.reason))
+    if (failure)
+      throw new ClickPreconditionError(failure.captureId, failure.reason, error)
   }
   throw error
 }

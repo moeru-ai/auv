@@ -180,6 +180,7 @@ pub mod google {
   }
 }
 
+pub mod click_precondition;
 pub mod device_entry;
 
 /// Short compatibility imports used by the existing Rust frontends.

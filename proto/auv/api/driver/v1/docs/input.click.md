@@ -31,16 +31,23 @@ state separately.
 
 ## Capture precondition
 
-`capture_precondition` binds the click to a full `CaptureWindow` or
-`CaptureDisplay` reference from the same Runner. Pixels stay on the Runner.
-Without this field, the call retains unguarded delivery.
+`ClickPointWithCapture` requires `click` (a `ClickPointRequest`) and `capture`
+(a full `CaptureWindow` or `CaptureDisplay` reference from the same Runner).
+Its response contains `result` (a `ClickPointResponse`). Pixels stay on the Runner.
+Ordinary `ClickPoint` retains unguarded delivery.
+
+SDK capture options select the dedicated method. An older Runner returns
+`UNIMPLEMENTED` without input. Clients never retry through `ClickPoint`.
 
 The Runner captures the same resource at the original resolution before
 calling input delivery. It requires exact equality of pixels and capture
-metadata. It also compares the visible window list before and after capture.
+metadata. Window captures compare visible windows that intersect the target.
+Display captures compare visible windows that contain the click point.
+Both comparisons retain the backend order and use snapshots before and after capture.
 Window movement, resize, display geometry changes, scrolling, navigation,
 and visible dialogs invalidate the click when they change this evidence.
-Changes to other visible windows also invalidate the click.
+Unrelated window metadata outside that area does not invalidate the click.
+The pixel comparison still covers the full captured image.
 Animation, caret blinking, and backend changes can therefore cause refusal.
 
 A window capture requires the same target window. A display capture requires
@@ -50,11 +57,13 @@ An unreadable target or an unstable capture also refuses input.
 Region, OCR-produced, and streamed captures currently have no click baseline
 and return `CHECK_UNAVAILABLE`.
 
-Refusal returns `FAILED_PRECONDITION` with `ClickPreconditionFailure` encoded
-directly in `grpc-status-details-bin`. Every reason requests a new capture
+Refusal returns `FAILED_PRECONDITION` with `ClickPreconditionFailure` packed
+in `google.rpc.Status.details` as `Any`. Every reason requests a new capture
 and a new target decision. CLI and MCP return `recapture_required`.
 The Runner records `auv.input.click_refused` in traced runs, including the
-capture ID, reason, `new_capture` recovery, and `input_delivered: false`.
+capture ID, reason, a bounded diagnostic `cause`, `new_capture` recovery, and `input_delivered: false`.
+The status message also includes the cause. Unknown or malformed typed details
+preserve the original RPC error in both SDKs.
 Refusal calls no input capability, including activation or modifier delivery.
 
 The check and delivery are not atomic. The UI can change after the final
@@ -63,7 +72,13 @@ Repeated clicks also retain their interval between events.
 Changes absent from both pixels and window metadata cannot be detected.
 Window lists do not provide a portable guarantee about every occluder.
 This policy does not establish semantic success or trigger automatic replanning.
-Guarded callers require a Runner that implements this field.
+Linux window-targeted guards and AT-SPI window crops return `CHECK_UNAVAILABLE`.
+AT-SPI extents cannot establish reliable screen placement on GNOME Wayland.
+Linux callers can use display captures with screen or display coordinates.
+
+Recapture runs inside the input task and delays other input operations.
+Exact pixels can reject an unchanged target because of caret blinking or animation.
+See the [review evidence and measured limits](../../../../../../docs/ai/references/driver/2026-10-26-click-capture-precondition-contract.md#review-evidence-and-limits).
 
 ## Examples
 
@@ -113,6 +128,9 @@ auv --run <run-id> invoke input.clickPoint 120 48 --target window:<window-id> --
 ```
 
 The CLI and MCP `capture` argument requires the Run that owns the capture.
-Local execution without a selected Runner refuses this argument.
+Local execution without a selected Runner returns `invalid_target` and requests
+selection through `--run`. Recapture alone cannot fix this configuration.
+Frontend target-resolution failures return `recapture_required` in the command
+record, but currently have no `auv.input.click_refused` Runner event.
 Runner-backed `window.capture` and `display.capture` return the reference in
 `capture.capture_id`. This ID supplies the next click's `--capture` value.

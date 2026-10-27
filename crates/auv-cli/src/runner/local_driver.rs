@@ -735,8 +735,27 @@ impl InputService for LocalInputService {
     let context = auv_tracing::Context::current();
     // Resolve, recapture, check and deliver in one blocking task. In particular,
     // a queued task must not use a check completed before it entered the queue.
-    let response = run_input_blocking(move || Ok(context.in_scope(|| execute_click(&session, &captures, request)))).await??;
+    let response = run_input_blocking(move || Ok(context.in_scope(|| execute_click(&session, &captures, request, None)))).await??;
     Ok(Response::new(response))
+  }
+
+  async fn click_point_with_capture(
+    &self,
+    request: Request<proto::ClickPointWithCaptureRequest>,
+  ) -> Result<Response<proto::ClickPointWithCaptureResponse>, Status> {
+    let request = request.into_inner();
+    let capture = request.capture.ok_or_else(|| Status::invalid_argument("capture is required"))?;
+    if capture.capture_id.trim().is_empty() {
+      return Err(Status::invalid_argument("capture_id must not be empty"));
+    }
+    let click = request.click.ok_or_else(|| Status::invalid_argument("click is required"))?;
+    let session = self.session.clone();
+    let captures = self.captures.clone();
+    let context = auv_tracing::Context::current();
+    let result = run_input_blocking(move || Ok(context.in_scope(|| execute_click(&session, &captures, click, Some(&capture))))).await??;
+    Ok(Response::new(proto::ClickPointWithCaptureResponse {
+      result: Some(result),
+    }))
   }
 
   async fn scroll_window_point(
@@ -2393,13 +2412,13 @@ impl CaptureService for LocalCaptureService {
       ..Default::default()
     };
     let resolution = options.resolution;
-    let before = self.session.window().list().ok();
+    let before = self.session.window().list().map_err(|error| error.to_string());
     let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
     let state = super::click_precondition::CaptureState::new(
       super::click_precondition::CaptureTarget::Window(window.clone()),
       resolution,
       before,
-      self.session.window().list().ok(),
+      self.session.window().list().map_err(|error| error.to_string()),
     );
     let capture = stored_capture_to_proto(&self.captures, capture);
     self.captures.set_click_state(&capture.r#ref.as_ref().expect("stored reference").capture_id, state);
@@ -2417,7 +2436,7 @@ impl CaptureService for LocalCaptureService {
     let request = request.into_inner();
     let display = display_selector_from_proto(request.selector)?;
     let resolution = capture_resolution_from_proto(request.resolution)?;
-    let before = self.session.window().list().ok();
+    let before = self.session.window().list().map_err(|error| error.to_string());
     let captured = self
       .session
       .display()
@@ -2431,7 +2450,7 @@ impl CaptureService for LocalCaptureService {
       super::click_precondition::CaptureTarget::Display(captured.display.clone()),
       resolution,
       before,
-      self.session.window().list().ok(),
+      self.session.window().list().map_err(|error| error.to_string()),
     );
     let capture = stored_capture_to_proto(&self.captures, captured.capture);
     self.captures.set_click_state(&capture.r#ref.as_ref().expect("stored reference").capture_id, state);
@@ -2834,12 +2853,14 @@ fn execute_click(
   session: &auv_driver::LocalDriverSession,
   captures: &CaptureStore,
   request: proto::ClickPointRequest,
+  precondition: Option<&proto::CaptureRef>,
 ) -> Result<proto::ClickPointResponse, Status> {
   use super::click_precondition;
-  let precondition = request.capture_precondition.as_ref();
   // Target lookup and coordinate failures are uncheckable preconditions too.
   let target_error = |error: Status| match precondition {
-    Some(reference) => click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable),
+    Some(reference) => {
+      click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable, error.message())
+    }
     None => error,
   };
   let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
@@ -2870,6 +2891,17 @@ fn execute_click(
     });
   };
   let options = click_options_from_proto(request.options)?;
+  // TODO(linux-guarded-window-placement): AT-SPI does not establish screen
+  // placement on Wayland. Refuse even with a display baseline until the
+  // driver exposes a reliable placement capability (PR #429).
+  #[cfg(target_os = "linux")]
+  if let Some(reference) = precondition {
+    return Err(click_precondition::refusal(
+      &reference.capture_id,
+      proto::ClickPreconditionFailureReason::CheckUnavailable,
+      "Linux window-targeted guards require reliable screen placement; use a display capture with screen coordinates",
+    ));
+  }
   let window = resolve_window_ref(session, window_ref).map_err(target_error)?;
   let point = window_point_for_position(&window, &position, |id| display_origin(session, id)).map_err(target_error)?;
   require_point_inside_window(&window, point).map_err(target_error)?;

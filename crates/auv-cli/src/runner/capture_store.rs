@@ -176,7 +176,7 @@ struct Inner {
 struct Entry {
   blob: BlobKey,
   last_used: Instant,
-  click_state: Option<super::click_precondition::CaptureState>,
+  click_state: Result<super::click_precondition::CaptureState, String>,
 }
 
 struct Blob {
@@ -272,7 +272,7 @@ impl CaptureStore {
       Entry {
         blob: key,
         last_used: now,
-        click_state: None,
+        click_state: Err("capture producer did not establish a click baseline".into()),
       },
     );
     inner.fit(self.options.budget_bytes, Some(key));
@@ -280,16 +280,16 @@ impl CaptureStore {
   }
 
   /// Provenance belongs to the reference, not the deduplicated pixel blob.
-  pub(super) fn set_click_state(&self, id: &str, state: Option<super::click_precondition::CaptureState>) {
+  pub(super) fn set_click_state(&self, id: &str, state: Result<super::click_precondition::CaptureState, String>) {
     if let Some(entry) = self.inner.lock().expect("capture store lock").entries.get_mut(id) {
       entry.click_state = state;
     }
   }
 
-  pub(super) fn click_state(&self, id: &str) -> Option<super::click_precondition::CaptureState> {
+  pub(super) fn click_state(&self, id: &str) -> Result<super::click_precondition::CaptureState, String> {
     let mut inner = self.inner.lock().expect("capture store lock");
     inner.expire(Instant::now(), self.options.idle);
-    inner.entries.get(id)?.click_state.clone()
+    inner.entries.get(id).ok_or_else(|| "capture baseline expired or was evicted".to_string())?.click_state.clone()
   }
 
   /// Returns a stored capture and marks it used, or `None` once it was

@@ -8,9 +8,6 @@ import {
   deviceServiceGetDevice,
   deviceServiceListDevices,
 } from '@auv-js/api-client'
-import { fromBinary } from '@bufbuild/protobuf'
-import { BinaryReader, WireType } from '@bufbuild/protobuf/wire'
-import { AnySchema, anyUnpack } from '@bufbuild/protobuf/wkt'
 
 import {
   DeviceEntryEffectKind,
@@ -32,6 +29,7 @@ import {
   UserSessionLockState as ProtoUserSessionLockState,
 } from '../../gen/auv/api/daemon/v1/device_pb'
 import { AuvConfigurationError, AuvProtocolError, AuvRemoteError, AuvRpcError } from '../../transport/errors'
+import { rpcDetail } from '../../transport/rpc-details'
 import { unknownEnum } from './wire'
 
 /** One Device visible to the connected AUV caller. */
@@ -277,31 +275,9 @@ async function entryCall<T>(call: Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Reads the `DeviceEntryError` packed in a serialized `google.rpc.Status`.
- * NOTICE(device-entry-status-decode): the SDK does not generate
- * `google.rpc.Status`, so this walks its `details` field (number 3, repeated
- * `Any`) directly. Unknown or malformed details yield `undefined`.
- */
+/** Reads the Device entry reason without replacing unrelated RPC failures. */
 function entryReason(details: Uint8Array): ProtoDeviceEntryErrorReason | undefined {
-  try {
-    const reader = new BinaryReader(details)
-    while (reader.pos < reader.len) {
-      const [field, wireType] = reader.tag()
-      if (field !== 3 || wireType !== WireType.LengthDelimited) {
-        reader.skip(wireType)
-        continue
-      }
-      const error = anyUnpack(fromBinary(AnySchema, reader.bytes()), DeviceEntryErrorSchema)
-      if (error !== undefined && error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED) {
-        return error.reason
-      }
-    }
-  }
-  catch {
-    return undefined
-  }
-  return undefined
+  return rpcDetail(details, DeviceEntryErrorSchema, error => error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED)?.reason
 }
 
 function userSession(value: ProtoUserSession): UserSession {
