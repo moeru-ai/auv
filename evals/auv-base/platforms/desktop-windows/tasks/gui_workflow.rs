@@ -550,15 +550,34 @@ struct Fixture {
   hwnd: isize,
 }
 
+enum ReceiverCleanup {
+  NotCreated,
+  // TODO(receiver-spawn-receipt): distinguish a failed spawn from an unverified termination
+  // after owner-approved work adds a detached-spawn cleanup receipt.
+  SpawnFailed,
+  Closed(Result<()>),
+}
+
+impl ReceiverCleanup {
+  fn record(self) -> Value {
+    match self {
+      Self::NotCreated => json!({"state": "not_created"}),
+      Self::SpawnFailed => json!({"state": "unknown", "note": "spawn may have created a process; termination has no receipt"}),
+      Self::Closed(Ok(())) => json!({"state": "verified"}),
+      Self::Closed(Err(error)) => json!({"state": "unknown", "error": error.to_string()}),
+    }
+  }
+}
+
 /// A fixture build that stopped partway. `runner_stop` is the bounded stop receipt when the
-/// daemon had been created (None when never reached); `receiver_close` is the close result when
-/// the receiver had been spawned. The flags say which later steps were reached: their resources
-/// have no cleanup receipt API and were left to Drop, so the caller records them as `unknown`,
-/// never as verified.
+/// daemon had been created (None when never reached); `receiver_cleanup` records whether the
+/// receiver spawn was reached or the process was confirmed closed. The flags say which later
+/// steps were reached: their resources have no cleanup receipt API and were left to Drop, so the
+/// caller records them as `unknown`, never as verified.
 struct SetupFailure {
   error: anyhow::Error,
   runner_stop: Option<Result<Value>>,
-  receiver_close: Option<Result<()>>,
+  receiver_cleanup: ReceiverCleanup,
   /// The receiver's answer when the foreground was explicitly handed back while it could still
   /// act on the request; None when there was no restore or the receiver was never created.
   foreground_restore: Option<Result<bool>>,
@@ -592,7 +611,7 @@ fn build_fixture(
         return Err(SetupFailure {
           error: failure.error,
           runner_stop,
-          receiver_close: None,
+          receiver_cleanup: ReceiverCleanup::NotCreated,
           foreground_restore: None,
           driver_created: false,
           witness_created: false,
@@ -611,7 +630,7 @@ fn build_fixture(
       return Err(SetupFailure {
         error,
         runner_stop,
-        receiver_close: None,
+        receiver_cleanup: ReceiverCleanup::NotCreated,
         foreground_restore: None,
         driver_created: false,
         witness_created: false,
@@ -627,7 +646,7 @@ fn build_fixture(
       return Err(SetupFailure {
         error,
         runner_stop,
-        receiver_close: None,
+        receiver_cleanup: ReceiverCleanup::NotCreated,
         foreground_restore: None,
         driver_created: true,
         witness_created: false,
@@ -644,7 +663,7 @@ fn build_fixture(
       return Err(SetupFailure {
         error,
         runner_stop,
-        receiver_close: None,
+        receiver_cleanup: ReceiverCleanup::SpawnFailed,
         foreground_restore: None,
         driver_created: true,
         witness_created: true,
@@ -691,7 +710,7 @@ fn build_fixture(
       return Err(SetupFailure {
         error,
         runner_stop,
-        receiver_close: Some(receiver_close),
+        receiver_cleanup: ReceiverCleanup::Closed(receiver_close),
         foreground_restore,
         driver_created: true,
         witness_created: true,
@@ -785,11 +804,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
         Some(Ok(receipt)) => json!({"state": "unknown", "receipt": receipt}),
         Some(Err(stop_error)) => json!({"state": "unknown", "error": stop_error.to_string()}),
       };
-      let receiver_cleanup = match failure.receiver_close {
-        None => json!({"state": "not_created"}),
-        Some(Ok(())) => json!({"state": "verified"}),
-        Some(Err(close_error)) => json!({"state": "unknown", "error": close_error.to_string()}),
-      };
+      let receiver_cleanup = failure.receiver_cleanup.record();
       let foreground_cleanup = match failure.foreground_restore {
         None => json!({"state": "not_attempted"}),
         Some(Ok(handed)) => json!({"state": "verified", "handed": handed}),
@@ -1129,6 +1144,18 @@ pub fn run(options: &Options) -> Result<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn receiver_spawn_failure_has_unknown_cleanup_until_a_receipt_exists() {
+    // ROOT CAUSE:
+    //
+    // A failed receiver handshake can happen after process creation. The old
+    // setup summary recorded it as not_created even though termination had no receipt.
+    assert_eq!(ReceiverCleanup::SpawnFailed.record()["state"], "unknown");
+    assert_eq!(ReceiverCleanup::NotCreated.record()["state"], "not_created");
+    assert_eq!(ReceiverCleanup::Closed(Ok(())).record()["state"], "verified");
+    assert_eq!(ReceiverCleanup::Closed(Err(anyhow::anyhow!("termination denied"))).record()["state"], "unknown");
+  }
 
   #[test]
   fn physical_input_must_make_the_workflow_inconclusive() {

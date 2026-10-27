@@ -143,3 +143,12 @@ The test also covers observation and functional acceptance without user input.
 The original test-only reproduction failed before the fix.
 The isolated-desktop results above apply to commit `178433f`.
 They do not validate the later interruption changes on a live desktop.
+
+## Receiver cleanup review
+
+A detached receiver can start before its handshake fails.
+The old setup summary recorded `not_created` for that failure.
+The summary now records `unknown` because the early termination has no receipt.
+The receiver also verifies process exit after forced termination.
+A no-desktop test opens a wait-only process handle that cannot terminate the process.
+The original test-only reproduction returned success before the fix.
