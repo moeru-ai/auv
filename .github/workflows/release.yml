@@ -269,14 +269,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
-
+      # NOTICE: `debian:12-slim` has no Node.js, and `pnpm/action-setup` runs
+      # `npm`, so Node.js comes first. `setup-node`'s pnpm cache needs pnpm
+      # installed before it runs, so this job does not cache the pnpm store.
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
-          cache: pnpm
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
