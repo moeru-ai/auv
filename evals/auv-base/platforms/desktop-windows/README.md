@@ -100,10 +100,10 @@ scenario does not claim Ctrl+A selects text in every application.
 No input action is retried. OCR readiness gets at most three observations. Before dispatch,
 OCR must select a single candidate inside the expected owned control, the user must have
 been idle for two seconds, and keyboard input requires the correct foreground and control
-focus. Every workflow `screen.clickText` also passes `--within LEFT,TOP,RIGHT,BOTTOM`:
-local Invoke and selected Runner reject a re-resolved OCR action point outside this owned
-control before sending input, and the direct Rust route checks the same fence. The returned
-click point is still checked independently. Wrong-focus and wrong-window controls
+focus. Every workflow `screen.clickText` passes a `--within` fence for the exact preflight point.
+Local Invoke and selected Runner reject a different OCR point before they send input.
+The direct Rust route checks the same fence. OCR jitter can therefore stop the workflow safely.
+The returned click point is checked independently. Wrong-focus and wrong-window controls
 must reject keys before dispatch and leave both applications' text/key logs unchanged.
 These checks are not an atomic OS focus lease; a concurrent desktop change can still race
 the precheck. Foreground actions are expected to change input/pointer state and are recorded

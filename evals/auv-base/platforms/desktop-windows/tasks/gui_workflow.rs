@@ -490,7 +490,12 @@ fn call(scenario: &mut Scenario<'_>, entry: &Entry<'_>, command: &str, args: &[S
   Ok(run)
 }
 
-fn find_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: [i32; 4]) -> Result<[i32; 2]> {
+fn find_text(
+  scenario: &mut Scenario<'_>,
+  entry: &Entry<'_>,
+  query: &str,
+  rect: [i32; 4],
+) -> Result<(auv_driver_common::geometry::Point, [i32; 2])> {
   let mut point = None;
   for attempt in 1..=3 {
     let found = call(scenario, entry, "screen.findText", &[query.into()], true)?;
@@ -499,16 +504,18 @@ fn find_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: 
       bail!("OCR preflight was ambiguous; no click sent");
     }
     if let Some(bounds) = found.json.as_ref().and_then(|value| rect_of(&value["result"]["matches"][0]["bounds"])) {
-      let candidate = [
-        (bounds[0] + bounds[2] / 2.0).round() as i32,
-        (bounds[1] + bounds[3] / 2.0).round() as i32,
-      ];
-      if candidate[0] < rect[0] || candidate[0] >= rect[2] || candidate[1] < rect[1] || candidate[1] >= rect[3] {
+      let candidate = auv_driver_common::geometry::Point::new(bounds[0] + bounds[2] / 2.0, bounds[1] + bounds[3] / 2.0);
+      let pixel = [candidate.x.round() as i32, candidate.y.round() as i32];
+      if pixel[0] < rect[0] || pixel[0] >= rect[2] || pixel[1] < rect[1] || pixel[1] >= rect[3] {
         bail!("OCR resolved outside the owned control; no click sent");
       }
-      point = Some(candidate);
+      point = Some((candidate, pixel));
     }
-    scenario.records.write("ocr_preflight", json!({"query": query, "attempt": attempt, "point": point, "owned_rect": rect}))?;
+    scenario.records.write(
+      "ocr_preflight",
+      json!({"query": query, "attempt": attempt, "point": point.map(|(_, pixel)| pixel),
+        "exact_point": point.map(|(candidate, _)| candidate), "owned_rect": rect}),
+    )?;
     if point.is_some() {
       break;
     }
@@ -517,11 +524,21 @@ fn find_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: 
   point.context("owned caption was not recognized; no click sent")
 }
 
+/// A half-open interval from a finite float to its next value contains that point alone.
+fn exact_click_fence(point: &auv_driver_common::geometry::Point) -> Result<String> {
+  let right = point.x.next_up();
+  let bottom = point.y.next_up();
+  if !point.x.is_finite() || !point.y.is_finite() || !right.is_finite() || !bottom.is_finite() {
+    bail!("OCR preflight point is not finite; no click sent");
+  }
+  Ok(format!("{},{},{},{}", point.x, point.y, right, bottom))
+}
+
 fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: [i32; 4]) -> Result<()> {
-  let point = find_text(scenario, entry, query, rect)?;
+  let (point, pixel) = find_text(scenario, entry, query, rect)?;
   reject_user_input(entry.start, &scenario.watch.snapshot())?;
-  scenario.pointer_may_go(&[point])?;
-  let fence = format!("{},{},{},{}", rect[0], rect[1], rect[2], rect[3]);
+  scenario.pointer_may_go(&[pixel])?;
+  let fence = exact_click_fence(&point)?;
   let clicked = call(scenario, entry, "screen.clickText", &[query.into(), "--within".into(), fence], false)?;
   let actual = clicked.json.as_ref().map(|value| &value["result"]["point"]);
   let contained = actual.is_some_and(|point| {
@@ -1209,7 +1226,7 @@ mod tests {
   fn runner_cleanup_is_bounded_when_taskkill_fails() {
     // ROOT CAUSE:
     //
-    // If taskkill returned an error without ending the daemon, Runner::finish
+    // If taskkill returned without ending the daemon, Runner::finish
     // waited for the daemon with no deadline. Drop had the same unbounded wait.
     const TEST_CHILD: &str = "AUV_TEST_RUNNER_TASKKILL_FAILURE";
     if std::env::var_os(TEST_CHILD).is_some() {
@@ -1239,6 +1256,7 @@ mod tests {
       let mut receipt = result.expect("the root fallback should end the owned process");
       assert_eq!(receipt["fallback_root_kill"], true);
       assert_eq!(receipt["daemon_exited"], true);
+      assert_eq!(receipt["owned_tree_kill_exit"], 0, "the substitute command should report success without ending the daemon");
       receipt["run_stop_exit"] = json!(0);
       receipt["owned_tree_kill_exit"] = json!(0);
       assert!(!runner_cleanup_verified(&receipt), "a root-only fallback does not verify descendant cleanup");
@@ -1342,6 +1360,41 @@ mod tests {
     assert!(ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(120.0, 220.0)).is_ok());
     assert!(ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(241.0, 220.0)).is_err());
     assert!(ensure_workflow_click_bounds(&args[..1], &auv_driver_common::geometry::Point::new(120.0, 220.0)).is_err());
+  }
+
+  #[test]
+  fn workflow_click_must_not_switch_to_another_point_inside_the_control() {
+    // ROOT CAUSE:
+    //
+    // The workflow checked window ownership at the preflight point, but the
+    // old fence also accepted a different OCR point inside the same control.
+    let point = auv_driver_common::geometry::Point::new(120.5, 220.0);
+    let args = vec![
+      "Submit".into(),
+      "--within".into(),
+      exact_click_fence(&point).expect("finite preflight point"),
+    ];
+    assert!(ensure_workflow_click_bounds(&args, &point).is_ok(), "the checked point remains allowed");
+    assert!(
+      ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(125.0, 220.0)).is_err(),
+      "a different point in the control has not passed the ownership check"
+    );
+    assert!(
+      ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(point.x.next_up(), point.y)).is_err(),
+      "even the next representable coordinate has not passed the ownership check"
+    );
+    for point in [
+      auv_driver_common::geometry::Point::new(-120.5, -220.0),
+      auv_driver_common::geometry::Point::new(0.0, 0.0),
+    ] {
+      let args = vec![
+        "Submit".into(),
+        "--within".into(),
+        exact_click_fence(&point).expect("finite preflight point"),
+      ];
+      assert!(ensure_workflow_click_bounds(&args, &point).is_ok());
+      assert!(ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(point.x.next_up(), point.y)).is_err());
+    }
   }
 
   #[test]
