@@ -309,6 +309,9 @@ impl Entry<'_> {
           return Ok(json!({"matches": matches.matches}));
         }
         let point = matches.best_match().context("no OCR match; no click sent")?.action_point();
+        if command == "screen.clickText" {
+          ensure_workflow_click_bounds(args, &point)?;
+        }
         let action =
           self.driver.input().click_at(point, MouseButton::Left, Click::Single, Default::default()).map_err(anyhow::Error::msg)?;
         Ok(json!({"matches": matches, "point": point, "action": action}))
@@ -359,6 +362,34 @@ impl Entry<'_> {
       _ => bail!("workflow has no direct Rust implementation for {command}"),
     }
   }
+}
+
+/// Verify the direct Rust route uses the same freshly selected, bounded OCR point as
+/// the CLI and Runner routes. The allowed rectangle is in logical screen coordinates.
+fn ensure_workflow_click_bounds(args: &[String], point: &auv_driver_common::geometry::Point) -> Result<()> {
+  let index = args.iter().position(|arg| arg == "--within").context("workflow screen.clickText omitted its required --within fence")?;
+  let raw = args.get(index + 1).context("workflow screen.clickText omitted the --within value")?;
+  let coordinates = raw
+    .split(',')
+    .map(|part| part.trim().parse::<f64>())
+    .collect::<std::result::Result<Vec<_>, _>>()?;
+  if coordinates.len() != 4
+    || coordinates.iter().any(|value| !value.is_finite())
+    || coordinates[2] <= coordinates[0]
+    || coordinates[3] <= coordinates[1]
+  {
+    bail!("workflow click has an invalid --within rectangle");
+  }
+  if !point.x.is_finite()
+    || !point.y.is_finite()
+    || point.x < coordinates[0]
+    || point.y < coordinates[1]
+    || point.x >= coordinates[2]
+    || point.y >= coordinates[3]
+  {
+    bail!("workflow screen.clickText re-resolved outside the owned control; no input delivered");
+  }
+  Ok(())
 }
 
 fn call(scenario: &mut Scenario<'_>, entry: &Entry<'_>, command: &str, args: &[String], quiet: bool) -> Result<Invocation> {
@@ -419,7 +450,8 @@ fn find_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: 
 fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: [i32; 4]) -> Result<()> {
   let point = find_text(scenario, entry, query, rect)?;
   scenario.pointer_may_go(&[point])?;
-  let clicked = call(scenario, entry, "screen.clickText", &[query.into()], false)?;
+  let fence = format!("{},{},{},{}", rect[0], rect[1], rect[2], rect[3]);
+  let clicked = call(scenario, entry, "screen.clickText", &[query.into(), "--within".into(), fence], false)?;
   let actual = clicked.json.as_ref().map(|value| &value["result"]["point"]);
   let contained = actual.is_some_and(|point| {
     point["x"].as_f64().is_some_and(|x| x >= f64::from(rect[0]) && x < f64::from(rect[2]))
@@ -1025,6 +1057,14 @@ pub fn run(options: &Options) -> Result<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn workflow_click_refuses_re_resolved_points_outside_the_owned_control() {
+    let args = vec!["Submit".into(), "--within".into(), "100,200,240,290".into()];
+    assert!(ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(120.0, 220.0)).is_ok());
+    assert!(ensure_workflow_click_bounds(&args, &auv_driver_common::geometry::Point::new(241.0, 220.0)).is_err());
+    assert!(ensure_workflow_click_bounds(&args[..1], &auv_driver_common::geometry::Point::new(120.0, 220.0)).is_err());
+  }
 
   #[test]
   fn an_unresponsive_cli_cannot_wait_forever() {
