@@ -369,10 +369,7 @@ impl Entry<'_> {
 fn ensure_workflow_click_bounds(args: &[String], point: &auv_driver_common::geometry::Point) -> Result<()> {
   let index = args.iter().position(|arg| arg == "--within").context("workflow screen.clickText omitted its required --within fence")?;
   let raw = args.get(index + 1).context("workflow screen.clickText omitted the --within value")?;
-  let coordinates = raw
-    .split(',')
-    .map(|part| part.trim().parse::<f64>())
-    .collect::<std::result::Result<Vec<_>, _>>()?;
+  let coordinates = raw.split(',').map(|part| part.trim().parse::<f64>()).collect::<std::result::Result<Vec<_>, _>>()?;
   if coordinates.len() != 4
     || coordinates.iter().any(|value| !value.is_finite())
     || coordinates[2] <= coordinates[0]
