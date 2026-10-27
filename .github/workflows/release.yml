@@ -373,7 +373,10 @@ jobs:
         run: |
           mkdir bundle
           tar -xzf "${{ matrix.archive }}" -C bundle
-          cp release-ocr-probe release-pipewire-probe bundle/
+          # NOTICE: workflow artifacts do not keep file modes, so the probes
+          # arrive without their execute bit. `auv` keeps it inside the tar.
+          # See https://github.com/actions/upload-artifact#permission-loss
+          install -m 0755 release-ocr-probe release-pipewire-probe bundle/
           for image in debian:12-slim ubuntu:26.04; do
             docker run --rm -v "$PWD/bundle:/opt/auv:ro" "$image" sh -c '
               set -e
