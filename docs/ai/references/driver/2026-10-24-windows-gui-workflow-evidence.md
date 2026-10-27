@@ -166,3 +166,17 @@ The harness attempts root-only termination if the tree kill fails or the daemon 
 The cleanup receipt records that fallback and does not claim that the descendants exited.
 A no-desktop test used a substitute command that reported success without terminating the daemon.
 The original test-only reproduction waited for the sleeping process and failed.
+
+## Initial capture review
+
+In [run 40453112779](https://github.com/moeru-ai/auv/actions/runs/40453112779),
+the initial Rust capture in round 2 decoded to `(0, 0)`.
+The receiver reported `(15, 0)`, and the captured window identity matched.
+The other five observation rounds passed. The functional rounds did not start.
+The recorded facts do not establish why the initial strip decoded to zero.
+
+The workflow now permits up to three initial captures for that specific mismatch.
+It records each attempt and requires the owned window identity on each one.
+Other mismatches still fail immediately, and the final capture is not retried.
+The retry sends no input and cannot make a mismatched capture pass by itself.
+The raw records are in the [run artifact](https://github.com/moeru-ai/auv/actions/runs/40453112779/artifacts/12711791654).

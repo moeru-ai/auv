@@ -105,6 +105,9 @@ Local Invoke and selected Runner reject a different OCR point before they send i
 The direct Rust route checks the same fence. OCR jitter can therefore stop the workflow safely.
 The returned click point is checked independently. Wrong-focus and wrong-window controls
 must reject keys before dispatch and leave both applications' text/key logs unchanged.
+If the first capture decodes to zero while the owned receiver reports its nonzero calibration,
+the workflow can capture again at most twice. Every attempt is recorded.
+Other capture mismatches and the final capture do not use this retry.
 These checks are not an atomic OS focus lease; a concurrent desktop change can still race
 the precheck. Foreground actions are expected to change input/pointer state and are recorded
 separately from operations required to be quiet. A quiet violation or inconclusive operation

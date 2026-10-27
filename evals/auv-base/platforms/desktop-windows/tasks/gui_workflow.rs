@@ -558,38 +558,51 @@ fn keys_may_go(scenario: &Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
   reject_user_input(entry.start, &scenario.watch.snapshot())
 }
 
-fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
-  let run = call(
-    scenario,
-    entry,
-    "window.capture",
-    &[
-      "--target".into(),
-      "win32-receiver.exe".into(),
-      "--title".into(),
-      entry.title.into(),
-    ],
-    true,
-  )?;
-  let decoded = if entry.route == "rust" {
-    run.json.as_ref().and_then(|value| serde_json::from_value::<(u8, u8)>(value["result"]["decoded_strip"].clone()).ok())
-  } else {
-    decoded_capture(&run, &entry.layout.strip)?
-  };
-  let state = target.state()?;
-  let expected = (state.clicks as u8, state.first_line as u8);
-  let identity = run.json.as_ref().map(|value| &value["result"]["window"]);
-  let identified =
-    identity.is_some_and(|window| window["reference"]["id"] == target.hwnd().to_string() && window["process_id"] == entry.layout.pid);
-  scenario.records.write(
-    "capture_verification",
-    json!({"route": entry.route, "decoded": decoded, "application_state": expected,
-    "window_identity_verified": identified, "verified": decoded == Some(expected) && identified}),
-  )?;
-  if decoded != Some(expected) || !identified {
-    bail!("captured pixels do not show the application's state");
+fn retry_initial_blank_capture(initial: bool, attempt: u32, decoded: Option<(u8, u8)>, expected: (u8, u8), identified: bool) -> bool {
+  initial && attempt < 3 && identified && expected.0 != 0 && expected.1 == 0 && decoded == Some((0, 0))
+}
+
+fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, initial: bool) -> Result<()> {
+  let mut attempt = 0;
+  loop {
+    attempt += 1;
+    let run = call(
+      scenario,
+      entry,
+      "window.capture",
+      &[
+        "--target".into(),
+        "win32-receiver.exe".into(),
+        "--title".into(),
+        entry.title.into(),
+      ],
+      true,
+    )?;
+    let decoded = if entry.route == "rust" {
+      run.json.as_ref().and_then(|value| serde_json::from_value::<(u8, u8)>(value["result"]["decoded_strip"].clone()).ok())
+    } else {
+      decoded_capture(&run, &entry.layout.strip)?
+    };
+    let state = target.state()?;
+    let expected = (state.clicks as u8, state.first_line as u8);
+    let identity = run.json.as_ref().map(|value| &value["result"]["window"]);
+    let identified =
+      identity.is_some_and(|window| window["reference"]["id"] == target.hwnd().to_string() && window["process_id"] == entry.layout.pid);
+    let verified = decoded == Some(expected) && identified;
+    let retry = retry_initial_blank_capture(initial, attempt, decoded, expected, identified);
+    scenario.records.write(
+      "capture_verification",
+      json!({"route": entry.route, "initial": initial, "attempt": attempt, "decoded": decoded, "application_state": expected,
+      "window_identity_verified": identified, "verified": verified, "retry_initial_blank": retry}),
+    )?;
+    if verified {
+      return Ok(());
+    }
+    if !retry {
+      bail!("captured pixels do not show the application's state");
+    }
+    std::thread::sleep(Duration::from_millis(200));
   }
-  Ok(())
 }
 
 /// A failed daemon startup. `started` carries the Runner when the daemon process was actually
@@ -933,7 +946,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
   };
   let started = Instant::now();
   let result = (|| -> Result<()> {
-    capture(&mut scenario, &entry, &mut target)?;
+    capture(&mut scenario, &entry, &mut target, true)?;
     if options.observe_only {
       find_text(&mut scenario, &entry, &input_caption, layout.typing_rect)?;
       find_text(&mut scenario, &entry, &button_caption, layout.button_rect)?;
@@ -1012,7 +1025,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     if !verified {
       bail!("the application did not submit the typed record exactly once");
     }
-    capture(&mut scenario, &entry, &mut target)?;
+    capture(&mut scenario, &entry, &mut target, false)?;
 
     // The submit button now has the focus. Test the guard before calling any key dispatch path.
     let before_guard = target.request(json!({"cmd": "state"}))?;
@@ -1209,6 +1222,23 @@ pub fn run(options: &Options) -> Result<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  // https://github.com/moeru-ai/auv/actions/runs/40453112779
+  #[test]
+  fn initial_blank_capture_retry_is_bounded_and_identity_checked() {
+    // ROOT CAUSE:
+    //
+    // The first capture in rust round 2 decoded to (0, 0), while the owned
+    // receiver reported (15, 0). The old workflow stopped at that first frame.
+    // The cause of the blank capture is not established by the recorded facts.
+    assert!(retry_initial_blank_capture(true, 1, Some((0, 0)), (15, 0), true));
+    assert!(retry_initial_blank_capture(true, 2, Some((0, 0)), (15, 0), true));
+    assert!(!retry_initial_blank_capture(true, 3, Some((0, 0)), (15, 0), true));
+    assert!(!retry_initial_blank_capture(true, 1, Some((0, 0)), (15, 0), false));
+    assert!(!retry_initial_blank_capture(false, 1, Some((0, 0)), (15, 0), true));
+    assert!(!retry_initial_blank_capture(true, 1, Some((4, 0)), (15, 0), true));
+    assert!(!retry_initial_blank_capture(true, 1, None, (15, 0), true));
+  }
 
   #[test]
   fn receiver_spawn_failure_has_unknown_cleanup_until_a_receipt_exists() {
