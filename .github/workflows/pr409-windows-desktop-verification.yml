@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: 178433f28189ed4ea5251d19d5e2b13f15800084
           submodules: recursive
           persist-credentials: false
 
@@ -24,7 +24,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne $env:GITHUB_SHA) { throw "Unexpected source: $actual" }
+          if ($actual -ne '178433f28189ed4ea5251d19d5e2b13f15800084') { throw "Unexpected source: $actual" }
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
           using System;
@@ -58,9 +58,8 @@ jobs:
       - name: Build AUV and evaluation binaries
         shell: pwsh
         run: |
-          cargo fmt --all
+          cargo fmt --all --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff -- evals/auv-base/platforms/desktop-windows/tasks/gui_workflow.rs evals/auv-base/platforms/desktop-windows/test-objects/win32/receiver.rs
           cargo build --locked --package auv-device-helper-windows --bin auv-helper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:AUV_WINDOWS_HELPER_EXE_PATH = (Resolve-Path 'target/debug/auv-helper.exe').Path
@@ -98,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr409-windows-desktop-evidence-diagnostic
+          name: pr409-windows-desktop-evidence-178433
           path: |
             ${{ runner.temp }}/auv-409-observe/
             ${{ runner.temp }}/auv-409-functional/
