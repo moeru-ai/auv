@@ -36,14 +36,19 @@ monitored dependency, not a blocker.
 
 ## Follow-up after review
 
-The workflow now passes a `--within LEFT,TOP,RIGHT,BOTTOM` fence to local and
+The workflow passes a `--within LEFT,TOP,RIGHT,BOTTOM` fence to local and
 Runner `screen.clickText`. Each path checks the **fresh OCR selection** before
 pointer delivery instead of relying only on the workflow's post-click check.
-The direct Rust route checks the same rectangle. This adds a narrow optional
+The direct Rust route checks the same fence. This adds a narrow optional
 Invoke CLI input; older binaries without `--within` cannot run the new workflow.
 The fence is not an atomic OS focus/occlusion guarantee, so functional runs
 still require an isolated desktop. The static checks in the table above predate
 this follow-up; its later desktop evidence is recorded below.
+
+The current workflow narrows the fence to the exact preflight point.
+The prior control-sized fence could accept a different point that had no ownership check.
+If a fresh OCR result differs, the workflow stops without a click.
+The ownership check and pointer delivery still are not atomic.
 
 ## Isolated-desktop runs (2026-10-27)
 
