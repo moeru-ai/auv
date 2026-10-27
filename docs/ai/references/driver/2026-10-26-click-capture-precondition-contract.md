@@ -93,6 +93,18 @@ Its displayed error preserves the diagnostic cause through CLI and MCP.
 Guarded invoke errors identify `InputService/ClickPointWithCapture`.
 No pixels travel through the caller.
 
+Window-list comparison failures report counts for added, removed, and modified windows.
+They also report changes to the relative order of shared window identities.
+The first difference includes a window ID and app name, with application ID as fallback.
+Each escaped label has an 80-character limit, plus an ellipsis when truncated.
+Window titles are omitted. The complete cause retains its 512-character limit.
+
+These diagnostics cover differences within a capture and between captures.
+They do not change the comparison policy or refusal categories.
+Automated admission and trace regressions cover the
+[review request](https://github.com/moeru-ai/auv/pull/429#discussion_r4386560659).
+This diagnostic follow-up has no new native macOS measurements.
+
 Frontend target-resolution refusals remain in the command failure record.
 They do not reach the Runner and currently emit no `auv.input.click_refused` event.
 The inline TODO in `selected_click_point` records this admission-recording gap.

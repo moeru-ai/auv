@@ -71,7 +71,7 @@ impl CaptureState {
   /// Window captures include intersecting windows; display captures include
   /// windows at the click point. Preserve their backend order, without
   /// claiming that enumeration exposes a portable z-order guarantee.
-  fn windows_at(&self, point: auv_driver::Point) -> Result<Vec<&Window>, &'static str> {
+  fn windows_at(&self, point: auv_driver::Point) -> Result<Vec<&Window>, String> {
     let relevant = |window: &&Window| match &self.target {
       CaptureTarget::Window(target) => window.frame.intersect(target.frame).is_some(),
       CaptureTarget::Display(_) => window.frame.contains_point(point),
@@ -79,9 +79,7 @@ impl CaptureState {
     let before: Vec<_> = self.before.iter().filter(relevant).collect();
     let after: Vec<_> = self.after.iter().filter(relevant).collect();
     if before != after {
-      // TODO(click-window-diff-diagnostics): naming changed windows is deferred
-      // from the freshness fix; add bounded identities in a diagnostic follow-up.
-      return Err("windows intersecting the target changed during capture");
+      return Err(format!("windows intersecting the target changed during capture: {}", window_difference(&before, &after)));
     }
     Ok(before)
   }
@@ -120,6 +118,56 @@ impl CaptureState {
     let after = session.window().list().map_err(|error| error.to_string());
     Ok((capture, Self::new(target, self.resolution, Ok(before), after)))
   }
+}
+
+/// Describe an already rejected comparison. Match identities without sorting
+/// the snapshots: backend order remains part of admission, not a z-order claim.
+fn window_difference(before: &[&Window], after: &[&Window]) -> String {
+  use std::collections::HashMap;
+
+  let before_by_ref: HashMap<_, _> = before.iter().map(|window| (&window.reference, *window)).collect();
+  let after_by_ref: HashMap<_, _> = after.iter().map(|window| (&window.reference, *window)).collect();
+  let (mut added, mut removed, mut modified) = (0, 0, 0);
+  let mut first = None;
+  for &window in before {
+    match after_by_ref.get(&window.reference) {
+      None => removed += 1,
+      Some(current) if *current != window => modified += 1,
+      _ => continue,
+    }
+    first.get_or_insert(window);
+  }
+  for &window in after {
+    if !before_by_ref.contains_key(&window.reference) {
+      added += 1;
+      first.get_or_insert(window);
+    }
+  }
+  // Compare the relative order of shared identities. Insertions and removals
+  // alone do not mean the remaining windows changed order.
+  let order_changed = before
+    .iter()
+    .map(|window| &window.reference)
+    .filter(|reference| after_by_ref.contains_key(reference))
+    .ne(after.iter().map(|window| &window.reference).filter(|reference| before_by_ref.contains_key(reference)));
+  let mut summary = format!("added={added}, removed={removed}, modified={modified}, order_changed={order_changed}");
+  let first = first.or_else(|| before.iter().zip(after).find_map(|(old, new)| (old.reference != new.reference).then_some(*old)));
+  if let Some(window) = first {
+    // Bound each escaped label before formatting, so a long backend ID cannot
+    // hide the app name. Do not include document titles in this diagnostic.
+    let label = |value: &str| {
+      let mut characters = value.chars().flat_map(char::escape_debug);
+      let mut text: String = characters.by_ref().take(80).collect();
+      if characters.next().is_some() {
+        text.push('…');
+      }
+      text
+    };
+    let id = label(&window.reference.id);
+    let app = label(window.app_name.as_deref().or(window.application_id.as_deref()).unwrap_or("unknown"));
+    summary.push_str(&format!("; first difference: id=\"{id}\", app=\"{app}\""));
+  }
+  summary
 }
 
 /// Owns the admission decision and invokes delivery only after every check.
@@ -184,12 +232,16 @@ pub(super) fn deliver<T>(
   {
     return Err(refusal(id, Reason::TargetMismatch, "click lies outside the captured bounds"));
   }
-  let windows = state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, cause))?;
+  let windows = state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
   let (current, current_state) = recapture(&state).map_err(|error| refusal(id, Reason::CheckUnavailable, error.message()))?;
   let current_state = current_state.map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
-  let current_windows = current_state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, cause))?;
-  if state.target != current_state.target || state.resolution != current_state.resolution || windows != current_windows {
+  let current_windows = current_state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
+  if state.target != current_state.target || state.resolution != current_state.resolution {
     return Err(refusal(id, Reason::StateChanged, "target or intersecting window metadata changed"));
+  }
+  if windows != current_windows {
+    let cause = format!("target or intersecting window metadata changed: {}", window_difference(&windows, &current_windows));
+    return Err(refusal(id, Reason::StateChanged, &cause));
   }
   if *expected != current {
     return Err(refusal(id, Reason::StateChanged, "captured pixels or capture metadata changed (exact comparison)"));

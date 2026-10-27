@@ -280,15 +280,103 @@ fn scroll_or_navigation_pixels_refuse_without_delivery() {
   assert_eq!(calls.get(), 0);
 }
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386560659
 #[test]
-fn separate_dialog_refuses_even_when_window_pixels_are_unchanged() {
+fn separate_dialog_refusal_names_the_added_window_pr_429() {
   let (store, reference, _) = stored();
   let mut dialog = window();
   dialog.reference.id = "dialog".into();
   dialog.title = Some("Confirm".into());
   let current = state(CaptureTarget::Window(window()), vec![dialog, window()]);
   let calls = Cell::new(0);
-  assert_eq!(reason(attempt(&store, &reference, &window(), Ok((capture(), Ok(current))), &calls).unwrap_err()), Reason::StateChanged);
+  let error = attempt(&store, &reference, &window(), Ok((capture(), Ok(current))), &calls).unwrap_err();
+  assert!(error.message().contains("added=1, removed=0, modified=0, order_changed=false"), "{error}");
+  assert!(error.message().contains("first difference: id=\"dialog\", app=\"Editor\""), "{error}");
+  assert_eq!(reason(error), Reason::StateChanged);
+  assert_eq!(calls.get(), 0);
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386560659
+// ROOT CAUSE:
+//
+// Window-list differences refused input without identifying the changed windows.
+// The cause must summarize the relevant snapshots without changing admission.
+#[test]
+fn unstable_capture_reports_window_difference_counts_pr_429() {
+  let (store, reference, mut baseline) = stored();
+  let mut removed = window();
+  removed.reference.id = "temporary-script".into();
+  removed.app_name = Some("osascript".into());
+  let mut modified = window();
+  modified.reference.id = "utility".into();
+  baseline.before.extend([removed, modified.clone()]);
+  modified.title = Some("New title".into());
+  let mut added = window();
+  added.reference.id = "dialog".into();
+  baseline.after.extend([added, modified]);
+  store.set_click_state(&reference.capture_id, Ok(baseline));
+  let calls = Cell::new(0);
+  let error = attempt(&store, &reference, &window(), Err(Status::internal("recapture must not run")), &calls).unwrap_err();
+  assert!(error.message().contains("windows intersecting the target changed during capture"), "{error}");
+  assert!(error.message().contains("added=1, removed=1, modified=1, order_changed=false"), "{error}");
+  assert!(error.message().contains("first difference: id=\"temporary-script\", app=\"osascript\""), "{error}");
+  assert_eq!(reason(error), Reason::CheckUnavailable);
+  assert_eq!(calls.get(), 0);
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386560659
+#[test]
+fn window_order_only_refusal_reports_order_change_pr_429() {
+  let (store, reference, _) = stored();
+  let mut other = window();
+  other.reference.id = "utility".into();
+  let baseline = state(CaptureTarget::Window(window()), vec![window(), other.clone()]);
+  store.set_click_state(&reference.capture_id, Ok(baseline));
+  let current = state(CaptureTarget::Window(window()), vec![other, window()]);
+  let calls = Cell::new(0);
+  let error = attempt(&store, &reference, &window(), Ok((capture(), Ok(current))), &calls).unwrap_err();
+  assert!(error.message().contains("added=0, removed=0, modified=0, order_changed=true"), "{error}");
+  assert!(error.message().contains("first difference: id=\"window-1\""), "{error}");
+  assert_eq!(reason(error), Reason::StateChanged);
+  assert_eq!(calls.get(), 0);
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386560659
+#[tokio::test]
+async fn recapture_window_diagnostic_is_bounded_and_recorded_pr_429() {
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+  let records = std::sync::Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(records.clone()).build().unwrap();
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  let (store, reference, mut current) = stored();
+  let mut added = window();
+  added.reference.id = "界".repeat(4096);
+  added.app_name = Some(format!("Utility\n{}", "应".repeat(4096)));
+  added.title = Some("private document title".into());
+  current.after.push(added);
+  let calls = Cell::new(0);
+  let error = root.in_scope(|| attempt(&store, &reference, &window(), Ok((capture(), Ok(current))), &calls)).unwrap_err();
+  dispatch.flush().await.unwrap();
+  let payload = records
+    .records()
+    .into_iter()
+    .find_map(|record| match record {
+      TraceRecord::Event {
+        schema, payload, ..
+      } if schema.name().as_str() == "auv.input.click_refused" => Some(serde_json::from_str::<serde_json::Value>(payload.get()).unwrap()),
+      _ => None,
+    })
+    .expect("refusal event");
+  let cause = payload["cause"].as_str().unwrap();
+  assert!(cause.contains("added=1, removed=0, modified=0, order_changed=false"), "{cause}");
+  assert!(cause.contains(&format!("id=\"{}…\"", "界".repeat(80))), "{cause}");
+  assert!(cause.contains("app=\"Utility\\n"), "{cause}");
+  assert!(!cause.contains('\n'));
+  assert!(!cause.contains("private document title"));
+  assert!(cause.chars().count() <= 512);
+  assert!(error.message().contains(cause));
+  assert_eq!(payload["input_delivered"], false);
+  assert_eq!(reason(error), Reason::CheckUnavailable);
   assert_eq!(calls.get(), 0);
 }
 
