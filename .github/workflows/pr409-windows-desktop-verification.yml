@@ -1,0 +1,119 @@
+name: PR 409 Windows desktop verification
+
+on:
+  push:
+    branches:
+      - codex/pr-409-desktop-verify-8d534e8a
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-verification:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 8d534e8a0a851d6cc3db003d08e6767e23269be1
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Record runner and desktop preflight
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = git rev-parse HEAD
+          if ($actual -ne '8d534e8a0a851d6cc3db003d08e6767e23269be1') { throw "Unexpected source: $actual" }
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class DesktopProbe {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+              [DllImport("user32.dll")]
+              public static extern bool CloseDesktop(IntPtr desktop);
+          }
+          '@
+          $desktop = [DesktopProbe]::OpenInputDesktop(0, $false, 1)
+          $screens = [System.Windows.Forms.Screen]::AllScreens
+          $facts = [ordered]@{
+            source_sha = $actual
+            os = [Environment]::OSVersion.VersionString
+            session_id = (Get-Process -Id $PID).SessionId
+            user_interactive = [Environment]::UserInteractive
+            input_desktop_open = ($desktop -ne [IntPtr]::Zero)
+            screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
+          }
+          $facts | ConvertTo-Json -Depth 4
+          Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object ProcessName, Id, MainWindowTitle | Format-Table -AutoSize
+          if ($desktop -ne [IntPtr]::Zero) { [void][DesktopProbe]::CloseDesktop($desktop) }
+          if (-not $facts.user_interactive -or -not $facts.input_desktop_open -or $screens.Count -eq 0) {
+            throw 'No accessible interactive input desktop; stop before GUI tests.'
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build AUV and evaluation binaries
+        shell: pwsh
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --package auv-device-helper-windows --bin auv-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:AUV_WINDOWS_HELPER_EXE_PATH = (Resolve-Path 'target/debug/auv-helper.exe').Path
+          cargo build --locked --package auv-cli --bin auv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --package auv-base-evals --bin win32-receiver --bin background-session-eval
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Observe each route twice
+        shell: pwsh
+        run: |
+          & target/release/background-session-eval.exe workflow --output "$env:RUNNER_TEMP/auv-409-observe" --auv target/debug/auv.exe --rounds 2 --observe-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Exercise each route twice
+        shell: pwsh
+        run: |
+          & target/release/background-session-eval.exe workflow --output "$env:RUNNER_TEMP/auv-409-functional" --auv target/debug/auv.exe --rounds 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify every summary
+        shell: pwsh
+        run: |
+          foreach ($mode in @('observe', 'functional')) {
+            $dir = "$env:RUNNER_TEMP/auv-409-$mode"
+            $records = @(Get-ChildItem -Path $dir -Filter workflow.jsonl -Recurse)
+            if ($records.Count -ne 6) { throw "$mode expected six records, got $($records.Count)" }
+            foreach ($record in $records) {
+              $summary = Get-Content -LiteralPath $record.FullName | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.kind -eq 'summary' }
+              if ($summary.passed -ne $true -or $summary.user_interrupted -ne $false) { throw "Bad summary in $($record.FullName)" }
+              if ($summary.quiet_inconclusive -ne 0 -or $summary.quiet_violated -ne 0) { throw "Quiet check failed in $($record.FullName)" }
+            }
+          }
+
+      - name: Print available outcome records
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($dir in @("$env:RUNNER_TEMP/auv-409-observe", "$env:RUNNER_TEMP/auv-409-functional")) {
+            if (Test-Path $dir) {
+              Get-ChildItem -Path $dir -Filter workflow.jsonl -Recurse | Sort-Object FullName | ForEach-Object {
+                Write-Host "--- $($_.FullName) ---"
+                Get-Content -Path $_.FullName -Tail 2
+              }
+            }
+          }
+
+      - name: Preserve evidence and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr409-windows-desktop-evidence-8d534e8a
+          path: |
+            ${{ runner.temp }}/auv-409-observe/
+            ${{ runner.temp }}/auv-409-functional/
+          if-no-files-found: warn
+          retention-days: 14
