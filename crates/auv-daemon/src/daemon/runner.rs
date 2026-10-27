@@ -331,6 +331,13 @@ impl RunnerSupervisor {
 /// The registry entry is the ownership token: only this task removes a
 /// Draining entry, so a cancelled or racing caller can neither stop the same
 /// Runner twice nor lose the registry's only handle to an executable child.
+///
+/// NOTICE: if this task itself panics, the entry strands as Draining and
+/// later deletes fail with `Deleting` forever. The only in-task panic sites
+/// are the registry-lock `.expect`s, which fire only after the lock is
+/// already poisoned daemon-wide, so no concrete in-slice panic path exists;
+/// recovering the entry from an owner-task panic is deferred to an
+/// owner-approved hardening slice.
 async fn delete_runner_task(
   runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
   activity_changed: Arc<Notify>,
