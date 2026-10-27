@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 90e8ebc29abbc2c4a8c11d05a4638eba3d4937af
+          ref: 9dabdabfe8d21fc64b6edc5de815843e31ccd564
           submodules: recursive
           persist-credentials: false
 
@@ -24,7 +24,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '90e8ebc29abbc2c4a8c11d05a4638eba3d4937af') { throw "Unexpected source: $actual" }
+          if ($actual -ne '9dabdabfe8d21fc64b6edc5de815843e31ccd564') { throw "Unexpected source: $actual" }
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
           using System;
@@ -111,7 +111,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr409-windows-desktop-evidence-90e8ebc2
+          name: pr409-windows-desktop-evidence-9dabdabf
           path: |
             ${{ runner.temp }}/auv-409-observe/
             ${{ runner.temp }}/auv-409-functional/
