@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use tokio::process::Child;
-use tokio::sync::{Notify, futures::Notified};
+use tokio::sync::Notify;
+use tokio_util::task::TaskTracker;
 use tonic::transport::{Channel, Endpoint};
 
 use super::runner_provider::{
@@ -24,6 +25,9 @@ pub(crate) struct RunnerSupervisor {
   parent_context: Option<ParentContext>,
   runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
   activity_changed: Arc<Notify>,
+  // Admission and closure use the registry lock. A task must register before
+  // shutdown takes the map, including when its caller later cancels.
+  deletions: TaskTracker,
 }
 
 struct ManagedRunner {
@@ -102,6 +106,7 @@ impl RunnerSupervisor {
       parent_context,
       runners: Arc::new(Mutex::new(HashMap::new())),
       activity_changed: Arc::new(Notify::new()),
+      deletions: TaskTracker::new(),
     })
   }
 
@@ -285,11 +290,21 @@ impl RunnerSupervisor {
     force: bool,
   ) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
     let grace_period = grace_period.map(validate_grace_period).transpose()?;
+    // Resolve the deadline before claiming ownership. A clock-range error
+    // must neither strand a Draining entry nor poison the registry lock.
+    let deadline = grace_period
+      .map(|grace| {
+        tokio::time::Instant::now().checked_add(grace).ok_or(RunnerError::InvalidArgument("grace_period exceeds the clock range"))
+      })
+      .transpose()?;
     // Claiming Draining marks this delete the single owner of the Runner's
     // deletion: a second delete, lifecycle auto-stop, and the idle stop all
     // leave Draining entries to that owner.
-    let drain = {
+    let task = {
       let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
+      if self.deletions.is_closed() {
+        return Err(RunnerError::Stop("daemon shutdown has closed Runner deletion admission".to_string()));
+      }
       let managed = runners.get_mut(runner_id).ok_or_else(|| RunnerError::Unknown(runner_id.to_string()))?;
       if managed.record.phase == daemon_proto::RunnerPhase::Draining as i32 {
         return Err(RunnerError::Deleting(runner_id.to_string()));
@@ -297,30 +312,46 @@ impl RunnerSupervisor {
       managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
       managed.run_affinities = 0;
       managed.record.idle_deadline = None;
-      matches!(&managed.runtime, ManagedRunnerRuntime::RemoteGrpc) && !force
+      let drain = matches!(&managed.runtime, ManagedRunnerRuntime::RemoteGrpc) && !force;
+      // Register and spawn under the claim lock so shutdown cannot miss the
+      // owner. Tokio never polls a spawned task synchronously under this lock.
+      self.deletions.spawn(delete_runner_task(
+        self.runners.clone(),
+        self.activity_changed.clone(),
+        runner_id.to_string(),
+        deadline,
+        force,
+        drain,
+      ))
     };
-    // Claim and spawn happen without an await between them, so a cancelled
-    // caller can never strand a claimed-but-unowned Draining entry: the task
-    // owns the deletion to completion once the claim is taken.
-    let task = tokio::spawn(delete_runner_task(
-      self.runners.clone(),
-      self.activity_changed.clone(),
-      runner_id.to_string(),
-      grace_period.map(|grace| tokio::time::Instant::now() + grace),
-      force,
-      drain,
-    ));
     // The task result is already the caller-facing Result; `?` only unwraps
     // the JoinHandle's join error.
     task.await.map_err(|error| RunnerError::Stop(format!("Runner deletion task failed: {error}")))?
   }
 
   pub(crate) async fn shutdown(&self) {
-    let runners = std::mem::take(&mut *self.runners.lock().expect("Runner registry lock poisoned"));
+    let runners = {
+      let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
+      self.deletions.close();
+      std::mem::take(&mut *runners)
+    };
     // Draining deletes watch registry membership, not the map's identity;
     // wake them so they observe the taken entry instead of waiting forever.
     self.activity_changed.notify_waiters();
     for (_, managed) in runners {
+      // TODO(runner-shutdown-stop-failures): preserve the existing best-effort
+      // shutdown policy here. Error retention needs an owner-approved lifecycle
+      // contract; see `2026-10-26-daemon-delete-runner-race-fix.md`.
+      let _ = stop_managed(managed).await;
+    }
+    // A removed executable can still belong to a deletion owner. Wait for
+    // that owner, then collect any Failed entry it retained during shutdown.
+    // TODO(runner-shutdown-lifecycle): creation and lifecycle auto-stop task
+    // coordination need an owner-approved slice; see
+    // `2026-10-26-daemon-delete-runner-race-fix.md` (Remaining risks).
+    self.deletions.wait().await;
+    let retained = std::mem::take(&mut *self.runners.lock().expect("Runner registry lock poisoned"));
+    for (_, managed) in retained {
       let _ = stop_managed(managed).await;
     }
   }
@@ -328,16 +359,13 @@ impl RunnerSupervisor {
 
 /// Owns one Runner deletion to completion, detached from its caller.
 ///
-/// The registry entry is the ownership token: only this task removes a
-/// Draining entry, so a cancelled or racing caller can neither stop the same
-/// Runner twice nor lose the registry's only handle to an executable child.
+/// The registry entry is the ownership token until removal. The supervisor
+/// tracks this task through the stop and any failure retention, so shutdown
+/// waits for the owner even after removal or caller cancellation.
 ///
-/// NOTICE: if this task itself panics, the entry strands as Draining and
-/// later deletes fail with `Deleting` forever. The only in-task panic sites
-/// are the registry-lock `.expect`s, which fire only after the lock is
-/// already poisoned daemon-wide, so no concrete in-slice panic path exists;
-/// recovering the entry from an owner-task panic is deferred to an
-/// owner-approved hardening slice.
+/// NOTICE: recovery from an unexpected owner-task panic or abrupt runtime
+/// teardown remains deferred to an owner-approved lifecycle slice. Tracking
+/// tasks makes orderly shutdown wait, but does not make runtime drop graceful.
 async fn delete_runner_task(
   runners: Arc<Mutex<HashMap<String, ManagedRunner>>>,
   activity_changed: Arc<Notify>,
@@ -348,8 +376,9 @@ async fn delete_runner_task(
 ) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
   if drain {
     loop {
-      let mut changed = std::pin::pin!(activity_changed.notified());
-      let already_notified = arm_notify_waiter(changed.as_mut()).await;
+      // notify_waiters reaches a Notified from its creation, even before its
+      // first poll. Create it before reading the drain predicate.
+      let changed = activity_changed.notified();
       let active_operations =
         runners.lock().expect("Runner registry lock poisoned").get(&runner_id).map(|managed| managed.record.active_operations);
       let Some(active_operations) = active_operations else {
@@ -360,12 +389,9 @@ async fn delete_runner_task(
       if active_operations == 0 {
         break;
       }
-      if already_notified {
-        continue;
-      }
       match deadline {
         Some(deadline) => {
-          if tokio::time::timeout_at(deadline, changed.as_mut()).await.is_err() {
+          if tokio::time::timeout_at(deadline, changed).await.is_err() {
             break;
           }
         }
@@ -386,26 +412,10 @@ async fn delete_runner_task(
   }
 }
 
-/// Registers a `Notified` waiter before the caller re-checks its predicate.
-///
-/// `Notified` registers with the `Notify` on its first poll and
-/// `notify_waiters` never stores permits, so a waiter that registers after the
-/// notification fires never wakes. Polling once up front closes that window:
-/// any later `notify_waiters` finds the waiter registered, and any state
-/// change that fired before registration is already visible to the predicate
-/// check that follows. Returns whether the waiter was already notified.
-async fn arm_notify_waiter(mut waiter: std::pin::Pin<&mut Notified<'_>>) -> bool {
-  use std::future::Future as _;
-  std::future::poll_fn(|cx| match waiter.as_mut().poll(cx) {
-    std::task::Poll::Ready(()) => std::task::Poll::Ready(true),
-    std::task::Poll::Pending => std::task::Poll::Ready(false),
-  })
-  .await
-}
-
 /// Retains a Runner whose stop failed: the registry keeps tracking it (and an
 /// executable runtime keeps owning its child) under the Failed phase so a
 /// later DeleteRunner can retry, instead of leaking an unmanaged process.
+/// During shutdown, the supervisor collects this entry after its owner exits.
 fn record_stop_failure(runners: &Arc<Mutex<HashMap<String, ManagedRunner>>>, runner_id: String, mut managed: ManagedRunner) {
   managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
   tracing::warn!(runner_id = %runner_id, "Runner did not stop cleanly; retained as Failed for a retry");

@@ -621,6 +621,149 @@ async fn force_and_grace_semantics_preserved() {
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
+// https://github.com/moeru-ai/auv/pull/431
+// ROOT CAUSE:
+//
+// If deletion removed an executable before shutdown, shutdown returned while
+// the detached owner still awaited its child. The registry no longer held it.
+// The fix waits for deletion owners before shutdown completes.
+#[tokio::test]
+async fn pr431_shutdown_waits_for_a_removed_executable_delete() {
+  let supervisor = Arc::new(RunnerSupervisor::new(daemon_proto::DeviceRef {
+    device_id: "device_test".to_string(),
+  }));
+  supervisor
+    .runners
+    .lock()
+    .expect("registry")
+    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+  let delete_owner = spawn_delete(
+    &supervisor,
+    Some(prost_types::Duration {
+      seconds: 1,
+      nanos: 0,
+    }),
+    false,
+  );
+  poll_until(|| registered_phase(&supervisor, "runner_test").is_none(), "the delete owner removed the executable").await;
+  let mut shutdown = std::pin::pin!(supervisor.shutdown());
+  let waits_for_owner = futures_util::poll!(shutdown.as_mut()).is_pending();
+
+  // Reap the fixture before the regression assertion, including on old code.
+  tokio::time::timeout(Duration::from_secs(5), delete_owner)
+    .await
+    .expect("bounded delete")
+    .expect("join delete caller")
+    .expect("delete fixture child");
+  if waits_for_owner {
+    tokio::time::timeout(Duration::from_secs(5), shutdown.as_mut()).await.expect("bounded shutdown");
+  }
+  assert!(waits_for_owner, "shutdown returned while the removed executable still had a deletion owner");
+  assert!(supervisor.list().runners.is_empty());
+}
+
+// https://github.com/moeru-ai/auv/pull/431
+// ROOT CAUSE:
+//
+// If a stop failed after shutdown took the registry, the owner reinserted a
+// live child after shutdown returned. The fix waits for the owner, then
+// collects its Failed entry. This simulates the failure policy, not an OS error.
+#[tokio::test]
+async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admission() {
+  let supervisor = Arc::new(RunnerSupervisor::new(daemon_proto::DeviceRef {
+    device_id: "device_test".to_string(),
+  }));
+  #[cfg(unix)]
+  let mut command = {
+    let mut command = tokio::process::Command::new("/bin/sleep");
+    command.arg("1");
+    command
+  };
+  #[cfg(windows)]
+  let mut command = {
+    let mut command = tokio::process::Command::new("powershell");
+    command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 1"]);
+    command
+  };
+  let child = command.kill_on_drop(true).spawn().expect("spawn short-lived fixture child");
+  let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0);
+  managed.runtime = ManagedRunnerRuntime::Executable { child };
+  let (fail_stop, stop_released) = tokio::sync::oneshot::channel();
+  let runners = supervisor.runners.clone();
+  let owner = {
+    let mut registry = runners.lock().expect("registry");
+    registry.insert("runner_test".to_string(), managed);
+    let managed = registry.remove("runner_test").expect("delete owner takes the child");
+    // The token covers the same failure-retention boundary as a real delete.
+    let runners = runners.clone();
+    supervisor.deletions.spawn(async move {
+      stop_released.await.expect("release the synthetic failure");
+      record_stop_failure(&runners, "runner_test".to_string(), managed);
+    })
+  };
+  let mut shutdown = std::pin::pin!(supervisor.shutdown());
+  let waits_for_owner = futures_util::poll!(shutdown.as_mut()).is_pending();
+  fail_stop.send(()).expect("finish the owner after shutdown takes the map");
+  tokio::time::timeout(Duration::from_secs(5), owner).await.expect("bounded owner").expect("join owner");
+  let retained_before_cleanup = registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Failed as i32);
+  let retry = supervisor.delete("runner_test", None, true).await;
+  let rejects_new_delete = matches!(retry, Err(RunnerError::Stop(_)));
+  if waits_for_owner {
+    tokio::time::timeout(Duration::from_secs(5), shutdown.as_mut()).await.expect("shutdown reaps the retained child");
+  }
+  let registry_empty = supervisor.list().runners.is_empty();
+  // Retain bounded fixture cleanup if shutdown regresses before assertions.
+  let remaining = supervisor.runners.lock().expect("registry").remove("runner_test");
+  if let Some(mut managed) = remaining {
+    stop_managed_in_place(&mut managed, None, true).await.expect("reap retained fixture");
+  }
+  assert!(waits_for_owner, "shutdown returned before its deletion owner finished");
+  assert!(retained_before_cleanup, "the synthetic failure reached the real retention policy");
+  assert!(rejects_new_delete, "shutdown must close new deletion admission under the claim lock");
+  assert!(registry_empty, "a late failure must enter shutdown cleanup instead of remaining registered");
+}
+
+// https://github.com/moeru-ai/auv/pull/431
+// Cancelling the request after removal must not detach its deletion from
+// supervisor shutdown. The supervisor tracks the owner until stop ends.
+#[tokio::test]
+async fn pr431_shutdown_waits_for_a_cancelled_executable_delete_caller() {
+  let supervisor = Arc::new(RunnerSupervisor::new(daemon_proto::DeviceRef {
+    device_id: "device_test".to_string(),
+  }));
+  supervisor
+    .runners
+    .lock()
+    .expect("registry")
+    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+  let caller = spawn_delete(
+    &supervisor,
+    Some(prost_types::Duration {
+      seconds: 1,
+      nanos: 0,
+    }),
+    false,
+  );
+  poll_until(|| registered_phase(&supervisor, "runner_test").is_none(), "the owner removed the executable").await;
+  caller.abort();
+  let cancelled = caller.await.expect_err("cancel the request");
+  tokio::time::timeout(Duration::from_secs(5), supervisor.shutdown()).await.expect("shutdown waits for the detached owner");
+  assert!(cancelled.is_cancelled());
+  assert!(supervisor.deletions.is_empty(), "shutdown waited through the child stop");
+  assert!(supervisor.list().runners.is_empty());
+}
+
+// https://github.com/moeru-ai/auv/pull/431
+// Tokio guarantees notify_waiters delivery from Notified creation, without
+// an initial poll. This pins the corrected drain-loop explanation.
+#[tokio::test]
+async fn pr431_notify_waiters_reaches_an_unpolled_future() {
+  let changed = Notify::new();
+  let waiter = changed.notified();
+  changed.notify_waiters();
+  tokio::time::timeout(Duration::from_millis(100), waiter).await.expect("the broadcast predates the first poll");
+}
+
 // ROOT CAUSE:
 //
 // The daemon adopted whichever process opened the Runner pipe first. Before
