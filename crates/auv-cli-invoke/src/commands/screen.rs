@@ -325,6 +325,60 @@ struct ClickScreenTextArgs {
   /// Text anchor to click.
   #[arg(value_name = "TEXT")]
   query: String,
+  /// Optional screen-coordinate fence checked against the freshly recognized click point before delivery.
+  #[arg(long, value_name = "LEFT,TOP,RIGHT,BOTTOM", allow_hyphen_values = true)]
+  #[serde(default)]
+  within: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScreenClickBounds {
+  left: f64,
+  top: f64,
+  right: f64,
+  bottom: f64,
+}
+
+/// The optional fence is an absolute screen-space rectangle, not a saved OCR point.
+/// Both local Invoke and the selected-Runner route must check it after their own OCR pass.
+pub(crate) fn parse_click_bounds(raw: Option<&str>) -> Result<Option<ScreenClickBounds>, crate::InvokeFailure> {
+  let Some(raw) = raw else {
+    return Ok(None);
+  };
+  let invalid = || {
+    crate::InvokeFailure::new(
+      crate::FailureCode::InvalidInput,
+      "screen.clickText --within must be four finite coordinates LEFT,TOP,RIGHT,BOTTOM with positive width and height",
+    )
+  };
+  let coords = raw.split(',').map(|part| part.trim().parse::<f64>()).collect::<Result<Vec<_>, _>>().map_err(|_| invalid())?;
+  if coords.len() != 4 || coords.iter().any(|value| !value.is_finite()) || coords[2] <= coords[0] || coords[3] <= coords[1] {
+    return Err(invalid());
+  }
+  Ok(Some(ScreenClickBounds {
+    left: coords[0],
+    top: coords[1],
+    right: coords[2],
+    bottom: coords[3],
+  }))
+}
+
+/// Refuse a changed OCR selection BEFORE sending pointer input, not after it was delivered.
+pub(crate) fn check_click_bounds(point: &auv_driver::Point, within: Option<ScreenClickBounds>) -> Result<(), crate::InvokeFailure> {
+  if let Some(bounds) = within
+    && (!point.x.is_finite()
+      || !point.y.is_finite()
+      || point.x < bounds.left
+      || point.x >= bounds.right
+      || point.y < bounds.top
+      || point.y >= bounds.bottom)
+  {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::InvalidTarget,
+      format!("screen.clickText re-resolved outside --within at ({:.1}, {:.1}); no input delivered", point.x, point.y),
+    ));
+  }
+  Ok(())
 }
 
 #[invoke_command(
@@ -346,12 +400,13 @@ async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs)
   {
     reject_target_activation(&input, "screen.clickText")?;
     input.cancellation.check().map_err(|error| error.to_string())?;
+    let within = parse_click_bounds(args.within.as_deref())?;
     let query = args.query;
     if input.dry_run {
       return Ok(super::input::validation_only_output());
     }
 
-    let result = click_recognized_screen_text_with_cancellation(query, &input.cancellation).await?;
+    let result = click_recognized_screen_text_with_cancellation(query, within, &input.cancellation).await?;
     Ok(screen_text_click_output(&result)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -388,11 +443,12 @@ pub fn recorded_screen_text_click_output(result: &ScreenTextClick, ocr_source: O
 }
 
 pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, crate::InvokeFailure> {
-  click_recognized_screen_text_with_cancellation(query, &Default::default()).await
+  click_recognized_screen_text_with_cancellation(query, None, &Default::default()).await
 }
 
 async fn click_recognized_screen_text_with_cancellation(
   query: String,
+  within: Option<ScreenClickBounds>,
   cancellation: &crate::InvokeCancellation,
 ) -> Result<ScreenTextClick, crate::InvokeFailure> {
   #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -410,6 +466,7 @@ async fn click_recognized_screen_text_with_cancellation(
       .best_match()
       .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("screen.clickText did not find text {query:?}")))?
       .action_point();
+    check_click_bounds(&point, within)?;
     let action = session
       .input()
       .click_at(point, auv_driver::MouseButton::Left, auv_driver::Click::Single, Default::default())
@@ -424,7 +481,7 @@ async fn click_recognized_screen_text_with_cancellation(
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    let _ = (query, cancellation);
+    let _ = (query, within, cancellation);
     Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "screen.clickText is only available on macOS and Windows"))
   }
 }
