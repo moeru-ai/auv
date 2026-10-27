@@ -172,19 +172,33 @@ fn image_fetch_rejects_paths_wrong_run_and_other_connections() {
   assert!(catalog.read(&run, &artifact, 10, 4097).unwrap_err().message.contains("1..=4096"));
 }
 
+// https://github.com/moeru-ai/auv/pull/430
 #[test]
-fn image_fetch_refuses_modified_missing_nonimage_and_mislabeled_bytes() {
+fn image_fetch_pr430_classifies_corrupt_storage_and_refuses_invalid_image_bytes() {
+  // ROOT CAUSE:
+  //
+  // If a registered file changed after its verified write, the reader blamed
+  // client parameters even though the caller supplied a valid receipt.
+  //
+  // Before the fix, corruption and missing files had different error categories.
+  // The fix reports both as server storage failures.
   let (_dir, catalog, metadata, path) = registered(&png(1, 1), "image/png");
   let run = metadata.uri().run_id().to_string();
   let artifact = metadata.uri().artifact_id().to_string();
   let mut bytes = std::fs::read(&path).unwrap();
   bytes[0] ^= 1;
   std::fs::write(&path, bytes).unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("integrity"));
+  let error = catalog.read(&run, &artifact, 10, 10).unwrap_err();
+  assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+  assert!(error.message.contains("integrity"));
   std::fs::write(&path, b"short").unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("length"));
+  let error = catalog.read(&run, &artifact, 10, 10).unwrap_err();
+  assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+  assert!(error.message.contains("length"));
   std::fs::remove_file(&path).unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("cannot be opened"));
+  let error = catalog.read(&run, &artifact, 10, 10).unwrap_err();
+  assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+  assert!(error.message.contains("cannot be opened"));
   let (_dir, catalog, metadata, _) = registered(b"private text", "text/plain");
   assert!(
     catalog

@@ -79,12 +79,12 @@ impl ImageArtifacts {
     let file = std::fs::File::open(path).map_err(|_| McpError::internal_error("image artifact cannot be opened", None))?;
     let info = file.metadata().map_err(|_| McpError::internal_error("image artifact metadata unavailable", None))?;
     if !info.is_file() || info.len() != metadata.byte_length().get() {
-      return Err(McpError::invalid_params("image artifact length changed", None));
+      return Err(McpError::internal_error("image artifact length changed", None));
     }
     let mut bytes = Vec::with_capacity(metadata.byte_length().get() as usize);
     file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| McpError::internal_error("image artifact cannot be read", None))?;
     if bytes.len() as u64 != metadata.byte_length().get() || Sha256Digest::new(Sha256::digest(&bytes).into()) != metadata.sha256() {
-      return Err(McpError::invalid_params("image artifact integrity check failed", None));
+      return Err(McpError::internal_error("image artifact integrity check failed", None));
     }
     let format = image_format(&metadata).ok_or_else(|| McpError::invalid_params("unsupported image content type", None))?;
     if image::guess_format(&bytes).ok() != Some(format) {
@@ -113,19 +113,20 @@ impl ImageArtifacts {
     limits
       .reserve(decoder.total_bytes())
       .map_err(|_| McpError::invalid_params("source image exceeds 128 MiB pixel allocation limit", None))?;
-    let image = DynamicImage::from_decoder(decoder)
+    let mut image = DynamicImage::from_decoder(decoder)
       .map_err(|_| McpError::invalid_params("image decoding failed or exceeded allocation limit", None))?;
-    let image = if width > max_width || height > max_height {
+    if width > max_width || height > max_height {
       // NOTICE: image 0.25.10 thumbnail sums u16 channels in u32 and can overflow.
       // Triangle uses floating-point samples. Reconsider thumbnail only after
       // image/src/imageops/sample.rs supports large 16-bit sampling regions.
-      image.resize(max_width, max_height, FilterType::Triangle)
-    } else {
-      image
-    };
+      // Assignment releases the original pixels after resizing, before encoding.
+      image = image.resize(max_width, max_height, FilterType::Triangle);
+    }
     let dimensions = (image.width(), image.height());
     let mut output = Cursor::new(Vec::new());
     image.write_to(&mut output, ImageFormat::Png).map_err(|_| McpError::internal_error("image encoding failed", None))?;
+    // Encoding is complete; release decoded pixels before Base64 allocation.
+    drop(image);
     if output.get_ref().len() > MAX_OUTPUT_BYTES {
       return Err(McpError::invalid_params("encoded image exceeds 8 MiB; request a smaller image", None));
     }

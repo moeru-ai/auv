@@ -276,6 +276,10 @@ mod frontend {
   }
 
   fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
+    // NOTICE(mcp-path-authority): invoke paths use the server's filesystem authority.
+    // Workspace confinement needs a separately approved frontend policy covering
+    // store roots and resolved fixture image paths. See
+    // docs/ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md.
     let explicit_store_root = store_root.map(PathBuf::from);
     let root = explicit_store_root.unwrap_or_else(|| project_root.join(".auv").join("store"));
     let store = auv_tracing::FileTracingStore::open(&root)
@@ -485,13 +489,17 @@ mod frontend {
         direct_result = Err(error.into());
       }
       let recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-      if recording_failure.is_none()
-        && let Ok(success) = &direct_result
-      {
-        // NOTICE(mcp-image-receipt-scope): OCR source evidence without a returned
-        // invoke receipt stays outside this catalog. Exposing it requires an
-        // owner-approved command receipt contract.
-        self.image_artifacts.register(&success.artifacts, &authority.store);
+      if let Ok(success) = &mut direct_result {
+        if recording_failure.is_none() {
+          // NOTICE(mcp-image-receipt-scope): OCR source evidence without a returned
+          // invoke receipt stays outside this catalog. Exposing it requires an
+          // owner-approved command receipt contract.
+          self.image_artifacts.register(&success.artifacts, &authority.store);
+        } else {
+          // Keep the command result and recording failure without advertising
+          // receipts that the failed flush did not admit to this server's catalog.
+          success.artifacts.clear();
+        }
       }
       invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
     }
@@ -721,7 +729,8 @@ mod frontend {
         instructions: Some(
           "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools. \
            Read returned image receipts with artifact_read_image, using run_id and artifact_id from artifacts[].uri. \
-           file_path refers to the server filesystem. No planner or NL parsing is present."
+           file_path refers to the server filesystem. Invoke serves trusted clients with the server's filesystem permissions. \
+           project_root sets defaults and does not confine explicit paths. No planner or NL parsing is present."
             .into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -777,7 +786,7 @@ mod frontend {
        pass its arguments in `inputs` as string values, keyed exactly as listed; list values are JSON array strings. \
        Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
        command, and `runner support` states the same for the selected-Runner route when it differs; neither is a \
-       claim that the path was run.\n\n\
+       claim that the path was run. A `recording_failure` preserves the command result but omits artifact receipts.\n\n\
        Application ids are the ones `window.list` reports on this Device, and they differ by platform: a bundle id \
        on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
        application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
@@ -1009,6 +1018,7 @@ mod frontend {
     inputs: BTreeMap<String, String>,
     #[serde(default)]
     dry_run: bool,
+    /// Server-side tracing directory override. Explicit paths are not confined to the project root.
     #[serde(default)]
     store_root: Option<String>,
   }

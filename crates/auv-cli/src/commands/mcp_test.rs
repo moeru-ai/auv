@@ -29,7 +29,7 @@ fn image_server(project_root: &std::path::Path) -> McpServer {
     let artifact = auv_cli_invoke::artifact::capture_evidence("test.mcp.image", &capture, None).unwrap();
     let metadata = auv_tracing::emit_artifact(artifact).await.unwrap().unwrap();
     Ok(super::McpInvokeSuccess {
-      result: serde_json::Value::Null,
+      result: serde_json::json!({ "capture_ready": true }),
       artifacts: vec![metadata],
     })
   }));
@@ -258,6 +258,115 @@ async fn mcp_pr430_image_storage_failure_is_internal_error() {
     .unwrap_err();
   assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
   assert!(error.message.contains("cannot be opened"));
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_flush_failure_preserves_result_without_advertising_image_receipts() {
+  // ROOT CAUSE:
+  //
+  // If recording flush failed after an artifact write, invoke returned its
+  // receipt even though the image catalog deliberately refused to register it.
+  //
+  // Before the fix, a newly advertised image could not be fetched.
+  // The fix preserves the command result and recording failure without receipts.
+  struct FailingFlush;
+  impl auv_tracing::TraceExporter for FailingFlush {
+    fn export(&self, _: auv_tracing::TraceRecord) -> auv_tracing::BoxFuture<'_, Result<(), auv_tracing::ExportError>> {
+      Box::pin(async { Ok(()) })
+    }
+
+    fn flush(&self) -> auv_tracing::BoxFuture<'_, Result<(), auv_tracing::ExportError>> {
+      Box::pin(async { Err(auv_tracing::ExportError::new(auv_tracing::ErrorCode::new("test.mcp.flush_failed"))) })
+    }
+  }
+
+  let directory = tempfile::tempdir().unwrap();
+  let store_root = directory.path().join(".auv").join("store");
+  let store = Arc::new(auv_tracing::FileTracingStore::open(&store_root).unwrap());
+  let authority = super::McpFrontendAuthority {
+    dispatch: auv_tracing::configure().tracing_store(store.clone()).exporter(Arc::new(FailingFlush)).build().unwrap(),
+    store: store.clone(),
+  };
+  let mut server = image_server(directory.path());
+  server.invoke_dispatch = Arc::new(move |_| Ok(authority.clone()));
+  let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
+  assert_ne!(result.is_error, Some(true));
+  let output = result.structured_content.unwrap();
+  assert_eq!(output["status"], "completed");
+  assert_eq!(output["result"]["capture_ready"], true);
+  assert!(!output["recording_failure"].as_str().unwrap().is_empty());
+  assert!(output.get("artifacts").is_none(), "receipts must be omitted after a recording flush failure");
+
+  // The file write and store flush succeeded; only the telemetry flush failed.
+  let metadata = auv_tracing::FileTracingStore::read_records(&store_root)
+    .unwrap()
+    .map(Result::unwrap)
+    .find_map(|stored| match stored.record {
+      auv_tracing::TraceRecord::Artifact { metadata, .. } => Some(metadata),
+      _ => None,
+    })
+    .unwrap();
+  assert_eq!(std::fs::metadata(store.artifact_path(&metadata)).unwrap().len(), metadata.byte_length().get());
+  let error = server
+    .artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+      run_id: metadata.uri().run_id().to_string(),
+      artifact_id: metadata.uri().artifact_id().to_string(),
+      max_width: 12,
+      max_height: 6,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+  assert!(error.message.contains("not available"));
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_explicit_fixture_and_store_paths_are_not_workspace_confined() {
+  use base64::Engine as _;
+
+  // This records the existing invoke authority boundary. Image receipt checks
+  // do not confine a trusted command's fixture or store paths to project_root.
+  let directory = tempfile::tempdir().unwrap();
+  let project = directory.path().join("project");
+  let fixture = directory.path().join("fixture");
+  let store_root = directory.path().join("store");
+  std::fs::create_dir(&project).unwrap();
+  std::fs::create_dir(&fixture).unwrap();
+  let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/testdata/scan/temporal/single_frame_v0");
+  for name in ["manifest.json", "frame-0001.png"] {
+    std::fs::copy(source.join(name), fixture.join(name)).unwrap();
+  }
+  let server = McpServer::new(project.clone()).unwrap();
+  let result = call_invoke(
+    server.clone(),
+    serde_json::json!({ "command_id": "scan.frame", "store_root": store_root, "inputs": { "fixture-dir": fixture } }),
+  )
+  .await;
+  let output = result.structured_content.unwrap();
+  assert_eq!(output["status"], "completed");
+  assert!(output.get("recording_failure").is_none());
+  assert!(store_root.join("records.jsonl").is_file());
+  assert!(!project.join(".auv").exists());
+  let artifact = output["artifacts"].as_array().unwrap().iter().find(|artifact| artifact["content_type"] == "image/png").unwrap();
+  let path = std::path::Path::new(artifact["file_path"].as_str().unwrap());
+  assert!(path.starts_with(store_root.join("artifacts")));
+  let uri: auv_tracing::ArtifactUri = artifact["uri"].as_str().unwrap().parse().unwrap();
+  let result = server
+    .artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+      run_id: uri.run_id().to_string(),
+      artifact_id: uri.artifact_id().to_string(),
+      max_width: 8,
+      max_height: 8,
+    }))
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let bytes = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  let actual = image::load_from_memory(&bytes).unwrap().to_rgba8();
+  let expected = image::open(source.join("frame-0001.png")).unwrap().to_rgba8();
+  assert_eq!(actual, expected);
 }
 
 #[test]

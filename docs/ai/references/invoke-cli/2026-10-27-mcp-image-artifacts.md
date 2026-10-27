@@ -86,13 +86,47 @@ filesystem; a client does not need filesystem access to fetch the image.
 
 Unknown fields, including a file path or store root, produce an invalid-params
 error. Invalid IDs, unavailable receipts, and refused image data produce the
-same error category. Storage I/O failures and PNG encoding failures produce an
-internal-error response. The handler preserves these categories from the reader.
+same error category. Storage I/O failures, changed file length or digest, and
+PNG encoding failures produce an internal-error response. These storage checks
+compare a registered file with its verified write receipt. A mismatch describes
+server state, rather than an invalid client parameter. The handler preserves
+these categories from the reader.
+
+## Invoke filesystem authority
+
+MCP `invoke` serves trusted clients with the server process's filesystem
+permissions. `project_root` selects defaults; it does not confine explicit paths.
+The image receipt catalog restricts fetch eligibility, not command filesystem
+authority.
+
+An explicit `invoke.store_root` can create a tracing store outside the project.
+`scan.frame` can load an external fixture directory and return an image receipt.
+That receipt becomes eligible for fetching after a successful recording flush.
+The fixture loader also resolves the image name from its manifest without
+confining the resulting path to the fixture directory.
+See [MCP authority](../../../../crates/auv-cli/src/commands/mcp.rs),
+[scan invocation](../../../../crates/auv-cli-invoke/src/commands/scan.rs), and
+[fixture loading](../../../../crates/auv-scan/src/producer/mod.rs).
+
+Workspace confinement requires a separately approved frontend path policy.
+That policy must cover store roots, fixture directories, manifest image paths,
+and symlink resolution. Restricting only the fixture directory cannot confine
+the image path. This PR preserves the existing invoke path authority.
+
+The default frontend creates a tracing worker for each invoke. The worker
+exits after its producer handles close and queued work completes; creating a
+worker per request does not itself establish a thread leak.
+See [dispatch lifecycle](../../../../crates/auv-tracing/src/dispatch.rs).
+Concurrent-request admission remains a separate scheduling decision.
 
 ## Receipt scope and limits
 
 Only successful `invoke` results with a successful tracing flush add image
-receipts. The catalog holds the latest 128 distinct image receipts in return
+receipts. A failed flush preserves the command result and `recording_failure`,
+but omits `artifacts` from the response and does not register new receipts.
+The artifact file can already exist before flush fails. File persistence alone
+does not admit a receipt to this catalog.
+The catalog holds the latest 128 distinct image receipts in return
 order. Returning an existing receipt refreshes its position. Catalog expiry
 does not delete a stored artifact.
 
@@ -150,6 +184,13 @@ not contain a retained 160 MiB profile.
 
 Image resizing uses the Triangle filter. This avoids the integer overflow in
 the image 0.25.10 thumbnail path for 16-bit PNG images.
+Assignment replaces the decoded image after resizing, releasing the original
+pixel buffer before PNG encoding. After encoding, the reader explicitly drops
+the final image before output checks, Base64 allocation, and response construction.
+Shadowing the original image would retain its buffer until the enclosing scope
+ends. See the [Rust drop rules](https://doc.rust-lang.org/reference/destructors.html#drop-scopes).
+These release points shorten buffer lifetimes; they do not define a process
+memory cap or a measured peak-memory reduction.
 
 An output-size error asks the client to request a smaller image. File reads,
 decoding, scaling, and encoding run on a blocking worker. Catalog locks cover
@@ -173,13 +214,19 @@ of images from another server instance. Tool-level tests preserve completed
 invoke results after catalog poison and classify storage failures as internal.
 Additional regressions cover replacement panic recovery, coordinate instructions,
 and a 2× capture through the shared producer, WebP storage, and PNG resizing.
+Storage regressions assert internal-error codes for changed length and digest.
+A failing telemetry exporter reproduces flush failure after a successful file
+write and verifies the omitted receipt, preserved result, and fetch refusal.
+An explicit-path fixture verifies the existing authority boundary through
+`invoke(scan.frame)` and `artifact_read_image`, using temporary files outside
+the project directory.
 
 Windows verification of the current reader, based on `main@8bf7e4f1`:
 
 | Command | Result |
 | --- | --- |
 | `cargo build --locked -p auv-device-helper-windows --bin auv-helper` | Passed |
-| `cargo test --workspace --locked --no-fail-fast` | 1,638 passed, 25 ignored, 0 failed |
+| `cargo test --workspace --locked --no-fail-fast` | 1,640 passed, 25 ignored, 0 failed |
 | `cargo check --locked` | Passed |
 | `cargo fmt --all -- --check` | Passed |
 | `cargo run --quiet --locked -- invoke --help` | Passed |
@@ -187,7 +234,7 @@ Windows verification of the current reader, based on `main@8bf7e4f1`:
 | `git diff --check` | Passed |
 
 The workspace run used `AUV_WINDOWS_HELPER_EXE_PATH` to select the built helper.
-It includes 46 MCP tests. The cache regression first failed with UUID-ordered
+It includes 48 MCP tests. The cache regression first failed with UUID-ordered
 eviction. It passes after receipt-ordered eviction.
 
 Header and 16-bit resizing regressions first failed against `d85ea044`.
@@ -204,6 +251,16 @@ Coordinate instructions and duplicate-receipt panic regressions first failed
 against `f5c0ff7b`. The capture fixture records 24×12 native pixels at scale 2,
 stores 12×6 logical pixels, and fetches a 6×3 PNG. Its receipt retains native
 dimensions while the fetch reports stored and returned dimensions separately.
+
+Storage corruption and flush-admission regressions first failed against
+`f9ce0bbf`. The path-authority fixture passes at that revision and the current
+reader, confirming an existing boundary rather than a new path restriction.
+Windows debug MIR from `cargo rustc --locked -p auv-cli --lib -- --emit=mir`
+with rustc 1.98.1 shows both image drops after Base64 encoding on the old resize
+path. With the fix,
+assignment releases the original image before PNG encoding, and explicit drop
+releases the final image before Base64 encoding. This checks destruction order,
+not allocator or operating-system memory return.
 
 Additional real MCP stdio checks at `0990c064` used `scan.frame` fixtures:
 
