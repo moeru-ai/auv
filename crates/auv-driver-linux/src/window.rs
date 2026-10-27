@@ -8,7 +8,7 @@ use crate::capture::capture_display;
 #[cfg(target_os = "linux")]
 use crate::driver::LinuxDriverSessionState;
 use crate::error::{invalid_input, not_found};
-use auv_driver_common::capture::Capture;
+use auv_driver_common::capture::{Capture, CaptureFreshness};
 use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
 use auv_driver_common::geometry::Rect;
@@ -33,7 +33,7 @@ pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Window) -> DriverResult<Capture> {
+pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Window, freshness: CaptureFreshness) -> DriverResult<Capture> {
   atspi::ObjectRef::decode(&window.reference.id)?;
   // TODO(linux-window-source-target-binding): XDG portal WINDOW capture is
   // picker-driven and does not expose a stable mapping to an AT-SPI WindowRef.
@@ -41,7 +41,7 @@ pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Wind
   // this exact window; geometry similarity alone is insufficient for input.
   let windows = list_windows()?;
   let window = resolve_capture_target(&windows, &window.reference, None)?;
-  let display = capture_display(state, None)?;
+  let display = capture_display(state, None, freshness)?;
   // Portal consent can outlive the target or its geometry. Recheck the exact
   // reference before assigning window coordinates to the captured pixels.
   let windows_after = list_windows()?;
@@ -64,6 +64,7 @@ pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Wind
 pub fn capture_window(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _window: &Window,
+  _freshness: CaptureFreshness,
 ) -> DriverResult<Capture> {
   Err(auv_driver_common::error::DriverError::unsupported("window.capture"))
 }

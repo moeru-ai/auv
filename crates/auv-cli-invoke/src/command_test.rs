@@ -5,11 +5,17 @@ fn click_precondition_failure_requires_recapture_across_frontends() {
   let failure = InvokeFailure::from(auv::client::runner::CapabilityError::CapturePrecondition {
     capture_id: "cap-test".into(),
     reason: auv::client::runner::ClickPreconditionFailureReason::StateChanged,
+    source: auv_api_proto::click_precondition::status(
+      "cap-test",
+      auv::client::runner::ClickPreconditionFailureReason::StateChanged,
+      "captured pixels changed",
+    ),
   });
   assert_eq!(failure.code, FailureCode::RecaptureRequired);
   let output = serde_json::to_value(&failure).unwrap();
   assert_eq!(output["code"], "recapture_required");
   assert!(failure.message.contains("take a new capture"));
+  assert!(failure.message.contains("captured pixels changed"));
 }
 
 // ROOT CAUSE:

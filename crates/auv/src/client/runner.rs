@@ -29,10 +29,12 @@ pub const IMAGE_RPC_MESSAGE_SIZE_LIMIT: usize = auv_api_proto::GRPC_MESSAGE_SIZE
 #[derive(Debug, thiserror::Error)]
 pub enum CapabilityError {
   /// No input was delivered. Take a new capture and select the target again.
-  #[error("click refused for capture {capture_id}: {reason:?}; take a new capture and select the target again")]
+  #[error("click refused for capture {capture_id}: {reason:?}; {source}")]
   CapturePrecondition {
     capture_id: String,
     reason: ClickPreconditionFailureReason,
+    /// Original remote failure, including the bounded admission cause.
+    source: tonic::Status,
   },
   /// The routed daemon client request failed.
   #[error(transparent)]
@@ -63,6 +65,7 @@ fn click_status(status: tonic::Status) -> CapabilityError {
     Some(failure) => CapabilityError::CapturePrecondition {
       capture_id: failure.capture_id,
       reason: ClickPreconditionFailureReason::try_from(failure.reason).expect("wire decoder checked reason"),
+      source: status,
     },
     None => capability_status(status),
   }

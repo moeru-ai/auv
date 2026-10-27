@@ -22,6 +22,28 @@ pub(super) struct CaptureState {
 }
 
 impl CaptureState {
+  /// Heap retained by this reference's provenance, independent of shared pixels.
+  pub(super) fn retained_bytes(&self) -> usize {
+    let space_bytes = |space: &CoordinateSpace| match space {
+      CoordinateSpace::Screen => 0,
+      CoordinateSpace::Window(id) | CoordinateSpace::Display(id) => id.capacity(),
+    };
+    let window_bytes = |window: &Window| {
+      window.reference.id.capacity()
+        + [&window.title, &window.app_name, &window.application_id].into_iter().flatten().map(String::capacity).sum::<usize>()
+        + space_bytes(&window.coordinate_space)
+    };
+    let target_bytes = match &self.target {
+      CaptureTarget::Window(window) => window_bytes(window),
+      CaptureTarget::Display(display) => {
+        display.id.capacity() + display.name.as_ref().map_or(0, String::capacity) + space_bytes(&display.coordinate_space)
+      }
+    };
+    target_bytes
+      + (self.before.capacity() + self.after.capacity()) * std::mem::size_of::<Window>()
+      + self.before.iter().chain(&self.after).map(window_bytes).sum::<usize>()
+  }
+
   /// Preserve both snapshots so a display click can select its relevant
   /// windows later. Capture remains readable even if admission is unavailable.
   pub(super) fn new(
@@ -57,6 +79,8 @@ impl CaptureState {
     let before: Vec<_> = self.before.iter().filter(relevant).collect();
     let after: Vec<_> = self.after.iter().filter(relevant).collect();
     if before != after {
+      // TODO(click-window-diff-diagnostics): naming changed windows is deferred
+      // from the freshness fix; add bounded identities in a diagnostic follow-up.
       return Err("windows intersecting the target changed during capture");
     }
     Ok(before)
@@ -73,6 +97,7 @@ impl CaptureState {
     }
     let options = CaptureOptions {
       resolution: self.resolution,
+      freshness: auv_driver::CaptureFreshness::RequireNewFrame,
       ..Default::default()
     };
     let (target, capture) = match &self.target {
@@ -82,9 +107,6 @@ impl CaptureState {
         (CaptureTarget::Window(window), capture)
       }
       CaptureTarget::Display(expected) => {
-        // TODO(click-frame-freshness): Linux can return a cached PipeWire frame.
-        // Freshness admission is deferred until the planned Linux validation;
-        // see the click-capture-precondition contract's review limits.
         let captured = session
           .display()
           .capture(CaptureOptions {
@@ -180,6 +202,9 @@ pub(super) fn deliver<T>(
   // `proto/auv/api/driver/v1/docs/input.click.md`.
   // TODO: Semantic matching and automatic replanning require a separate
   // owner-approved policy; this slice compares exact evidence only.
+  if auv_driver::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
+    return Err(Status::cancelled("click cancelled during capture admission"));
+  }
   input()
 }
 

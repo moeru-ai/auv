@@ -330,7 +330,7 @@ async fn click_capture_binding_and_typed_refusal_survive_rpc() {
   ));
   let error = input.click_with_capture(&point, Default::default(), Some(&capture)).await.unwrap_err();
   assert!(
-    matches!(error, CapabilityError::CapturePrecondition { capture_id, reason: ClickPreconditionFailureReason::StateChanged } if capture_id == capture.id())
+    matches!(error, CapabilityError::CapturePrecondition { capture_id, reason: ClickPreconditionFailureReason::StateChanged, .. } if capture_id == capture.id())
   );
   assert_eq!(service.guarded.lock().unwrap().len(), 2, "refusal must not cause automatic replay");
   assert!(service.clicks.lock().unwrap().is_empty());
@@ -1148,4 +1148,16 @@ fn text_matches_and_screen_rects_click_at_their_center() {
   let expected = PointerTarget::Position(auv_driver::Position::in_screen(auv_driver::ScreenPoint::new(330.0, 210.0)));
   assert_eq!(PointerTarget::from(&matched), expected);
   assert_eq!(PointerTarget::from(matched.bounds), expected);
+}
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386560642
+#[test]
+fn click_refusal_preserves_backend_diagnostic_pr_429() {
+  let status = auv_api_proto::click_precondition::status(
+    "capture-1",
+    ClickPreconditionFailureReason::CheckUnavailable,
+    "screen recording permission denied",
+  );
+  let error = click_status(status);
+  assert!(error.to_string().contains("screen recording permission denied"), "{error}");
+  assert!(std::error::Error::source(&error).is_some(), "retain the remote failure as the error source");
 }

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "linux")]
 use auv_driver_common::capture::Capture;
-use auv_driver_common::capture::{DisplayCapture, RegionCapture};
+use auv_driver_common::capture::{CaptureFreshness, DisplayCapture, RegionCapture};
 #[cfg(target_os = "linux")]
 use auv_driver_common::display::Display;
 use auv_driver_common::display::ObservedDisplays;
@@ -43,10 +43,14 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Option<&str>) -> DriverResult<DisplayCapture> {
+pub fn capture_display(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  selector: Option<&str>,
+  freshness: CaptureFreshness,
+) -> DriverResult<DisplayCapture> {
   let target = selected_target_or_none(selector)?;
   let target_bounds = target.as_ref().map(|target| target.display.frame);
-  match capture_monitor_frame_for_session(state, target_bounds) {
+  match capture_monitor_frame_for_session(state, target_bounds, freshness) {
     Ok(frame) => {
       let display = target.map(|target| target.display).unwrap_or_else(|| display_from_screencast_frame(&frame));
       let scale_factor = capture_scale_factor(&frame.image, display.frame, display.scale_factor);
@@ -60,6 +64,9 @@ pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Op
       };
       Ok(DisplayCapture { display, capture })
     }
+    // A guarded check must not replace unavailable stream evidence with an
+    // interactive Screenshot fallback or silently weaken the requirement.
+    Err(error) if freshness == CaptureFreshness::RequireNewFrame => Err(error),
     Err(error) => {
       let captured = capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || match target.as_ref() {
         Some(target) => capture_area(target.display.frame, target),
@@ -107,20 +114,27 @@ fn capture_display_from_captured(target: Option<display::DisplayTarget>, capture
 pub fn capture_display(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _selector: Option<&str>,
+  _freshness: CaptureFreshness,
 ) -> DriverResult<DisplayCapture> {
   Err(auv_driver_common::error::DriverError::unsupported("display.capture"))
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_region(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
+pub fn capture_region(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  selector: Option<&str>,
+  region: Rect,
+  freshness: CaptureFreshness,
+) -> DriverResult<RegionCapture> {
   let targets = list_targets()?;
   let target = resolve_for_region(&targets, selector, region)?;
-  let captured = match capture_monitor_frame_for_session(state, Some(target.display.frame)) {
+  let captured = match capture_monitor_frame_for_session(state, Some(target.display.frame), freshness) {
     Ok(frame) => CapturedImage {
       image: crop_portal_screenshot_to_region(frame.image, target.display.frame, region)?,
       backend: format!("{PORTAL_SCREENCAST_BACKEND}.crop"),
       fallback_reason: Some("region pixels were cropped from PipeWire screencast using Wayland xdg-output logical bounds".to_string()),
     },
+    Err(error) if freshness == CaptureFreshness::RequireNewFrame => return Err(error),
     Err(error) => with_primary_capture_failure(
       capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || capture_area(region, &target))?,
       PORTAL_SCREENCAST_BACKEND,
@@ -147,6 +161,7 @@ pub fn capture_region(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _selector: Option<&str>,
   _region: Rect,
+  _freshness: CaptureFreshness,
 ) -> DriverResult<RegionCapture> {
   Err(auv_driver_common::error::DriverError::unsupported("display.capture_region"))
 }
@@ -171,6 +186,7 @@ fn capture_fallback<T>(
 fn capture_monitor_frame_for_session(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   target_bounds: Option<Rect>,
+  freshness: CaptureFreshness,
 ) -> DriverResult<ScreenCastFrame> {
   // TODO(linux-capture-session-lock): the outer session mutex remains held
   // during the bounded frame wait because ScreenCastSession is currently
@@ -182,7 +198,7 @@ fn capture_monitor_frame_for_session(
     let restore_tokens = state.restore_tokens.clone();
     state.screencast_session = Some(ScreenCastSession::open_monitor(restore_tokens.as_ref(), state.portal_app_id.as_ref())?);
   }
-  state.screencast_session.as_mut().expect("screencast session was just initialized").capture_monitor_frame(target_bounds)
+  state.screencast_session.as_mut().expect("screencast session was just initialized").capture_monitor_frame(target_bounds, freshness)
 }
 
 #[cfg(target_os = "linux")]

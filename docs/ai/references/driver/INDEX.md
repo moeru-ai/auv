@@ -2,6 +2,8 @@
 
 - [Click capture precondition](2026-10-26-click-capture-precondition-contract.md):
   guarded RPC admission, typed refusal, shared frontends, and platform evidence.
+- [Linux click capture freshness](2026-10-27-linux-click-capture-freshness.md):
+  paused-stream reproduction, native receiver evidence, and conservative freshness admission.
 
 Platform drivers, input, window, capture, permissions
 
@@ -10,7 +12,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **82**
+Count: **83**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)

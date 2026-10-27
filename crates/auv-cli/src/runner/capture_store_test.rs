@@ -2,6 +2,62 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386304501
+// ROOT CAUSE:
+//
+// Each reference retained two window snapshots outside the pixel budget.
+// Identical pixels shared a blob, so reference-specific titles grew unbounded.
+#[test]
+fn click_baselines_share_the_store_budget_pr_429() {
+  use super::super::click_precondition::{CaptureState, CaptureTarget};
+  let store = store(128 * 1024, Duration::from_secs(60));
+  let window = auv_driver::Window {
+    reference: auv_driver::WindowRef {
+      id: "receiver".into(),
+    },
+    title: Some("x".repeat(32 * 1024)),
+    app_name: None,
+    application_id: None,
+    process_id: Some(42),
+    frame: auv_driver::Rect::new(0.0, 0.0, 8.0, 8.0),
+    coordinate_space: auv_driver::CoordinateSpace::Window("receiver".into()),
+    is_main: true,
+    is_visible: true,
+  };
+  let mut ids = Vec::new();
+  for _ in 0..16 {
+    let id = store.insert(flat(8, 8));
+    store.set_click_state(
+      &id,
+      CaptureState::new(
+        CaptureTarget::Window(window.clone()),
+        auv_driver::CaptureResolution::Native,
+        Ok(vec![window.clone()]),
+        Ok(vec![window.clone()]),
+      ),
+    );
+    ids.push(id);
+  }
+  assert!(store.get(&ids[0]).is_none(), "old provenance must be evicted even when pixels are shared");
+  assert!(store.get(ids.last().unwrap()).is_some(), "keep the newest reference");
+  assert!(store.total_bytes() >= 96 * 1024, "count target and both window snapshots");
+  assert!(store.total_bytes() <= 128 * 1024, "fit provenance and pixels within the budget");
+}
+
+#[test]
+fn replacing_and_expiring_baseline_failures_releases_their_budget() {
+  let store = store(4096, Duration::from_secs(60));
+  let start = Instant::now();
+  let id = store.insert_at(flat(1, 1), start);
+  store.set_click_state(&id, Err("x".repeat(1024)));
+  assert_eq!(store.total_bytes(), 1028);
+  store.set_click_state(&id, Err("y".repeat(128)));
+  assert_eq!(store.total_bytes(), 132);
+  store.sweep_at(start + Duration::from_secs(61));
+  assert_eq!(store.total_bytes(), 0);
+  assert!(store.get(&id).is_none());
+}
+
 /// A capture of `pixels` RGBA pixels (4 bytes each) of incompressible noise;
 /// `seed` makes captures distinct.
 fn noise(pixels: u32, seed: u32) -> auv_driver::Capture {

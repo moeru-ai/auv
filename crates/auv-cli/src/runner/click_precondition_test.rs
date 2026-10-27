@@ -2,6 +2,41 @@ use super::super::capture_store::CaptureStoreOptions;
 use super::*;
 use std::cell::Cell;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386288123
+// ROOT CAUSE:
+//
+// Cancellation during recapture was missed because admission checked it only
+// while acquiring the desktop reservation. Delivery must check it again.
+#[test]
+fn cancellation_during_recapture_stops_delivery_pr_429() {
+  use auv_driver::input_cancellation::{InputCancellation, with_input_cancellation};
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  let (store, reference, state) = stored();
+  let calls = Cell::new(0);
+  let result = with_input_cancellation(cancellation.clone(), || {
+    deliver(
+      &store,
+      Some(&reference),
+      &Position {
+        point: auv_driver::Point::new(5.0, 5.0),
+        coordinate_space: window().coordinate_space,
+      },
+      Some(&window()),
+      ScreenPoint::new(15.0, 25.0),
+      |_| {
+        cancellation.cancel();
+        Ok((capture(), Ok(state)))
+      },
+      || {
+        calls.set(calls.get() + 1);
+        Ok(())
+      },
+    )
+  });
+  assert_eq!(calls.get(), 0, "cancelled admission must not invoke native input");
+  assert_eq!(result.unwrap_err().code(), tonic::Code::Cancelled);
+}
+
 // https://github.com/moeru-ai/auv/pull/429
 // ROOT CAUSE:
 //

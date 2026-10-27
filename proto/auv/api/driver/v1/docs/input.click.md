@@ -72,12 +72,23 @@ Refusal calls no input capability, including activation or modifier delivery.
 Guarded admission waits for the shared desktop input reservation before checking
 the baseline and recapturing. It holds that reservation through delivery, so
 another AUV pointer operation cannot make the checked click wait in the input queue.
+Cancellation during recapture stops delivery at the final admission check.
+
+Guarded recapture requires a new frame through the shared driver capture options.
+On Linux, a cached PipeWire frame cannot satisfy this requirement.
+With an existing cache, no new buffer within 150 ms causes `CHECK_UNAVAILABLE`.
+This includes healthy static streams that send no new damage.
+The guard does not fall back to an interactive Screenshot request.
+Ordinary captures retain their cache behavior.
+This requirement concerns receipt during the request, not a compositor timestamp.
 
 The check and delivery are not atomic. The UI can change after the final
 capture, during native activation, fallback, or event submission.
 Repeated clicks also retain their interval between events.
 Changes absent from both pixels and window metadata cannot be detected.
 Window lists do not provide a portable guarantee about every occluder.
+An unchanged display capture does not prove that a named background recipient is visible.
+The recipient can remain covered throughout the check.
 This policy does not establish semantic success or trigger automatic replanning.
 Linux window-targeted guards and AT-SPI window crops return `CHECK_UNAVAILABLE`.
 AT-SPI extents cannot establish reliable screen placement on GNOME Wayland.
@@ -139,5 +150,7 @@ Local execution without a selected Runner returns `invalid_target` and requests
 selection through `--run`. Recapture alone cannot fix this configuration.
 Frontend target-resolution failures return `recapture_required` in the command
 record, but currently have no `auv.input.click_refused` Runner event.
+Their optional `cause_code` preserves the original resolution category, such as `permission_denied` or `backend`.
+Rust refusal errors retain the server status as `source`, including its diagnostic message.
 Runner-backed `window.capture` and `display.capture` return the reference in
 `capture.capture_id`. This ID supplies the next click's `--capture` value.

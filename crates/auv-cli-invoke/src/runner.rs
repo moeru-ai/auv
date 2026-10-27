@@ -577,19 +577,18 @@ async fn selected_click_point(
   runner: &auv::client::runner::RunnerClient,
 ) -> crate::InvokeExecutionResult {
   let capture = input.inputs.get("capture").map(|id| auv::client::runner::CaptureRef::new(id.clone()));
+  let click_rpc = if capture.is_some() {
+    "InputService/ClickPointWithCapture"
+  } else {
+    "InputService/ClickPoint"
+  };
   // Failures while resolving a guarded target precede every input RPC. Keep
   // the same recapture recovery when the frontend detects a missing target.
   // Delivery failures are deliberately not mapped here: input may have begun.
   // TODO(click-frontend-refusal-event): these failures stay in the command
   // record but have no Runner RPC/event. Unify admission recording when an
   // owner-approved shared frontend/Runner refusal boundary is available.
-  let target_failure = |failure: crate::InvokeFailure| match &capture {
-    Some(capture) => crate::InvokeFailure::new(
-      crate::FailureCode::RecaptureRequired,
-      format!("capture {} target could not be checked: {}; take a new capture and select the target again", capture.id(), failure.message),
-    ),
-    None => failure,
-  };
+  let target_failure = |failure| capture_target_failure(capture.as_ref(), failure);
   let requested = selected_screen_point(input, "input.clickPoint")?;
   let normalized = input
     .inputs
@@ -616,7 +615,7 @@ async fn selected_click_point(
         .input()
         .click_with_capture(&requested, click_options, capture.as_ref())
         .await
-        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
+        .map_err(|error| step_failure(click_rpc, error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),
@@ -661,10 +660,8 @@ async fn selected_click_point(
         .map_err(|error| target_failure(error.into()))?;
         auv_driver::WindowPoint::new(point.x, point.y).into()
       };
-      let response = resolved
-        .click_with_capture(target, click_options, capture.as_ref())
-        .await
-        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
+      let response =
+        resolved.click_with_capture(target, click_options, capture.as_ref()).await.map_err(|error| step_failure(click_rpc, error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),
@@ -707,7 +704,7 @@ async fn selected_click_point(
         .input()
         .click_with_capture(&position, click_options, capture.as_ref())
         .await
-        .map_err(|error| step_failure("InputService/ClickPoint", error))?;
+        .map_err(|error| step_failure(click_rpc, error))?;
       crate::emit_input_action_result(&response.action);
       crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
         relative_to: basis.as_str().to_string(),
@@ -721,6 +718,18 @@ async fn selected_click_point(
       .map_err(Into::into)
     }
   }
+}
+
+/// Preserve the resolution category alongside capture recovery. A new capture
+/// cannot by itself repair a disconnected Runner or a denied permission.
+fn capture_target_failure(capture: Option<&auv::client::runner::CaptureRef>, mut failure: crate::InvokeFailure) -> crate::InvokeFailure {
+  if let Some(capture) = capture {
+    failure.cause_code = Some(failure.code);
+    failure.code = crate::FailureCode::RecaptureRequired;
+    failure.message =
+      format!("capture {} target could not be checked: {}; take a new capture and select the target again", capture.id(), failure.message);
+  }
+  failure
 }
 
 fn selected_screen_point(input: &crate::InvokeCommandInput, command_id: &str) -> Result<auv_driver::ScreenPoint, String> {

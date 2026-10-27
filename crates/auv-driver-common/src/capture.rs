@@ -37,6 +37,21 @@ pub struct CaptureOptions {
   pub window: Option<WindowRef>,
   pub region: Option<Rect>,
   pub resolution: CaptureResolution,
+  pub freshness: CaptureFreshness,
+}
+
+/// Whether a capture may reuse pixels received before this request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CaptureFreshness {
+  /// Preserve the backend's ordinary capture and cache behavior.
+  #[default]
+  LatestAvailable,
+  /// Require an on-demand capture or a stream buffer received during this
+  /// request. A static or stalled stream can refuse when no new buffer arrives.
+  /// This is not a compositor timestamp or an atomic capture/input guarantee.
+  /// TODO(capture-source-time): a source timestamp barrier needs a validated
+  /// cross-backend clock contract in a separately approved slice.
+  RequireNewFrame,
 }
 
 #[derive(Clone, Debug, PartialEq)]

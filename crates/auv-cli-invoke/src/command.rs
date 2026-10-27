@@ -201,6 +201,9 @@ pub type InvokeCommandResult = Result<InvokeCommandOutput, String>;
 #[error("{message}")]
 pub struct InvokeFailure {
   pub code: FailureCode,
+  /// Original category when recovery changes the outer failure category.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub cause_code: Option<FailureCode>,
   pub message: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub keyboard_progress: Option<auv_driver::KeyboardInputProgress>,
@@ -226,6 +229,7 @@ impl InvokeFailure {
   pub fn new(code: FailureCode, message: impl Into<String>) -> Self {
     Self {
       code,
+      cause_code: None,
       message: message.into(),
       keyboard_progress: None,
     }
