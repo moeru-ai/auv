@@ -410,7 +410,12 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
           .map_err(|error| step_failure("TextRecognitionService/FindDisplayText", error))?;
         let matches = recognized.matches;
         let capture = recognized.capture;
-        let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
+        // The direct local path answers the same miss with `not_found`, so the
+        // Runner route must not downgrade it to `command_failed`.
+        let point = matches
+          .best_match()
+          .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("screen.clickText did not find text {query:?}")))?
+          .action_point();
         crate::commands::screen::check_click_bounds(&point, within)?;
         let click = selected_click_options(&input)?.click;
         let options = auv_driver::ClickOptions {

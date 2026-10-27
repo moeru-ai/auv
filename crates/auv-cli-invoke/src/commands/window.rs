@@ -494,18 +494,23 @@ pub async fn click_recognized_window_text_with_index_and_options(
   }
 }
 
+/// Selects one OCR match for `window.clickText` with the failure codes the
+/// direct local path and the selected-Runner route must both report: a text
+/// miss is `not_found` and an out-of-range `--index` is `invalid_input`.
 pub fn selected_window_text_match<'a>(
   matches: &'a auv_driver::OcrMatches,
   query: &str,
   index: usize,
-) -> Result<&'a auv_driver::OcrMatch, String> {
+) -> Result<&'a auv_driver::OcrMatch, crate::InvokeFailure> {
   if matches.matches.is_empty() {
-    return Err(format!("window.clickText did not find text {query:?}"));
+    return Err(crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("window.clickText did not find text {query:?}")));
   }
-  matches
-    .matches
-    .get(index)
-    .ok_or_else(|| format!("window.clickText --index {index} is out of range for {} text match(es)", matches.matches.len()))
+  matches.matches.get(index).ok_or_else(|| {
+    crate::InvokeFailure::new(
+      crate::FailureCode::InvalidInput,
+      format!("window.clickText --index {index} is out of range for {} text match(es)", matches.matches.len()),
+    )
+  })
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -525,8 +530,7 @@ async fn click_recognized_window_text_with_session(
   if matches.matches.is_empty() {
     return Err(crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("window.clickText did not find text {query:?}")));
   }
-  let matched = selected_window_text_match(&matches, &query, index)
-    .map_err(|error| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, error))?;
+  let matched = selected_window_text_match(&matches, &query, index)?;
   let point = auv_driver::geometry::ScreenPoint::from(matched.action_point());
   let window_point = session.window().to_window_point(&window, point).map_err(crate::InvokeFailure::from)?;
   let action = session.window().click(&window, window_point, options.clone()).map_err(crate::InvokeFailure::from)?;
