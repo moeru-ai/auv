@@ -1,6 +1,6 @@
 # Windows GUI workflow: evidence levels
 
-Status: **static verification complete, functional runs pending**. The `workflow`
+Status: **earlier static verification complete, latest click-fence changes pending verification; functional runs pending**. The `workflow`
 scenario is implemented and compiles; no desktop run of it has happened yet, so
 its per-route acceptance is **null** and no workflow.jsonl evidence exists. This
 document records what has been verified and what remains blocked, so the
@@ -34,6 +34,17 @@ carry --credential-stdin through selected invokes; keep the SDK owner endpoint a
 URI`) touches the invoke runner plumbing but changes no endpoint format or
 `--run` behavior for the credential-free path this scenario uses; it is a
 monitored dependency, not a blocker.
+
+## Follow-up after review
+
+The workflow now passes a `--within LEFT,TOP,RIGHT,BOTTOM` fence to local and
+Runner `screen.clickText`. Each path checks the **fresh OCR selection** before
+pointer delivery instead of relying only on the workflow's post-click check.
+The direct Rust route checks the same rectangle. This adds a narrow optional
+Invoke CLI input; older binaries without `--within` cannot run the new workflow.
+The fence is not an atomic OS focus/occlusion guarantee, and isolated-desktop
+runs remain required. Existing static checks in the table above predate this
+follow-up; new CI and Windows-only evidence must be collected separately.
 
 ## Blocked: isolated-desktop functional runs
 
