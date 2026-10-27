@@ -1305,6 +1305,72 @@ async fn mcp_invoke_without_a_selection_still_runs_the_local_adapter() {
   assert_ne!(result.is_error, Some(true), "{result:?}");
 }
 
+// Pins the shared dry-run selection rule with MCP on both sides: a dry run
+// that needs no Device stays local (the control plane cannot resolve a
+// selection without creating a Run), while a keyboard dry run still resolves
+// the selected Device because keyboard validation depends on its driver. The
+// CLI applies the same rule in `commands::invoke::execute`.
+#[tokio::test]
+async fn mcp_invoke_dry_run_with_a_device_selection_runs_locally() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+
+  let result = call_invoke(
+    server,
+    serde_json::json!({
+      "command_id": "display.list",
+      "device_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "dry_run": true,
+    }),
+  )
+  .await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 1, "a dry run that needs no Device must not resolve one");
+  assert_ne!(result.is_error, Some(true), "{result:?}");
+}
+
+#[tokio::test]
+async fn mcp_invoke_keyboard_dry_run_still_selects_the_device() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+
+  let result = call_invoke(
+    server,
+    serde_json::json!({
+      "command_id": "input.key",
+      "device_id": "0000000000000000000000000000000000000000000000000000000000000000",
+      "dry_run": true,
+    }),
+  )
+  .await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 0, "a keyboard dry run must validate on the selected Device, not locally");
+  assert_eq!(result.is_error, Some(true), "an unreachable selected Device is a tool error: {result:?}");
+}
+
+// Pins the #428 MCP presentation contract for selection failures: the caller
+// gets the structured failed form with a typed failure_details.code instead of
+// a bare protocol error. The specific code depends on the reachable daemon
+// state, so only the typed shape is asserted.
+#[tokio::test]
+async fn mcp_invoke_selection_failure_keeps_typed_failure_details() {
+  let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+
+  let result = call_invoke(
+    server,
+    serde_json::json!({ "command_id": "display.list", "device_id": "0000000000000000000000000000000000000000000000000000000000000000" }),
+  )
+  .await;
+
+  assert_eq!(local_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+  assert_eq!(result.is_error, Some(true), "{result:?}");
+  let output = serde_json::to_value(result.structured_content.expect("selection failures present the structured failed form")).unwrap();
+  assert_eq!(output["status"], "failed");
+  assert_eq!(output["command_id"], "display.list");
+  assert!(output["run_id"].is_string(), "the failed presentation still carries its run id: {output}");
+  let details = &output["failure_details"];
+  assert!(details["code"].as_str().is_some_and(|code| !code.is_empty()), "failure_details.code must stay typed: {output}");
+  assert_eq!(output["failure"], details["message"], "{output}");
+}
+
 // ROOT CAUSE:
 //
 // If a model client listed MCP tools, it rendered only standard schema keys,
