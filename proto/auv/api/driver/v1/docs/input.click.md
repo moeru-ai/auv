@@ -14,6 +14,9 @@ to that window:
 - `options.policy` chooses background or foreground delivery, and
   `options.window_strategy` the background route.
 
+On Windows, foreground delivery stops if target-window activation fails.
+This applies to ordinary and capture-bound clicks.
+
 The response reports the refreshed window and the delivered point in both
 window and screen space.
 
@@ -65,6 +68,10 @@ capture ID, reason, a bounded diagnostic `cause`, `new_capture` recovery, and `i
 The status message also includes the cause. Unknown or malformed typed details
 preserve the original RPC error in both SDKs.
 Refusal calls no input capability, including activation or modifier delivery.
+
+Guarded admission waits for the shared desktop input reservation before checking
+the baseline and recapturing. It holds that reservation through delivery, so
+another AUV pointer operation cannot make the checked click wait in the input queue.
 
 The check and delivery are not atomic. The UI can change after the final
 capture, during native activation, fallback, or event submission.

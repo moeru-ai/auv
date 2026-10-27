@@ -2,6 +2,64 @@ use super::super::capture_store::CaptureStoreOptions;
 use super::*;
 use std::cell::Cell;
 
+// https://github.com/moeru-ai/auv/pull/429
+// ROOT CAUSE:
+//
+// A guarded click checked pixels before waiting for the driver's desktop lock.
+// Another input could change the UI during that wait, leaving admitted input stale.
+// Admission must wait for the desktop before recapture and retain it through delivery.
+#[test]
+fn guarded_click_checks_after_desktop_queue_wait_pr_429() {
+  use std::sync::atomic::{AtomicBool, Ordering};
+  use std::sync::{Arc, mpsc};
+  use std::time::Duration;
+
+  let desktop = auv_driver::mouse_input::reserve_desktop_input().unwrap();
+  let changed = Arc::new(AtomicBool::new(false));
+  let worker_changed = changed.clone();
+  let (started_tx, started_rx) = mpsc::channel();
+  let (captured_tx, captured_rx) = mpsc::channel();
+  let worker = std::thread::spawn(move || {
+    let (store, reference, state) = stored();
+    let calls = Cell::new(0);
+    started_tx.send(()).unwrap();
+    let result = deliver(
+      &store,
+      Some(&reference),
+      &Position {
+        point: auv_driver::Point::new(5.0, 5.0),
+        coordinate_space: window().coordinate_space,
+      },
+      Some(&window()),
+      ScreenPoint::new(15.0, 25.0),
+      |_| {
+        let mut pixels = capture();
+        if worker_changed.load(Ordering::SeqCst) {
+          pixels.image.put_pixel(5, 5, image::Rgba([200, 0, 0, 255]));
+        }
+        captured_tx.send(()).unwrap();
+        Ok((pixels, Ok(state)))
+      },
+      || {
+        // Use the real shared reservation, but never call a native input backend.
+        let _desktop = auv_driver::mouse_input::reserve_desktop_input().unwrap();
+        calls.set(calls.get() + 1);
+        Ok(())
+      },
+    );
+    (result, calls.get())
+  });
+  started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+  // Give the worker a chance to expose the old check-before-lock ordering.
+  let captured_while_occupied = captured_rx.recv_timeout(Duration::from_millis(100)).is_ok();
+  changed.store(true, Ordering::SeqCst);
+  drop(desktop);
+  let (result, calls) = worker.join().unwrap();
+  assert_eq!(calls, 0, "a queued click must not deliver from stale evidence");
+  assert!(!captured_while_occupied, "recapture must wait for desktop admission");
+  assert_eq!(reason(result.unwrap_err()), Reason::StateChanged);
+}
+
 fn window() -> Window {
   Window {
     reference: auv_driver::WindowRef {
@@ -67,6 +125,8 @@ fn attempt(
     ScreenPoint::new(target.frame.origin.x + 5.0, target.frame.origin.y + 5.0),
     |_| current,
     || {
+      // Native click implementations share the admission reservation on this thread.
+      let _desktop = auv_driver::mouse_input::reserve_desktop_input().unwrap();
       calls.set(calls.get() + 1);
       Ok(())
     },
@@ -85,6 +145,31 @@ fn unchanged_capture_permits_exactly_one_delivery() {
   let calls = Cell::new(0);
   attempt(&store, &reference, &window(), Ok((capture(), Ok(state))), &calls).unwrap();
   assert_eq!(calls.get(), 1);
+}
+
+// https://github.com/moeru-ai/auv/pull/429
+#[test]
+fn cancelled_guard_stops_before_recapture_or_delivery_pr_429() {
+  use auv_driver::input_cancellation::{InputCancellation, with_input_cancellation};
+  let (store, reference, _) = stored();
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    deliver(
+      &store,
+      Some(&reference),
+      &Position {
+        point: auv_driver::Point::new(5.0, 5.0),
+        coordinate_space: window().coordinate_space,
+      },
+      Some(&window()),
+      ScreenPoint::new(15.0, 25.0),
+      |_| panic!("cancelled admission must not recapture"),
+      || -> Result<(), Status> { panic!("cancelled admission must not deliver input") },
+    )
+  })
+  .unwrap_err();
+  assert!(error.message().contains("cancelled"), "{error}");
 }
 
 // https://github.com/moeru-ai/auv/pull/429#discussion_r4382693014

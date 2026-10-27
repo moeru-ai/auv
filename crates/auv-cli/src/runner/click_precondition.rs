@@ -82,6 +82,9 @@ impl CaptureState {
         (CaptureTarget::Window(window), capture)
       }
       CaptureTarget::Display(expected) => {
+        // TODO(click-frame-freshness): Linux can return a cached PipeWire frame.
+        // Freshness admission is deferred until the planned Linux validation;
+        // see the click-capture-precondition contract's review limits.
         let captured = session
           .display()
           .capture(CaptureOptions {
@@ -111,6 +114,10 @@ pub(super) fn deliver<T>(
   let Some(reference) = reference else {
     return input();
   };
+  // Wait for other AUV pointer operations before checking evidence. Platform
+  // delivery reuses this thread's reservation, so it cannot queue after the
+  // check. Recapture also rejects a recipient moved since coordinate resolution.
+  let _desktop = auv_driver::mouse_input::reserve_desktop_input().map_err(super::local_driver::driver_status)?;
   let id = &reference.capture_id;
   let expected =
     captures.get(id).ok_or_else(|| refusal(id, Reason::CaptureUnavailable, "capture expired, was evicted, or belongs to another Runner"))?;

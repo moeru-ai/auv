@@ -27,6 +27,17 @@ blocking task. There is no asynchronous scheduling boundary between the check
 and the input capability call. A refused click never calls that capability.
 The input result remains the existing `InputActionResult`.
 
+Guarded admission acquires the shared desktop input reservation before checking
+the baseline or recapturing. It retains the reservation through delivery.
+Nested platform calls reuse this reservation instead of waiting after the check.
+If the recipient moved while admission waited, recapture rejects its old metadata.
+Cancellation while waiting stops admission without input.
+
+On Windows, foreground window clicks now return activation errors before global
+input. This applies to guarded and ordinary clicks. Previously, a failed activation
+was recorded as an attempt, then global input continued at the target coordinates.
+Call syntax, wire fields, and successful results stay unchanged.
+
 ## Detection policy
 
 The first policy requires exact equality. It compares the resolved resource,
@@ -76,6 +87,15 @@ They do not reach the Runner and currently emit no `auv.input.click_refused` eve
 The inline TODO in `selected_click_point` records this admission-recording gap.
 
 ## Review evidence and limits
+
+Linux PipeWire capture can return its cached image after the refresh wait.
+The guard currently receives no freshness marker for that image. A stalled stream
+could therefore look unchanged. Validation and a freshness policy are deferred
+until the next Linux session; this follow-up does not resolve that risk.
+
+The queue-order and Windows activation fixes have regression tests that send no
+native input. Both tests failed before their respective fixes. Cancellation and
+nested desktop reservations also have admission coverage.
 
 The following measurements came from the maintainer's review of the original PR revision.
 They are small samples, not general failure rates or new measurements of the fixes.
