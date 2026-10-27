@@ -91,7 +91,13 @@ fn click_text_fence_rejects_changed_ocr_target_before_delivery() {
   assert_eq!(error.code, crate::FailureCode::InvalidTarget);
   assert!(error.message.contains("no input delivered"));
   assert!(check_click_bounds(&auv_driver::Point::new(999.0, 999.0), None).is_ok(), "existing unbounded calls are unchanged");
-  for malformed in ["100,200,100,290", "100,200,240", "100,200,NaN,290", "100,200,inf,290", "nope,200,240,290"] {
+  for malformed in [
+    "100,200,100,290",
+    "100,200,240",
+    "100,200,NaN,290",
+    "100,200,inf,290",
+    "nope,200,240,290",
+  ] {
     let error = parse_click_bounds(Some(malformed)).expect_err("invalid fence must fail before OCR or input");
     assert_eq!(error.code, crate::FailureCode::InvalidInput, "{malformed}");
   }
