@@ -24,6 +24,14 @@ overlay = []
 name = "validate"
 path = "examples/validate.rs"
 
+[[example]]
+name = "release_ocr_probe"
+path = "examples/release_ocr_probe.rs"
+
+[[example]]
+name = "release_pipewire_probe"
+path = "examples/release_pipewire_probe.rs"
+
 [dependencies]
 auv-driver-common = { version = "0.0.38", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }

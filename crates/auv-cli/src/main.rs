@@ -1,6 +1,12 @@
 //! Root `auv` core command frontend and first-party Runner process host.
 
 fn main() {
+  // SAFETY: this is the first statement of `main`; no other thread exists yet.
+  #[cfg(target_os = "linux")]
+  unsafe {
+    auv_driver_linux::bundle::prepare_pipewire_environment()
+  };
+
   let arguments = std::env::args().collect::<Vec<_>>();
   if let Some(exit) = auv_cli::runner::run_if_internal(&arguments) {
     std::process::exit(exit);

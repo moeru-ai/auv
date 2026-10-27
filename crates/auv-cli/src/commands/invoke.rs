@@ -80,7 +80,18 @@ async fn execute(
   // Use the command's shared keyboard contract so new commands cannot fall
   // through a second, frontend-only command-ID list.
   let selected_context = if !selection.is_empty() && (!request.dry_run || command.target == TargetPolicy::OptionalKeyboard) {
-    Some(crate::commands::plugin::resolve_invoke_context(selection).await?)
+    match crate::commands::plugin::resolve_invoke_context(selection).await {
+      Ok(selected) => Some(selected),
+      Err(failure) => {
+        // Preserve the legacy human stderr boundary. JSON requests use the
+        // normal invoke renderer so failure_details.code survives selection.
+        if !output.json {
+          return Err(failure.message);
+        }
+        let result = auv_cli_invoke::InvokeResult::from_command_result(auv_tracing::RunId::new(), &command, Err(failure));
+        return Ok(auv_cli_invoke::render_invoke_result(&result, output)?.exit_code);
+      }
+    }
   } else {
     None
   };

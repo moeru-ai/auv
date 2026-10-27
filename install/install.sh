@@ -50,11 +50,21 @@ else
 fi
 [ "$actual" = "$expected" ] || error "Checksum mismatch for $archive"
 
-tar -xzf "$archive" auv
-./auv --version >/dev/null || error 'The downloaded auv cannot run on this host.'
-
 mkdir -p "$install_dir"
-install -m 0755 auv "$install_dir/auv"
+if [ "$platform" = unknown-linux-gnu ]; then
+  # The Linux archive is a bundle: `auv` finds its libraries beside itself, so
+  # install the whole directory and link `auv` to it.
+  mkdir bundle
+  tar -xzf "$archive" -C bundle
+  bundle/auv --version >/dev/null || error 'The downloaded auv cannot run on this host.'
+  rm -rf "$install_dir/.auv"
+  mv bundle "$install_dir/.auv"
+  ln -sf .auv/auv "$install_dir/auv"
+else
+  tar -xzf "$archive" auv
+  ./auv --version >/dev/null || error 'The downloaded auv cannot run on this host.'
+  install -m 0755 auv "$install_dir/auv"
+fi
 printf 'Installed auv to %s\n' "$install_dir/auv" >&2
 
 case ":$PATH:" in

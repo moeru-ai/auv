@@ -66,6 +66,11 @@ fn execute_resolved(
 
   let mut command = Command::new(executable);
   command.args(arguments).env("AUV_CONTEXT", context).env("AUV_PATH", auv_path).env(auv_tracing::STORE_ROOT_ENV, store_root);
+  // A plugin is not this release bundle; it must load its own PipeWire files.
+  #[cfg(target_os = "linux")]
+  for name in auv_driver_linux::bundle::injected_variables() {
+    command.env_remove(name);
+  }
   if replace_process {
     let error = command.exec();
     return Err(format!("failed to execute plugin {}: {error}", executable.display()));
@@ -135,11 +140,20 @@ async fn resolve_context(parent: &RootSelection) -> Result<ResolvedExecutionCont
     });
   }
 
-  resolve_selected_context(parent, None, true, context).await
+  resolve_selected_context(parent, None, true, context).await.map_err(|error| error.to_string())
 }
 
-pub(crate) async fn resolve_invoke_context(parent: &RootSelection) -> Result<ResolvedExecutionContext, String> {
-  resolve_selected_context(parent, None, true, AuvContext::default()).await
+/// Unlike the external plugin boundary, invoke must preserve placement categories
+/// until CLI/MCP render their typed failure_details.
+pub(crate) async fn resolve_invoke_context(parent: &RootSelection) -> Result<ResolvedExecutionContext, auv_cli_invoke::InvokeFailure> {
+  resolve_selected_context(parent, None, true, AuvContext::default()).await.map_err(|error| match error {
+    auv::selection::SelectedClientError::Placement(error) => error.into(),
+    auv::selection::SelectedClientError::Context(error) => auv::client::PlacementError::Context(error).into(),
+    // TODO(runner-placement-failure-codes): keep SelectionError as
+    // command_failed until the owner approves its failure-code policy,
+    // alongside the deferred PlacementError cases in InvokeFailure::from.
+    auv::selection::SelectedClientError::Selection(error) => error.to_string().into(),
+  })
 }
 
 async fn resolve_selected_context(
@@ -147,14 +161,14 @@ async fn resolve_selected_context(
   explicit_endpoint: Option<&str>,
   create_implicit_run: bool,
   mut context: AuvContext,
-) -> Result<ResolvedExecutionContext, String> {
+) -> Result<ResolvedExecutionContext, auv::selection::SelectedClientError> {
   context.device_id = parent.device_id.clone();
   context.device_name = parent.device_name.clone();
   context.run_id = parent.run_id.clone();
   if let Some(endpoint) = explicit_endpoint {
     context.daemon_endpoint = Some(endpoint.to_string());
   }
-  let client = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let client = auv::Client::from_context(context).await?;
   let mut context = client.context().cloned().unwrap_or_default();
   if create_implicit_run {
     let selection = parent
@@ -162,7 +176,8 @@ async fn resolve_selected_context(
       .as_deref()
       .map(auv::resource::RunSelector::parse)
       .transpose()
-      .map_err(|error| error.to_string())?
+      .map_err(auv::runs::RunError::from)
+      .map_err(auv::selection::SelectionError::from)?
       .map(auv::client::RunSelection::Existing)
       .unwrap_or_default();
     let device = match (&context.device_id, &context.device_name) {
@@ -177,8 +192,7 @@ async fn resolve_selected_context(
         device,
         labels: Default::default(),
       })
-      .await
-      .map_err(|error| error.to_string())?;
+      .await?;
     context.device_id = run.device().map(|device| device.id.to_string());
     context.device_name = run.device().and_then(|device| (!device.name.is_empty()).then(|| device.name.clone()));
     context.device_platform = run.device().map(|device| device.platform);
@@ -189,7 +203,7 @@ async fn resolve_selected_context(
       implicit_run_id,
     });
   }
-  let resolved = client.resolve(parent).await.map_err(|error| error.to_string())?;
+  let resolved = client.resolve(parent).await?;
   context.device_platform = resolved.device.as_ref().map(|device| device.platform);
   context.device_id = resolved.device.as_ref().map(|device| device.id.to_string());
   context.device_name = resolved.device.and_then(|device| (!device.name.is_empty()).then_some(device.name));

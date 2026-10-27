@@ -402,6 +402,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
     "screen.clickText" => {
       async {
         let query = input.inputs.get("query").cloned().ok_or_else(|| "screen.clickText omitted its typed query argument".to_string())?;
+        let within = crate::commands::screen::parse_click_bounds(input.inputs.get("within").map(String::as_str))?;
         let recognized = runner
           .displays()
           .find_text(None, query.clone())
@@ -410,6 +411,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, context: auv::AuvCont
         let matches = recognized.matches;
         let capture = recognized.capture;
         let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
+        crate::commands::screen::check_click_bounds(&point, within)?;
         let click = selected_click_options(&input)?.click;
         let options = auv_driver::ClickOptions {
           click,

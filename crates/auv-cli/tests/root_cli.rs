@@ -1078,11 +1078,19 @@ fn invoke_store_root_cannot_consume_the_next_flag() {
 // A CLI-only list of three command IDs let new keyboard dry-runs succeed
 // locally even when a Runner was explicitly selected. Driver validation must
 // use the selected Runner for every registered keyboard command.
+// https://github.com/moeru-ai/auv/pull/428
+// https://github.com/moeru-ai/auv/actions/runs/40325285278/job/121580283670
+// Preselection failures now use JSON stdout for --json. The old stderr
+// assertion failed even though selected Runner validation still refused
+// execution. Assert the structured failure on every local transport.
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(unix, windows))]
 fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
   let root = tempfile::tempdir().unwrap();
+  #[cfg(unix)]
   let endpoint = format!("unix://{}", root.path().join("missing-daemon.sock").display());
+  #[cfg(windows)]
+  let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
   for arguments in [
     vec!["input.key", "escape"],
     vec!["input.keys", "escape"],
@@ -1096,14 +1104,29 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
       .current_dir(root.path())
       .env_remove("AUV_CONTEXT")
       .env("AUV_ENDPOINT", &endpoint)
+      .env("AUV_DISCOVERY_FILE", root.path().join("missing-discovery.json"))
+      .env("AUV_CONFIG_PROFILES_FILE", root.path().join("profiles.json"))
       .args(["--device-id", &"0".repeat(64), "invoke"])
       .args(&arguments)
       .args(["--dry-run", "--json"])
       .output()
       .unwrap();
-    assert!(!output.status.success(), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
-    assert!(stderr(&output).contains("connect"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(1), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+      .unwrap_or_else(|error| panic!("{} must return JSON: {error}; stdout={} stderr={}", arguments[0], stdout(&output), stderr(&output)));
+    assert_eq!(response["status"], "failed", "{response}");
+    assert_eq!(response["command_id"], arguments[0], "{response}");
+    assert_eq!(response["failure_details"]["code"], "command_failed", "{response}");
+    assert!(response["failure_details"]["message"].as_str().unwrap().contains("connect"), "{response}");
+    assert_eq!(response["failure"], response["failure_details"]["message"], "{response}");
+    assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
+    assert!(response.get("artifacts").is_none(), "dry-run returned artifacts: {response}");
   }
+  assert_eq!(
+    std::fs::read_to_string(root.path().join(".auv").join("store").join("records.jsonl")).expect("preselection tracing store"),
+    "",
+    "unreachable selected Runner must not enter local command validation"
+  );
 }
 
 // https://github.com/moeru-ai/auv/pull/177
@@ -1156,4 +1179,53 @@ fn selected_global_text_dry_run_returns_validation_without_delivery() {
   let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(response["status"], "completed", "{response}");
   assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
+}
+
+// https://github.com/moeru-ai/auv/pull/428
+// ROOT CAUSE:
+//
+// If a selected Run was missing, preselection returned its error as text
+// before the JSON result renderer. The shared Runner mapping was bypassed.
+// The fix keeps the typed failure through preselection and JSON rendering.
+#[test]
+fn missing_selected_run_is_typed_in_cli_json_without_local_execution() {
+  let directory = tempfile::tempdir().unwrap();
+  let discovery = directory.path().join("missing-discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let selected_run = "0123456789abcdef0123456789abcdef";
+
+  let command = || {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_auv"));
+    cmd
+      .current_dir(directory.path())
+      .env_remove("AUV_CONTEXT")
+      .env_remove("AUV_ENDPOINT")
+      .env("AUV_DISCOVERY_FILE", &discovery)
+      .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+      .args(["--run", selected_run, "invoke", "display.list"]);
+    cmd
+  };
+
+  let json_output = command().args(["--json"]).output().expect("invoke JSON subprocess");
+  assert_eq!(json_output.status.code(), Some(1), "stderr={}", stderr(&json_output));
+  let body: serde_json::Value = serde_json::from_slice(&json_output.stdout).expect("failure must have JSON stdout");
+  assert_eq!(body["status"], "failed");
+  assert_eq!(body["command_id"], "display.list");
+  assert_eq!(body["failure_details"]["code"], "not_found");
+  assert!(body["failure_details"]["message"].as_str().unwrap().contains(selected_run));
+  assert_eq!(body["failure"], body["failure_details"]["message"]);
+  assert!(body["result"].is_null());
+  assert!(body.get("artifacts").is_none());
+
+  // Non-JSON callers retain the prior stderr message and exit code.
+  let human = command().output().expect("invoke human subprocess");
+  assert_eq!(human.status.code(), Some(1));
+  assert!(stderr(&human).contains(selected_run));
+  assert!(stderr(&human).contains(body["failure_details"]["message"].as_str().unwrap()));
+  assert!(stdout(&human).is_empty(), "human error output must remain on stderr");
+  assert_eq!(
+    std::fs::read_to_string(directory.path().join(".auv").join("store").join("records.jsonl")).expect("preselection tracing store"),
+    "",
+    "selection failure must not enter the local command or its tracing context"
+  );
 }
