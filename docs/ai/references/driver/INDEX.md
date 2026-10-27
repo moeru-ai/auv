@@ -102,7 +102,7 @@ Count: **81**
 - [`2026-10-20-linux-live-desktop-matrix.md`](2026-10-20-linux-live-desktop-matrix.md): live Linux desktop evidence behind the matrix cells: window list/capture/findText, display capture fallback, PaperWM and occlusion boundaries.
 - [`2026-10-20-linux-window-text-ocr.md`](2026-10-20-linux-window-text-ocr.md): `window.findText` and `window.waitForText` wired on Linux through AT-SPI resolve, display crop, and Tesseract; visible-area and PaperWM boundaries, no support-matrix claim.
 - [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
-- [`2026-10-24-windows-gui-workflow-evidence.md`](2026-10-24-windows-gui-workflow-evidence.md): the `workflow` scenario's per-route evidence levels: static and unit verification done, isolated-desktop functional runs pending.
+- [`2026-10-24-windows-gui-workflow-evidence.md`](2026-10-24-windows-gui-workflow-evidence.md): the `workflow` scenario's per-route evidence: observation and functional rounds passed on one isolated Windows Server 2025 runner, with platform limits and raw-record links.
 
 
 ## Related
