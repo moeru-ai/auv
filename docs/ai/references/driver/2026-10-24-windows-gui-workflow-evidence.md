@@ -1,10 +1,9 @@
 # Windows GUI workflow: evidence levels
 
-Status: **earlier static verification complete, latest click-fence changes pending verification; functional runs pending**. The `workflow`
-scenario is implemented and compiles; no desktop run of it has happened yet, so
-its per-route acceptance is **null** and no workflow.jsonl evidence exists. This
-document records what has been verified and what remains blocked, so the
-scenario's claims stay at their actual evidence level.
+Status: **all three routes passed two observation and two functional rounds on
+one isolated GitHub-hosted Windows desktop** at source commit
+`178433f28189ed4ea5251d19d5e2b13f15800084`. This is evidence for that Windows
+Server 2025 environment, not a claim about all Windows machines or setups.
 
 The scenario itself lives in
 [`evals/auv-base/platforms/desktop-windows/tasks/gui_workflow.rs`](../../../../evals/auv-base/platforms/desktop-windows/tasks/gui_workflow.rs)
@@ -42,44 +41,88 @@ Runner `screen.clickText`. Each path checks the **fresh OCR selection** before
 pointer delivery instead of relying only on the workflow's post-click check.
 The direct Rust route checks the same rectangle. This adds a narrow optional
 Invoke CLI input; older binaries without `--within` cannot run the new workflow.
-The fence is not an atomic OS focus/occlusion guarantee, and isolated-desktop
-runs remain required. Existing static checks in the table above predate this
-follow-up; new CI and Windows-only evidence must be collected separately.
+The fence is not an atomic OS focus/occlusion guarantee, so functional runs
+still require an isolated desktop. The static checks in the table above predate
+this follow-up; its later desktop evidence is recorded below.
 
-## Blocked: isolated-desktop functional runs
+## Isolated-desktop runs (2026-10-27)
 
 The three routes (`rust`, `invoke`, `runner`) each execute the same record-entry
-workflow and must each produce their own `workflow.jsonl` evidence; one route's
-success never stands in for another's. The execution machine available on
-2026-10-24 was an interactive desktop with the user's own applications running
+workflow and produce their own `workflow.jsonl`; one route's success never
+stands in for another's. On 2026-10-24 the available desktop had the user's own applications running
 (browser, messaging, music player, game launcher), so **no workflow command was
-executed there at all** — not even `--observe-only`, which still creates
+executed on that machine** — not even `--observe-only`, which still creates
 topmost receiver windows, captures the whole display as its OCR source, and
 installs the desktop witness hooks. Running it would have interfered with the
 user's session and produced inconclusive evidence the moment the user moved the
 mouse.
 
-Required to unlock (run in that order, each with a fresh output directory, on a
-dedicated isolated Windows session with no user applications open):
+On 2026-10-27, a separate GitHub-hosted `windows-2025` runner checked out the
+exact source commit above. Its preflight recorded Windows build 26100, session
+2, `UserInteractive=true`, an accessible input desktop, and one 1024×768
+display. The only listed foreground-capable processes before the run were
+Explorer and the hosted runner's Windows Terminal. The runner was separate from
+the user's desktop. The [workflow run](https://github.com/moeru-ai/auv/actions/runs/40435530446)
+contains preflight/build logs and the
+[`workflow.jsonl` artifact](https://github.com/moeru-ai/auv/actions/runs/40435530446/artifacts/12704745253)
+(SHA-256 `53770f9e9227e1701905cac3cb843383781e4438618c60176be5b565c604881a`,
+retained by GitHub until 2026-11-10). The commands were equivalent to the
+following, using the built release evaluation binaries and a debug `auv.exe`,
+in this order and with separate fresh output directories:
 
 ```sh
 just eval windows workflow --output <fresh> --auv <auv.exe> --rounds 2 --observe-only
 just eval windows workflow --output <fresh> --auv <auv.exe> --rounds 2
 ```
 
-Acceptance per route: summary `passed:true` with `quiet_violated == 0` and
-`quiet_inconclusive == 0`; for the functional run also `cursor_restored`,
-`foreground_restored`, `handed`, verified wrong-focus and wrong-window
-rejections, and a runner-route `runner_cleanup` receipt
-(`run_stop_exit == 0 && owned_tree_kill_exit == 0 && daemon_exited == true`).
+| Route | Observation rounds 1 / 2 | Functional rounds 1 / 2 |
+| --- | --- | --- |
+| Direct Rust | passed / passed | passed / passed |
+| Local Invoke | passed / passed | passed / passed |
+| Selected Runner | passed / passed | passed / passed |
+
+Each of the twelve final summaries reports `passed: true`, with zero quiet
+violations and zero inconclusive quiet observations. Observation runs report
+`no_global_input: true`. Every functional run verified the receiver's complete
+text selection, exact typed text, a scroll from line 0 to 10, exactly one
+submission with the intended text, two captures with matching painted state and
+window identity, and both wrong-focus and wrong-window rejections before key
+dispatch. Both OCR queries were found on the first attempt in every run. All
+functional summaries report pointer and foreground restored; fixture cleanup is
+verified for every route and mode. The Runner cleanup receipts in both modes
+show `run_stop_exit: 0`, `owned_tree_kill_exit: 0` and `daemon_exited: true`.
+The functional phase itself expects injected input and foreground changes; its
+phase-wide witness can therefore report `violated` even when the separately
+required quiet operations and overall summary pass.
+
+### Failed baseline and selection fix
+
+An earlier [run](https://github.com/moeru-ai/auv/actions/runs/40433335220) of
+`225f53021b18ddef81758733861d17d0b83a5651` passed all six observation rounds
+but failed all six functional rounds: the intended text was inserted into the
+original caption instead of replacing it. In a separate
+[diagnostic run](https://github.com/moeru-ai/auv/actions/runs/40434562900),
+the receiver recorded Ctrl-down, A-down, A-up and Ctrl-up while its focused
+native single-line EDIT still reported an empty selection. `Home` followed by
+`Shift+End` selected the complete caption in all six rounds; the fixed scenario
+reads `EM_GETSEL` and refuses to type unless the expected selection is present.
+The diagnostic run is not the exact final code: it included an extra Ctrl+A
+probe. The twelve final results above are from the later exact-source run.
+
+The Windows driver's `type_text` and `paste_text` `replace_existing` paths also
+send Ctrl+A and Backspace. This observation raises a separate compatibility
+risk for that production behavior on this kind of control; those paths were not
+exercised as `replace_existing` in these workflow runs and need their own
+reproduction and fix assessment.
 
 ## Evidence level summary
 
-| Route | Implemented | Statically verified | Desktop-verified |
+| Route | Implemented | Statically verified | Desktop-verified on the stated runner |
 | --- | --- | --- | --- |
-| Direct Rust | yes | yes | **null** |
-| CLI Invoke | yes | yes | **null** |
-| Selected Runner | yes (adapted to `--local-socket`) | yes | **null** |
+| Direct Rust | yes | yes | 2 observation + 2 functional rounds passed |
+| CLI Invoke | yes | yes | 2 observation + 2 functional rounds passed |
+| Selected Runner | yes (adapted to `--local-socket`) | yes | 2 observation + 2 functional rounds passed |
 
-Until the blocked runs happen, the workflow scenario must not be cited as
-desktop-verified end-to-end regression coverage.
+This does not establish behavior on the user's Windows desktop, on other display
+scales or layouts, or under concurrent user activity. Focus, window position and
+occlusion can still change between checks and OS input delivery.
