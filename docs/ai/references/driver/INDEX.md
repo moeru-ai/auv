@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **81**
+Count: **82**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -104,6 +104,9 @@ Count: **81**
 - [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
 - [`2026-10-24-windows-gui-workflow-evidence.md`](2026-10-24-windows-gui-workflow-evidence.md): the `workflow` scenario's per-route evidence: observation and functional rounds passed on one isolated Windows Server 2025 runner, with platform limits and raw-record links.
 
+
+- [`2026-10-26-windows-input-desktop-lifetime.md`](2026-10-26-windows-input-desktop-lifetime.md): Input desktop ownership, pending close retries, native TLS destruction, attachment errors, and lifecycle test evidence.
+- [`2026-10-26-windows-operation-preflight.md`](2026-10-26-windows-operation-preflight.md): Explicit step admission, declared gate thresholds, title changes, timeout limits, and executor test evidence.
 
 ## Related
 

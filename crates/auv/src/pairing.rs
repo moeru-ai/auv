@@ -208,6 +208,7 @@ impl Pairing {
     )
     .await
     .map_err(|status| ClientError::from_status("PairDevice", status))?;
+    crate::profile::validate_device_credential(&response.device_credential)?;
     let grpc = auv_api_client::protocol::grpc::Client::connect_paired(auv_api_client::PairedConnectConfig {
       endpoint,
       device_credential: response.device_credential.clone(),

@@ -31,7 +31,7 @@ mod frontend {
   use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, JsonObject, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, Implementation, JsonObject, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo},
     service::{RequestContext, RoleServer},
     tool, tool_router,
     transport::stdio,
@@ -437,7 +437,7 @@ mod frontend {
       let selected = if wants_device {
         match crate::commands::plugin::resolve_invoke_context(&selection).await {
           Ok(selected) => Some(selected),
-          Err(error) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(error.into()), None, &authority),
+          Err(failure) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(failure), None, &authority),
         }
       } else {
         None
@@ -690,6 +690,14 @@ mod frontend {
           "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools; no planner or NL parsing is present.".into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
+        // The handshake is the only place a client can ask which build answers. Defaulting
+        // this field reports the transport crate (rmcp) instead of auv, so a long-running
+        // server started before an upgrade cannot be told apart from the current one.
+        server_info: Implementation {
+          name: "auv".into(),
+          version: env!("CARGO_PKG_VERSION").into(),
+          ..Default::default()
+        },
         ..Default::default()
       }
     }
@@ -927,6 +935,7 @@ mod frontend {
   }
 
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
   struct InvokeToolRequest {
     command_id: String,
     /// Exact configured Device name; omit to use the server's root selection or run locally.

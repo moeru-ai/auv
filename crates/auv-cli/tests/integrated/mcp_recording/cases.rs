@@ -242,3 +242,59 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
   mcp.kill().await?;
   Ok(())
 }
+
+// https://github.com/moeru-ai/auv/pull/428
+// ROOT CAUSE:
+//
+// If a selected Run was missing, preselection converted RunNotFound to text
+// and MCP returned command_failed. The fix preserves the shared not_found
+// category before any local command or tracing context starts.
+#[tokio::test]
+async fn mcp_missing_selected_run_preserves_not_found_without_local_fallback() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+  let directory = tempfile::tempdir()?;
+  let discovery = directory.path().join("missing-discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let store = directory.path().join("store");
+  let timeout = std::time::Duration::from_secs(10);
+  let selected_run = "0123456789abcdef0123456789abcdef";
+  let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["--run", selected_run, "mcp", "serve"])
+    .current_dir(directory.path())
+    .env_remove("AUV_CONTEXT")
+    .env_remove("AUV_ENDPOINT")
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true)
+    .spawn()?;
+
+  let transport = tokio::io::join(child.stdout.take().expect("MCP stdout"), child.stdin.take().expect("MCP stdin"));
+  let client = tokio::time::timeout(timeout, TestClient.serve(transport)).await??;
+  let outcome = tokio::time::timeout(
+    timeout,
+    client.call_tool(CallToolRequestParam {
+      name: "invoke".into(),
+      arguments: Some(
+        serde_json::json!({ "command_id": "display.list", "store_root": store.to_str().unwrap() }).as_object().unwrap().clone(),
+      ),
+    }),
+  )
+  .await??;
+  assert_eq!(outcome.is_error, Some(true));
+  let body = outcome.structured_content.expect("structured selection failure");
+  assert_eq!(body["status"], "failed");
+  assert_eq!(body["command_id"], "display.list");
+  assert_eq!(body["failure_details"]["code"], "not_found");
+  assert!(body["failure_details"]["message"].as_str().unwrap().contains(selected_run));
+  assert_eq!(body["failure"], body["failure_details"]["message"]);
+  assert!(body.get("result").is_none());
+  assert!(body.get("artifacts").is_none());
+
+  tokio::time::timeout(timeout, client.cancel()).await??;
+  let status = tokio::time::timeout(timeout, child.wait()).await??;
+  assert!(status.success(), "MCP subprocess failed: {status}");
+  assert_eq!(std::fs::read_to_string(store.join("records.jsonl"))?, "", "selection failure must not execute or record a local command");
+  Ok(())
+}

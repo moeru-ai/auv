@@ -238,7 +238,7 @@ mod native {
   use crate::error::backend;
 
   pub(super) fn list_windows() -> DriverResult<Vec<Window>> {
-    crate::desktop::ensure_input_desktop();
+    crate::desktop::try_ensure_input_desktop().map_err(|error| backend(format!("input desktop attachment failed: {error}")))?;
     let mut handles: Vec<HWND> = Vec::new();
     // Clear last error prior to EnumWindows. Win32 EnumWindows does not reset last-error,
     // so any stale error (such as ERROR_ALREADY_EXISTS from earlier process startup)

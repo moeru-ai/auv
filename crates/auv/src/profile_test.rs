@@ -49,7 +49,7 @@ fn duplicate_device_names_report_canonical_candidate_ids() {
   let path = directory.path().join("profiles.json");
   std::fs::write(
       &path,
-      br#"{"profiles":{"a":{"device_id":"device_a","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"device_b","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#,
+      br#"{"profiles":{"a":{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#,
     )
     .unwrap();
   let error = ProfileStore::from_path(path)
@@ -58,7 +58,162 @@ fn duplicate_device_names_report_canonical_candidate_ids() {
       ..Default::default()
     })
     .unwrap_err();
-  assert!(matches!(error, ProfileError::AmbiguousDevice(ids) if ids == "device_a, device_b"));
+  assert!(matches!(error, ProfileError::AmbiguousDevice(ids) if ids == format!("{}, {}", "a".repeat(64), "b".repeat(64))));
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// ROOT CAUSE:
+//
+// Selection reported same-name ambiguity before parsing the candidate IDs,
+// so malformed identities appeared in a canonical-candidate error.
+// Validate stored identities before selecting a profile.
+#[test]
+fn malformed_device_ids_are_rejected_before_name_ambiguity() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"a":{"device_id":"device_a","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"device_b","device_name":"Studio","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  let error = store
+    .resolve(&AuvContext {
+      device_name: Some("Studio".into()),
+      ..Default::default()
+    })
+    .unwrap_err();
+  assert!(matches!(
+    error,
+    ProfileError::Identity(crate::resource::IdentityError::InvalidResourceId {
+      kind: "Device",
+      length: 64
+    })
+  ));
+  assert!(matches!(store.list_devices(), Err(ProfileError::Identity(_))));
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// ROOT CAUSE:
+//
+// Duplicate detection compared raw strings although DeviceId parsing folds
+// hexadecimal case. Two spellings of one Device passed the uniqueness gate.
+#[test]
+fn reading_profiles_rejects_case_variants_of_one_device_id() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"a":{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_name":"First","endpoint":"http://localhost:9847","device_credential":"a-secret"},"b":{"device_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","device_name":"Second","endpoint":"http://localhost:9848","device_credential":"b-secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  let error = store.list_devices().unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  let error = store
+    .resolve(&AuvContext {
+      config_profile: Some("a".into()),
+      ..Default::default()
+    })
+    .unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// Parsing accepted uppercase IDs but summaries and resolved profiles retained
+// them, breaking exact comparisons with canonical daemon identities.
+#[test]
+fn profile_reads_return_canonical_device_ids_without_rewriting_the_store() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let document = br#"{"profiles":{"studio":{"device_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","device_name":"Studio","endpoint":"http://localhost:9847","device_credential":"secret"}}}"#;
+  std::fs::write(&path, document).unwrap();
+  let store = ProfileStore::from_path(&path);
+
+  assert_eq!(store.list_devices().unwrap()[0].device_id(), "a".repeat(64));
+  let resolved = store
+    .resolve(&AuvContext {
+      device_id: Some("AAAA".into()),
+      ..Default::default()
+    })
+    .unwrap();
+  assert_eq!(resolved.device_id(), "a".repeat(64));
+  assert_eq!(resolved.device_credential(), "secret");
+  assert_eq!(std::fs::read(&path).unwrap(), document);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// All profile mutations must reject a duplicate canonical identity before
+// publishing the new document, regardless of the input's hexadecimal case.
+#[test]
+fn profile_writes_reject_case_variant_duplicates_without_changing_the_store() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+  let input = DeviceProfileInput {
+    device_id: "a".repeat(64),
+    device_name: "First".into(),
+    endpoint: "http://localhost:9847".into(),
+    device_credential: "secret".into(),
+  };
+  store.create("a", input.clone()).unwrap();
+  store
+    .create(
+      "b",
+      DeviceProfileInput {
+        device_id: "b".repeat(64),
+        ..input.clone()
+      },
+    )
+    .unwrap();
+  let before = std::fs::read(&path).unwrap();
+  let duplicate = DeviceProfileInput {
+    device_id: "A".repeat(64),
+    ..input
+  };
+
+  let error = store.create("new", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, new"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.update("b", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.upsert("b", duplicate.clone()).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, b"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+  let error = store.upsert("new", duplicate).unwrap_err();
+  assert!(matches!(error, ProfileError::DuplicateDeviceId { device_id, profiles } if device_id == "a".repeat(64) && profiles == "a, new"));
+  assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+// https://github.com/moeru-ai/auv/commit/0a5dfc2e1bc34991a6d00a3ee019414e0a3547be
+// Canonical spelling must reach persistence as well as the read-side outputs.
+#[test]
+fn profile_writes_persist_canonical_device_ids() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+  let input = DeviceProfileInput {
+    device_id: "A".repeat(64),
+    device_name: "Studio".into(),
+    endpoint: "http://localhost:9847".into(),
+    device_credential: "secret".into(),
+  };
+  store.create("studio", input.clone()).unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "a".repeat(64));
+  store
+    .update(
+      "studio",
+      DeviceProfileInput {
+        device_id: "B".repeat(64),
+        ..input.clone()
+      },
+    )
+    .unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "b".repeat(64));
+  store.upsert("studio", input).unwrap();
+  let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(document["profiles"]["studio"]["device_id"], "a".repeat(64));
 }
 
 // https://github.com/moeru-ai/auv/actions/runs/31051684740/job/92460058236
@@ -167,4 +322,108 @@ fn damaged_profile_store_is_not_rewritten() {
     .unwrap_err();
   assert!(matches!(error, ProfileError::Decode { .. }));
   assert_eq!(std::fs::read(path).unwrap(), b"damaged");
+}
+
+#[test]
+fn profile_rejects_malformed_credentials_on_create_update_upsert() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+
+  store
+    .create(
+      "existing",
+      DeviceProfileInput {
+        device_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        device_name: "Existing".into(),
+        endpoint: "http://localhost:9847".into(),
+        device_credential: "initial-valid-secret".into(),
+      },
+    )
+    .unwrap();
+
+  for malformed in [
+    "bearer token with spaces",
+    "token\nnewline",
+    "token\rreturn",
+    "token\0null",
+    "token\tspace",
+    "token-\u{1f600}-emoji",
+    "token-\u{4e2d}\u{6587}-chinese",
+  ] {
+    let input = DeviceProfileInput {
+      device_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+      device_name: "Test".into(),
+      endpoint: "http://localhost:9847".into(),
+      device_credential: malformed.into(),
+    };
+    let err = store.create("new_profile", input.clone()).unwrap_err();
+    assert!(matches!(err, ProfileError::InvalidCredential));
+    let err = store.update("existing", input.clone()).unwrap_err();
+    assert!(matches!(err, ProfileError::InvalidCredential));
+    let err = store.upsert("existing", input).unwrap_err();
+    assert!(matches!(err, ProfileError::InvalidCredential));
+  }
+
+  let input_empty = DeviceProfileInput {
+    device_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+    device_name: "Test".into(),
+    endpoint: "http://localhost:9847".into(),
+    device_credential: "   ".into(),
+  };
+  let err = store.create("new_empty", input_empty.clone()).unwrap_err();
+  assert!(matches!(err, ProfileError::EmptyField("device_credential")));
+  let err = store.update("existing", input_empty).unwrap_err();
+  assert!(matches!(err, ProfileError::EmptyField("device_credential")));
+}
+
+#[test]
+fn mixed_valid_and_malformed_profiles_allow_listing_but_reject_resolving_malformed() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  std::fs::write(
+    &path,
+    br#"{"profiles":{
+      "valid":{"device_id":"1111111111111111111111111111111111111111111111111111111111111111","device_name":"ValidStudio","endpoint":"http://localhost:9847","device_credential":"valid_secret_token"},
+      "corrupted":{"device_id":"2222222222222222222222222222222222222222222222222222222222222222","device_name":"CorruptedStudio","endpoint":"http://localhost:9848","device_credential":"invalid credential with spaces"}
+    }}"#,
+  )
+  .unwrap();
+
+  let store = ProfileStore::from_path(&path);
+
+  // Listing devices succeeds even with a malformed credential in one profile,
+  // returning non-secret metadata summaries for all configured devices.
+  let devices = store.list_devices().unwrap();
+  assert_eq!(devices.len(), 2);
+  let valid_device = devices.iter().find(|d| d.config_profile == "valid").unwrap();
+  assert_eq!(valid_device.device_name, "ValidStudio");
+  let corrupted_device = devices.iter().find(|d| d.config_profile == "corrupted").unwrap();
+  assert_eq!(corrupted_device.device_name, "CorruptedStudio");
+
+  // Getting a valid device by name succeeds.
+  let got_valid = store.get_device("valid").unwrap();
+  assert_eq!(got_valid.device_id, "1111111111111111111111111111111111111111111111111111111111111111");
+
+  // Getting the corrupted device metadata also succeeds.
+  let got_corrupted = store.get_device("corrupted").unwrap();
+  assert_eq!(got_corrupted.device_id, "2222222222222222222222222222222222222222222222222222222222222222");
+
+  // Resolving the valid profile succeeds and yields the bearer token.
+  let resolved_valid = store
+    .resolve(&AuvContext {
+      config_profile: Some("valid".to_string()),
+      ..Default::default()
+    })
+    .unwrap();
+  assert_eq!(resolved_valid.device_credential, "valid_secret_token");
+
+  // Resolving the corrupted profile fails closed with typed InvalidCredential and does not dial.
+  let resolve_err = store
+    .resolve(&AuvContext {
+      config_profile: Some("corrupted".to_string()),
+      ..Default::default()
+    })
+    .unwrap_err();
+  assert!(matches!(resolve_err, ProfileError::InvalidCredential));
 }
