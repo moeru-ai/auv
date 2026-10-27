@@ -559,6 +559,9 @@ fn keys_may_go(scenario: &Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
 }
 
 fn retry_initial_blank_capture(initial: bool, attempt: u32, decoded: Option<(u8, u8)>, expected: (u8, u8), identified: bool) -> bool {
+  // NOTICE: hosted run 40453112779 decoded an initial owned frame as zero against a nonzero
+  // calibration. Its cause is unconfirmed; retry only that startup mismatch. See
+  // `docs/ai/references/driver/2026-10-24-windows-gui-workflow-evidence.md`.
   initial && attempt < 3 && identified && expected.0 != 0 && expected.1 == 0 && decoded == Some((0, 0))
 }
 

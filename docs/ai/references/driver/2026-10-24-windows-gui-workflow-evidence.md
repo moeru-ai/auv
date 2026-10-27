@@ -2,13 +2,50 @@
 
 Status: **all three routes passed two observation and two functional rounds on
 one isolated GitHub-hosted Windows desktop** at source commit
-`178433f28189ed4ea5251d19d5e2b13f15800084`. This is evidence for that Windows
+`2abf8502ab4d1910a413b74800610152c53dbfb2`. This is evidence for that Windows
 Server 2025 environment, not a claim about all Windows machines or setups.
 
 The scenario itself lives in
 [`evals/auv-base/platforms/desktop-windows/tasks/gui_workflow.rs`](../../../../evals/auv-base/platforms/desktop-windows/tasks/gui_workflow.rs)
 and is documented in the
 [platform README](../../../../evals/auv-base/platforms/desktop-windows/README.md).
+
+## Current review validation (2026-10-27)
+
+The tested source includes `main@e72b3da2` and the PR review repairs.
+The [isolated desktop run](https://github.com/moeru-ai/auv/actions/runs/40456514332)
+checked out the exact source commit above.
+Its workflow definition was commit `93933047d43733b2ce27afa635e1ba5a40b900e9`.
+Preflight recorded Windows build 26100, interactive session 2, an accessible input desktop, and one 1024×768 display.
+
+| Route | Observation rounds 1 / 2 | Functional rounds 1 / 2 |
+| --- | --- | --- |
+| Direct Rust | passed / passed | passed / passed |
+| Local Invoke | passed / passed | passed / passed |
+| Selected Runner | passed / passed | passed / passed |
+
+Independent inspection of the raw records found:
+
+- All 12 summaries report `passed: true`, no physical input, and no quiet violations or inconclusive operations.
+- All 12 functional click destinations equal their exact preflight points.
+- All 18 captures match application state and window identity.
+- All six functional cases verify selection, exact text, scroll, one submission, both negative controls, and pointer/foreground restoration.
+- All 12 fixture cleanups and four Runner cleanups pass. No Runner cleanup uses root-only fallback.
+- All 24 OCR queries succeed on the first attempt. No initial capture needs a retry in this run.
+
+The [raw artifact](https://github.com/moeru-ai/auv/actions/runs/40456514332/artifacts/12713495654)
+has SHA-256 `d4558784513e4651f376cfd25c4da6e5565618fc4e3aaac51b534acb6883b67b`.
+GitHub retention ends 2026-11-10.
+
+At this source, local `cargo test --locked -p auv-base-evals --lib` passes 22 tests and ignores one.
+`cargo test --locked -p auv-cli-invoke --lib` passes 161 tests and ignores one.
+The [PR CI run](https://github.com/moeru-ai/auv/actions/runs/40454099277) passes Rust checks and the workspace suite on Windows, macOS, and Linux.
+Formatting, compilation, and Invoke help checks pass.
+
+The interruption and cleanup failure paths have no-desktop regression coverage.
+The current live run does not exercise physical user interruption or initial-capture recovery.
+The earlier failed capture and the bounded recovery policy remain documented below.
+This validates one hosted configuration, not all Windows versions, display scales, OCR languages, or concurrent desktop conditions.
 
 ## Verified (2026-10-24, base `main@739fe399311ae72b77ffeea530b231c3bb6c34ea`)
 
@@ -50,7 +87,7 @@ The prior control-sized fence could accept a different point that had no ownersh
 If a fresh OCR result differs, the workflow stops without a click.
 The ownership check and pointer delivery still are not atomic.
 
-## Isolated-desktop runs (2026-10-27)
+## Earlier isolated-desktop runs (2026-10-27, source `178433f`)
 
 The three routes (`rust`, `invoke`, `runner`) each execute the same record-entry
 workflow and produce their own `workflow.jsonl`; one route's success never
@@ -62,8 +99,8 @@ installs the desktop witness hooks. Running it would have interfered with the
 user's session and produced inconclusive evidence the moment the user moved the
 mouse.
 
-On 2026-10-27, a separate GitHub-hosted `windows-2025` runner checked out the
-exact source commit above. Its preflight recorded Windows build 26100, session
+On 2026-10-27, a separate GitHub-hosted `windows-2025` runner checked out
+`178433f28189ed4ea5251d19d5e2b13f15800084`. Its preflight recorded Windows build 26100, session
 2, `UserInteractive=true`, an accessible input desktop, and one 1024×768
 display. The only listed foreground-capable processes before the run were
 Explorer and the hosted runner's Windows Terminal. The runner was separate from
@@ -120,7 +157,7 @@ risk for that production behavior on this kind of control; those paths were not
 exercised as `replace_existing` in these workflow runs and need their own
 reproduction and fix assessment.
 
-## Evidence level summary
+## Earlier evidence level summary (source `178433f`)
 
 | Route | Implemented | Statically verified | Desktop-verified on the stated runner |
 | --- | --- | --- | --- |
@@ -170,6 +207,7 @@ The original test-only reproduction waited for the sleeping process and failed.
 ## Initial capture review
 
 In [run 40453112779](https://github.com/moeru-ai/auv/actions/runs/40453112779),
+at source `9dabdabfe8d21fc64b6edc5de815843e31ccd564`,
 the initial Rust capture in round 2 decoded to `(0, 0)`.
 The receiver reported `(15, 0)`, and the captured window identity matched.
 The other five observation rounds passed. The functional rounds did not start.
