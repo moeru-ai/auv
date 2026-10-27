@@ -269,6 +269,35 @@ fn image_fetch_pr430_recovers_existing_receipt_after_catalog_poison() {
   assert!(!catalog.entries.is_poisoned());
 }
 
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_panicking_duplicate_preserves_existing_receipt() {
+  // ROOT CAUSE:
+  //
+  // If a duplicate receipt had an invalid extension, path construction panicked
+  // after registration had already removed the original receipt with that URI.
+  //
+  // Before the fix, lock recovery could not restore the removed receipt.
+  // The fix prepares the replacement before changing the catalog.
+  let (directory, catalog, metadata, _) = registered(&png(1, 1), "image/png");
+  let store = FileTracingStore::open(directory.path()).unwrap();
+  let invalid = ArtifactMetadata::new(
+    metadata.uri().clone(),
+    metadata.purpose().clone(),
+    metadata.content_type().clone(),
+    Some("invalid/extension".into()),
+    metadata.byte_length(),
+    metadata.sha256(),
+    metadata.attributes().clone(),
+  );
+  assert!(std::panic::catch_unwind(|| catalog.register(&[invalid], &store)).is_err());
+  let result = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let bytes = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  assert_eq!(image::load_from_memory(&bytes).unwrap().to_rgb8().get_pixel(0, 0).0, [12, 34, 56]);
+  assert!(!catalog.entries.is_poisoned());
+}
+
 #[test]
 fn image_fetch_retains_the_latest_returned_receipts_at_capacity() {
   // ROOT CAUSE:

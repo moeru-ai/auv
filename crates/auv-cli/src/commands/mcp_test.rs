@@ -18,13 +18,15 @@ fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
 fn image_server(project_root: &std::path::Path) -> McpServer {
   let mut adapters = core_invoke_adapters().into_iter().filter(|adapter| adapter.command_id != "display.capture").collect::<Vec<_>>();
   adapters.push(super::McpInvokeAdapter::new("display.capture", |_| async {
-    let pixels = image::RgbImage::from_pixel(12, 6, image::Rgb([42, 84, 126]));
-    let artifact = auv_tracing::image_artifact(
-      auv_tracing::EmitBytesOptions::new().with_purpose("test.mcp.image"),
-      &pixels,
-      auv_tracing::ImageResolution::Native,
-    )
-    .unwrap();
+    let capture = auv_driver::Capture {
+      image: image::RgbaImage::from_pixel(24, 12, image::Rgba([42, 84, 126, 255])),
+      scale_factor: 2.0,
+      bounds: auv_driver::Rect::new(100.0, -50.5, 12.0, 6.0),
+      origin: None,
+      backend: "fixture".into(),
+      fallback_reason: None,
+    };
+    let artifact = auv_cli_invoke::artifact::capture_evidence("test.mcp.image", &capture, None).unwrap();
     let metadata = auv_tracing::emit_artifact(artifact).await.unwrap().unwrap();
     Ok(super::McpInvokeSuccess {
       result: serde_json::Value::Null,
@@ -32,6 +34,71 @@ fn image_server(project_root: &std::path::Path) -> McpServer {
     })
   }));
   McpServer::with_registry(project_root.into(), Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap()
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn mcp_pr430_describes_logical_capture_coordinates_and_explicit_fetch() {
+  // ROOT CAUSE:
+  //
+  // If a client followed the capture instructions on a high-DPI display, it
+  // divided already-logical artifact pixels by the backing scale factor again.
+  //
+  // Before the fix, the instructions also omitted fetch-time resizing.
+  // The fix maps returned PNG pixels through the stored image dimensions.
+  let description = super::invoke_tool_description(&auv_cli_invoke::default_registry());
+  assert!(description.contains("logical resolution"));
+  assert!(description.contains("px * source_width / width"));
+  assert!(description.contains("py * source_height / height"));
+  assert!(!description.contains("divide a pixel by the capture's scale factor"));
+  assert!(description.contains("artifact_read_image"));
+  assert!(description.contains("artifacts[].uri"));
+
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  assert!(server.get_info().instructions.unwrap().contains("artifact_read_image"));
+  let tools = server.tool_router.list_all();
+  let image = tools.iter().find(|tool| tool.name == "artifact_read_image").unwrap();
+  let image_description = image.description.as_deref().unwrap();
+  assert!(image_description.contains("stored artifact dimensions"));
+  assert!(image_description.contains("source_width"));
+  assert!(image_description.contains("image.source_width"));
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_fetch_dimensions_distinguish_stored_and_native_capture_pixels() {
+  use base64::Engine as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let server = image_server(directory.path());
+  let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
+  let artifact = &result.structured_content.as_ref().unwrap()["artifacts"][0];
+  assert_eq!(artifact["content_type"], "image/webp");
+  assert_eq!(artifact["attributes"]["image.source_width"], 24);
+  assert_eq!(artifact["attributes"]["image.source_height"], 12);
+  assert_eq!(artifact["attributes"]["image.scale_factor"], 2.0);
+  assert_eq!(artifact["attributes"]["capture.bounds.x"], 100.0);
+  assert_eq!(artifact["attributes"]["capture.bounds.y"], -50.5);
+  let uri: auv_tracing::ArtifactUri = artifact["uri"].as_str().unwrap().parse().unwrap();
+  let result = server
+    .artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+      run_id: uri.run_id().to_string(),
+      artifact_id: uri.artifact_id().to_string(),
+      max_width: 6,
+      max_height: 6,
+    }))
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let dimensions: serde_json::Value = serde_json::from_str(wire["content"][0]["text"].as_str().unwrap()).unwrap();
+  assert_eq!(dimensions["source_width"], 12);
+  assert_eq!(dimensions["source_height"], 6);
+  assert_eq!(dimensions["width"], 6);
+  assert_eq!(dimensions["height"], 3);
+  let bytes = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  let image = image::load_from_memory(&bytes).unwrap().to_rgb8();
+  assert_eq!(image.dimensions(), (6, 3));
+  assert_eq!(image.get_pixel(3, 1).0, [42, 84, 126]);
 }
 
 #[tokio::test]

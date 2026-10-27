@@ -53,6 +53,37 @@ The text contains `run_id`, `artifact_id`, `source_width`, `source_height`,
 `width`, and `height`. The output preserves the aspect ratio. Small images
 retain their original dimensions.
 
+`source_width` and `source_height` describe the stored artifact before this
+fetch resizes it. `width` and `height` describe the returned PNG.
+For capture artifacts, the receipt attributes `image.source_width` and
+`image.source_height`, when present, describe native captured pixels before
+logical downscaling. These values can differ on a display with a backing scale factor.
+
+Capture evidence from `display.capture`, `window.capture`, and
+`screen.captureRegion` uses logical resolution. The producer already divides
+the native dimensions by the capture's backing scale factor.
+See [capture evidence](../../../../crates/auv-cli-invoke/src/artifact.rs) and
+[image resolution](../../../../crates/auv-tracing/src/image.rs).
+
+For a returned PNG pixel `(px, py)`, use this screen coordinate formula:
+
+```text
+x = capture.bounds.x + px * source_width / width
+y = capture.bounds.y + py * source_height / height
+```
+
+Use `capture.bounds.x` and `capture.bounds.y` from that artifact's attributes
+in the `invoke` result. Do not divide by the capture's scale factor again.
+For example, a native 2880×1800 capture at scale 2 produces a 1440×900 artifact.
+A fetch bounded to 720×450 returns that size. Its pixel `(360, 225)` maps to
+logical offset `(720, 450)` from the capture bounds origin.
+The formula applies to capture artifacts with bounds attributes. A `scan.frame`
+fixture has no implied screen mapping.
+
+The server instructions and both tool descriptions direct clients to
+`artifact_read_image`. An `invoke` result's `file_path` refers to the server
+filesystem; a client does not need filesystem access to fetch the image.
+
 Unknown fields, including a file path or store root, produce an invalid-params
 error. Invalid IDs, unavailable receipts, and refused image data produce the
 same error category. Storage I/O failures and PNG encoding failures produce an
@@ -67,7 +98,13 @@ does not delete a stored artifact.
 
 Catalog locks recover from poison, preserve complete receipts, and finish any
 pending FIFO eviction. Recovery does not replace a completed `invoke` result
-with a protocol error. Recovery emits a server warning.
+with a protocol error. A replacement receipt is prepared before the old receipt
+is removed. A panic during preparation therefore preserves the old receipt.
+Recovery emits a server warning.
+
+OCR source captures emitted without a returned `invoke` receipt stay outside
+this catalog. Exposing that evidence requires an owner-approved command receipt
+contract. This tool does not scan a Run for additional images.
 
 Each `McpServer` has its own catalog. Clones of that server share the catalog.
 The stdio entry point creates one server for its connection. Another server
@@ -86,8 +123,10 @@ request:
 | External decoded pixel buffer | 128 MiB |
 | Encoded output PNG | 8 MiB |
 
-One decoder reads both the header and the pixels. Its limits apply before
-header parsing, because compressed PNG metadata can expand during this step.
+One decoder reads both the header and the pixels. For PNG, its constructor
+receives limits before header parsing, because compressed metadata can expand
+during this step. In image 0.25.10, JPEG and WebP receive limits after header
+parsing. The 16 MiB encoded-source limit applies before every decoder constructor.
 The reader checks the external pixel buffer size separately before pixel
 decoding. These checks do not share a remaining allocation balance. Metadata
 and pixel buffers can coexist and exceed 128 MiB together. Source bytes,
@@ -97,7 +136,7 @@ process memory outside these checks.
 In image 0.25.10, `PngDecoder::set_limits` changes the wrapper limits without
 changing the underlying `png::Reader` allocation balance.
 See the [dependency source](https://docs.rs/image/0.25.10/src/image/codecs/png.rs.html#264-272).
-The reader keeps the constructor limits and does not set them again after the
+The PNG reader keeps the constructor limits and does not set them again after the
 header parse. A strict combined cap requires allocation accounting from each
 codec. That work remains deferred until an owner-approved slice adds this
 accounting.
@@ -132,13 +171,15 @@ The [MCP transport test](../../../../crates/auv-cli/src/commands/mcp_test.rs)
 covers discovery, the request schema, explicit image delivery, and rejection
 of images from another server instance. Tool-level tests preserve completed
 invoke results after catalog poison and classify storage failures as internal.
+Additional regressions cover replacement panic recovery, coordinate instructions,
+and a 2× capture through the shared producer, WebP storage, and PNG resizing.
 
 Windows verification of the current reader, based on `main@8bf7e4f1`:
 
 | Command | Result |
 | --- | --- |
 | `cargo build --locked -p auv-device-helper-windows --bin auv-helper` | Passed |
-| `cargo test --workspace --locked --no-fail-fast` | 1,635 passed, 25 ignored, 0 failed |
+| `cargo test --workspace --locked --no-fail-fast` | 1,638 passed, 25 ignored, 0 failed |
 | `cargo check --locked` | Passed |
 | `cargo fmt --all -- --check` | Passed |
 | `cargo run --quiet --locked -- invoke --help` | Passed |
@@ -146,7 +187,7 @@ Windows verification of the current reader, based on `main@8bf7e4f1`:
 | `git diff --check` | Passed |
 
 The workspace run used `AUV_WINDOWS_HELPER_EXE_PATH` to select the built helper.
-It includes 43 MCP tests. The cache regression first failed with UUID-ordered
+It includes 46 MCP tests. The cache regression first failed with UUID-ordered
 eviction. It passes after receipt-ordered eviction.
 
 Header and 16-bit resizing regressions first failed against `d85ea044`.
@@ -158,6 +199,11 @@ PNG output above 8 MiB and success after a smaller size request.
 The ICC regression confirms that a 160 MiB profile is absent from the limited
 PNG decoder, while the returned image contains the expected pixel. This
 distinguishes profile refusal from pixel refusal.
+
+Coordinate instructions and duplicate-receipt panic regressions first failed
+against `f5c0ff7b`. The capture fixture records 24×12 native pixels at scale 2,
+stores 12×6 logical pixels, and fetches a 6×3 PNG. Its receipt retains native
+dimensions while the fetch reports stored and returned dimensions separately.
 
 Additional real MCP stdio checks at `0990c064` used `scan.frame` fixtures:
 

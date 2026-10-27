@@ -488,13 +488,22 @@ mod frontend {
       if recording_failure.is_none()
         && let Ok(success) = &direct_result
       {
+        // NOTICE(mcp-image-receipt-scope): OCR source evidence without a returned
+        // invoke receipt stays outside this catalog. Exposing it requires an
+        // owner-approved command receipt contract.
         self.image_artifacts.register(&success.artifacts, &authority.store);
       }
       invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
     }
 
     #[tool(
-      description = "Read an AUV image artifact returned by invoke through this MCP server instance. Supply run_id and artifact_id from its artifact URI, never a file path. Returns PNG image content with its aspect ratio preserved. The default size limit is 2048x2048; each requested dimension must be 1..=4096. Source bytes and decoded pixels are bounded. Unknown, expired, non-image or modified artifacts are refused."
+      description = "Read an AUV image artifact returned by invoke through this MCP server instance. \
+        Supply run_id and artifact_id from artifacts[].uri, never a file path. Returns PNG image content with its aspect ratio preserved. \
+        source_width/source_height are stored artifact dimensions before this fetch resizes them; width/height are the returned PNG dimensions. \
+        For capture artifacts, image.source_width/image.source_height in the invoke receipt instead describe native captured pixels before logical downscaling. \
+        Capture evidence is already at logical resolution. Undo this fetch's resize before adding the capture bounds origin for screen coordinates. \
+        The default size limit is 2048x2048. Each requested dimension must be 1..=4096. Source bytes and decoded pixels are bounded. \
+        Unknown, expired, non-image or modified artifacts are refused."
     )]
     async fn artifact_read_image(&self, Parameters(req): Parameters<ArtifactReadImageRequest>) -> Result<CallToolResult, McpError> {
       let images = Arc::clone(&self.image_artifacts);
@@ -710,7 +719,10 @@ mod frontend {
     fn get_info(&self) -> ServerInfo {
       ServerInfo {
         instructions: Some(
-          "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools; no planner or NL parsing is present.".into(),
+          "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools. \
+           Read returned image receipts with artifact_read_image, using run_id and artifact_id from artifacts[].uri. \
+           file_path refers to the server filesystem. No planner or NL parsing is present."
+            .into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
         // The handshake is the only place a client can ask which build answers. Defaulting
@@ -770,8 +782,13 @@ mod frontend {
        on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
        application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
        Points: with an app or window `target`, point coordinates are window-local unless `inputs.relative-to` is \
-       `screen`. A `display.capture` image is in pixels: divide a pixel by the capture's scale factor and add its \
-       capture bounds origin to get a screen point. Send a screen point without `target`, or with `target` and \
+       `screen`. Fetch image receipts with `artifact_read_image`, using `run_id` and `artifact_id` from `artifacts[].uri`; \
+       `file_path` refers to the server filesystem. Evidence from `display.capture`, `window.capture`, and \
+       `screen.captureRegion` is stored at logical resolution. For a returned PNG pixel `(px, py)`, the screen point is \
+       `(capture.bounds.x + px * source_width / width, capture.bounds.y + py * source_height / height)`. \
+       Use `capture.bounds.x` and `capture.bounds.y` from that artifact's attributes. `source_width`/`source_height` are \
+       stored artifact dimensions; `width`/`height` are returned PNG dimensions. Do not divide by the capture's scale factor again. \
+       Send a screen point without `target`, or with `target` and \
        `relative-to: screen`.\n\n\
        Input delivery: `inputs.input-policy` decides how input reaches a target window. Leave it unset unless an \
        action had no visible effect. Delivery never proves the app reacted; check with a capture.\n\

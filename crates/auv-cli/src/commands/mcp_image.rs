@@ -50,8 +50,10 @@ impl ImageArtifacts {
       // Both path and digest originate in the successful AUV artifact write receipt.
       // No metadata is loaded from a caller-selected path or a pre-existing store.
       // Receipt order also covers images returned from an older, reused Run.
+      // Prepare the complete replacement before removing an existing receipt.
+      let receipt = (metadata.clone(), store.artifact_path(metadata));
       entries.retain(|(existing, _)| existing.uri() != metadata.uri());
-      entries.push_back((metadata.clone(), store.artifact_path(metadata)));
+      entries.push_back(receipt);
       while entries.len() > MAX_SESSION_IMAGES {
         entries.pop_front();
       }
@@ -94,6 +96,8 @@ impl ImageArtifacts {
     limits.max_alloc = Some(128 * 1024 * 1024);
     // PNG metadata can expand while the decoder reads its header. Apply the
     // budget before construction and retain that decoder for pixel decoding.
+    // ImageReader forwards constructor limits to PNG; JPEG and WebP receive
+    // limits after their header parse. Source bytes are already bounded above.
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(limits.clone());
     let decoder =
