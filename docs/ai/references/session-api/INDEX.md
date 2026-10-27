@@ -18,8 +18,9 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **43**
+Count: **44**
 
+- [`2026-10-26-daemon-delete-runner-race-fix.md`](2026-10-26-daemon-delete-runner-race-fix.md) — concurrent `DeleteRunner` races fixed by a single delete-owner invariant (Draining entry ⇔ one owner, detached owner task, armed drain waiter, stop-failure re-insertion as `Failed`, Ready-gated lifecycle auto-stops) with the new conflict surfaced as gRPC `failed_precondition`; root-cause chains, deterministic test matrix, and adversarial-review verdict.
 - [`2026-10-11-device-entry-error-status.md`](2026-10-11-device-entry-error-status.md) — `DeviceService` session RPCs fail with a gRPC status (code per reason, `DeviceEntryError` in `google.rpc.Status` details) instead of an OK response with an in-body error; plain success fields with the old `error` field reserved, Rust and JS SDK decoding, and the upgrade-together compatibility rule.
 - [`2026-10-09-sdk-ergonomics-design.md`](2026-10-09-sdk-ergonomics-design.md) — shared ergonomic SDK API in Rust and JS (rectangle builders and `region()` with percentages, `windows.resolve` short form, `pressKeys('cmd+a')`, Rust `WindowClient` keyboard methods), then playground lineage by IDs and the `auv` global becoming the SDK client.
 - [`2026-10-09-method-presentation-and-docs.md`](2026-10-09-method-presentation-and-docs.md) — `presentation` method option (API name, title, plain-text description), per-method Markdown docs with examples served by `MethodDocsService`, SDK `describeMethod().docs()`, and playground hover docs.
