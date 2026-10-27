@@ -109,6 +109,13 @@ These checks are not an atomic OS focus lease; a concurrent desktop change can s
 the precheck. Foreground actions are expected to change input/pointer state and are recorded
 separately from operations required to be quiet. A quiet violation or inconclusive operation
 prevents overall acceptance. Pointer and foreground restoration are checked after the full run.
+The witness also counts physical mouse and keyboard events across the full case.
+If physical input occurs, the summary records `user_interrupted: true` and `passed: false`.
+If setup fails before the witness starts, `user_interrupted` is `null`.
+The workflow sends no further input and does not start later rounds.
+It skips pointer and foreground restoration after the user resumes control.
+It still closes its processes and removes the capture store.
+An input operation already in progress cannot be interrupted atomically.
 The summary's `functional_passed` (and `--observe-only`'s `observation_passed`) covers only the
 scenario body; the overall `passed` additionally requires the quiet tally, runner and fixture
 cleanup, and pointer and foreground restoration. Consumers must gate on `passed`: a true

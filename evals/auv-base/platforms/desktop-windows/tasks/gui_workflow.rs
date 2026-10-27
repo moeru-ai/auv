@@ -23,6 +23,27 @@ pub struct Options {
   pub observe_only: bool,
 }
 
+fn physical_input_changed(start: &Snapshot, current: &Snapshot) -> bool {
+  (start.physical_mouse, start.physical_keys) != (current.physical_mouse, current.physical_keys)
+}
+
+/// A workflow must stop issuing input once the witness sees the user return.
+fn reject_user_input(start: &Snapshot, current: &Snapshot) -> Result<()> {
+  if physical_input_changed(start, current) {
+    bail!("physical user input interrupted the workflow; no further input will be sent");
+  }
+  Ok(())
+}
+
+/// Foreground actions may inject input, but neither mode may accept user activity.
+fn quiet_verified(tally: &Tally, observe_only: bool, phase_verdict: &Verdict, start: &Snapshot, finish: &Snapshot) -> bool {
+  let no_global_input = finish.injected_mouse == start.injected_mouse && finish.injected_keys == start.injected_keys;
+  tally.violated == 0
+    && tally.inconclusive == 0
+    && !physical_input_changed(start, finish)
+    && (!observe_only || (matches!(phase_verdict, Verdict::Held) && no_global_input))
+}
+
 /// CLI calls are external process/I/O boundaries. A disconnected daemon must not hang the
 /// evaluation or its cleanup indefinitely. Tokio kills the owned CLI child on timeout.
 fn command_output(command: Command, limit: Duration) -> Result<Output> {
@@ -257,6 +278,7 @@ struct Entry<'a> {
   window: &'a Window,
   layout: &'a Layout,
   title: &'a str,
+  start: &'a Snapshot,
 }
 
 impl Entry<'_> {
@@ -390,6 +412,7 @@ fn ensure_workflow_click_bounds(args: &[String], point: &auv_driver_common::geom
 }
 
 fn call(scenario: &mut Scenario<'_>, entry: &Entry<'_>, command: &str, args: &[String], quiet: bool) -> Result<Invocation> {
+  reject_user_input(entry.start, &scenario.watch.snapshot())?;
   let measured = scenario.desk.measure(|| entry.call(command, args), || std::thread::sleep(Duration::from_millis(150))).0;
   let facts = invariants(&measured, scenario.hwnd);
   if quiet {
@@ -410,6 +433,7 @@ fn call(scenario: &mut Scenario<'_>, entry: &Entry<'_>, command: &str, args: &[S
     "run_id": result.as_ref().ok().and_then(|run| run.json.as_ref().map(|value| value["run_id"].clone())),
     "quiet_required": quiet, "watch": facts}),
   )?;
+  reject_user_input(entry.start, &scenario.watch.snapshot())?;
   let run = result?;
   if !run.completed() {
     bail!("{command} failed (exit {:?}): {}", run.exit, run.failure());
@@ -446,6 +470,7 @@ fn find_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: 
 
 fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect: [i32; 4]) -> Result<()> {
   let point = find_text(scenario, entry, query, rect)?;
+  reject_user_input(entry.start, &scenario.watch.snapshot())?;
   scenario.pointer_may_go(&[point])?;
   let fence = format!("{},{},{},{}", rect[0], rect[1], rect[2], rect[3]);
   let clicked = call(scenario, entry, "screen.clickText", &[query.into(), "--within".into(), fence], false)?;
@@ -459,6 +484,12 @@ fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect:
     bail!("screen.clickText reported a point outside the owned control");
   }
   Ok(())
+}
+
+fn keys_may_go(scenario: &Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
+  reject_user_input(entry.start, &scenario.watch.snapshot())?;
+  scenario.keys_may_go(target)?;
+  reject_user_input(entry.start, &scenario.watch.snapshot())
 }
 
 fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
@@ -534,6 +565,8 @@ struct SetupFailure {
   driver_created: bool,
   witness_created: bool,
   restore_created: bool,
+  /// None means that the desktop witness did not start, so activity is unknown.
+  user_interrupted: Option<bool>,
 }
 
 /// Builds one case's fixture: the private daemon (runner route), the driver session, the desktop
@@ -564,6 +597,7 @@ fn build_fixture(
           driver_created: false,
           witness_created: false,
           restore_created: false,
+          user_interrupted: None,
         });
       }
     }
@@ -582,6 +616,7 @@ fn build_fixture(
         driver_created: false,
         witness_created: false,
         restore_created: false,
+        user_interrupted: None,
       });
     }
   };
@@ -597,6 +632,7 @@ fn build_fixture(
         driver_created: true,
         witness_created: false,
         restore_created: false,
+        user_interrupted: None,
       });
     }
   };
@@ -613,6 +649,7 @@ fn build_fixture(
         driver_created: true,
         witness_created: true,
         restore_created: false,
+        user_interrupted: Some(physical_input_changed(&start, &watch.snapshot())),
       });
     }
   };
@@ -623,6 +660,7 @@ fn build_fixture(
     receiver: hwnd,
     // TempDir owns and verifies capture-store removal after the receiver and Runner are closed.
     store: None,
+    physical_input_at_start: Some((start.physical_mouse, start.physical_keys)),
     clipboard: None,
   });
   let bound = (|| -> Result<(Window, Layout)> {
@@ -641,13 +679,15 @@ fn build_fixture(
       // backstop only posts a message to the receiver's window, and a window that has exited
       // cannot yield a foreground it no longer holds. The receiver is closed after that
       // answer, and the daemon gets its bounded stop.
-      let foreground_restore = if restore.is_some() {
+      let user_interrupted = physical_input_changed(&start, &watch.snapshot());
+      let foreground_restore = if restore.is_some() && !user_interrupted {
         Some(target.yield_foreground(start.foreground))
       } else {
         None
       };
       let receiver_close = target.close();
       let runner_stop = runner.as_mut().map(Runner::finish);
+      let user_interrupted = physical_input_changed(&start, &watch.snapshot());
       return Err(SetupFailure {
         error,
         runner_stop,
@@ -655,7 +695,8 @@ fn build_fixture(
         foreground_restore,
         driver_created: true,
         witness_created: true,
-        restore_created: true,
+        restore_created: restore.is_some(),
+        user_interrupted: Some(user_interrupted),
       });
     }
   };
@@ -766,6 +807,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
         "summary",
         json!({"route": route, "round": round, "passed": false, "setup_failed": true,
         "observe_only": options.observe_only, "observation_passed": Value::Null, "functional_passed": Value::Null,
+        "user_interrupted": failure.user_interrupted,
         "error": error, "failures": [], "quiet_operations": 0, "quiet_held": 0, "quiet_inconclusive": 0, "quiet_violated": 0,
         "cleanup": {"runner_daemon": runner_cleanup, "receiver": receiver_cleanup,
           "foreground_restore": foreground_cleanup,
@@ -775,6 +817,9 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
             "close_error": store_close.err().map(|close_error| close_error.to_string())}}}),
       )?;
       println!("workflow {route} round {round}: FAIL (setup failed; see workflow.jsonl)");
+      if failure.user_interrupted == Some(true) {
+        bail!("physical user input interrupted workflow setup; no later rounds were started");
+      }
       return Ok(false);
     }
   };
@@ -803,6 +848,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     window: &window,
     layout: &layout,
     title: &spec.title,
+    start: &start,
   };
   let started = Instant::now();
   let result = (|| -> Result<()> {
@@ -815,9 +861,9 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     click_text(&mut scenario, &entry, &input_caption, layout.typing_rect)?;
     // This native single-line EDIT does not select all on Ctrl+A. Select the line through
     // keyboard input, then verify the actual control selection before replacing its text.
-    scenario.keys_may_go(&mut target)?;
+    keys_may_go(&scenario, &entry, &mut target)?;
     call(&mut scenario, &entry, "input.key", &["home".into()], false)?;
-    scenario.keys_may_go(&mut target)?;
+    keys_may_go(&scenario, &entry, &mut target)?;
     call(&mut scenario, &entry, "input.key", &["shift+end".into()], false)?;
     let selection = target.request(json!({"cmd": "state"}))?;
     let expected_selection = json!([0, input_caption.encode_utf16().count()]);
@@ -832,7 +878,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     if !selected {
       bail!("the application did not select the complete existing text");
     }
-    scenario.keys_may_go(&mut target)?;
+    keys_may_go(&scenario, &entry, &mut target)?;
     let text = format!("Workflow {route} {round} {}", std::process::id());
     call(&mut scenario, &entry, "input.typeText", &[text.clone()], false)?;
     let typed = target.request(json!({"cmd": "state"}))?;
@@ -890,9 +936,11 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     // The submit button now has the focus. Test the guard before calling any key dispatch path.
     let before_guard = target.request(json!({"cmd": "state"}))?;
     let snapshot = watch.snapshot();
+    reject_user_input(&start, &snapshot)?;
     let rejected = scenario.keys_may_go(&mut target).is_err();
     let after_guard = target.request(json!({"cmd": "state"}))?;
     let finish_guard = watch.snapshot();
+    reject_user_input(&start, &finish_guard)?;
     let no_keys = snapshot.injected_keys == finish_guard.injected_keys;
     let unchanged = before_guard["typing"] == after_guard["typing"];
     scenario.records.write(
@@ -915,10 +963,12 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     let mut decoy = spawn_topmost_receiver(&decoy_spec, &["--foreground-input"])?;
     decoy.request(json!({"cmd": "keep_foreground"}))?;
     let point = decoy.layout.button_center;
+    reject_user_input(&start, &watch.snapshot())?;
     scenario.wait_until_idle()?;
     if !owns_point(decoy.hwnd(), point) {
       bail!("decoy is not uncovered; no click sent");
     }
+    reject_user_input(&start, &watch.snapshot())?;
     driver
       .input()
       .click_at(
@@ -931,8 +981,10 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     std::thread::sleep(Duration::from_millis(150));
     let decoy_before = decoy.request(json!({"cmd": "state"}))?;
     let before = watch.snapshot();
+    reject_user_input(&start, &before)?;
     let rejected = scenario.keys_may_go(&mut target).is_err();
     let after = watch.snapshot();
+    reject_user_input(&start, &after)?;
     let decoy_after = decoy.request(json!({"cmd": "state"}))?;
     let target_after = target.request(json!({"cmd": "state"}))?;
     let verified = before.foreground == decoy.hwnd()
@@ -945,7 +997,9 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       json!({"decoy_foreground": before.foreground == decoy.hwnd(),
       "rejected_before_dispatch": rejected, "injected_keys_unchanged": before.injected_keys == after.injected_keys, "verified": verified}),
     )?;
-    let _ = decoy.yield_foreground(hwnd);
+    if !physical_input_changed(&start, &watch.snapshot()) {
+      let _ = decoy.yield_foreground(hwnd);
+    }
     if !verified {
       bail!("wrong-window guard failed or the control did not become foreground");
     }
@@ -971,7 +1025,8 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       "run": output.as_ref().ok().and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())}),
     )?;
   }
-  let handed = options.observe_only || target.yield_foreground(start.foreground).unwrap_or(false);
+  let handed = options.observe_only
+    || (!physical_input_changed(&start, &watch.snapshot()) && target.yield_foreground(start.foreground).unwrap_or(false));
   let mut runner_closed = true;
   if let Some(runner) = runner.as_mut() {
     let closed = runner.finish();
@@ -1002,9 +1057,8 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
   // acceptance includes the complete watched interval, without moving the user's pointer back.
   let (phase_verdict, phase_timeline) = watch.judge(&start, &finish);
   let no_global_input = finish.injected_mouse == start.injected_mouse && finish.injected_keys == start.injected_keys;
-  let quiet_verified = scenario.tally.violated == 0
-    && scenario.tally.inconclusive == 0
-    && (!options.observe_only || (matches!(phase_verdict, Verdict::Held) && no_global_input));
+  let user_interrupted = physical_input_changed(&start, &finish);
+  let quiet_verified = quiet_verified(&scenario.tally, options.observe_only, &phase_verdict, &start, &finish);
   let passed = result.is_ok()
     && scenario.tally.failures.is_empty()
     && quiet_verified
@@ -1023,6 +1077,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     json!({"route": route, "round": round, "passed": passed, "ms": elapsed,
     "observe_only": options.observe_only, "observation_passed": options.observe_only.then_some(result.is_ok()),
     "functional_passed": (!options.observe_only).then_some(result.is_ok()), "quiet_verified": quiet_verified,
+    "user_interrupted": user_interrupted,
     "error": result.err().map(|error| format!("{error:#}")), "failures": scenario.tally.failures,
     "quiet_operations": scenario.tally.ops, "quiet_held": scenario.tally.held, "quiet_inconclusive": scenario.tally.inconclusive,
     "quiet_violated": scenario.tally.violated, "gap_findings": scenario.desk.gaps,
@@ -1048,6 +1103,9 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       "FAIL (see workflow.jsonl)"
     }
   );
+  if user_interrupted {
+    bail!("physical user input interrupted the workflow; no later rounds were started");
+  }
   Ok(passed)
 }
 
@@ -1071,6 +1129,76 @@ pub fn run(options: &Options) -> Result<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn physical_input_must_make_the_workflow_inconclusive() {
+    // ROOT CAUSE:
+    //
+    // If a user pressed a key without changing the foreground or pointer, the
+    // phase witness reported Held and the workflow's old gate accepted it.
+    // Foreground operations also did not count toward the quiet tally. The
+    // workflow now rejects physical input across the whole witnessed interval.
+    let start = Snapshot {
+      taken_ms: 100,
+      foreground: 1,
+      cursor: (10, 20),
+      injected_mouse: 0,
+      injected_keys: 0,
+      physical_mouse: 0,
+      physical_keys: 0,
+      foreground_changes: 0,
+      last_physical_ms: 0,
+    };
+    let tally = Tally::default();
+    for finish in [
+      Snapshot {
+        physical_keys: 1,
+        last_physical_ms: 101,
+        taken_ms: 102,
+        ..start
+      },
+      Snapshot {
+        physical_mouse: 1,
+        last_physical_ms: 101,
+        taken_ms: 102,
+        ..start
+      },
+    ] {
+      let phase_verdict = Snapshot::judge(&start, &finish, &super::super::super::watch::Timeline::default());
+      assert!(matches!(phase_verdict, Verdict::Held), "the ordinary quiet witness alone does not detect this input");
+      assert!(reject_user_input(&start, &finish).is_err(), "do not dispatch more input after the user returns");
+      for observe_only in [true, false] {
+        assert!(
+          !quiet_verified(&tally, observe_only, &phase_verdict, &start, &finish),
+          "physical input must prevent acceptance (observe_only={observe_only})"
+        );
+      }
+    }
+    assert!(reject_user_input(&start, &start).is_ok());
+    assert!(quiet_verified(&tally, true, &Verdict::Held, &start, &start));
+    let injected = Snapshot {
+      injected_keys: 1,
+      ..start
+    };
+    assert!(quiet_verified(
+      &tally,
+      false,
+      &Verdict::Violated {
+        reasons: vec!["injected_key_input"]
+      },
+      &start,
+      &injected
+    ));
+    assert!(!quiet_verified(
+      &tally,
+      true,
+      &Verdict::Violated {
+        reasons: vec!["injected_key_input"]
+      },
+      &start,
+      &injected
+    ));
+  }
 
   #[test]
   fn workflow_click_refuses_re_resolved_points_outside_the_owned_control() {
@@ -1129,6 +1257,7 @@ mod tests {
     assert_eq!(summary["setup_failed"], json!(true));
     assert_eq!(summary["functional_passed"], Value::Null);
     assert_eq!(summary["observation_passed"], Value::Null);
+    assert_eq!(summary["user_interrupted"], Value::Null, "no witness existed to judge physical input");
     // Never-created resources are not claimed as cleaned, and the store — the one resource the
     // failure path can close and re-check before recording — is the only verified one.
     assert_eq!(summary["cleanup"]["runner_daemon"]["state"], json!("not_created"));

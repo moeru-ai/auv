@@ -103,6 +103,50 @@ fn click_text_fence_rejects_changed_ocr_target_before_delivery() {
   }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn click_text_fence_cli_and_protocol_validate_without_opening_the_desktop() {
+  for (within, valid) in [("-100,-50,200,100", true), ("100,200,100,290", false)] {
+    let arguments = [
+      "screen.clickText",
+      "Submit",
+      "--within",
+      within,
+      "--dry-run",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    let crate::InvokeCliParse::Invoke {
+      command_id,
+      target,
+      inputs,
+      typed_args,
+      dry_run,
+      ..
+    } = crate::parse_invoke_args(&arguments).expect("parse click arguments")
+    else {
+      panic!("expected a click invocation");
+    };
+    assert_eq!(inputs.get("within").map(String::as_str), Some(within));
+    for typed_args in [Some(typed_args), None] {
+      let result = futures_executor::block_on(click_screen_text_invoke_command().invoke(InvokeCommandInput {
+        command_id: command_id.clone(),
+        target: target.clone(),
+        inputs: inputs.clone(),
+        typed_args,
+        dry_run,
+        cancellation: InvokeCancellation::new(),
+      }));
+      if valid {
+        assert!(result.is_ok(), "valid bounds must pass dry-run: {result:?}");
+      } else {
+        assert_eq!(result.expect_err("invalid bounds must fail dry-run").code, crate::FailureCode::InvalidInput);
+      }
+    }
+  }
+}
+
 #[test]
 fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   let click = ScreenTextClick {

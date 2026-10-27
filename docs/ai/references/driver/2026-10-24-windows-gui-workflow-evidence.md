@@ -126,3 +126,20 @@ reproduction and fix assessment.
 This does not establish behavior on the user's Windows desktop, on other display
 scales or layouts, or under concurrent user activity. Focus, window position and
 occlusion can still change between checks and OS input delivery.
+
+## User interruption review
+
+The original acceptance gate could pass after a physical key event.
+The ordinary quiet witness reports `Held` if that event changes neither focus nor cursor position.
+The workflow now rejects physical mouse or keyboard input across the full witnessed case.
+It records `user_interrupted: true`, stops before later input, and does not start later rounds.
+If setup fails before the witness starts, `user_interrupted` is `null`.
+It also skips pointer and foreground restoration after physical input.
+Cleanup still closes owned processes and removes the temporary capture store.
+The input guard is not atomic with an operation already in progress.
+
+A no-desktop regression test uses witness snapshots for both physical input types.
+The test also covers observation and functional acceptance without user input.
+The original test-only reproduction failed before the fix.
+The isolated-desktop results above apply to commit `178433f`.
+They do not validate the later interruption changes on a live desktop.

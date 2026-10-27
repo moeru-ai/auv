@@ -80,6 +80,8 @@ struct Restore {
   foreground: isize,
   receiver: isize,
   store: Option<PathBuf>,
+  /// Workflow restoration is skipped if the user has resumed input since setup.
+  physical_input_at_start: Option<(u64, u64)>,
   /// Every format of the user's clipboard at the start; the paste steps replace it.
   clipboard: Option<ClipboardSnapshot>,
 }
@@ -97,10 +99,13 @@ impl Restore {
 impl Drop for Restore {
   fn drop(&mut self) {
     // SAFETY: a message to the harness's own receiver, which hands the foreground on only while it
-    // holds it, and a pointer move back to where the user left it.
-    unsafe {
-      let _ = PostMessageW(HWND(self.receiver as *mut c_void), WM_YIELD_FOREGROUND, WPARAM(self.foreground as usize), LPARAM(0));
-      let _ = SetCursorPos(self.cursor.0, self.cursor.1);
+    // holds it, and a pointer move back to where the user left it. A workflow must not move the
+    // pointer or foreground back after the witness has seen the user resume control.
+    if self.physical_input_at_start.is_none_or(|start| super::watch::physical_input_counts() == start) {
+      unsafe {
+        let _ = PostMessageW(HWND(self.receiver as *mut c_void), WM_YIELD_FOREGROUND, WPARAM(self.foreground as usize), LPARAM(0));
+        let _ = SetCursorPos(self.cursor.0, self.cursor.1);
+      }
     }
     if let Some(snapshot) = self.clipboard.take() {
       let _ = clipboard::restore_rich(&snapshot);
@@ -308,6 +313,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     foreground: start.foreground,
     receiver: hwnd,
     store: Some(store.clone()),
+    physical_input_at_start: None,
     clipboard: Some(clipboard_at_start),
   };
   let (window, _) = discover_by_hwnd(&driver, hwnd)?;

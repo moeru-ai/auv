@@ -62,6 +62,11 @@ static KEY_HOOK: AtomicIsize = AtomicIsize::new(0);
 static STARTED: OnceLock<Instant> = OnceLock::new();
 static RUNNING: Mutex<bool> = Mutex::new(false);
 
+/// Counts input observed by the active witness without reading or moving the desktop.
+pub(super) fn physical_input_counts() -> (u64, u64) {
+  (PHYSICAL_MOUSE.load(Relaxed), PHYSICAL_KEYS.load(Relaxed))
+}
+
 const RING: usize = 256;
 /// Times (ms since start, plus one so zero means empty) of physical clicks and key presses.
 static DISCRETE: [AtomicU64; RING] = [const { AtomicU64::new(0) }; RING];
