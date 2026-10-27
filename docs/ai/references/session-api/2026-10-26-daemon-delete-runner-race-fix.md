@@ -1,7 +1,7 @@
 # Daemon DeleteRunner Concurrency Race Fix
 
 Date: 2026-10-26
-Updated: 2026-10-27 (PR #431 review follow-up)
+Updated: 2026-10-28 (Windows CI fixture correction)
 Branch: `fix/daemon-delete-runner-race`
 Baseline: `e72b3da2fe17c4b177c6cb90660b1b680c816ca6` (origin/main)
 Scope: `crates/auv-daemon/src/daemon/runner.rs`, `runner_test.rs`, plus the minimal error-mapping additions required to surface the new conflict as gRPC `FailedPrecondition`.
@@ -195,7 +195,7 @@ Local verification on Windows:
 - `git diff --check`: exit 0.
 
 The late-failure test gates a tracked owner with a oneshot channel.
-It uses the real failure-retention policy and a real short-lived child.
+It uses the real failure-retention policy and a real child.
 It verifies shutdown cleanup and rejection of new deletion requests.
 It does not inject an OS-level stop failure.
 The cancellation test aborts the caller after the owner removes its executable.
@@ -203,6 +203,25 @@ Shutdown then waits through that owner's child termination.
 
 Cross-platform results belong to the checks for the follow-up revision in PR #431.
 The local results above cover Windows only.
+
+## Windows CI fixture correction (2026-10-28)
+
+[Windows job 122295998527](https://github.com/moeru-ai/auv/actions/runs/40534513711/job/122295998527?pr=431)
+failed on `b4d8a5c8` with 63 daemon tests passed and one failed.
+The late-failure test timed out at `shutdown reaps the retained child`.
+Its five-second shutdown deadline also covered PowerShell startup and the child's natural exit.
+The same test passed locally, so the CI failure was not reproduced locally.
+
+The fixture now uses a stdin gate with an explicit readiness message.
+Windows uses `cmd`, and Unix uses `/bin/sh`.
+The test waits for readiness before it starts the shutdown interleaving.
+It verifies that shutdown remains pending while the retained child waits for stdin EOF.
+It then opens that gate and waits for shutdown to reap the child.
+Separate deadlines bound fixture startup and shutdown completion.
+The test no longer depends on a sleep duration or PowerShell startup speed.
+This correction changes the test and this note only.
+Local verification passed: 64 daemon tests, `cargo fmt --check`, and `git diff --check`.
+The new CI result is not part of this local verification record.
 
 ## Historical independent review (superseded)
 

@@ -670,22 +670,39 @@ async fn pr431_shutdown_waits_for_a_removed_executable_delete() {
 // collects its Failed entry. This simulates the failure policy, not an OS error.
 #[tokio::test]
 async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admission() {
+  use tokio::io::AsyncBufReadExt as _;
+
   let supervisor = Arc::new(RunnerSupervisor::new(daemon_proto::DeviceRef {
     device_id: "device_test".to_string(),
   }));
   #[cfg(unix)]
   let mut command = {
-    let mut command = tokio::process::Command::new("/bin/sleep");
-    command.arg("1");
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command.args(["-c", "printf 'ready\\n'; read -r auv_fixture_release"]);
     command
   };
   #[cfg(windows)]
   let mut command = {
-    let mut command = tokio::process::Command::new("powershell");
-    command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 1"]);
+    let mut command = tokio::process::Command::new("cmd");
+    command.args(["/D", "/Q", "/C", "echo ready&set /p auv_fixture_release="]);
     command
   };
-  let child = command.kill_on_drop(true).spawn().expect("spawn short-lived fixture child");
+  // The CI failure waited for PowerShell startup and natural exit inside
+  // the shutdown deadline. A ready child now waits for stdin EOF instead.
+  let mut child = command
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .kill_on_drop(true)
+    .spawn()
+    .expect("spawn gated fixture child");
+  let release_child = child.stdin.take().expect("fixture stdin gate");
+  let mut output = tokio::io::BufReader::new(child.stdout.take().expect("fixture readiness output"));
+  let mut ready = String::new();
+  tokio::time::timeout(Duration::from_secs(10), output.read_line(&mut ready))
+    .await
+    .expect("bounded fixture startup")
+    .expect("read fixture readiness");
+  assert_eq!(ready.trim(), "ready");
   let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0);
   managed.runtime = ManagedRunnerRuntime::Executable { child };
   let (fail_stop, stop_released) = tokio::sync::oneshot::channel();
@@ -708,7 +725,9 @@ async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admissi
   let retained_before_cleanup = registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Failed as i32);
   let retry = supervisor.delete("runner_test", None, true).await;
   let rejects_new_delete = matches!(retry, Err(RunnerError::Stop(_)));
-  if waits_for_owner {
+  let waits_for_child = waits_for_owner && futures_util::poll!(shutdown.as_mut()).is_pending();
+  drop(release_child);
+  if waits_for_child {
     tokio::time::timeout(Duration::from_secs(5), shutdown.as_mut()).await.expect("shutdown reaps the retained child");
   }
   let registry_empty = supervisor.list().runners.is_empty();
@@ -720,6 +739,7 @@ async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admissi
   assert!(waits_for_owner, "shutdown returned before its deletion owner finished");
   assert!(retained_before_cleanup, "the synthetic failure reached the real retention policy");
   assert!(rejects_new_delete, "shutdown must close new deletion admission under the claim lock");
+  assert!(waits_for_child, "shutdown must reap the retained child after its stdin gate opens");
   assert!(registry_empty, "a late failure must enter shutdown cleanup instead of remaining registered");
 }
 
