@@ -488,7 +488,7 @@ mod frontend {
       if recording_failure.is_none()
         && let Ok(success) = &direct_result
       {
-        self.image_artifacts.register(&success.artifacts, &authority.store).map_err(invalid_params)?;
+        self.image_artifacts.register(&success.artifacts, &authority.store);
       }
       invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
     }
@@ -503,7 +503,6 @@ mod frontend {
       tokio::task::spawn_blocking(move || images.read(&req.run_id, &req.artifact_id, req.max_width, req.max_height))
         .await
         .map_err(|_| McpError::internal_error("image reader did not complete", None::<Value>))?
-        .map_err(invalid_params)
     }
 
     /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this

@@ -2,12 +2,15 @@
 use std::collections::VecDeque;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use auv_tracing::{ArtifactId, ArtifactMetadata, FileTracingStore, RunId, Sha256Digest};
 use base64::Engine as _;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, imageops::FilterType};
-use rmcp::model::{CallToolResult, Content};
+use rmcp::{
+  ErrorData as McpError,
+  model::{CallToolResult, Content},
+};
 use sha2::{Digest, Sha256};
 
 const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
@@ -21,8 +24,25 @@ pub(super) struct ImageArtifacts {
 }
 
 impl ImageArtifacts {
-  pub(super) fn register(&self, artifacts: &[ArtifactMetadata], store: &FileTracingStore) -> Result<(), String> {
-    let mut entries = self.entries.lock().map_err(|_| "image catalog unavailable")?;
+  fn lock_entries(&self) -> MutexGuard<'_, VecDeque<(ArtifactMetadata, PathBuf)>> {
+    match self.entries.lock() {
+      Ok(entries) => entries,
+      Err(poisoned) => {
+        tracing::warn!("recovering poisoned MCP image receipt catalog");
+        // Queue mutations insert or remove complete receipts. Unwinding cannot
+        // change their identity or path, but can interrupt FIFO eviction.
+        let mut entries = poisoned.into_inner();
+        while entries.len() > MAX_SESSION_IMAGES {
+          entries.pop_front();
+        }
+        self.entries.clear_poison();
+        entries
+      }
+    }
+  }
+
+  pub(super) fn register(&self, artifacts: &[ArtifactMetadata], store: &FileTracingStore) {
+    let mut entries = self.lock_entries();
     for metadata in artifacts {
       if image_format(metadata).is_none() {
         continue;
@@ -36,39 +56,37 @@ impl ImageArtifacts {
         entries.pop_front();
       }
     }
-    Ok(())
   }
 
-  pub(super) fn read(&self, run_id: &str, artifact_id: &str, max_width: u32, max_height: u32) -> Result<CallToolResult, String> {
-    let run_id: RunId = run_id.parse().map_err(|_| "run_id must be a canonical non-nil UUID")?;
-    let artifact_id: ArtifactId = artifact_id.parse().map_err(|_| "artifact_id must be a canonical non-nil UUID")?;
+  pub(super) fn read(&self, run_id: &str, artifact_id: &str, max_width: u32, max_height: u32) -> Result<CallToolResult, McpError> {
+    let run_id: RunId = run_id.parse().map_err(|_| McpError::invalid_params("run_id must be a canonical non-nil UUID", None))?;
+    let artifact_id: ArtifactId =
+      artifact_id.parse().map_err(|_| McpError::invalid_params("artifact_id must be a canonical non-nil UUID", None))?;
     if !(1..=4096).contains(&max_width) || !(1..=4096).contains(&max_height) {
-      return Err("image dimensions must be within 1..=4096".into());
+      return Err(McpError::invalid_params("image dimensions must be within 1..=4096", None));
     }
     let (metadata, path) = self
-      .entries
-      .lock()
-      .map_err(|_| "image catalog unavailable")?
+      .lock_entries()
       .iter()
       .find(|(metadata, _)| metadata.uri().run_id() == run_id && metadata.uri().artifact_id() == artifact_id)
       .cloned()
-      .ok_or("image artifact not available in this MCP server instance")?;
+      .ok_or_else(|| McpError::invalid_params("image artifact not available in this MCP server instance", None))?;
     if metadata.byte_length().get() > MAX_SOURCE_BYTES {
-      return Err("source image exceeds 16 MiB".into());
+      return Err(McpError::invalid_params("source image exceeds 16 MiB", None));
     }
-    let file = std::fs::File::open(path).map_err(|_| "image artifact cannot be opened")?;
-    let info = file.metadata().map_err(|_| "image artifact metadata unavailable")?;
+    let file = std::fs::File::open(path).map_err(|_| McpError::internal_error("image artifact cannot be opened", None))?;
+    let info = file.metadata().map_err(|_| McpError::internal_error("image artifact metadata unavailable", None))?;
     if !info.is_file() || info.len() != metadata.byte_length().get() {
-      return Err("image artifact length changed".into());
+      return Err(McpError::invalid_params("image artifact length changed", None));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| "image artifact cannot be read")?;
+    let mut bytes = Vec::with_capacity(metadata.byte_length().get() as usize);
+    file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| McpError::internal_error("image artifact cannot be read", None))?;
     if bytes.len() as u64 != metadata.byte_length().get() || Sha256Digest::new(Sha256::digest(&bytes).into()) != metadata.sha256() {
-      return Err("image artifact integrity check failed".into());
+      return Err(McpError::invalid_params("image artifact integrity check failed", None));
     }
-    let format = image_format(&metadata).ok_or("unsupported image content type")?;
+    let format = image_format(&metadata).ok_or_else(|| McpError::invalid_params("unsupported image content type", None))?;
     if image::guess_format(&bytes).ok() != Some(format) {
-      return Err("image content type does not match its bytes".into());
+      return Err(McpError::invalid_params("image content type does not match its bytes", None));
     }
     let mut limits = Limits::default();
     limits.max_image_width = Some(8192);
@@ -78,16 +96,21 @@ impl ImageArtifacts {
     // budget before construction and retain that decoder for pixel decoding.
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(limits.clone());
-    let mut decoder = reader.into_decoder().map_err(|_| "invalid image header or exceeded dimension/allocation limit")?;
+    let decoder =
+      reader.into_decoder().map_err(|_| McpError::invalid_params("invalid image header or exceeded dimension/allocation limit", None))?;
     let (width, height) = decoder.dimensions();
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_SOURCE_PIXELS {
-      return Err("source image exceeds dimension or 16 megapixel limit".into());
+      return Err(McpError::invalid_params("source image exceeds dimension or 16 megapixel limit", None));
     }
-    // Preserve ImageReader::decode's output-buffer reservation when reusing the
-    // decoder (`image` 0.25.10, src/io/image_reader_type.rs).
-    limits.reserve(decoder.total_bytes()).map_err(|_| "source image exceeds 128 MiB pixel allocation limit")?;
-    decoder.set_limits(limits).map_err(|_| "image decoder rejected remaining allocation budget")?;
-    let image = DynamicImage::from_decoder(decoder).map_err(|_| "image decoding failed or exceeded allocation limit")?;
+    // NOTICE(mcp-image-allocation-budgets): this bounds the external pixel buffer
+    // separately from the decoder's internal budget. Do not replace its limits
+    // after header parsing. A combined cap needs codec allocation accounting;
+    // see docs/ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md.
+    limits
+      .reserve(decoder.total_bytes())
+      .map_err(|_| McpError::invalid_params("source image exceeds 128 MiB pixel allocation limit", None))?;
+    let image = DynamicImage::from_decoder(decoder)
+      .map_err(|_| McpError::invalid_params("image decoding failed or exceeded allocation limit", None))?;
     let image = if width > max_width || height > max_height {
       // NOTICE: image 0.25.10 thumbnail sums u16 channels in u32 and can overflow.
       // Triangle uses floating-point samples. Reconsider thumbnail only after
@@ -98,9 +121,9 @@ impl ImageArtifacts {
     };
     let dimensions = (image.width(), image.height());
     let mut output = Cursor::new(Vec::new());
-    image.write_to(&mut output, ImageFormat::Png).map_err(|_| "image encoding failed")?;
+    image.write_to(&mut output, ImageFormat::Png).map_err(|_| McpError::internal_error("image encoding failed", None))?;
     if output.get_ref().len() > MAX_OUTPUT_BYTES {
-      return Err("encoded image exceeds 8 MiB; request a smaller image".into());
+      return Err(McpError::invalid_params("encoded image exceeds 8 MiB; request a smaller image", None));
     }
     Ok(CallToolResult::success(vec![
       Content::text(

@@ -15,11 +15,7 @@ fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
 }
 
-#[tokio::test]
-async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
-  use base64::Engine as _;
-
-  let directory = tempfile::tempdir().unwrap();
+fn image_server(project_root: &std::path::Path) -> McpServer {
   let mut adapters = core_invoke_adapters().into_iter().filter(|adapter| adapter.command_id != "display.capture").collect::<Vec<_>>();
   adapters.push(super::McpInvokeAdapter::new("display.capture", |_| async {
     let pixels = image::RgbImage::from_pixel(12, 6, image::Rgb([42, 84, 126]));
@@ -35,7 +31,15 @@ async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
       artifacts: vec![metadata],
     })
   }));
-  let server = McpServer::with_registry(directory.path().into(), Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap();
+  McpServer::with_registry(project_root.into(), Arc::new(auv_cli_invoke::default_registry()), adapters).unwrap()
+}
+
+#[tokio::test]
+async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
+  use base64::Engine as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let server = image_server(directory.path());
   let (server_transport, client_transport) = tokio::io::duplex(65_536);
   let server_handle = tokio::spawn(async move {
     let service = server.serve(server_transport).await.unwrap();
@@ -112,6 +116,81 @@ async fn mcp_image_tool_reads_only_images_returned_by_its_server() {
   other_handle.await.unwrap();
   client.cancel().await.unwrap();
   server_handle.await.unwrap();
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_catalog_poison_preserves_completed_invoke_and_image_receipt() {
+  use auv_tracing::{ArtifactId, ArtifactMetadata, ArtifactUri, Attributes, ByteLength, RunId, Sha256Digest};
+
+  // ROOT CAUSE:
+  //
+  // If catalog registration encountered a poisoned lock, invoke discarded an
+  // already-completed command and successful tracing flush as INVALID_PARAMS.
+  //
+  // Before the fix, the completed result and its image receipt were lost.
+  // The fix recovers the catalog and returns both without repeating the command.
+  let directory = tempfile::tempdir().unwrap();
+  let server = image_server(directory.path());
+  let store = auv_tracing::FileTracingStore::open(directory.path().join("poison")).unwrap();
+  let metadata = ArtifactMetadata::new(
+    ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
+    "test.poison".into(),
+    "image/png".into(),
+    Some("invalid/extension".into()),
+    ByteLength::new(1).unwrap(),
+    Sha256Digest::new([0; 32]),
+    Attributes::default(),
+  );
+  // An invalid extension makes Path::set_extension panic under the catalog lock.
+  assert!(std::panic::catch_unwind(|| server.image_artifacts.register(&[metadata], &store)).is_err());
+  let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
+  assert_ne!(result.is_error, Some(true));
+  let output = result.structured_content.unwrap();
+  assert_eq!(output["status"], "completed");
+  assert!(output.get("recording_failure").is_none());
+  let uri: ArtifactUri = output["artifacts"][0]["uri"].as_str().unwrap().parse().unwrap();
+  let image = server
+    .artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+      run_id: uri.run_id().to_string(),
+      artifact_id: uri.artifact_id().to_string(),
+      max_width: 12,
+      max_height: 6,
+    }))
+    .await
+    .unwrap();
+  assert_ne!(image.is_error, Some(true));
+  assert_eq!(serde_json::to_value(image).unwrap()["content"][1]["type"], "image");
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[tokio::test]
+async fn mcp_pr430_image_storage_failure_is_internal_error() {
+  // ROOT CAUSE:
+  //
+  // If a registered file disappeared, a valid image read became INVALID_PARAMS
+  // because every reader failure crossed the handler boundary as a String.
+  //
+  // Before the fix, callers could not distinguish server storage failure.
+  // The fix preserves the server error category through artifact_read_image.
+  let directory = tempfile::tempdir().unwrap();
+  let server = image_server(directory.path());
+  let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
+  let output = result.structured_content.unwrap();
+  let artifact = &output["artifacts"][0];
+  std::fs::remove_file(artifact["file_path"].as_str().unwrap()).unwrap();
+  let uri: auv_tracing::ArtifactUri = artifact["uri"].as_str().unwrap().parse().unwrap();
+  let error = server
+    .artifact_read_image(rmcp::handler::server::wrapper::Parameters(super::ArtifactReadImageRequest {
+      run_id: uri.run_id().to_string(),
+      artifact_id: uri.artifact_id().to_string(),
+      max_width: 12,
+      max_height: 6,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
+  assert!(error.message.contains("cannot be opened"));
 }
 
 #[test]

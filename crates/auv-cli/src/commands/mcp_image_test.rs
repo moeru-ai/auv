@@ -18,7 +18,7 @@ fn registered(bytes: &[u8], content_type: &str) -> (tempfile::TempDir, ImageArti
   std::fs::create_dir_all(path.parent().unwrap()).unwrap();
   std::fs::write(&path, bytes).unwrap();
   let catalog = ImageArtifacts::default();
-  catalog.register(std::slice::from_ref(&metadata), &store).unwrap();
+  catalog.register(std::slice::from_ref(&metadata), &store);
   (dir, catalog, metadata, path)
 }
 
@@ -85,7 +85,35 @@ fn image_fetch_pr430_applies_allocation_budget_to_header_parsing() {
   assert!(bytes.len() < MAX_SOURCE_BYTES as usize);
   let (_dir, catalog, metadata, _) = registered(&bytes, "image/png");
   let error = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap_err();
-  assert!(error.starts_with("invalid image header"), "{error}");
+  assert!(error.message.starts_with("invalid image header"), "{error}");
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_accepts_pixels_after_oversized_icc_is_discarded() {
+  use image::ImageEncoder as _;
+
+  let mut bytes = Vec::new();
+  let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+  encoder.set_icc_profile(vec![0; 160 * 1024 * 1024]).unwrap();
+  encoder.write_image(&[255], 1, 1, image::ExtendedColorType::L8).unwrap();
+  assert!(bytes.len() as u64 <= MAX_SOURCE_BYTES);
+
+  // png 0.18.1 ignores an iCCP parsing error. Confirm that the over-budget
+  // profile is absent, rather than assuming successful pixels retain it.
+  let mut limits = Limits::default();
+  limits.max_alloc = Some(128 * 1024 * 1024);
+  let mut decoder = image::codecs::png::PngDecoder::with_limits(Cursor::new(&bytes), limits).unwrap();
+  assert!(decoder.icc_profile().unwrap().is_none());
+  drop(decoder);
+
+  let (_dir, catalog, metadata, _) = registered(&bytes, "image/png");
+  let result = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let decoded = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  let pixels = image::load_from_memory(&decoded).unwrap().to_luma8();
+  assert_eq!(pixels.dimensions(), (1, 1));
+  assert_eq!(pixels.get_pixel(0, 0).0, [255]);
 }
 
 // https://github.com/moeru-ai/auv/pull/430
@@ -136,12 +164,12 @@ fn image_fetch_rejects_paths_wrong_run_and_other_connections() {
   let (_dir, catalog, metadata, _) = registered(&png(1, 1), "image/png");
   let run = metadata.uri().run_id().to_string();
   let artifact = metadata.uri().artifact_id().to_string();
-  assert!(catalog.read("../../secret", &artifact, 10, 10).unwrap_err().contains("UUID"));
-  assert!(catalog.read(&run, "C:\\secret.png", 10, 10).unwrap_err().contains("UUID"));
-  assert!(catalog.read(&RunId::new().to_string(), &artifact, 10, 10).unwrap_err().contains("not available"));
-  assert!(ImageArtifacts::default().read(&run, &artifact, 10, 10).unwrap_err().contains("not available"));
-  assert!(catalog.read(&run, &artifact, 0, 10).unwrap_err().contains("1..=4096"));
-  assert!(catalog.read(&run, &artifact, 10, 4097).unwrap_err().contains("1..=4096"));
+  assert!(catalog.read("../../secret", &artifact, 10, 10).unwrap_err().message.contains("UUID"));
+  assert!(catalog.read(&run, "C:\\secret.png", 10, 10).unwrap_err().message.contains("UUID"));
+  assert!(catalog.read(&RunId::new().to_string(), &artifact, 10, 10).unwrap_err().message.contains("not available"));
+  assert!(ImageArtifacts::default().read(&run, &artifact, 10, 10).unwrap_err().message.contains("not available"));
+  assert!(catalog.read(&run, &artifact, 0, 10).unwrap_err().message.contains("1..=4096"));
+  assert!(catalog.read(&run, &artifact, 10, 4097).unwrap_err().message.contains("1..=4096"));
 }
 
 #[test]
@@ -152,16 +180,17 @@ fn image_fetch_refuses_modified_missing_nonimage_and_mislabeled_bytes() {
   let mut bytes = std::fs::read(&path).unwrap();
   bytes[0] ^= 1;
   std::fs::write(&path, bytes).unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().contains("integrity"));
+  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("integrity"));
   std::fs::write(&path, b"short").unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().contains("length"));
+  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("length"));
   std::fs::remove_file(&path).unwrap();
-  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().contains("cannot be opened"));
+  assert!(catalog.read(&run, &artifact, 10, 10).unwrap_err().message.contains("cannot be opened"));
   let (_dir, catalog, metadata, _) = registered(b"private text", "text/plain");
   assert!(
     catalog
       .read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10)
       .unwrap_err()
+      .message
       .contains("not available")
   );
   let (_dir, catalog, metadata, _) = registered(b"not an image", "image/png");
@@ -169,6 +198,7 @@ fn image_fetch_refuses_modified_missing_nonimage_and_mislabeled_bytes() {
     catalog
       .read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10)
       .unwrap_err()
+      .message
       .contains("content type")
   );
 }
@@ -177,12 +207,66 @@ fn image_fetch_refuses_modified_missing_nonimage_and_mislabeled_bytes() {
 fn image_fetch_limits_source_bytes_and_dimensions_before_decode() {
   let (_dir, catalog, metadata, _) = registered(&png(8193, 1), "image/png");
   assert!(
-    catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10).unwrap_err().contains("dimension")
+    catalog
+      .read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10)
+      .unwrap_err()
+      .message
+      .contains("dimension")
   );
   let (_dir, catalog, metadata, _) = registered(&vec![0; MAX_SOURCE_BYTES as usize + 1], "image/png");
   assert!(
-    catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10).unwrap_err().contains("16 MiB")
+    catalog
+      .read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 10, 10)
+      .unwrap_err()
+      .message
+      .contains("16 MiB")
   );
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_enforces_output_limit_and_accepts_smaller_request() {
+  // Incompressible RGB pixels keep the source below 16 MiB while forcing
+  // native-size PNG output past 8 MiB. Exercise the real encoder and limit.
+  let mut pixels = image::RgbImage::new(2048, 1536);
+  let mut state = 0x1234_5678_u32;
+  for byte in pixels.as_mut() {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    *byte = (state >> 24) as u8;
+  }
+  let mut bytes = Cursor::new(Vec::new());
+  image::DynamicImage::ImageRgb8(pixels).write_to(&mut bytes, ImageFormat::Png).unwrap();
+  assert!(bytes.get_ref().len() > MAX_OUTPUT_BYTES);
+  assert!(bytes.get_ref().len() as u64 <= MAX_SOURCE_BYTES);
+  let (_dir, catalog, metadata, _) = registered(bytes.get_ref(), "image/png");
+  let run = metadata.uri().run_id().to_string();
+  let artifact = metadata.uri().artifact_id().to_string();
+  let error = catalog.read(&run, &artifact, 4096, 4096).unwrap_err();
+  assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+  assert!(error.message.contains("encoded image exceeds 8 MiB"));
+  let wire = serde_json::to_value(catalog.read(&run, &artifact, 1024, 1024).unwrap()).unwrap();
+  let decoded = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  assert!(decoded.len() <= MAX_OUTPUT_BYTES);
+  let image = image::load_from_memory(&decoded).unwrap();
+  assert_eq!((image.width(), image.height()), (1024, 768));
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_recovers_existing_receipt_after_catalog_poison() {
+  let (_dir, catalog, metadata, _) = registered(&png(1, 1), "image/png");
+  assert!(
+    std::panic::catch_unwind(|| {
+      let _guard = catalog.entries.lock().unwrap();
+      panic!("interrupt catalog access");
+    })
+    .is_err()
+  );
+  let image = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap();
+  assert_ne!(image.is_error, Some(true));
+  assert!(!catalog.entries.is_poisoned());
 }
 
 #[test]
@@ -213,11 +297,11 @@ fn image_fetch_retains_the_latest_returned_receipts_at_capacity() {
     let path = store.artifact_path(&metadata);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, &bytes).unwrap();
-    catalog.register(std::slice::from_ref(&metadata), &store).unwrap();
+    catalog.register(std::slice::from_ref(&metadata), &store);
     returned.push(artifact);
   }
   let run = run.to_string();
   assert!(catalog.read(&run, &returned.last().unwrap().to_string(), 10, 10).is_ok());
   assert!(catalog.read(&run, &returned[1].to_string(), 10, 10).is_ok());
-  assert!(catalog.read(&run, &returned[0].to_string(), 10, 10).unwrap_err().contains("not available"));
+  assert!(catalog.read(&run, &returned[0].to_string(), 10, 10).unwrap_err().message.contains("not available"));
 }
