@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use auv_tracing::{ArtifactId, ArtifactMetadata, FileTracingStore, RunId, Sha256Digest};
 use base64::Engine as _;
-use image::{ImageFormat, ImageReader, Limits};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, imageops::FilterType};
 use rmcp::model::{CallToolResult, Content};
 use sha2::{Digest, Sha256};
 
@@ -70,19 +70,29 @@ impl ImageArtifacts {
     if image::guess_format(&bytes).ok() != Some(format) {
       return Err("image content type does not match its bytes".into());
     }
-    let (width, height) = ImageReader::with_format(Cursor::new(&bytes), format).into_dimensions().map_err(|_| "invalid image header")?;
-    if width == 0 || height == 0 || width > 8192 || height > 8192 || u64::from(width) * u64::from(height) > MAX_SOURCE_PIXELS {
-      return Err("source image exceeds dimension or 16 megapixel limit".into());
-    }
     let mut limits = Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
+    // PNG metadata can expand while the decoder reads its header. Apply the
+    // budget before construction and retain that decoder for pixel decoding.
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
-    reader.limits(limits);
-    let image = reader.decode().map_err(|_| "image decoding failed or exceeded allocation limit")?;
+    reader.limits(limits.clone());
+    let mut decoder = reader.into_decoder().map_err(|_| "invalid image header or exceeded dimension/allocation limit")?;
+    let (width, height) = decoder.dimensions();
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_SOURCE_PIXELS {
+      return Err("source image exceeds dimension or 16 megapixel limit".into());
+    }
+    // Preserve ImageReader::decode's output-buffer reservation when reusing the
+    // decoder (`image` 0.25.10, src/io/image_reader_type.rs).
+    limits.reserve(decoder.total_bytes()).map_err(|_| "source image exceeds 128 MiB pixel allocation limit")?;
+    decoder.set_limits(limits).map_err(|_| "image decoder rejected remaining allocation budget")?;
+    let image = DynamicImage::from_decoder(decoder).map_err(|_| "image decoding failed or exceeded allocation limit")?;
     let image = if width > max_width || height > max_height {
-      image.thumbnail(max_width, max_height)
+      // NOTICE: image 0.25.10 thumbnail sums u16 channels in u32 and can overflow.
+      // Triangle uses floating-point samples. Reconsider thumbnail only after
+      // image/src/imageops/sample.rs supports large 16-bit sampling regions.
+      image.resize(max_width, max_height, FilterType::Triangle)
     } else {
       image
     };

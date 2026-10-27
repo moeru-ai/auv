@@ -77,8 +77,17 @@ request:
 | Encoded source | 16 MiB |
 | Source dimension | 8192 pixels on each axis |
 | Source pixel count | 16,777,216 pixels |
-| Decoder allocation | 128 MiB |
+| Decoder allocation budget | 128 MiB |
 | Encoded output PNG | 8 MiB |
+
+One decoder reads both the header and the pixels. Its limits apply before
+header parsing, because compressed PNG metadata can expand during this step.
+The reader reserves the pixel buffer from the allocation budget before pixel
+decoding. The image crate treats this budget as best effort. It does not cap
+process memory, allocator overhead, resizing buffers, or PNG encoding buffers.
+
+Image resizing uses the Triangle filter. This avoids the integer overflow in
+the image 0.25.10 thumbnail path for 16-bit PNG images.
 
 An output-size error asks the client to request a smaller image. File reads,
 decoding, scaling, and encoding run on a blocking worker. Catalog locks cover
@@ -93,11 +102,13 @@ scheduling contract. Both remain deferred for an owner-approved slice.
 The [image tests](../../../../crates/auv-cli/src/commands/mcp_image_test.rs)
 cover PNG decoding, dimensions, aspect ratio, receipt scope,
 invalid paths and IDs, byte integrity, content type, source limits, and catalog
-expiry. The [MCP transport test](../../../../crates/auv-cli/src/commands/mcp_test.rs)
+expiry. PR #430 regression tests also cover the header allocation budget and
+16-bit pixel values after resizing.
+The [MCP transport test](../../../../crates/auv-cli/src/commands/mcp_test.rs)
 covers discovery, the request schema, explicit
 image delivery, and rejection of images from another server instance.
 
-Windows verification on the feature branch, based on `main@8bf7e4f1`:
+Initial Windows verification at `d85ea044`, based on `main@8bf7e4f1`:
 
 | Command | Result |
 | --- | --- |
@@ -115,3 +126,35 @@ eviction. It passed after receipt-ordered eviction.
 
 The images in these tests come from fixtures. Desktop capture and input
 support remain defined by the invoke registry and their platform evidence.
+
+### PR #430 follow-up verification
+
+Two regression tests first failed against `d85ea044`. The dimension probe
+admitted oversized metadata before the 128 MiB decode budget applied. The
+16-bit image test failed with an integer overflow. Both tests pass with one
+decoder limited before header parsing and Triangle resizing.
+
+Windows verification after the fixes:
+
+| Command | Result |
+| --- | --- |
+| `cargo test --locked -p auv-cli --lib commands::mcp::` | 38 passed, 0 failed |
+| `cargo test --workspace --locked --no-fail-fast` | 1,630 passed, 25 ignored, 0 failed |
+| `cargo build --locked -p auv-device-helper-windows --bin auv-helper` | Passed |
+| `cargo check --locked` | Passed |
+| `cargo fmt --all -- --check` | Passed |
+| `cargo run --quiet --locked -- invoke --help` | Passed |
+| `cargo run --quiet --locked -- mcp serve --help` | Passed |
+| `git diff --check` | Passed |
+
+The workspace run selected the built helper through
+`AUV_WINDOWS_HELPER_EXE_PATH`. Real MCP stdio requests also used `scan.frame`
+fixtures to exercise the following cases:
+
+- A 512×512 RGBA16 PNG shrank to 1×1 with channel values
+  `[65535, 50000, 30000, 65535]` intact.
+- A header with a 127 MiB decompressed ICC profile and 2 MiB EXIF chunk failed
+  during header parsing with an invalid-params error.
+- A 163,167-byte PNG with a 160 MiB decompressed ICC profile returned its pixels.
+  Sampled process private memory peaked near 204 MiB during the read, compared
+  with 402 MiB before the fix. These samples do not define a process memory cap.

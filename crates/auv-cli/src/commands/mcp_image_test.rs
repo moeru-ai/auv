@@ -42,6 +42,75 @@ fn image_fetch_returns_decodable_mcp_png_with_aspect_ratio() {
   assert_eq!(image.to_rgb8().get_pixel(0, 0).0, [12, 34, 56]);
 }
 
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_applies_allocation_budget_to_header_parsing() {
+  use image::ImageEncoder as _;
+
+  // ROOT CAUSE:
+  //
+  // If a PNG contained compressed metadata, the dimension probe expanded it
+  // under the default 512 MiB budget before the 128 MiB decode budget applied.
+  //
+  // Before the fix, this header passed the probe and failed only during decode.
+  // The fix applies the budget to the first header parse, before pixel decoding.
+  let mut bytes = Vec::new();
+  let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+  encoder.set_icc_profile(vec![0; 127 * 1024 * 1024]).unwrap();
+  // The profile nearly fills the header budget. A following metadata chunk must fail
+  // in the header parser, rather than in a second decoder with a lower budget.
+  encoder.set_exif_metadata(vec![0; 2 * 1024 * 1024]).unwrap();
+  encoder.write_image(&[255], 1, 1, image::ExtendedColorType::L8).unwrap();
+  // The encoder writes EXIF first. Move that complete chunk after iCCP so its
+  // allocation exposes whether the profile consumed the configured budget.
+  let mut chunks = Vec::new();
+  let mut offset = 8;
+  while offset < bytes.len() {
+    let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+    let end = offset + 12 + length;
+    chunks.push(&bytes[offset..end]);
+    offset = end;
+  }
+  let exif = chunks.iter().find(|chunk| &chunk[4..8] == b"eXIf").unwrap();
+  let mut ordered = bytes[..8].to_vec();
+  for chunk in &chunks {
+    if &chunk[4..8] == b"IDAT" {
+      ordered.extend_from_slice(exif);
+    }
+    if &chunk[4..8] != b"eXIf" {
+      ordered.extend_from_slice(chunk);
+    }
+  }
+  let bytes = ordered;
+  assert!(bytes.len() < MAX_SOURCE_BYTES as usize);
+  let (_dir, catalog, metadata, _) = registered(&bytes, "image/png");
+  let error = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap_err();
+  assert!(error.starts_with("invalid image header"), "{error}");
+}
+
+// https://github.com/moeru-ai/auv/pull/430
+#[test]
+fn image_fetch_pr430_resizes_16_bit_png_without_pixel_corruption() {
+  // ROOT CAUSE:
+  //
+  // If a 16-bit PNG shrank to a small thumbnail, image 0.25.10 accumulated its
+  // pixels in u32, which overflowed for sufficiently large sampling regions.
+  //
+  // Before the fix, debug builds panicked and release builds changed the pixels.
+  // The fix preserves the channel values during bounded image resizing.
+  let pixel = image::Rgba([u16::MAX, 50_000, 30_000, u16::MAX]);
+  let pixels = image::DynamicImage::ImageRgba16(image::ImageBuffer::from_pixel(512, 512, pixel));
+  let mut bytes = Cursor::new(Vec::new());
+  pixels.write_to(&mut bytes, ImageFormat::Png).unwrap();
+  let (_dir, catalog, metadata, _) = registered(bytes.get_ref(), "image/png");
+  let result = catalog.read(&metadata.uri().run_id().to_string(), &metadata.uri().artifact_id().to_string(), 1, 1).unwrap();
+  let wire = serde_json::to_value(result).unwrap();
+  let decoded = base64::engine::general_purpose::STANDARD.decode(wire["content"][1]["data"].as_str().unwrap()).unwrap();
+  let image = image::load_from_memory(&decoded).unwrap().to_rgba16();
+  assert_eq!(image.dimensions(), (1, 1));
+  assert_eq!(*image.get_pixel(0, 0), pixel);
+}
+
 #[test]
 fn image_fetch_accepts_supported_formats_without_upscaling() {
   let pixels = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(12, 6, image::Rgb([12, 34, 56])));
