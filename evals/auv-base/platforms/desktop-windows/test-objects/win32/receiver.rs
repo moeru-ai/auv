@@ -100,7 +100,8 @@ mod native {
   const PAD_TOP: i32 = 206;
   /// `MK_LBUTTON` in a mouse message's `wparam`: the left button is down.
   const MK_LBUTTON: usize = 0x0001;
-  /// `EM_GETFIRSTVISIBLELINE` lives in the Controls module, which this crate does not enable.
+  /// Edit-control messages live in the Controls module, which this crate does not enable.
+  const EM_GETSEL: u32 = 0x00B0;
   const EM_GETFIRSTVISIBLELINE: u32 = 0x00CE;
   const LINE_COUNT: usize = 400;
   /// The state strip: sixteen cells of `STRIP_CELL_WIDTH` by `STRIP_CELL_HEIGHT`, `STRIP_LEFT` from the
@@ -927,9 +928,21 @@ mod native {
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
+      let mut selection_start = 0_u32;
+      let mut selection_end = 0_u32;
+      // SAFETY: the edit belongs to this thread, and both DWORD outputs live through the call.
+      unsafe {
+        let _ = SendMessageW(
+          typing,
+          EM_GETSEL,
+          WPARAM((&mut selection_start as *mut u32) as usize),
+          LPARAM((&mut selection_end as *mut u32) as isize),
+        );
+      }
       state["submitted_text"] = json!(SUBMITTED_TEXT.lock().map(|text| text.clone()).unwrap_or_default());
       state["typing"] = json!({
         "text": window_text(typing),
+        "selection": [selection_start, selection_end],
         // The request runs on the window's own thread, so this is the control focused in it.
         "focused": unsafe { GetFocus() } == typing,
         "chars": c.typing_chars.load(Relaxed),
