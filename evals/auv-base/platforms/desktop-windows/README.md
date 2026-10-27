@@ -95,7 +95,10 @@ exactly one click. The fixture's `submitted_text` is copied from the control by 
 No input action is retried. OCR readiness gets at most three observations. Before dispatch,
 OCR must select a single candidate inside the expected owned control, the user must have
 been idle for two seconds, and keyboard input requires the correct foreground and control
-focus. The returned click point is checked too. Wrong-focus and wrong-window controls
+focus. Every workflow `screen.clickText` also passes `--within LEFT,TOP,RIGHT,BOTTOM`:
+local Invoke and selected Runner reject a re-resolved OCR action point outside this owned
+control before sending input, and the direct Rust route checks the same fence. The returned
+click point is still checked independently. Wrong-focus and wrong-window controls
 must reject keys before dispatch and leave both applications' text/key logs unchanged.
 These checks are not an atomic OS focus lease; a concurrent desktop change can still race
 the precheck. Foreground actions are expected to change input/pointer state and are recorded
@@ -112,8 +115,9 @@ So, whenever the record medium is usable and normal error handling can run, `wor
 ends with an explicit outcome; a forced process kill or an unwritable volume can still truncate
 it. Global misconfigurations (output directory, missing `auv`, temp space) still stop the run
 with a process error before any route runs.
-Because `screen.clickText` re-resolves its target after the preflight, all functional workflow
-runs must happen in a dedicated, isolated Windows session with no user applications open.
+The click fence does not make OCR and native input atomic: a window may move, focus may
+change, or an occluder may appear after the final check. All functional workflow runs must
+therefore still happen in a dedicated, isolated Windows session with no user applications open.
 
 `--observe-only` exercises resolution, owned-window capture, OCR coordinates and Runner
 lifecycle, with no input, decoy activation, clipboard access or pointer/foreground restoration.
