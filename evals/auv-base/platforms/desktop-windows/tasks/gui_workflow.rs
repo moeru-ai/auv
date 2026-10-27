@@ -813,8 +813,25 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       return Ok(());
     }
     click_text(&mut scenario, &entry, &input_caption, layout.typing_rect)?;
+    // This native single-line EDIT does not select all on Ctrl+A. Select the line through
+    // keyboard input, then verify the actual control selection before replacing its text.
     scenario.keys_may_go(&mut target)?;
-    call(&mut scenario, &entry, "input.key", &["ctrl+a".into()], false)?;
+    call(&mut scenario, &entry, "input.key", &["home".into()], false)?;
+    scenario.keys_may_go(&mut target)?;
+    call(&mut scenario, &entry, "input.key", &["shift+end".into()], false)?;
+    let selection = target.request(json!({"cmd": "state"}))?;
+    let expected_selection = json!([0, input_caption.encode_utf16().count()]);
+    let selected = selection["typing"]["focused"] == true
+      && selection["typing"]["text"].as_str() == Some(input_caption.as_str())
+      && selection["typing"]["selection"] == expected_selection;
+    scenario.records.write(
+      "selection_verification",
+      json!({"expected": expected_selection, "actual": selection["typing"]["selection"], "text": selection["typing"]["text"],
+      "focused": selection["typing"]["focused"], "keys": selection["typing"]["keys"], "verified": selected}),
+    )?;
+    if !selected {
+      bail!("the application did not select the complete existing text");
+    }
     scenario.keys_may_go(&mut target)?;
     let text = format!("Workflow {route} {round} {}", std::process::id());
     call(&mut scenario, &entry, "input.typeText", &[text.clone()], false)?;

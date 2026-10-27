@@ -86,11 +86,16 @@ that text again. Its records hold only whether the clipboard came back, never wh
 
 `workflow` runs the same owned Win32 record-entry workflow through direct Rust APIs, local
 Invoke, and a real daemon-owned Runner selected by `--run`: resolve and capture the window,
-OCR the input caption, click, verify foreground and control focus, select and type text,
+OCR the input caption, click, verify foreground and control focus, select the existing
+single-line text with Home and Shift+End, verify the receiver's actual selection, type text,
 scroll a separate control, OCR-click Submit, then check the actual submitted record and
 decode the painted state strip from a final capture. Receiver setup starts with a nonzero
 calibration count; it is never counted as delivered input. Every real submission must add
 exactly one click. The fixture's `submitted_text` is copied from the control by `BN_CLICKED`.
+
+The fixture uses a native single-line `EDIT`, which did not select all on Ctrl+A in the
+Windows desktop run; its selection is checked through `EM_GETSEL` before typing. This
+scenario does not claim Ctrl+A selects text in every application.
 
 No input action is retried. OCR readiness gets at most three observations. Before dispatch,
 OCR must select a single candidate inside the expected owned control, the user must have
