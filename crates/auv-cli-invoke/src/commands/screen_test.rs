@@ -84,6 +84,20 @@ fn region_capture_result_keeps_pixels_out_of_json() {
 }
 
 #[test]
+fn click_text_fence_rejects_changed_ocr_target_before_delivery() {
+  let within = parse_click_bounds(Some("100,200,240,290")).expect("valid bounds");
+  assert!(check_click_bounds(&auv_driver::Point::new(120.0, 220.0), within).is_ok());
+  let error = check_click_bounds(&auv_driver::Point::new(241.0, 220.0), within).expect_err("off-control point must refuse");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+  assert!(error.message.contains("no input delivered"));
+  assert!(check_click_bounds(&auv_driver::Point::new(999.0, 999.0), None).is_ok(), "existing unbounded calls are unchanged");
+  for malformed in ["100,200,100,290", "100,200,240", "100,200,NaN,290", "100,200,inf,290", "nope,200,240,290"] {
+    let error = parse_click_bounds(Some(malformed)).expect_err("invalid fence must fail before OCR or input");
+    assert_eq!(error.code, crate::FailureCode::InvalidInput, "{malformed}");
+  }
+}
+
+#[test]
 fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   let click = ScreenTextClick {
     matches: auv_driver::OcrMatches {
@@ -178,7 +192,7 @@ fn screen_click_text_rejects_target_activation_before_windows_input() {
 fn cancelled_screen_click_never_opens_the_desktop() {
   let cancellation = InvokeCancellation::new();
   cancellation.cancel();
-  let error = futures_executor::block_on(click_recognized_screen_text_with_cancellation("Absent".into(), &cancellation))
+  let error = futures_executor::block_on(click_recognized_screen_text_with_cancellation("Absent".into(), None, &cancellation))
     .expect_err("already cancelled before capture");
   assert!(error.message.contains("cancelled"), "{error:?}");
 }
