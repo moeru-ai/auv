@@ -2,6 +2,80 @@ use super::super::capture_store::CaptureStoreOptions;
 use super::*;
 use std::cell::Cell;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389789663
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389756803
+// ROOT CAUSE:
+// Window captures collected two extra snapshots even when the platform refused
+// every guarded window click. Pixels remain useful; that baseline does not.
+#[test]
+fn unavailable_window_guard_skips_baseline_queries_pr_429() {
+  let captures = Cell::new(0);
+  let expected = capture();
+  let (pixels, state) = CaptureState::capture_window(
+    window(),
+    CaptureResolution::Native,
+    Some("window placement unavailable"),
+    || panic!("unsupported window guard must not enumerate a baseline"),
+    || {
+      captures.set(captures.get() + 1);
+      Ok(expected.clone())
+    },
+  )
+  .unwrap();
+  assert_eq!(pixels, expected);
+  assert_eq!(captures.get(), 1);
+  assert_eq!(state.as_ref().unwrap_err(), "window placement unavailable");
+  let store = CaptureStore::new(CaptureStoreOptions::default());
+  let id = store.insert(pixels);
+  store.set_click_state(&id, state);
+  assert_eq!(*store.get(&id).unwrap(), expected, "capture stays available for image fetch and OCR");
+  assert_eq!(store.click_state(&id).unwrap_err(), "window placement unavailable");
+  let calls = Cell::new(0);
+  let error =
+    attempt(&store, &proto::CaptureRef { capture_id: id }, &window(), Err(Status::internal("recapture must not run")), &calls).unwrap_err();
+  assert!(error.message().contains("window placement unavailable"));
+  assert_eq!(reason(error), Reason::CheckUnavailable);
+  assert_eq!(calls.get(), 0);
+}
+
+#[test]
+fn available_window_guard_keeps_both_capture_snapshots_pr_429() {
+  let steps = std::cell::RefCell::new(Vec::new());
+  let (_, state) = CaptureState::capture_window(
+    window(),
+    CaptureResolution::Native,
+    None,
+    || {
+      steps.borrow_mut().push("list");
+      Ok(vec![window()])
+    },
+    || {
+      steps.borrow_mut().push("capture");
+      Ok(capture())
+    },
+  )
+  .unwrap();
+  assert_eq!(*steps.borrow(), ["list", "capture", "list"]);
+  let state = state.unwrap();
+  assert_eq!(state.target, CaptureTarget::Window(window()));
+  assert_eq!(state.before, [window()]);
+  assert_eq!(state.after, [window()]);
+}
+
+#[test]
+fn unavailable_window_guard_keeps_capture_errors_pr_429() {
+  let error = CaptureState::capture_window(
+    window(),
+    CaptureResolution::Native,
+    Some("window placement unavailable"),
+    || panic!("no baseline query"),
+    || Err(Status::permission_denied("capture denied")),
+  )
+  .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::PermissionDenied);
+  assert_eq!(error.message(), "capture denied");
+}
+
 // https://github.com/moeru-ai/auv/pull/429#discussion_r4386288123
 // ROOT CAUSE:
 //
@@ -222,14 +296,49 @@ fn unrelated_window_churn_does_not_refuse_target_clicks() {
   assert_eq!(calls.get(), 1);
 }
 
-// https://github.com/moeru-ai/auv/pull/429#discussion_r4382693049
-#[test]
-fn recapture_failure_preserves_the_backend_cause() {
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+// ROOT CAUSE:
+// Recapture errors were reduced to message text before encoding the refusal.
+// Preserve the underlying category while refusing without native input.
+#[tokio::test]
+async fn recapture_failure_preserves_the_backend_cause_pr_429() {
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+  let records = std::sync::Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(records.clone()).build().unwrap();
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let (store, reference, _) = stored();
   let calls = Cell::new(0);
-  let error = attempt(&store, &reference, &window(), Err(Status::permission_denied("capture permission denied")), &calls).unwrap_err();
-  assert!(error.message().contains("capture permission denied"));
+  for code in [
+    tonic::Code::PermissionDenied,
+    tonic::Code::Unavailable,
+    tonic::Code::NotFound,
+  ] {
+    let error =
+      root.in_scope(|| attempt(&store, &reference, &window(), Err(Status::new(code, "capture check failed")), &calls)).unwrap_err();
+    assert!(error.message().contains("capture check failed"));
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    let detail = auv_api_proto::click_precondition::failure(&error).unwrap();
+    assert_eq!(detail.reason, Reason::CheckUnavailable as i32);
+    assert_eq!(detail.cause_code, Some(code as i32));
+  }
   assert_eq!(calls.get(), 0);
+  dispatch.flush().await.unwrap();
+  let codes: Vec<_> = records
+    .records()
+    .into_iter()
+    .filter_map(|record| match record {
+      TraceRecord::Event {
+        schema, payload, ..
+      } if schema.name().as_str() == "auv.input.click_refused" => {
+        let json: serde_json::Value = serde_json::from_str(payload.get()).unwrap();
+        assert_eq!(json["input_delivered"], false);
+        assert_eq!(json["recovery"], "new_capture");
+        Some(json["cause_code"].as_i64().unwrap())
+      }
+      _ => None,
+    })
+    .collect();
+  assert_eq!(codes, [7, 14, 5]);
 }
 
 // https://github.com/moeru-ai/auv/pull/429#discussion_r4382693034

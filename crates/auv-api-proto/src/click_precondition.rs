@@ -8,6 +8,15 @@ const TYPE_URL: &str = "type.googleapis.com/auv.api.driver.v1.ClickPreconditionF
 
 /// Wraps the typed refusal in the standard gRPC rich-error envelope.
 pub fn status(capture_id: &str, reason: ClickPreconditionFailureReason, cause: &str) -> tonic::Status {
+  encode_status(capture_id, reason, cause, None)
+}
+
+/// Retains the underlying check's gRPC category without changing the refusal.
+pub fn status_with_cause(capture_id: &str, reason: ClickPreconditionFailureReason, cause: &tonic::Status) -> tonic::Status {
+  encode_status(capture_id, reason, cause.message(), Some(cause.code()))
+}
+
+fn encode_status(capture_id: &str, reason: ClickPreconditionFailureReason, cause: &str, code: Option<tonic::Code>) -> tonic::Status {
   let message =
     format!("click capture precondition failed ({}): {cause}; take a new capture and select the target again", reason.as_str_name());
   let detail = prost_types::Any {
@@ -15,6 +24,7 @@ pub fn status(capture_id: &str, reason: ClickPreconditionFailureReason, cause: &
     value: ClickPreconditionFailure {
       capture_id: capture_id.into(),
       reason: reason as i32,
+      cause_code: code.filter(|code| *code != tonic::Code::Ok).map(|code| code as i32),
     }
     .encode_to_vec(),
   };
@@ -52,7 +62,20 @@ mod tests {
     assert_eq!(envelope.message, status.message());
     assert_eq!(envelope.details[0].type_url, TYPE_URL);
     assert_eq!(failure(&status).unwrap().capture_id, "cap");
+    assert_eq!(failure(&status).unwrap().cause_code, None);
     assert!(status.message().contains("permission denied"));
+  }
+
+  // https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+  #[test]
+  fn original_check_code_survives_the_rich_error_envelope_pr_429() {
+    let source = tonic::Status::permission_denied("screen recording permission revoked");
+    let status = status_with_cause("cap", ClickPreconditionFailureReason::CheckUnavailable, &source);
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    let detail = failure(&status).unwrap();
+    assert_eq!(detail.cause_code, Some(tonic::Code::PermissionDenied as i32));
+    assert_eq!(detail.reason, ClickPreconditionFailureReason::CheckUnavailable as i32);
+    assert!(status.message().contains(source.message()));
   }
 
   #[test]
@@ -78,6 +101,7 @@ mod tests {
           value: ClickPreconditionFailure {
             capture_id: "cap".into(),
             reason: 99,
+            cause_code: None,
           }
           .encode_to_vec(),
         }],

@@ -1,0 +1,429 @@
+{
+  "date": "2026-10-27",
+  "revisions": {
+    "main": "be0074beff9c4eabb0d0ab37272ee4a2b969a922",
+    "submitted": "44c9ed4d4c0d5cbf73bfb9edb591d54406a6c64d",
+    "patched": "44c9ed4d4c0d5cbf73bfb9edb591d54406a6c64d plus transferred patch"
+  },
+  "patch_sha256": "23a5573fe7e5aff37c31b63616250466bed32c96fb45cb9d7bd14f39fd7a866c",
+  "profile": "release; opt-level=2; debug=0",
+  "units": "milliseconds",
+  "percentile_method": "nearest_rank",
+  "warmup_per_group": 10,
+  "results": [
+    {
+      "revision": "main",
+      "kind": "window",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        3
+      ],
+      "rpc_ms": {
+        "p50": 299.798,
+        "p95": 320.916
+      },
+      "components": {
+        "resolution": {
+          "p50": 52.286,
+          "p95": 71.072
+        },
+        "driver_before": {
+          "p50": 58.946,
+          "p95": 78.475
+        },
+        "driver_after": {
+          "p50": 51.695,
+          "p95": 67.827
+        },
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "main",
+      "kind": "window",
+      "group": "lookup_failure",
+      "n": 100,
+      "statuses": [
+        14
+      ],
+      "enum_counts": [
+        1
+      ],
+      "rpc_ms": {
+        "p50": 0.932,
+        "p95": 1.788
+      },
+      "components": {
+        "resolution": {
+          "p50": 0.698,
+          "p95": 1.493
+        },
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "main",
+      "kind": "display",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        0
+      ],
+      "rpc_ms": {
+        "p50": 100.375,
+        "p95": 106.93
+      },
+      "components": {
+        "resolution": null,
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "main",
+      "kind": "health_during_capture",
+      "n": 20,
+      "rpc_ms": {
+        "p50": 89.564,
+        "p95": 98.772
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "window",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        5
+      ],
+      "rpc_ms": {
+        "p50": 400.889,
+        "p95": 433.052
+      },
+      "components": {
+        "resolution": {
+          "p50": 59.547,
+          "p95": 75.92
+        },
+        "driver_before": {
+          "p50": 57.056,
+          "p95": 73.319
+        },
+        "driver_after": {
+          "p50": 52.978,
+          "p95": 70.623
+        },
+        "baseline_before": {
+          "p50": 50.963,
+          "p95": 71.16
+        },
+        "baseline_after": {
+          "p50": 60.532,
+          "p95": 72.565
+        },
+        "baseline_combined": {
+          "p50": 113.409,
+          "p95": 135.944
+        }
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "window",
+      "group": "lookup_failure",
+      "n": 100,
+      "statuses": [
+        14
+      ],
+      "enum_counts": [
+        1
+      ],
+      "rpc_ms": {
+        "p50": 0.591,
+        "p95": 1.661
+      },
+      "components": {
+        "resolution": {
+          "p50": 0.487,
+          "p95": 1.255
+        },
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "window",
+      "group": "baseline_failure",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        5
+      ],
+      "rpc_ms": {
+        "p50": 399.873,
+        "p95": 584.857
+      },
+      "components": {
+        "resolution": {
+          "p50": 65.752,
+          "p95": 119.4
+        },
+        "driver_before": {
+          "p50": 58.344,
+          "p95": 127.697
+        },
+        "driver_after": {
+          "p50": 59.393,
+          "p95": 115.215
+        },
+        "baseline_before": {
+          "p50": 2.244,
+          "p95": 2.916
+        },
+        "baseline_after": {
+          "p50": 65.17,
+          "p95": 121.601
+        },
+        "baseline_combined": {
+          "p50": 67.836,
+          "p95": 124.767
+        }
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "display",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        2
+      ],
+      "rpc_ms": {
+        "p50": 199.092,
+        "p95": 220.829
+      },
+      "components": {
+        "resolution": null,
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": {
+          "p50": 60.238,
+          "p95": 74.991
+        },
+        "baseline_after": {
+          "p50": 51.16,
+          "p95": 65.927
+        },
+        "baseline_combined": {
+          "p50": 112.234,
+          "p95": 135.215
+        }
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "display",
+      "group": "baseline_failure",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        2
+      ],
+      "rpc_ms": {
+        "p50": 116.234,
+        "p95": 204.488
+      },
+      "components": {
+        "resolution": null,
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": {
+          "p50": 2.431,
+          "p95": 3.16
+        },
+        "baseline_after": {
+          "p50": 52.281,
+          "p95": 68.838
+        },
+        "baseline_combined": {
+          "p50": 54.414,
+          "p95": 72.269
+        }
+      }
+    },
+    {
+      "revision": "submitted",
+      "kind": "health_during_capture",
+      "n": 20,
+      "rpc_ms": {
+        "p50": 214.783,
+        "p95": 331.943
+      }
+    },
+    {
+      "revision": "patched",
+      "kind": "window",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        3
+      ],
+      "rpc_ms": {
+        "p50": 300.918,
+        "p95": 321.028
+      },
+      "components": {
+        "resolution": {
+          "p50": 52.89,
+          "p95": 70.371
+        },
+        "driver_before": {
+          "p50": 60.966,
+          "p95": 78.439
+        },
+        "driver_after": {
+          "p50": 50.309,
+          "p95": 65.397
+        },
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "patched",
+      "kind": "window",
+      "group": "lookup_failure",
+      "n": 100,
+      "statuses": [
+        14
+      ],
+      "enum_counts": [
+        1
+      ],
+      "rpc_ms": {
+        "p50": 0.423,
+        "p95": 1.713
+      },
+      "components": {
+        "resolution": {
+          "p50": 0.345,
+          "p95": 1.393
+        },
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": null,
+        "baseline_after": null,
+        "baseline_combined": null
+      }
+    },
+    {
+      "revision": "patched",
+      "kind": "display",
+      "group": "success",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        2
+      ],
+      "rpc_ms": {
+        "p50": 201.265,
+        "p95": 225.639
+      },
+      "components": {
+        "resolution": null,
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": {
+          "p50": 60.298,
+          "p95": 76.129
+        },
+        "baseline_after": {
+          "p50": 53.453,
+          "p95": 75.349
+        },
+        "baseline_combined": {
+          "p50": 115.482,
+          "p95": 141.696
+        }
+      }
+    },
+    {
+      "revision": "patched",
+      "kind": "display",
+      "group": "baseline_failure",
+      "n": 100,
+      "statuses": [
+        0
+      ],
+      "enum_counts": [
+        2
+      ],
+      "rpc_ms": {
+        "p50": 116.066,
+        "p95": 204.84
+      },
+      "components": {
+        "resolution": null,
+        "driver_before": null,
+        "driver_after": null,
+        "baseline_before": {
+          "p50": 2.387,
+          "p95": 3.031
+        },
+        "baseline_after": {
+          "p50": 51.773,
+          "p95": 70.965
+        },
+        "baseline_combined": {
+          "p50": 54.513,
+          "p95": 72.792
+        }
+      }
+    },
+    {
+      "revision": "patched",
+      "kind": "health_during_capture",
+      "n": 20,
+      "rpc_ms": {
+        "p50": 214.657,
+        "p95": 282.569
+      }
+    }
+  ]
+}

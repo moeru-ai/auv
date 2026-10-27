@@ -18,6 +18,38 @@ import { createAuv } from './client'
 import { ClickPreconditionError, splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
+  // https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+  it.each([7, 14, 5, undefined])('preserves recapture cause code %s without retrying', async (causeCode) => {
+    const methods: string[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          methods.push(call.method)
+          const detail = anyPack(ClickPreconditionFailureSchema, create(ClickPreconditionFailureSchema, {
+            captureId: 'cap',
+            causeCode,
+            reason: ClickPreconditionFailureReason.CHECK_UNAVAILABLE,
+          }))
+          const envelope = new BinaryWriter().tag(3, WireType.LengthDelimited).bytes(toBinary(AnySchema, detail)).finish()
+          throw new AuvRpcError(9, 'recapture failed', undefined, envelope)
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await expect(runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'cap' })).rejects.toMatchObject({
+      causeCode,
+      name: 'ClickPreconditionError',
+      reason: ClickPreconditionFailureReason.CHECK_UNAVAILABLE,
+      rpcCode: 9,
+    })
+    expect(methods.map(method => method.split('/').pop())).toEqual(['ClickPointWithCapture'])
+    await connection.close()
+  })
+
   // https://github.com/moeru-ai/auv/pull/429#discussion_r4383986620
   it('never sends a guarded click to an older Runner through the unguarded method', async () => {
     const methods: string[] = []

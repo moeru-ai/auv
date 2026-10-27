@@ -33,6 +33,8 @@ pub enum CapabilityError {
   CapturePrecondition {
     capture_id: String,
     reason: ClickPreconditionFailureReason,
+    /// Original check category, absent for policy refusals and older Runners.
+    cause_code: Option<tonic::Code>,
     /// Original remote failure, including the bounded admission cause.
     source: tonic::Status,
   },
@@ -65,6 +67,7 @@ fn click_status(status: tonic::Status) -> CapabilityError {
     Some(failure) => CapabilityError::CapturePrecondition {
       capture_id: failure.capture_id,
       reason: ClickPreconditionFailureReason::try_from(failure.reason).expect("wire decoder checked reason"),
+      cause_code: failure.cause_code.filter(|code| (1..=16).contains(code)).map(tonic::Code::from_i32),
       source: status,
     },
     None => capability_status(status),
@@ -72,6 +75,14 @@ fn click_status(status: tonic::Status) -> CapabilityError {
 }
 
 impl CapabilityError {
+  /// Underlying capture-check category, separate from the outer conflict.
+  pub fn capture_cause_kind(&self) -> Option<crate::error::ClientErrorKind> {
+    match self {
+      Self::CapturePrecondition { cause_code, .. } => cause_code.map(crate::error::ClientErrorKind::from_code),
+      _ => None,
+    }
+  }
+
   /// Returns the protocol-neutral transport category when the failure came
   /// from the remote capability service.
   pub fn client_kind(&self) -> Option<crate::error::ClientErrorKind> {

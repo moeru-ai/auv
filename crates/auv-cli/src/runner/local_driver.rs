@@ -2412,14 +2412,16 @@ impl CaptureService for LocalCaptureService {
       ..Default::default()
     };
     let resolution = options.resolution;
-    let before = self.session.window().list().map_err(|error| error.to_string());
-    let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
-    let state = super::click_precondition::CaptureState::new(
-      super::click_precondition::CaptureTarget::Window(window.clone()),
+    // TODO(capture-baseline-latency): native timing confirms that synchronous
+    // capture delays other RPCs. A scheduling follow-up must preserve platform
+    // thread ownership; see 2026-10-27-pr-429-linux-review-handoff.md.
+    let (capture, state) = super::click_precondition::CaptureState::capture_window(
+      window.clone(),
       resolution,
-      before,
-      self.session.window().list().map_err(|error| error.to_string()),
-    );
+      super::click_precondition::window_guard_unavailable(),
+      || self.session.window().list().map_err(|error| error.to_string()),
+      || self.session.window().capture_with(&window, options).map_err(driver_status),
+    )?;
     let capture = stored_capture_to_proto(&self.captures, capture);
     self.captures.set_click_state(&capture.r#ref.as_ref().expect("stored reference").capture_id, state);
     record_stored_capture(&self.captures, &capture, "auv.driver.window_capture");
@@ -2436,6 +2438,10 @@ impl CaptureService for LocalCaptureService {
     let request = request.into_inner();
     let display = display_selector_from_proto(request.selector)?;
     let resolution = capture_resolution_from_proto(request.resolution)?;
+    // TODO(capture-baseline-latency): measured display snapshots delay other
+    // RPCs, but guards still need both. Review platform scheduling constraints;
+    // measurements and the deferred scheduling decision are recorded in
+    // docs/ai/references/driver/2026-10-27-pr-429-linux-review-handoff.md.
     let before = self.session.window().list().map_err(|error| error.to_string());
     let captured = self
       .session
@@ -2858,9 +2864,7 @@ fn execute_click(
   use super::click_precondition;
   // Target lookup and coordinate failures are uncheckable preconditions too.
   let target_error = |error: Status| match precondition {
-    Some(reference) => {
-      click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable, error.message())
-    }
+    Some(reference) => click_precondition::refusal_with_cause(&reference.capture_id, &error),
     None => error,
   };
   let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
@@ -2891,16 +2895,12 @@ fn execute_click(
     });
   };
   let options = click_options_from_proto(request.options)?;
-  // TODO(linux-guarded-window-placement): AT-SPI does not establish screen
-  // placement on Wayland. Refuse even with a display baseline until the
-  // driver exposes a reliable placement capability (PR #429).
-  #[cfg(target_os = "linux")]
-  if let Some(reference) = precondition {
-    return Err(click_precondition::refusal(
-      &reference.capture_id,
-      proto::ClickPreconditionFailureReason::CheckUnavailable,
-      "Linux window-targeted guards require reliable screen placement; use a display capture with screen coordinates",
-    ));
+  // Refuse even with a display baseline when window placement is unreliable.
+  // The same policy skips unusable baseline collection during window capture.
+  if let Some(reference) = precondition
+    && let Some(cause) = click_precondition::window_guard_unavailable()
+  {
+    return Err(click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable, cause));
   }
   let window = resolve_window_ref(session, window_ref).map_err(target_error)?;
   let point = window_point_for_position(&window, &position, |id| display_origin(session, id)).map_err(target_error)?;

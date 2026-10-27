@@ -22,6 +22,24 @@ pub(super) struct CaptureState {
 }
 
 impl CaptureState {
+  /// Capture pixels even when window guards are unavailable, without collecting
+  /// snapshots that admission cannot use. Both closures are native IO boundaries.
+  pub(super) fn capture_window(
+    window: Window,
+    resolution: CaptureResolution,
+    guard_unavailable: Option<&str>,
+    mut list_windows: impl FnMut() -> Result<Vec<Window>, String>,
+    capture: impl FnOnce() -> Result<Capture, Status>,
+  ) -> Result<(Capture, Result<Self, String>), Status> {
+    if let Some(cause) = guard_unavailable {
+      return capture().map(|capture| (capture, Err(cause.to_string())));
+    }
+    let before = list_windows();
+    let capture = capture()?;
+    let state = Self::new(CaptureTarget::Window(window), resolution, before, list_windows());
+    Ok((capture, state))
+  }
+
   /// Heap retained by this reference's provenance, independent of shared pixels.
   pub(super) fn retained_bytes(&self) -> usize {
     let space_bytes = |space: &CoordinateSpace| match space {
@@ -115,9 +133,19 @@ impl CaptureState {
         (CaptureTarget::Display(captured.display), captured.capture)
       }
     };
-    let after = session.window().list().map_err(|error| error.to_string());
-    Ok((capture, Self::new(target, self.resolution, Ok(before), after)))
+    let after = session.window().list().map_err(super::local_driver::driver_status)?;
+    Ok((capture, Self::new(target, self.resolution, Ok(before), Ok(after))))
   }
+}
+
+/// Shared by baseline collection and window-click admission. Do not collect
+/// evidence for a window path that the current platform policy always refuses.
+pub(super) fn window_guard_unavailable() -> Option<&'static str> {
+  // TODO(linux-guarded-window-placement): replace this conservative OS gate
+  // only when the driver exposes reliable placement. See PR #429,
+  // discussion_r4386560664. An AT-SPI crop cannot prove screen placement.
+  cfg!(target_os = "linux")
+    .then_some("Linux window-targeted guards require reliable screen placement; use a display capture with screen coordinates")
 }
 
 /// Describe an already rejected comparison. Match identities without sorting
@@ -233,7 +261,7 @@ pub(super) fn deliver<T>(
     return Err(refusal(id, Reason::TargetMismatch, "click lies outside the captured bounds"));
   }
   let windows = state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
-  let (current, current_state) = recapture(&state).map_err(|error| refusal(id, Reason::CheckUnavailable, error.message()))?;
+  let (current, current_state) = recapture(&state).map_err(|error| refusal_with_cause(id, &error))?;
   let current_state = current_state.map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
   let current_windows = current_state.windows_at(point).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
   if state.target != current_state.target || state.resolution != current_state.resolution {
@@ -261,16 +289,29 @@ pub(super) fn deliver<T>(
 }
 
 pub(super) fn refusal(capture_id: &str, reason: Reason, cause: &str) -> Status {
+  refuse(capture_id, reason, cause, None)
+}
+
+/// A failed check keeps its original category for caller recovery decisions.
+pub(super) fn refusal_with_cause(capture_id: &str, cause: &Status) -> Status {
+  refuse(capture_id, Reason::CheckUnavailable, cause.message(), Some(cause.code()))
+}
+
+fn refuse(capture_id: &str, reason: Reason, cause: &str, cause_code: Option<tonic::Code>) -> Status {
   // Bound backend diagnostics in both the status and the recorded event.
   let cause: String = cause.chars().take(512).collect();
   auv_tracing::emit_event!(Refused {
     capture_id,
     reason: reason.as_str_name(),
     cause: &cause,
+    cause_code: cause_code.map(|code| code as i32),
     recovery: "new_capture",
     input_delivered: false,
   });
-  auv_api_proto::click_precondition::status(capture_id, reason, &cause)
+  match cause_code {
+    Some(code) => auv_api_proto::click_precondition::status_with_cause(capture_id, reason, &Status::new(code, cause)),
+    None => auv_api_proto::click_precondition::status(capture_id, reason, &cause),
+  }
 }
 
 #[derive(serde::Serialize)]
@@ -278,6 +319,8 @@ struct Refused<'a> {
   capture_id: &'a str,
   reason: &'static str,
   cause: &'a str,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  cause_code: Option<i32>,
   recovery: &'static str,
   input_delivered: bool,
 }

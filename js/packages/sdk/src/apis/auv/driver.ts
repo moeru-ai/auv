@@ -353,7 +353,7 @@ export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 
 export class ClickPreconditionError extends AuvRpcError {
   readonly recovery = 'new_capture' as const
 
-  constructor(readonly captureId: string, readonly reason: ClickPreconditionFailureReason, source: AuvRpcError) {
+  constructor(readonly captureId: string, readonly reason: ClickPreconditionFailureReason, source: AuvRpcError, readonly causeCode?: number) {
     super(source.rpcCode, source.message, source, source.details)
     this.name = 'ClickPreconditionError'
   }
@@ -716,7 +716,7 @@ function clickFailure(error: unknown): never {
     const failure = rpcDetail(error.details, ClickPreconditionFailureSchema, detail =>
       [ClickPreconditionFailureReason.CAPTURE_UNAVAILABLE, ClickPreconditionFailureReason.CHECK_UNAVAILABLE, ClickPreconditionFailureReason.STATE_CHANGED, ClickPreconditionFailureReason.TARGET_MISMATCH].includes(detail.reason))
     if (failure)
-      throw new ClickPreconditionError(failure.captureId, failure.reason, error)
+      throw new ClickPreconditionError(failure.captureId, failure.reason, error, failure.causeCode && failure.causeCode >= 1 && failure.causeCode <= 16 ? failure.causeCode : undefined)
   }
   throw error
 }

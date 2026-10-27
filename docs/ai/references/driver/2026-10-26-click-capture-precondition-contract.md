@@ -66,6 +66,19 @@ Failure reasons are `CAPTURE_UNAVAILABLE`, `TARGET_MISMATCH`, `STATE_CHANGED`,
 and `CHECK_UNAVAILABLE`. Every reason requests a new capture and caller decision.
 There is no automatic retry or replanning.
 
+Runner check failures retain their original gRPC category in the optional
+`ClickPreconditionFailure.cause_code` field (field 3, `google.rpc.Code`).
+Target resolution, recapture, and surrounding window queries preserve this category.
+The outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+Policy refusals and older Runners omit the cause code.
+Callers must resolve the underlying cause before taking a new capture.
+Rust exposes `cause_code` and `capture_cause_kind()`; JavaScript exposes `causeCode`.
+CLI and MCP retain `recapture_required` and set `failure_details.cause_code`.
+This uses the existing invoke categories: `permission_denied`, `not_found`, or `backend` for `UNAVAILABLE`.
+The refusal trace event records the original numeric gRPC `cause_code` when available.
+The [review report](https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193)
+has regression coverage for zero delivery, Rust RPC decoding, and CLI/MCP JSON output.
+
 Region captures, OCR-produced captures, and streamed frames lack the required
 baseline in this slice. Their references refuse guarded clicks.
 The code-site TODO records this producer boundary.
@@ -155,6 +168,16 @@ The Linux placement restriction is conservative: the current driver exposes no r
 Display captures with screen or display coordinates remain available.
 Window-targeted guards require a driver contract that establishes reliable placement before they can be enabled.
 
+Window baseline collection and click admission share this restriction.
+Linux window captures skip the two Runner window-list snapshots and retain an explicit unavailable cause beside the captured pixels.
+The Driver still checks the target before and after capture; image fetch, OCR, and ordinary capture behavior remain available.
+Native measurements confirmed three enumerations per successful window RPC, compared with five in the submitted PR.
+This count covers one Runner target lookup and two Driver checks.
+Windows and macOS window captures retain both Runner snapshots.
+In the measured Linux session, window-capture p50/p95 changed from 400.89/433.05 ms to 300.92/321.03 ms.
+Display snapshots and synchronous Runner blocking remain; see the
+[review validation](2026-10-27-pr-429-linux-review-handoff.md) for methods, failure groups, and evidence limits.
+
 Recapture runs inside the input task, so other input RPCs can wait behind it.
 Reported latency was 0.1–3.3 seconds on macOS and 1.6–2.7 seconds for a Windows 4K display.
 GNOME guarded clicks took 4–5 times as long as unguarded clicks.
@@ -189,8 +212,8 @@ Other tests cover typed transport failures, reference isolation, and refusal rec
 
 ## Validation
 
-Original validation commands appear below. Current review-fix results are recorded
-in the PR description and thread replies at the tested revision.
+Original validation commands appear below. Published review-fix results appear in the PR description and thread replies at their tested revisions.
+The latest Linux review results appear in the [review validation](2026-10-27-pr-429-linux-review-handoff.md).
 
 - The original unfiltered platform suite failed the live WGC/GDI pixel comparison.
   The remaining suites passed with that test explicitly excluded. This was not

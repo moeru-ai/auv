@@ -337,6 +337,35 @@ async fn click_capture_binding_and_typed_refusal_survive_rpc() {
   server.abort();
 }
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+#[tokio::test]
+async fn capture_check_cause_survives_rpc_pr_429() {
+  let service = std::sync::Arc::new(InputFixture::default());
+  let (input, server) = serve_input_fixture(service.clone()).await;
+  let cases = [
+    (tonic::Code::PermissionDenied, crate::error::ClientErrorKind::Unauthorized),
+    (tonic::Code::Unavailable, crate::error::ClientErrorKind::Unavailable),
+    (tonic::Code::NotFound, crate::error::ClientErrorKind::NotFound),
+  ];
+  for (code, kind) in cases {
+    service.statuses.lock().unwrap().push_back(auv_api_proto::click_precondition::status_with_cause(
+      "cap",
+      proto::ClickPreconditionFailureReason::CheckUnavailable,
+      &tonic::Status::new(code, "recapture failed"),
+    ));
+    let error = input
+      .click_with_capture(&auv_driver::ScreenPoint::new(10.0, 20.0), Default::default(), Some(&CaptureRef::new("cap")))
+      .await
+      .unwrap_err();
+    assert_eq!(error.capture_cause_kind(), Some(kind));
+    assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Conflict));
+    assert!(matches!(error, CapabilityError::CapturePrecondition { cause_code: Some(actual), .. } if actual == code));
+  }
+  assert_eq!(service.guarded.lock().unwrap().len(), 3);
+  assert!(service.clicks.lock().unwrap().is_empty(), "no unguarded retry");
+  server.abort();
+}
+
 // https://github.com/moeru-ai/auv/pull/429#discussion_r4383986620
 #[tokio::test]
 async fn old_runner_rejects_guarded_calls_without_unguarded_fallback() {

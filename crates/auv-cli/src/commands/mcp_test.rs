@@ -10,6 +10,24 @@ use rmcp::{
 use super::{McpInvokeInput, McpServer, OpRunToolRequest, core_invoke_adapters, mcp_command_inputs};
 use crate::commands::op::ExecutionModeArg;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+#[test]
+fn guarded_recapture_cause_reaches_mcp_json_pr_429() {
+  use auv::client::runner::{CapabilityError, ClickPreconditionFailureReason};
+  let source = auv_api_proto::click_precondition::status_with_cause("cap", ClickPreconditionFailureReason::CheckUnavailable, &tonic::Status::permission_denied("screen recording permission revoked"));
+  let failure = auv_cli_invoke::InvokeFailure::from(CapabilityError::CapturePrecondition {
+    capture_id: "cap".into(), reason: ClickPreconditionFailureReason::CheckUnavailable, cause_code: Some(tonic::Code::PermissionDenied), source,
+  });
+  let output = super::McpInvokePresentation::Failed {
+    run_id: auv_tracing::RunId::new(), failure: failure.to_string(), failure_details: failure,
+    command_id: "input.clickPoint".into(), recording_failure: None,
+  };
+  let json = serde_json::to_value(output).unwrap();
+  assert_eq!(json["failure_details"]["code"], "recapture_required");
+  assert_eq!(json["failure_details"]["cause_code"], "permission_denied");
+  assert!(json["failure"].as_str().unwrap().contains("screen recording permission revoked"));
+}
+
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");

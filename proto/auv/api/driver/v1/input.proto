@@ -10,6 +10,7 @@ import "auv/api/driver/v1/text_recognition.proto";
 import "auv/api/driver/v1/window.proto";
 import "auv/api/image/v1/region.proto";
 import "google/protobuf/duration.proto";
+import "google/rpc/code.proto";
 
 service InputService {
   // Reads the OS pointer in logical screen coordinates. The pointer is the
@@ -460,6 +461,9 @@ enum ClickPreconditionFailureReason {
 message ClickPreconditionFailure {
   string capture_id = 1;
   ClickPreconditionFailureReason reason = 2;
+  // Original check failure. Absent for policy refusals or older Runners.
+  // Never OK. Resolve this cause before taking a new capture and deciding again.
+  optional google.rpc.Code cause_code = 3;
 }
 
 message ClickPointResponse {

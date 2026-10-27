@@ -152,5 +152,15 @@ Frontend target-resolution failures return `recapture_required` in the command
 record, but currently have no `auv.input.click_refused` Runner event.
 Their optional `cause_code` preserves the original resolution category, such as `permission_denied` or `backend`.
 Rust refusal errors retain the server status as `source`, including its diagnostic message.
+Runner check failures also retain the original gRPC category in
+`ClickPreconditionFailure.cause_code` (optional `google.rpc.Code`, field 3).
+This includes target resolution, recapture, and the window queries around recapture.
+The outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+Rust exposes `CapabilityError::CapturePrecondition.cause_code` and `capture_cause_kind()`;
+JavaScript exposes `ClickPreconditionError.causeCode`.
+CLI and MCP JSON expose `failure_details.cause_code`: `permission_denied`,
+`not_found`, or `backend` for gRPC `UNAVAILABLE`.
+Policy refusals and older Runners omit the cause code.
+If a cause is present, resolve it before taking a new capture and deciding again.
 Runner-backed `window.capture` and `display.capture` return the reference in
 `capture.capture_id`. This ID supplies the next click's `--capture` value.

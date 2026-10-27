@@ -288,7 +288,9 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
     if matches!(error, auv::client::runner::CapabilityError::CapturePrecondition { .. }) {
-      return Self::new(FailureCode::RecaptureRequired, error.to_string());
+      let mut failure = Self::new(FailureCode::RecaptureRequired, error.to_string());
+      failure.cause_code = error.capture_cause_kind().map(|kind| client_failure_code(Some(kind)));
+      return failure;
     }
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {

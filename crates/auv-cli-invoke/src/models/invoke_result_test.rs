@@ -6,6 +6,42 @@ use auv_tracing::{ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactUri, At
 use super::*;
 use crate::{InvokeCommandOutput, default_registry};
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+#[test]
+fn guarded_recapture_cause_reaches_cli_json_pr_429() {
+  use auv::client::runner::{CapabilityError, ClickPreconditionFailureReason};
+  let registry = default_registry();
+  let command = registry.resolve("input.clickPoint").unwrap();
+  for (code, expected) in [
+    (tonic::Code::PermissionDenied, "permission_denied"),
+    (tonic::Code::Unavailable, "backend"),
+    (tonic::Code::NotFound, "not_found"),
+  ] {
+    let source = auv_api_proto::click_precondition::status_with_cause(
+      "cap",
+      ClickPreconditionFailureReason::CheckUnavailable,
+      &tonic::Status::new(code, "recapture failed"),
+    );
+    let failure = crate::InvokeFailure::from(CapabilityError::CapturePrecondition {
+      capture_id: "cap".into(),
+      reason: ClickPreconditionFailureReason::CheckUnavailable,
+      cause_code: Some(code),
+      source,
+    });
+    let result = InvokeResult::from_command_result(RunId::new(), command, Err(failure));
+    let output = result
+      .render_to_string(InvokeOutputOptions {
+        json: true,
+        ..Default::default()
+      })
+      .unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["failure_details"]["code"], "recapture_required");
+    assert_eq!(json["failure_details"]["cause_code"], expected);
+    assert!(json["failure"].as_str().unwrap().contains("recapture failed"));
+  }
+}
+
 #[test]
 fn primary_artifact_is_directly_openable_in_human_and_json_output() {
   let registry = default_registry();

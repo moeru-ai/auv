@@ -5,6 +5,7 @@ fn click_precondition_failure_requires_recapture_across_frontends() {
   let failure = InvokeFailure::from(auv::client::runner::CapabilityError::CapturePrecondition {
     capture_id: "cap-test".into(),
     reason: auv::client::runner::ClickPreconditionFailureReason::StateChanged,
+    cause_code: None,
     source: auv_api_proto::click_precondition::status(
       "cap-test",
       auv::client::runner::ClickPreconditionFailureReason::StateChanged,

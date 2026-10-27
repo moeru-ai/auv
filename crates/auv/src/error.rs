@@ -21,6 +21,22 @@ pub enum ClientErrorKind {
   Protocol,
 }
 
+impl ClientErrorKind {
+  /// One classification for outer RPC failures and retained check causes.
+  pub(crate) fn from_code(code: tonic::Code) -> Self {
+    match code {
+      tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => Self::Unauthorized,
+      tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => Self::Unavailable,
+      tonic::Code::InvalidArgument => Self::InvalidRequest,
+      tonic::Code::FailedPrecondition => Self::Ambiguous,
+      tonic::Code::NotFound => Self::NotFound,
+      tonic::Code::AlreadyExists | tonic::Code::Aborted => Self::Conflict,
+      tonic::Code::Unimplemented => Self::Unsupported,
+      _ => Self::Protocol,
+    }
+  }
+}
+
 /// Transport failure with a stable category and preserved source error.
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{message}")]
@@ -38,16 +54,7 @@ impl ClientError {
   }
 
   pub(crate) fn from_status(operation: &'static str, status: tonic::Status) -> Self {
-    let kind = match status.code() {
-      tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => ClientErrorKind::Unauthorized,
-      tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => ClientErrorKind::Unavailable,
-      tonic::Code::InvalidArgument => ClientErrorKind::InvalidRequest,
-      tonic::Code::FailedPrecondition => ClientErrorKind::Ambiguous,
-      tonic::Code::NotFound => ClientErrorKind::NotFound,
-      tonic::Code::AlreadyExists | tonic::Code::Aborted => ClientErrorKind::Conflict,
-      tonic::Code::Unimplemented => ClientErrorKind::Unsupported,
-      _ => ClientErrorKind::Protocol,
-    };
+    let kind = ClientErrorKind::from_code(status.code());
     Self {
       kind,
       message: format!("{operation} failed: {status}"),
