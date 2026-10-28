@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 927201cdfa18efc1851933e85f93ea6b10651189
+          ref: 46c2ba723c83fc1b66595d5733d979ee794100ff
           submodules: recursive
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '927201cdfa18efc1851933e85f93ea6b10651189') { throw "Unexpected source: $actual" }
+          if ($actual -ne '46c2ba723c83fc1b66595d5733d979ee794100ff') { throw "Unexpected source: $actual" }
           New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-focus-preflight" -Force | Out-Null
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -44,7 +44,7 @@ jobs:
           $screens = [System.Windows.Forms.Screen]::AllScreens
           $facts = [ordered]@{
             source_sha = $actual
-            integration_base = '1c72f553a78f4f0e6527b89155f492a84cccefdd'
+            integration_base = '1e80a5fd8b56043195160d773891dcb94239899a'
             os = [Environment]::OSVersion.VersionString
             session_id = (Get-Process -Id $PID).SessionId
             user_interactive = [Environment]::UserInteractive
@@ -124,6 +124,15 @@ jobs:
                 $rawProgress = if ($summary.route -eq 'rust') { $refusals[0].failure_response.input_progress } else { $refusals[0].failure_response.failure_details.input_progress }
                 if ($rawProgress.state -ne 'not_delivered') { throw "Raw failure lost its zero-delivery receipt in $($record.FullName)" }
                 if ($focus.Count -ne 1 -or $focus[0].verified -ne $true -or $focus[0].receiver_focused -ne $true) { throw "Missing application focus proof in $($record.FullName)" }
+                $rejected = @($rows | Where-Object { $_.kind -eq 'focus_rejection_verification' })
+                if ($rejected.Count -ne 1 -or $rejected[0].verified -ne $true) { throw "Missing post-delivery refusal in $($record.FullName)" }
+                $proof = $rejected[0]
+                if ($proof.focus_received -ne $true -or $proof.focus_rejected -ne $true -or $proof.receiver_typing_focused -ne $false -or $proof.receiver_button_focused -ne $true) { throw "Missing application-owned rejection facts in $($record.FullName)" }
+                if ($proof.text_keys_clicks_unchanged -ne $true -or $proof.pointer_keys_unchanged -ne $true -or $proof.input_action_retries -ne 0) { throw "Unexpected refusal input in $($record.FullName)" }
+                $rawProgress = if ($summary.route -eq 'rust') { $proof.failure_response.input_progress } else { $proof.failure_response.failure_details.input_progress }
+                if ($rawProgress.state -notin @('submitted', 'delivery_uncertain') -or $rawProgress.action.verified -ne $false) { throw "Lost uncertain/submitted progress in $($record.FullName)" }
+                $attempts = @($rawProgress.action.attempts)
+                if ($rawProgress.action.selected_path -ne 'ax_focus' -or $attempts.Count -ne 1 -or $attempts[0].path -ne 'ax_focus' -or $attempts[0].succeeded -ne ($rawProgress.state -eq 'submitted')) { throw "Contradictory delivery attempt in $($record.FullName)" }
               }
               $summary | ConvertTo-Json -Depth 5 -Compress
             }
@@ -147,7 +156,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-focus-progress-927201cd
+          name: windows-focus-fault-46c2ba72
           path: |
             ${{ runner.temp }}/auv-focus-preflight/
             ${{ runner.temp }}/auv-focus-baseline/
