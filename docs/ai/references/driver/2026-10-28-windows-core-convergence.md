@@ -5,6 +5,8 @@ Status: Phase 0 source audit complete. Phase 1 implementation is ready for isola
 ## Baseline and evidence
 
 The audit uses upstream `main@68c4cf7c4a0646fd471f7db48241cffb2fc37329` on 2026-10-28.
+Before publication, the implementation rebased onto `main@5b722b027c5270074b11c0296134c29584060f4e` after #406 merged.
+The four affected Rust library suites and SDK typecheck passed again on that integration base.
 The implementation worktree is separate from the owner's benchmark worktree.
 The benchmark worktree contains local MCP, Pixi, and evaluation changes.
 Those changes remain outside this work.
