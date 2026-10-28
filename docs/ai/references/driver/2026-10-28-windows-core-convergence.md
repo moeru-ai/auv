@@ -172,6 +172,30 @@ Exact full-frame comparison can refuse unchanged intended controls because other
 The final native capture and OS input call are not atomic.
 Phase 2 must preserve these limits and must never retry a refused guard through ordinary clicking.
 
+## Phase 2: focus cancellation boundary
+
+The first follow-up binds Windows Runner focus to the existing `run_input_blocking` boundary.
+The RPC thread remains available while UIA calls run on one COM-initialized worker.
+Dropping the RPC sets that worker's existing input-cancellation signal.
+The worker retains its native input reservation until it exits.
+
+Focus admission checks cancellation before the final identity read and immediately before `SetFocus`.
+A cancellation during that read must refuse delivery.
+Two deterministic regressions failed before this change: an already-cancelled request still read the target, and cancellation during readback still delivered once.
+After the change, all 31 focus tests pass.
+The 53 Runner boundary tests pass, including a readiness/release test for cancellation before worker completion.
+Affected CLI and Windows Driver targets compile.
+
+This is cancellation admission, not an interruption guarantee for synchronous providers.
+A provider call already in progress can still block until it returns.
+Cancellation after the last check can race with `SetFocus`, and delivery errors still lack structured progress.
+Those Phase 2 gaps remain marked at the native call sites.
+No cancellation result authorizes a retry of an uncertain action.
+The macOS native thread contract remains unchanged.
+
+The Phase 1 native receipts above predate this worker change.
+New native acceptance is required for the changed Windows Runner path.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.

@@ -270,6 +270,9 @@ fn focus_selected(
   mut read_current: impl FnMut() -> DriverResult<AxNode>,
   focus: impl FnOnce() -> DriverResult<()>,
 ) -> DriverResult<InputActionResult> {
+  if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
+    return Err(invalid_input("UIA focus cancelled before delivery"));
+  }
   let current = read_current()?;
   let mut expected = selected.clone();
   expected.focused = current.focused;
@@ -278,6 +281,11 @@ fn focus_selected(
       message: "UIA focus target changed before delivery".into(),
       recovery: Some("read a new UIA tree and select the target again".into()),
     });
+  }
+  // The provider read can outlive a cancelled RPC. Recheck on this worker
+  // immediately before SetFocus; dropping the caller must not admit input.
+  if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
+    return Err(invalid_input("UIA focus cancelled before delivery"));
   }
   focus()?;
   // TODO(windows-focus-progress): Phase 2 owns structured post-delivery
@@ -383,9 +391,10 @@ mod native {
   }
 
   pub(super) fn focus_text(window: &Window, options: &FocusTextOptions) -> DriverResult<AxFocusResult> {
-    // TODO(windows-uia-cancellation): synchronous provider calls cannot be
-    // interrupted here. Add bounded provider execution in the Phase 2
-    // input-lifetime slice; callers must not retry an uncertain delivery.
+    // TODO(windows-uia-deadline): synchronous provider calls cannot be
+    // interrupted here. Cancellation refuses delivery when the provider
+    // returns; a bounded provider deadline remains in Phase 2. Callers must
+    // not retry an uncertain delivery. See the Windows convergence record.
     // Serialize with this process's other AUV input. This does not lock out the user
     // or make the final identity check and SetFocus atomic.
     let _input = auv_driver_common::mouse_input::reserve_desktop_input()?;
