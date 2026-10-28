@@ -239,6 +239,10 @@ pub(super) fn invariants<T>(measured: &Measured<T>, target: isize) -> Value {
 
 pub(super) fn error_kind(error: &DriverError) -> &'static str {
   match error {
+    // TODO(background-input-progress): this harness does not invoke query
+    // focus. Record progress when a background producer adopts the contract;
+    // preserve its underlying category in the current report meanwhile.
+    DriverError::InputAction { cause, .. } => error_kind(cause),
     DriverError::Unsupported { .. } => "unsupported",
     DriverError::NotFound { .. } => "not_found",
     DriverError::PermissionDenied { .. } => "permission_denied",
