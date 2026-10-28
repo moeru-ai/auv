@@ -1,5 +1,8 @@
 use clap::{Args, Subcommand};
 
+#[path = "mcp_image.rs"]
+mod artifact_image;
+
 /// Expose core AUV capabilities through MCP.
 #[derive(Clone, Debug, Args)]
 pub struct McpArgs {
@@ -47,6 +50,8 @@ mod frontend {
   };
 
   use crate::commands::op::{ExecutionModeArg, OpRunArgs, default_executor, run_with_executor_inner};
+
+  const MAX_IMAGE_READS: usize = 2;
 
   tokio::task_local! {
     static MCP_REQUEST_CANCELLATION: InvokeCancellation;
@@ -148,6 +153,10 @@ mod frontend {
     op_executor: Arc<dyn OperationExecutor>,
     /// Root `--device`, `--device-id`, and `--run` for `invoke` calls that select no Device.
     default_selection: auv::selection::RootSelection,
+    /// Image receipts returned by this MCP server instance, shared with its worker threads.
+    image_artifacts: Arc<super::artifact_image::ImageArtifacts>,
+    /// Shared admission slots for queued or running image workers.
+    image_read_slots: Arc<tokio::sync::Semaphore>,
   }
 
   impl McpServer {
@@ -184,6 +193,8 @@ mod frontend {
         invoke_dispatch,
         op_executor: default_executor(),
         default_selection: auv::selection::RootSelection::default(),
+        image_artifacts: Arc::new(super::artifact_image::ImageArtifacts::default()),
+        image_read_slots: Arc::new(tokio::sync::Semaphore::new(MAX_IMAGE_READS)),
       })
     }
 
@@ -270,6 +281,10 @@ mod frontend {
   }
 
   fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
+    // NOTICE(mcp-path-authority): invoke paths use the server's filesystem authority.
+    // Workspace confinement needs a separately approved frontend policy covering
+    // store roots and resolved fixture image paths. See
+    // docs/ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md.
     let explicit_store_root = store_root.map(PathBuf::from);
     let root = explicit_store_root.unwrap_or_else(|| project_root.join(".auv").join("store"));
     let store = auv_tracing::FileTracingStore::open(&root)
@@ -322,7 +337,12 @@ mod frontend {
   }
 
   /// Runs one core command on a selected Device through the CLI's typed remote adapter.
-  fn remote_invoke(command_id: String, command: Option<InvokeCommand>, input: McpInvokeInput, context: auv::AuvContext) -> McpInvokeFuture {
+  fn remote_invoke(
+    command_id: String,
+    command: Option<InvokeCommand>,
+    input: McpInvokeInput,
+    daemon: auv_cli_invoke::runner::SelectedDaemon,
+  ) -> McpInvokeFuture {
     Box::pin(async move {
       let inputs = match &command {
         Some(command) => mcp_command_inputs(command.namespace, input.inputs),
@@ -337,14 +357,14 @@ mod frontend {
           dry_run: input.dry_run,
           cancellation: input.cancellation,
         },
-        context,
+        daemon,
       )
       .await?;
       Ok(McpInvokeSuccess::from_output(&output))
     })
   }
 
-  /// Presents one invoke outcome; artifacts carry store paths so clients can read evidence themselves.
+  /// Presents one invoke outcome. Image references can be fetched through `artifact_read_image`.
   fn invoke_tool_result(
     run_id: auv_tracing::RunId,
     command_id: String,
@@ -443,13 +463,16 @@ mod frontend {
         None
       };
       let run_id = crate::commands::invoke::tracing_run_id(selected.as_ref()).map_err(invalid_params)?;
-      let remote_context = selected.as_ref().map(|selected| selected.context.clone());
+      let remote_daemon = selected.as_ref().map(|selected| auv_cli_invoke::runner::SelectedDaemon {
+        context: selected.context.clone(),
+        credential: selected.credential.clone(),
+      });
       let command_id = req.command_id.clone();
       let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
       let command_future = root.in_scope(|| {
         auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-        match remote_context {
-          Some(context) => remote_invoke(command_id, command, input, context),
+        match remote_daemon {
+          Some(daemon) => remote_invoke(command_id, command, input, daemon),
           None => adapter.invoke(input),
         }
       });
@@ -479,7 +502,58 @@ mod frontend {
         direct_result = Err(error.into());
       }
       let recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+      if let Ok(success) = &mut direct_result {
+        if recording_failure.is_none() {
+          // NOTICE(mcp-image-receipt-scope): OCR source evidence without a returned
+          // invoke receipt stays outside this catalog. Exposing it requires an
+          // owner-approved command receipt contract.
+          self.image_artifacts.register(&success.artifacts, &authority.store);
+        } else {
+          // Keep the command result and recording failure without advertising
+          // receipts that the failed flush did not admit to this server's catalog.
+          success.artifacts.clear();
+        }
+      }
       invoke_tool_result(run_id, req.command_id, direct_result, recording_failure, &authority)
+    }
+
+    #[tool(
+      description = "Read an AUV image artifact returned by invoke through this MCP server instance. \
+        Supply run_id and artifact_id from artifacts[].uri, never a file path. Returns PNG image content with its aspect ratio preserved. \
+        source_width/source_height are stored artifact dimensions before this fetch resizes them; width/height are the returned PNG dimensions. \
+        For capture artifacts, image.source_width/image.source_height in the invoke receipt instead describe native captured pixels before logical downscaling. \
+        Capture evidence is already at logical resolution. Undo this fetch's resize before adding the capture bounds origin for screen coordinates. \
+        The default size limit is 2048x2048. Each requested dimension must be 1..=4096. Source bytes and decoded pixels are bounded. \
+        Source files are limited to 64 MiB; output size requests do not override source limits. \
+        Each server instance admits at most two image reads. A busy error asks you to retry after current reads finish. \
+        Unknown, expired, non-image or modified artifacts are refused."
+    )]
+    async fn artifact_read_image(&self, Parameters(req): Parameters<ArtifactReadImageRequest>) -> Result<CallToolResult, McpError> {
+      let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
+      if cancellation.is_cancelled() {
+        return Err(McpError::internal_error("image read cancelled", None));
+      }
+      let permit = Arc::clone(&self.image_read_slots)
+        .try_acquire_owned()
+        .map_err(|_| McpError::internal_error("image reader busy; retry after current reads finish", None))?;
+      let images = Arc::clone(&self.image_artifacts);
+      let worker_cancellation = cancellation.clone();
+      let work = tokio::task::spawn_blocking(move || {
+        // The worker owns admission, even if its waiter is cancelled or dropped.
+        let _permit = permit;
+        if worker_cancellation.is_cancelled() {
+          return Err(McpError::internal_error("image read cancelled", None));
+        }
+        images.read(&req.run_id, &req.artifact_id, req.max_width, req.max_height)
+      });
+      // NOTICE(mcp-image-concurrency): running codecs finish while retaining their
+      // slots. Byte-weighted budgets and response buffering remain deferred to a
+      // separately approved MCP scheduling contract.
+      tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(McpError::internal_error("image read cancelled", None)),
+        result = work => result.map_err(|_| McpError::internal_error("image reader did not complete", None::<Value>))?,
+      }
     }
 
     /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this
@@ -687,7 +761,11 @@ mod frontend {
     fn get_info(&self) -> ServerInfo {
       ServerInfo {
         instructions: Some(
-          "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools; no planner or NL parsing is present.".into(),
+          "MCP exposes explicit AUV invoke commands, mode-aware operation runs (op_run) and typed Device unlock tools. \
+           Read returned image receipts with artifact_read_image, using run_id and artifact_id from artifacts[].uri. \
+           file_path refers to the server filesystem. Invoke serves trusted clients with the server's filesystem permissions. \
+           project_root sets defaults and does not confine explicit paths. No planner or NL parsing is present."
+            .into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
         // The handshake is the only place a client can ask which build answers. Defaulting
@@ -742,13 +820,18 @@ mod frontend {
        pass its arguments in `inputs` as string values, keyed exactly as listed; list values are JSON array strings. \
        Set `target` only where a command accepts one. `support` names the platforms whose source has a path for the \
        command, and `runner support` states the same for the selected-Runner route when it differs; neither is a \
-       claim that the path was run.\n\n\
+       claim that the path was run. A `recording_failure` preserves the command result but omits artifact receipts.\n\n\
        Application ids are the ones `window.list` reports on this Device, and they differ by platform: a bundle id \
        on macOS (com.google.Chrome), the executable name on Windows (chrome.exe), and the AT-SPI \
        application id on Linux (org.gnome.TextEditor). Examples below use macOS ids; run `window.list` instead of guessing.\n\n\
        Points: with an app or window `target`, point coordinates are window-local unless `inputs.relative-to` is \
-       `screen`. A `display.capture` image is in pixels: divide a pixel by the capture's scale factor and add its \
-       capture bounds origin to get a screen point. Send a screen point without `target`, or with `target` and \
+       `screen`. Fetch image receipts with `artifact_read_image`, using `run_id` and `artifact_id` from `artifacts[].uri`; \
+       `file_path` refers to the server filesystem. Evidence from `display.capture`, `window.capture`, and \
+       `screen.captureRegion` is stored at logical resolution. For a returned PNG pixel `(px, py)`, the screen point is \
+       `(capture.bounds.x + px * source_width / width, capture.bounds.y + py * source_height / height)`. \
+       Use `capture.bounds.x` and `capture.bounds.y` from that artifact's attributes. `source_width`/`source_height` are \
+       stored artifact dimensions; `width`/`height` are returned PNG dimensions. Do not divide by the capture's scale factor again. \
+       Send a screen point without `target`, or with `target` and \
        `relative-to: screen`.\n\n\
        Input delivery: `inputs.input-policy` decides how input reaches a target window. Leave it unset unless an \
        action had no visible effect. Delivery never proves the app reacted; check with a capture.\n\
@@ -936,6 +1019,25 @@ mod frontend {
 
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]
   #[serde(deny_unknown_fields)]
+  struct ArtifactReadImageRequest {
+    /// Run ID from an image artifact URI returned by `invoke` on this server instance.
+    run_id: String,
+    /// Artifact ID from that URI.
+    artifact_id: String,
+    /// Maximum output width in pixels. Defaults to 2048.
+    #[serde(default = "default_image_edge")]
+    max_width: u32,
+    /// Maximum output height in pixels. Defaults to 2048.
+    #[serde(default = "default_image_edge")]
+    max_height: u32,
+  }
+
+  fn default_image_edge() -> u32 {
+    2048
+  }
+
+  #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
   struct InvokeToolRequest {
     command_id: String,
     /// Exact configured Device name; omit to use the server's root selection or run locally.
@@ -950,6 +1052,7 @@ mod frontend {
     inputs: BTreeMap<String, String>,
     #[serde(default)]
     dry_run: bool,
+    /// Server-side tracing directory override. Explicit paths are not confined to the project root.
     #[serde(default)]
     store_root: Option<String>,
   }

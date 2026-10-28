@@ -710,21 +710,27 @@ async fn undeclared_input_keys_fail_before_daemon_resolution() {
   assert!(id_spelling.message.contains("does not accept input click_count"), "{}", id_spelling.message);
 }
 
-fn gate_context(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
-  auv::AuvContext {
-    device_platform: platform,
-    ..Default::default()
+fn gate_context(platform: Option<auv::devices::DevicePlatform>) -> SelectedDaemon {
+  SelectedDaemon {
+    context: auv::AuvContext {
+      device_platform: platform,
+      ..Default::default()
+    },
+    credential: None,
   }
 }
 
 // An endpoint that cannot parse fails placement deterministically and without
 // any network traffic, so a placement error from it proves the dispatch got
 // past the gate instead of connecting anywhere.
-fn gate_context_past_the_gate(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
-  auv::AuvContext {
-    device_platform: platform,
-    daemon_endpoint: Some("not a valid endpoint".to_string()),
-    ..Default::default()
+fn gate_context_past_the_gate(platform: Option<auv::devices::DevicePlatform>) -> SelectedDaemon {
+  SelectedDaemon {
+    context: auv::AuvContext {
+      device_platform: platform,
+      daemon_endpoint: Some("not a valid endpoint".to_string()),
+      ..Default::default()
+    },
+    credential: None,
   }
 }
 

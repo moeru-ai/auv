@@ -439,6 +439,7 @@ impl From<runner::RunnerError> for DaemonError {
       runner::RunnerError::InvalidArgument(message) => Self::InvalidArgument(message),
       runner::RunnerError::ProviderUnavailable(class) => Self::RunnerProviderUnavailable(class),
       runner::RunnerError::Unknown(id) => Self::UnknownRunner(id),
+      runner::RunnerError::Deleting(id) => Self::RunnerDeleting(id),
       error => Self::RunnerOperation(error.to_string()),
     }
   }

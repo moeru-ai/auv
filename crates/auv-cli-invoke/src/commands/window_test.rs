@@ -247,7 +247,40 @@ fn window_text_click_selects_the_requested_candidate_and_rejects_out_of_range_in
   assert_eq!(selected.bounds, auv_driver::Rect::new(100.0, 720.0, 71.0, 10.0));
 
   let error = selected_window_text_match(&matches, "AGENTS.md", 2).expect_err("out-of-range index should fail");
-  assert_eq!(error, "window.clickText --index 2 is out of range for 2 text match(es)");
+  assert_eq!(error.code, crate::FailureCode::InvalidInput);
+  assert_eq!(error.message, "window.clickText --index 2 is out of range for 2 text match(es)");
+}
+
+// ROOT CAUSE:
+//
+// The selected-Runner route consumed this helper's `String` errors, which
+// `From<String>` downgraded to `command_failed`, while the direct local path
+// answered the same conditions with `not_found` and `invalid_input`. A caller
+// could not tell a text miss from a broken run when the command ran on a
+// selected Runner.
+//
+// Before the fix, the helper carried plain strings and the Runner arm could
+// not preserve a failure code. The fix types the helper's errors, so both
+// routes propagate the same classification, and this test pins the codes.
+#[test]
+fn window_text_match_failures_carry_the_shared_failure_codes() {
+  let matches = auv_driver::OcrMatches::default();
+
+  let miss = selected_window_text_match(&matches, "Ready", 0).expect_err("an empty match set should fail");
+  assert_eq!(miss.code, crate::FailureCode::NotFound);
+  assert_eq!(miss.message, "window.clickText did not find text \"Ready\"");
+
+  let candidate = auv_driver::OcrMatch {
+    text: "Ready".to_string(),
+    confidence: 0.9,
+    bounds: auv_driver::Rect::new(10.0, 10.0, 20.0, 8.0),
+  };
+  let one_match = auv_driver::OcrMatches {
+    matches: vec![candidate],
+  };
+  let out_of_range = selected_window_text_match(&one_match, "Ready", 1).expect_err("index 1 should be out of range for one match");
+  assert_eq!(out_of_range.code, crate::FailureCode::InvalidInput);
+  assert_eq!(out_of_range.message, "window.clickText --index 1 is out of range for 1 text match(es)");
 }
 
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
