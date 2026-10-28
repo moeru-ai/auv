@@ -310,20 +310,38 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
   let point = matched_window_point(&window, &inside).expect("inside point should map");
   assert_eq!(point, auv_driver::geometry::WindowPoint::new(50.0, 50.0));
 
-  // 2. Exact boundaries: (0.0, 0.0) and (width, height) are inclusive
+  // 2. Exact boundaries: top-left (0.0, 0.0) is inclusive; right and bottom [width, height] are excluded
+  // Top-left boundary: local (0.0, 0.0)
   let top_left = ocr_match_at(50.0, 150.0);
   assert_eq!(
     matched_window_point(&window, &top_left).expect("top-left boundary should map"),
     auv_driver::geometry::WindowPoint::new(0.0, 0.0)
   );
 
-  let bottom_right = ocr_match_at(450.0, 450.0);
+  // Just inside bottom-right perimeter: local (399.9, 299.9)
+  let just_inside = ocr_match_at(449.9, 449.9);
   assert_eq!(
-    matched_window_point(&window, &bottom_right).expect("bottom-right boundary should map"),
-    auv_driver::geometry::WindowPoint::new(400.0, 300.0)
+    matched_window_point(&window, &just_inside).expect("point just inside right/bottom should map"),
+    auv_driver::geometry::WindowPoint::new(399.9, 299.9)
   );
 
-  // 3. Out of bounds: screen (600, 500) -> window (550, 350), exceeds 400x300
+  // Exact right boundary x == width (400.0) is outside the half-open window pixel span [0, width)
+  let exact_right = ocr_match_at(450.0, 200.0);
+  let err_right = matched_window_point(&window, &exact_right).expect_err("exact right edge x==width must be rejected");
+  assert_eq!(err_right.code, crate::FailureCode::InvalidTarget);
+  assert!(err_right.message.contains("outside resolved window bounds; no input delivered"));
+
+  // Exact bottom boundary y == height (300.0) is outside the half-open window pixel span [0, height)
+  let exact_bottom = ocr_match_at(100.0, 450.0);
+  let err_bottom = matched_window_point(&window, &exact_bottom).expect_err("exact bottom edge y==height must be rejected");
+  assert_eq!(err_bottom.code, crate::FailureCode::InvalidTarget);
+
+  // Exact bottom-right corner (400.0, 300.0) must be rejected
+  let bottom_right = ocr_match_at(450.0, 450.0);
+  let err_br = matched_window_point(&window, &bottom_right).expect_err("bottom-right corner must be rejected");
+  assert_eq!(err_br.code, crate::FailureCode::InvalidTarget);
+
+  // 3. Out of bounds beyond right/bottom: screen (600, 500) -> window (550, 350)
   let outside = ocr_match_at(600.0, 500.0);
   let error = matched_window_point(&window, &outside).expect_err("outside point must be rejected");
   assert_eq!(error.code, crate::FailureCode::InvalidTarget);
@@ -334,14 +352,125 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
   let err_neg = matched_window_point(&window, &negative_x).expect_err("negative x must be rejected");
   assert_eq!(err_neg.code, crate::FailureCode::InvalidTarget);
 
-  // 4. Non-finite coordinates (NaN and Inf) must be rejected
+  // 4. Non-finite candidate coordinates (NaN and Inf) must be rejected
   let nan_match = ocr_match_at(f64::NAN, 200.0);
-  let err_nan = matched_window_point(&window, &nan_match).expect_err("NaN must be rejected");
+  let err_nan = matched_window_point(&window, &nan_match).expect_err("NaN point must be rejected");
   assert_eq!(err_nan.code, crate::FailureCode::InvalidTarget);
 
   let inf_match = ocr_match_at(f64::INFINITY, 200.0);
-  let err_inf = matched_window_point(&window, &inf_match).expect_err("Infinity must be rejected");
+  let err_inf = matched_window_point(&window, &inf_match).expect_err("Infinity point must be rejected");
   assert_eq!(err_inf.code, crate::FailureCode::InvalidTarget);
+
+  // 5. Raw float display precision in error message (no misleading rounding like 450.0001 -> 450.0)
+  let float_precision_match = ocr_match_at(450.0001, 200.0);
+  let err_precision = matched_window_point(&window, &float_precision_match).expect_err("micro out-of-bounds must be rejected");
+  assert!(err_precision.message.contains("450.0001,200"));
+
+  // 6. Zero-sized and negative-dimension windows must reject any click point
+  let zero_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, 0.0, 0.0),
+    ..window.clone()
+  };
+  let err_zero = matched_window_point(&zero_window, &top_left).expect_err("zero-size window must reject clicks");
+  assert_eq!(err_zero.code, crate::FailureCode::InvalidTarget);
+
+  let neg_width_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, -10.0, 300.0),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&neg_width_window, &inside).expect_err("negative width must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+
+  let neg_height_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, 400.0, -10.0),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&neg_height_window, &inside).expect_err("negative height must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+
+  // 7. Non-finite window dimensions (NaN and Infinity) must be rejected
+  let nan_width_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, f64::NAN, 300.0),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&nan_width_window, &inside).expect_err("NaN width must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+
+  let nan_height_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, 400.0, f64::NAN),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&nan_height_window, &inside).expect_err("NaN height must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+
+  let inf_width_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, f64::INFINITY, 300.0),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&inf_width_window, &inside).expect_err("Infinity width must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+
+  let inf_height_window = Window {
+    frame: auv_driver::Rect::new(50.0, 150.0, 400.0, f64::INFINITY),
+    ..window.clone()
+  };
+  assert_eq!(
+    matched_window_point(&inf_height_window, &inside).expect_err("Infinity height must be rejected").code,
+    crate::FailureCode::InvalidTarget
+  );
+}
+
+#[test]
+fn matched_window_point_out_of_bounds_serializes_to_structured_invalid_target_failure() {
+  let window = Window {
+    reference: WindowRef {
+      id: "test_win".into(),
+    },
+    title: Some("Test".into()),
+    app_name: Some("test.exe".into()),
+    application_id: None,
+    process_id: Some(100),
+    frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+  let outside = auv_driver::OcrMatch {
+    text: "Target".to_string(),
+    confidence: 0.95,
+    bounds: auv_driver::Rect::new(445.0, 195.0, 10.0, 10.0), // center at (450.0, 200.0), exact right edge
+  };
+  let failure = matched_window_point(&window, &outside).expect_err("exact right edge is outside half-open window bounds");
+  assert_eq!(failure.code, crate::FailureCode::InvalidTarget);
+
+  let registry = crate::default_registry();
+  let command = registry.resolve("window.clickText").expect("resolve window.clickText");
+  let output = crate::models::InvokeResult::from_command_result(auv_tracing::RunId::new(), command, Err(failure.clone()));
+  let json: serde_json::Value = serde_json::from_str(
+    &output
+      .render_to_string(crate::models::InvokeOutputOptions {
+        json: true,
+        ..Default::default()
+      })
+      .expect("render json"),
+  )
+  .expect("parse json");
+
+  assert_eq!(json["status"], "failed");
+  assert_eq!(json["command_id"], "window.clickText");
+  assert_eq!(json["failure"], failure.message);
+  assert_eq!(json["failure_details"]["code"], "invalid_target");
+  assert_eq!(json["failure_details"]["message"], failure.message);
 }
 
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {

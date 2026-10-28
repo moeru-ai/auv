@@ -523,14 +523,22 @@ pub(crate) fn matched_window_point(
   let screen_point = matched.action_point();
   let point = auv_driver::geometry::WindowPoint::new(screen_point.x - window.frame.origin.x, screen_point.y - window.frame.origin.y);
   let point_value = point.point();
+  let width = window.frame.size.width;
+  let height = window.frame.size.height;
   if !point_value.x.is_finite()
     || !point_value.y.is_finite()
-    || !(0.0..=window.frame.size.width).contains(&point_value.x)
-    || !(0.0..=window.frame.size.height).contains(&point_value.y)
+    || !width.is_finite()
+    || !height.is_finite()
+    || width <= 0.0
+    || height <= 0.0
+    || point_value.x < 0.0
+    || point_value.x >= width
+    || point_value.y < 0.0
+    || point_value.y >= height
   {
     return Err(crate::InvokeFailure::new(
       crate::FailureCode::InvalidTarget,
-      format!("recognized text point {:.1},{:.1} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
+      format!("recognized text point {},{} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
     ));
   }
   Ok(point)
