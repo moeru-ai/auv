@@ -355,9 +355,9 @@ Windows can generate mouse-move messages after window changes; see
 The failed artifact digests are `1d4b49e31bcc7e16ea0770bad7526fd941231b25bcff7407714dddecdd8343ca` and
 `2f89818919ad2732449d8909138182c2ec84de685366964d432f2ceb3590435e`.
 Minimized geometry currently exposes the generic underlying `command_failed` cause; typed geometry causes remain a separate Invoke slice.
-The closed-window scenario below and queue-peek removal still need final native acceptance.
+The final run below validates closed targets and removal of the ineffective queue peek.
 
-## Phase 2: closed capture target scenario (pending)
+## Phase 2: closed capture target scenario
 
 Classification: test-only, reusing the existing decoy from the wrong-window control.
 After that control completes, guarded workflows capture the decoy and confirm its process exit and HWND destruction.
@@ -366,7 +366,40 @@ The live primary receiver's full state, pointer, foreground, and injected input 
 The primary stays alive for normal final checks and foreground restoration.
 All functional routes now require an explicit decoy cleanup receipt instead of relying on Drop alone.
 No new Driver, RPC, command flag, input retry, or fallback is added.
-Compilation and all ten no-desktop workflow regression tests pass; native target-loss acceptance is pending.
+Compilation and all ten no-desktop workflow regression tests pass.
+The [final isolated run](https://github.com/moeru-ai/auv/actions/runs/40731551833)
+passed at source `c7d6b53f5d348bd57391514c61f0cdfe67e4d69c`, based on integration `4a3ec71c22f673b9470d21e61cd3e82e9e4fd91f`.
+Its evidence workflow is `6a00a41d185a3d680896210465e522259467031e`.
+Independent artifact checks confirmed all 14 workflows, 46 accepted captures, and 14 explicit decoy cleanup receipts.
+Both closed-target requests retained `recapture_required` / `not_found` after confirmed process exit and HWND destruction.
+The live primary receiver's complete state and the desktop witness remained unchanged during each refused request.
+
+The same run confirms eight semantic focus readbacks, eight zero-input missing-query refusals, and eight submitted-but-unverified focus refusals.
+Both unchanged-target guarded clicks reached the receiver exactly once; all six caption, move, and minimize refusals passed.
+All 20 ordinary pointer deliveries matched their planned coordinates, all six Runner cleanups passed, and system-state restoration passed.
+Physical input remained zero. No capture or input action needed a retry.
+This run includes the explicit read-only target query and contains no queue-peek workaround.
+The [raw final artifact](https://github.com/moeru-ai/auv/actions/runs/40731551833/artifacts/12835702553)
+matched SHA-256 `2003532fbe310a5e23b0349a8d7ce2476b2b0321a3e01acbd89252b82cb61cec` after download.
+GitHub retention ends 2026-11-11. Actual DPI was not recorded for this run.
+
+## Application and DPI environment preflight
+
+The separate [environment run](https://github.com/moeru-ai/auv/actions/runs/40733696621)
+used workflow `c858d081c31a00e83fe136bef483be2b6314be9b` and checked out source `c7d6b53f`.
+It recorded hosted image `20261021.278.1`, Windows Server 2025 build 26100, interactive session 2, and an accessible input desktop.
+There was one 1024 by 768 display.
+An owned hidden per-monitor-v2 window reported 96 DPI, equivalent to 100% effective primary-display scaling.
+The probe destroyed that window and restored its thread DPI context; it changed no system scaling setting.
+This measurement applies only to this environment run and does not supply missing DPI metadata for earlier functional runs.
+
+Edge `155.0.4283.62` was present at its checked Program Files path.
+VS Code, VLC, qBittorrent, and ILSpy were absent from the common paths checked by this probe; the `code` command was also absent.
+Windows Desktop .NET runtimes from the 8.0, 9.0, and 10.0 families were available.
+These are environment facts, not application-workflow or scaled-coordinate acceptance.
+The [environment artifact](https://github.com/moeru-ai/auv/actions/runs/40733696621/artifacts/12835068803)
+matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5e` after download.
+GitHub retention ends 2026-11-11.
 
 ## Remaining acceptance
 
@@ -375,8 +408,8 @@ with reviewed capture-guard source `7cce1d93bbcdd2ccf8405dd943879f6e8528282b` fr
 It preserves both features' rich errors and regression tests.
 The SDK's typed-detail lookup reuses the existing standard status decoder, including for Device-entry errors.
 Workspace all-target compilation, 469 affected Rust library tests, 44 SDK tests, SDK typecheck, and protocol generation pass.
-Native evidence at `58938f51` covers the caption, move, and minimize guards above.
-Closed targets, resized targets, provider faults, and final queue-peek removal remain outside that run's acceptance.
+Native evidence at `c7d6b53f` covers unchanged guarded delivery, caption changes, moved windows, minimized windows, closed targets, and queue-peek removal.
+Resized targets, blocked providers, in-flight cancellation faults, and WGC queued-frame freshness remain outside that run's acceptance.
 
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
