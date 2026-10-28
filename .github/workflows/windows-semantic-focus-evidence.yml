@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 46c2ba723c83fc1b66595d5733d979ee794100ff
+          ref: ca15a7acf465dcfb49167b8d2c091cb60a2ef5be
           submodules: recursive
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '46c2ba723c83fc1b66595d5733d979ee794100ff') { throw "Unexpected source: $actual" }
+          if ($actual -ne 'ca15a7acf465dcfb49167b8d2c091cb60a2ef5be') { throw "Unexpected source: $actual" }
           New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-focus-preflight" -Force | Out-Null
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -44,7 +44,7 @@ jobs:
           $screens = [System.Windows.Forms.Screen]::AllScreens
           $facts = [ordered]@{
             source_sha = $actual
-            integration_base = '1e80a5fd8b56043195160d773891dcb94239899a'
+            integration_base = '4a3ec71c22f673b9470d21e61cd3e82e9e4fd91f'
             os = [Environment]::OSVersion.VersionString
             session_id = (Get-Process -Id $PID).SessionId
             user_interactive = [Environment]::UserInteractive
@@ -103,12 +103,19 @@ jobs:
           & target/debug/background-session-eval.exe workflow --output "$env:RUNNER_TEMP/auv-focus-semantic" --auv target/debug/auv.exe --rounds 2 --semantic-focus
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Exercise capture guards with independently changed owned UI twice
+        shell: pwsh
+        run: |
+          & target/debug/background-session-eval.exe workflow --output "$env:RUNNER_TEMP/auv-focus-guard" --auv target/debug/auv.exe --rounds 2 --routes runner --semantic-focus --capture-guard
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify complete workflows and independent focus receipts
         shell: pwsh
         run: |
-          foreach ($mode in @('baseline', 'semantic')) {
+          foreach ($mode in @('baseline', 'semantic', 'guard')) {
             $records = @(Get-ChildItem -Path "$env:RUNNER_TEMP/auv-focus-$mode" -Filter workflow.jsonl -Recurse)
-            if ($records.Count -ne 6) { throw "$mode expected six records, got $($records.Count)" }
+            $expected = if ($mode -eq 'guard') { 2 } else { 6 }
+            if ($records.Count -ne $expected) { throw "$mode expected $expected records, got $($records.Count)" }
             foreach ($record in $records) {
               $rows = @(Get-Content -LiteralPath $record.FullName | ForEach-Object { $_ | ConvertFrom-Json })
               $summaries = @($rows | Where-Object { $_.kind -eq 'summary' })
@@ -116,7 +123,7 @@ jobs:
               $summary = $summaries[0]
               if ($summary.passed -ne $true -or $summary.user_interrupted -ne $false) { throw "Failed workflow in $($record.FullName)" }
               if ($summary.quiet_inconclusive -ne 0 -or $summary.quiet_violated -ne 0 -or $summary.input_action_retries -ne 0) { throw "Unsafe workflow in $($record.FullName)" }
-              if ($mode -eq 'semantic') {
+              if ($mode -ne 'baseline') {
                 $refusals = @($rows | Where-Object { $_.kind -eq 'missing_focus_query' })
                 $focus = @($rows | Where-Object { $_.kind -eq 'semantic_focus_verification' })
                 if ($refusals.Count -ne 1 -or $refusals[0].verified -ne $true -or $refusals[0].failure_code -ne 'not_found') { throw "Missing refusal proof in $($record.FullName)" }
@@ -134,6 +141,22 @@ jobs:
                 $attempts = @($rawProgress.action.attempts)
                 if ($rawProgress.action.selected_path -ne 'ax_focus' -or $attempts.Count -ne 1 -or $attempts[0].path -ne 'ax_focus' -or $attempts[0].succeeded -ne ($rawProgress.state -eq 'submitted')) { throw "Contradictory delivery attempt in $($record.FullName)" }
               }
+              if ($mode -eq 'guard') {
+                if ($summary.capture_guard -ne $true -or $summary.route -ne 'runner') { throw "Guard mode used the wrong route in $($record.FullName)" }
+                $positive = @($rows | Where-Object { $_.kind -eq 'guarded_click_verification' })
+                if ($positive.Count -ne 1 -or $positive[0].verified -ne $true) { throw "Missing unchanged-target delivery in $($record.FullName)" }
+                $proof = $positive[0]
+                if ($proof.application_after.clicks -ne ($proof.application_before.clicks + 1) -or $proof.response.status -ne 'completed' -or $proof.response.result.screen_point.x -ne $proof.expected_screen_point[0] -or $proof.response.result.screen_point.y -ne $proof.expected_screen_point[1]) { throw "Missing independent exact delivery facts in $($record.FullName)" }
+                $refusals = @($rows | Where-Object { $_.kind -eq 'capture_guard_refusal' })
+                if ($refusals.Count -ne 3 -or (@($refusals.change | Sort-Object) -join ',') -ne 'caption,minimized,moved') { throw "Missing guard faults in $($record.FullName)" }
+                foreach ($proof in $refusals) {
+                  if ($proof.verified -ne $true -or $proof.failure_response.failure_details.code -ne 'recapture_required' -or $proof.desktop_unchanged -ne $true -or $proof.pointer_unchanged -ne $true -or $proof.input_action_retries -ne 0) { throw "Unsafe refusal in $($record.FullName)" }
+                  if ($proof.foreground[0] -ne $proof.foreground[1] -or $proof.injected_mouse[0] -ne $proof.injected_mouse[1] -or $proof.injected_keys[0] -ne $proof.injected_keys[1]) { throw "Refusal changed native input in $($record.FullName)" }
+                  if (($proof.application_before | ConvertTo-Json -Depth 20 -Compress) -ne ($proof.application_after | ConvertTo-Json -Depth 20 -Compress)) { throw "Refusal changed application state in $($record.FullName)" }
+                }
+                $resets = @($rows | Where-Object { $_.kind -eq 'capture_guard_fixture_reset' })
+                if ($resets.Count -ne 3 -or @($resets | Where-Object { $_.verified -ne $true }).Count -ne 0) { throw "Missing fixture resets in $($record.FullName)" }
+              }
               $summary | ConvertTo-Json -Depth 5 -Compress
             }
           }
@@ -142,7 +165,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          foreach ($mode in @('baseline', 'semantic')) {
+          foreach ($mode in @('baseline', 'semantic', 'guard')) {
             $directory = "$env:RUNNER_TEMP/auv-focus-$mode"
             if (Test-Path -LiteralPath $directory) {
               Get-ChildItem -LiteralPath $directory -Filter workflow.jsonl -Recurse | Sort-Object FullName | ForEach-Object {
@@ -156,10 +179,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-focus-fault-46c2ba72
+          name: windows-capture-guard-ca15a7ac
           path: |
             ${{ runner.temp }}/auv-focus-preflight/
             ${{ runner.temp }}/auv-focus-baseline/
             ${{ runner.temp }}/auv-focus-semantic/
+            ${{ runner.temp }}/auv-focus-guard/
           if-no-files-found: warn
           retention-days: 14
