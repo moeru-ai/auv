@@ -261,12 +261,12 @@ struct FocusTextArgs {
 
 #[invoke_command(
   id = "input.focusText",
-  support = { macos: Supported, linux: Unsupported, windows: Partial("UIA query focus with readback; raw candidate paths are unsupported; isolated native evidence is pending") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
   // Runner support describes its native backend, independently of this host.
   runner = {
     macos: Supported,
     linux: Unsupported("the Runner has no Linux accessibility focus backend"),
-    windows: Partial("UIA query focus with readback; raw candidate paths are unsupported; isolated native evidence is pending"),
+    windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
   },
   target = RequiredApplication,
   group = "input",
@@ -325,11 +325,11 @@ struct AxFocusTextArgs {
 // Remove the alias only after an owner-approved CLI compatibility boundary.
 #[invoke_command(
   id = "input.axFocusText",
-  support = { macos: Supported, linux: Unsupported, windows: Partial("UIA query focus with readback; raw candidate paths are unsupported; isolated native evidence is pending") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
   runner = {
     macos: Supported,
     linux: Unsupported("the Runner has no Linux accessibility focus backend"),
-    windows: Partial("UIA query focus with readback; raw candidate paths are unsupported; isolated native evidence is pending"),
+    windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
   },
   role = Alias("input.focusText"),
   target = RequiredApplication,

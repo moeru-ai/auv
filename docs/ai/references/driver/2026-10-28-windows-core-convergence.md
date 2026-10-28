@@ -1,6 +1,6 @@
 # Windows core convergence
 
-Status: Phase 0 source audit complete. Phase 1 implementation is ready for isolated desktop acceptance.
+Status: Phase 0 source audit complete. Phase 1 passed isolated Win32 receiver acceptance on one hosted Windows desktop.
 
 ## Baseline and evidence
 
@@ -52,10 +52,9 @@ Its path branch also bypasses the query branch's role and bounds filters.
 Its referenced 2026-10-25 audit file is absent from main and from the candidate commit.
 This note replaces that missing reference for this implementation.
 
-The existing Runner focus service belongs to `auv.api.driver.macos.v1`.
-The shared Runner contract requires an explicit namespace migration before Windows uses it.
-The migration must include Rust and JavaScript consumers, discovery, permissions, and protocol checks.
-No Windows support cell changes before the corresponding execution path exists.
+Before this change, the Runner focus service belonged to `auv.api.driver.macos.v1`.
+The shared Runner contract required a namespace migration before Windows could use it.
+The implementation includes Rust and JavaScript consumers, discovery, permissions, and protocol checks.
 
 ### Runner namespace migration
 
@@ -116,6 +115,51 @@ The desktop witness must record no pointer movement or injected mouse or keyboar
 The remaining existing workflow verifies typed text, scrolling, submission, painted pixels, and cleanup.
 Failure stops the scenario without pointer fallback or focus retries.
 
+### Isolated receiver evidence (2026-10-28)
+
+The [native run](https://github.com/moeru-ai/auv/actions/runs/40683082392) checked out source
+`2d30101922551769eff9ecec2bfa23934dbe20d0` exactly.
+Its separate evidence workflow is commit `adfccdf1d39e590a0eb4ad62f46f5e67449c6b50`.
+Preflight recorded Windows Server 2025 build 26100, interactive session 2, an accessible input desktop, and one 1024 x 768 display.
+Display scaling was not recorded; this is not acceptance for the Phase 4 DPI matrix.
+
+| Route | Original workflow rounds 1 / 2 | Semantic-focus workflow rounds 1 / 2 |
+| --- | --- | --- |
+| Direct Rust | passed / passed | passed / passed |
+| Local Invoke | passed / passed | passed / passed |
+| Selected Runner | passed / passed | passed / passed |
+
+Independent inspection of all twelve raw records confirmed:
+
+- Every complete summary reports `passed: true`, with no physical input, quiet violation, or inconclusive quiet operation.
+- All six semantic cases retain the fixture PID and programmatic `Edit` role, with one `AxFocus` delivery and confirmed driver readback.
+- The receiver independently reports keyboard focus. Text, pointer, and injected mouse/key counts remain unchanged during focus.
+- All six missing queries return `not_found` without changing receiver state, foreground, pointer, or injected input counts.
+- All twelve workflows verify selection, exact text, scrolling, one submission, and both negative controls.
+- All twenty-four accepted captures match the independently reported application state and window identity.
+- All eighteen OCR click destinations equal their exact preflight points.
+- All twelve fixtures close and remove their stores. All four Runner cleanups verify the owned process tree without a root-only fallback.
+- Every summary reports zero input-action retries and restored pointer and foreground state.
+
+The first original Rust round returned one initial blank PrintWindow frame.
+The existing bounded read-only retry recovered it on attempt two, before input.
+That failed capture remains in the raw record. No input action was retried.
+This run does not establish reliable first-frame capture.
+
+The [raw artifact](https://github.com/moeru-ai/auv/actions/runs/40683082392/artifacts/12814680810)
+has SHA-256 `180627456f92cae9ff9517a2d2eb4195f376f54358142696d01b1400049ba43e`.
+The downloaded archive matched this digest. GitHub retention ends 2026-11-11.
+
+The [standard PR Check run](https://github.com/moeru-ai/auv/actions/runs/40681134116)
+passed the full workspace suite on Windows, macOS, and Linux.
+The [JS matrix](https://github.com/moeru-ai/auv/actions/runs/40681134076) also passed.
+Its first Windows attempt timed out in the unchanged five-second child-connection test.
+The exact file passed locally, and the unchanged CI rerun passed.
+No timeout or test assertion was weakened.
+
+This evidence applies to native Win32 EDIT query focus on the recorded hosted desktop.
+It does not prove general application support, live MCP parity, provider cancellation, or other DPI behavior.
+
 ## Capture guard review
 
 The [#429 head](https://github.com/moeru-ai/auv/pull/429) uses a dedicated guarded-click RPC.
@@ -130,7 +174,7 @@ Phase 2 must preserve these limits and must never retry a refused guard through 
 
 ## Remaining acceptance
 
-Phase 1 still needs isolated receiver evidence for all three selected routes.
+Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
 Phase 2 depends on the reviewed capture guard and separately scoped input-lifetime work.
 Phase 3 needs repeatable application-owned checks for each named toolkit.

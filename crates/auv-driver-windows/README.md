@@ -15,7 +15,7 @@ UIA, and `Windows.Media.Ocr`.
 - OCR via `Windows.Media.Ocr`
 - Window-scoped OCR polling (`find_text` / `wait_text`)
 - UIA accessibility tree capture, node focus, node select
-- UIA query focus with target identity checks and keyboard-focus readback (`AccessibilityApi::focus_text`, local Invoke, and the shared Runner focus service). Current evidence is compilation and unit tests; isolated desktop evidence is pending ([record](../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md)).
+- UIA query focus with target identity checks and keyboard-focus readback (`AccessibilityApi::focus_text`, local Invoke, and the shared Runner focus service). All three routes passed two complete rounds with a native Win32 EDIT control on one isolated hosted Windows desktop ([evidence and limits](../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md#isolated-receiver-evidence-2026-10-28)).
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke app.activate`)
