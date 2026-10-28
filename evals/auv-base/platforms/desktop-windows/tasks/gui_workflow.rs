@@ -808,7 +808,8 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     && action["attempts"].as_array().is_some_and(|attempts| attempts.len() == 1 && attempts[0]["succeeded"] == true);
   scenario.records.write(
     "guarded_click_verification",
-    json!({"capture_id": capture_id, "response": delivered.json, "application_before": before,
+    json!({"capture_id": capture_id, "expected_screen_point": entry.layout.button_center,
+      "response": delivered.json, "application_before": before,
       "application_after": after, "input_action_retries": 0, "verified": verified}),
   )?;
   if !verified {
@@ -867,6 +868,8 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
       json!({"change": change, "capture_id": capture_id, "fixture_request": request, "fixture_response": mutation,
         "layout_before": layout_before, "layout_after": layout_after, "application_before": state_before,
         "application_after": state_after, "failure_response": refused.json, "desktop_unchanged": quiet,
+        "foreground": [before.foreground, after.foreground], "injected_mouse": [before.injected_mouse, after.injected_mouse],
+        "injected_keys": [before.injected_keys, after.injected_keys], "pointer_unchanged": before.cursor == after.cursor,
         "input_action_retries": 0, "verified": verified}),
     )?;
     if !verified {
