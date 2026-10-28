@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: d30b61b9d668f108f0b6145bcf2d4ad4209b0e70
+          ref: 58938f515bbd35a77d9f555e0c3c7c12e3ccabc3
           submodules: recursive
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'd30b61b9d668f108f0b6145bcf2d4ad4209b0e70') { throw "Unexpected source: $actual" }
+          if ($actual -ne '58938f515bbd35a77d9f555e0c3c7c12e3ccabc3') { throw "Unexpected source: $actual" }
           New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-focus-preflight" -Force | Out-Null
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -153,6 +153,7 @@ jobs:
                   if ($proof.verified -ne $true -or $proof.failure_response.failure_details.code -ne 'recapture_required' -or $proof.desktop_unchanged -ne $true -or $proof.pointer_unchanged -ne $true -or $proof.input_action_retries -ne 0) { throw "Unsafe refusal in $($record.FullName)" }
                   if ($proof.foreground[0] -ne $proof.foreground[1] -or $proof.injected_mouse[0] -ne $proof.injected_mouse[1] -or $proof.injected_keys[0] -ne $proof.injected_keys[1]) { throw "Refusal changed native input in $($record.FullName)" }
                   if ($proof.fixture_settlement.ok -ne $true -or $proof.fixture_settlement.drained_mouse_moves -lt 0 -or $proof.fixture_settlement.drained_mouse_moves -ge 64) { throw "Missing bounded fixture settlement in $($record.FullName)" }
+                  if ($proof.readonly_target_query.status -ne 'completed') { throw "Missing read-only target control in $($record.FullName)" }
                   if (($proof.application_before | ConvertTo-Json -Depth 20 -Compress) -ne ($proof.application_after | ConvertTo-Json -Depth 20 -Compress)) { throw "Refusal changed application state in $($record.FullName)" }
                 }
                 $resets = @($rows | Where-Object { $_.kind -eq 'capture_guard_fixture_reset' })
@@ -180,7 +181,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-capture-guard-d30b61b9
+          name: windows-capture-guard-58938f51
           path: |
             ${{ runner.temp }}/auv-focus-preflight/
             ${{ runner.temp }}/auv-focus-baseline/
