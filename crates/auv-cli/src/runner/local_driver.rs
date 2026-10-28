@@ -2,10 +2,10 @@
 
 use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
-use auv_api_proto::auv::api::driver::macos::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::{MediaControlService, MediaControlServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::permission_service_server::{PermissionService, PermissionServiceServer};
 use auv_api_proto::auv::api::driver::v1 as proto;
+use auv_api_proto::auv::api::driver::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
 use auv_api_proto::auv::api::driver::v1::capture_service_server::{CaptureService, CaptureServiceServer};
 use auv_api_proto::auv::api::driver::v1::display_service_server::{DisplayService, DisplayServiceServer};
@@ -289,25 +289,25 @@ struct LocalAccessibilityService {
 
 #[tonic::async_trait]
 impl AccessibilityService for LocalAccessibilityService {
-  async fn focus_text(&self, request: Request<macos_proto::FocusTextRequest>) -> Result<Response<macos_proto::FocusTextResponse>, Status> {
+  async fn focus_text(&self, request: Request<proto::FocusTextRequest>) -> Result<Response<proto::FocusTextResponse>, Status> {
     let options = focus_text_options_from_proto(request.into_inner())?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
       let result = self.session.accessibility().focus_text(options).map_err(driver_status)?;
-      Ok(Response::new(macos_proto::FocusTextResponse {
+      Ok(Response::new(proto::FocusTextResponse {
         result: Some(ax_focus_result_to_proto(result)?),
       }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
       let _ = (&self.session, options);
-      Err(Status::unimplemented("macOS AccessibilityService is unavailable on this local Driver platform"))
+      Err(Status::unimplemented("AccessibilityService has no backend on this local Driver platform"))
     }
   }
 }
 
-fn focus_text_options_from_proto(request: macos_proto::FocusTextRequest) -> Result<auv_driver::FocusTextOptions, Status> {
-  use macos_proto::focus_text_request::Selector;
+fn focus_text_options_from_proto(request: proto::FocusTextRequest) -> Result<auv_driver::FocusTextOptions, Status> {
+  use proto::focus_text_request::Selector;
 
   let selector = match request.selector {
     Some(Selector::Query(query)) if !query.trim().is_empty() => auv_driver::AxTextSelector::Query(query),
@@ -325,8 +325,8 @@ fn focus_text_options_from_proto(request: macos_proto::FocusTextRequest) -> Resu
   Ok(options)
 }
 
-fn ax_focus_result_to_proto(result: auv_driver::AxFocusResult) -> Result<macos_proto::AxFocusResult, Status> {
-  Ok(macos_proto::AxFocusResult {
+fn ax_focus_result_to_proto(result: auv_driver::AxFocusResult) -> Result<proto::AxFocusResult, Status> {
+  Ok(proto::AxFocusResult {
     app: result.app,
     pid: result.pid,
     path: result.path,
@@ -2755,7 +2755,6 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<ApplicationServiceServer<LocalApplicationService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<PermissionServiceServer<LocalPermissionService>>().await;
-  #[cfg(target_os = "macos")]
   health_reporter.set_serving::<AccessibilityServiceServer<LocalAccessibilityService>>().await;
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   health_reporter.set_serving::<MediaControlServiceServer<LocalMediaControlService>>().await;
@@ -2769,11 +2768,10 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     "auv.api.driver.v1.TextRecognitionService",
     "auv.api.driver.v1.InputService",
     "auv.api.driver.v1.ApplicationService",
+    "auv.api.driver.v1.AccessibilityService",
   ];
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.PermissionService");
-  #[cfg(target_os = "macos")]
-  served_services.push("auv.api.driver.macos.v1.AccessibilityService");
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   served_services.push("auv.api.driver.macos.v1.MediaControlService");
   #[cfg(target_os = "macos")]

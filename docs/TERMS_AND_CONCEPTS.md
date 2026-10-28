@@ -117,6 +117,12 @@ observability; they are not storage or reconstructed operation truth.
 Verification evaluates asserted external state. It is independent from target
 resolution, input delivery, operation completion, and persistence.
 
+`InputActionResult.verified` records explicit post-action readback for that action.
+Dispatch success alone leaves it false. Runner Protobuf field `verified = 6`
+preserves the same fact; older messages without the field decode as false.
+Windows UIA focus confirms the selected element's keyboard focus before it sets this field.
+This does not establish a complete application workflow's success.
+
 ## Inspector (deferred)
 
 An inspector is a future read-side component that may ingest durable trace

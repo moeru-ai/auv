@@ -1,22 +1,21 @@
 // EXPERIMENTAL / UNSTABLE
 syntax = "proto3";
 
-package auv.api.driver.macos.v1;
+package auv.api.driver.v1;
 
 import "auv/api/annotations/v1/annotations.proto";
 import "auv/api/driver/v1/input.proto";
 
-// Exposes macOS Accessibility operations whose semantics are not portable
-// Driver capabilities. FocusText performs AX focus delivery only; it does not
-// promise pointer fallback or semantic focus readback.
+// Exposes typed accessibility focus. The Driver reports whether focus was read
+// back. Unsupported platforms refuse the operation without pointer fallback.
 service AccessibilityService {
   rpc FocusText(FocusTextRequest) returns (FocusTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
     option (auv.api.annotations.v1.presentation) = {
-      name: "macos.accessibility.focus_text"
+      name: "accessibility.focus_text"
       title: "Focus a text field"
-      description: "Focuses a text field in an application through macOS accessibility, found by a text query or an exact accessibility path."
+      description: "Focuses a control in an application through accessibility, found by a text query or a platform-supported path. The result states whether focus readback confirmed delivery."
     };
   }
 }
@@ -24,13 +23,16 @@ service AccessibilityService {
 message FocusTextRequest {
   reserved 1;
   reserved "lease";
-  // Application name or bundle identifier accepted by the owning macOS Driver.
+  // Application selector accepted by the owning Driver, such as a macOS bundle
+  // identifier or Windows executable name.
   string application = 2;
   oneof selector {
     string query = 3;
-    // Exact path from a current macOS accessibility tree observation.
+    // Exact platform accessibility path. Windows rejects raw child paths
+    // because they cannot prove the same control's identity across calls.
     string path = 4;
   }
+  // Platform role: AX role on macOS; programmatic UIA role on Windows.
   optional string expected_role = 5;
 }
 

@@ -226,7 +226,6 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         auv_driver::AxTextSelector::Path(candidate.clone())
       };
       runner
-        .macos()
         .accessibility()
         .focus_text(auv_driver::FocusTextOptions {
           app: input.application_target()?.expect("validated target").to_string(),
@@ -235,7 +234,10 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         })
         .await
         .map_err(|error| step_failure("AccessibilityService/FocusText", error))
-        .and_then(|result| crate::commands::input::focus_text_output(&result, &candidate).map_err(Into::into))
+        .and_then(|result| {
+          crate::emit_input_action_result(&result.input_action_result);
+          crate::commands::input::focus_text_output(&result, &candidate).map_err(Into::into)
+        })
     }
     "mediaControl.nowPlaying" => runner
       .macos()

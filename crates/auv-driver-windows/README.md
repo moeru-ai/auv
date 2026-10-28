@@ -15,6 +15,7 @@ UIA, and `Windows.Media.Ocr`.
 - OCR via `Windows.Media.Ocr`
 - Window-scoped OCR polling (`find_text` / `wait_text`)
 - UIA accessibility tree capture, node focus, node select
+- UIA query focus with target identity checks and keyboard-focus readback (`AccessibilityApi::focus_text`, local Invoke, and the shared Runner focus service). Current evidence is compilation and unit tests; isolated desktop evidence is pending ([record](../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md)).
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke app.activate`)
@@ -31,6 +32,9 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-window-zoom-verification)` | `src/mutation.rs` | Zoom/maximize state verification after mutation |
 | `TODO(windows-window-capture-dpi)` | `src/capture.rs` | Tighter DPI/border mapping for window capture |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
+| `TODO(windows-focus-reference)` | `src/accessibility.rs` | Cross-call focus by a typed element identity; raw child paths are refused |
+| `TODO(windows-uia-cancellation)` | `src/accessibility.rs` | Bounded or cancelable synchronous UIA provider calls |
+| `TODO(windows-focus-progress)` | `src/accessibility.rs` | Shared structured metadata for a readback failure after focus delivery |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |

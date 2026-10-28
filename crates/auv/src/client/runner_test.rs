@@ -103,6 +103,7 @@ struct InputFixture {
 
 fn fixture_action(path: proto::InputDeliveryPath) -> proto::InputActionResult {
   proto::InputActionResult {
+    verified: false,
     selected_path: path as i32,
     attempts: vec![proto::InputAttempt {
       path: path as i32,
@@ -498,6 +499,7 @@ async fn runner_input_exposes_typed_mouse_motion() {
 #[test]
 fn input_action_projection_preserves_typed_delivery_evidence() {
   let action = input_action_result_from_proto(proto::InputActionResult {
+    verified: true,
     selected_path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
     attempts: vec![proto::InputAttempt {
       path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
@@ -518,6 +520,7 @@ fn input_action_projection_preserves_typed_delivery_evidence() {
     )]
   );
   assert_eq!(action.focus_disturbance, auv_driver::DisturbanceLevel::Foreground);
+  assert!(action.verified);
 }
 
 #[test]
@@ -619,8 +622,8 @@ fn permission_mapper_rejects_unspecified_and_unknown_wire_values() {
 
 #[test]
 fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
-  let result = ax_focus_result_from_proto(macos_proto::FocusTextResponse {
-    result: Some(macos_proto::AxFocusResult {
+  let result = ax_focus_result_from_proto(proto::FocusTextResponse {
+    result: Some(proto::AxFocusResult {
       app: "com.example.Editor".to_string(),
       pid: 42,
       path: "root/AXTextArea[0]".to_string(),
@@ -630,6 +633,7 @@ fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
       // Exact-path selection intentionally has no query in the owner result.
       query: String::new(),
       action: Some(proto::InputActionResult {
+        verified: false,
         selected_path: proto::InputDeliveryPath::AxFocus as i32,
         attempts: vec![proto::InputAttempt {
           path: proto::InputDeliveryPath::AxFocus as i32,
@@ -651,7 +655,7 @@ fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
 
 #[test]
 fn accessibility_mapper_rejects_missing_result_before_rendering() {
-  let error = ax_focus_result_from_proto(macos_proto::FocusTextResponse::default()).expect_err("missing focus result");
+  let error = ax_focus_result_from_proto(proto::FocusTextResponse::default()).expect_err("missing focus result");
   assert!(matches!(error, CapabilityError::InvalidResponse(_)));
 }
 
