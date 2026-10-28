@@ -210,7 +210,7 @@ GitHub retention ends 2026-11-11.
 These receipts validate the changed native thread path.
 Cancellation during a blocked provider read has deterministic unit evidence, not native fault-injection evidence.
 
-## Phase 2: failure progress (in progress)
+## Phase 2: failure progress
 
 Classification: approved feature from the owner's Phase 2 input-recovery goal.
 This slice connects Windows query focus to shared Driver errors, Runner rich errors, Invoke output, and recorded command failures.
@@ -267,6 +267,24 @@ Success result signatures stay unchanged.
 The wire addition is compatible: older readers can ignore the new rich-error detail, and missing details remain unknown.
 Native post-delivery fault injection is not claimed by these unit and transport tests.
 The updated receiver scenario requires an explicit `not_delivered` receipt plus independent zero-input checks for missing queries.
+
+The [isolated Windows acceptance run](https://github.com/moeru-ai/auv/actions/runs/40699276058)
+passed at source `927201cdfa18efc1851933e85f93ea6b10651189`, based on `1c72f553a78f4f0e6527b89155f492a84cccefdd`.
+The temporary workflow used evidence commit `f5a99fd4e1eb239a12590ecc505345068433323b`.
+Independent artifact checks confirmed 12 complete workflows across direct Rust, local Invoke, and selected Runner, each run twice in baseline and semantic modes.
+The six semantic refusals retain raw `not_found` / `not_delivered` receipts with independent zero-input checks.
+The six successful focus operations retain application-owned focus readback.
+All 24 captures matched application state, all 18 pointer deliveries matched their planned coordinates, and all four Runner cleanup receipts passed.
+No capture retry or input-action retry occurred; physical input remained zero and system-state restoration passed.
+
+The [raw progress artifact](https://github.com/moeru-ai/auv/actions/runs/40699276058/artifacts/12819959927)
+matched SHA-256 `db18a1899b96189bd675e899de75501b9ce5feb8f9364ac9cf2ce724f6174133` after download.
+GitHub retention ends 2026-11-11.
+The environment was Windows Server 2025 build 26100, interactive session 2, with one 1024 by 768 display.
+Actual DPI was not recorded; these receipts do not establish scaled-coordinate coverage.
+The source's [Check run](https://github.com/moeru-ai/auv/actions/runs/40699687747)
+and [JavaScript run](https://github.com/moeru-ai/auv/actions/runs/40699687353) passed.
+Post-delivery refusal remains unit and transport evidence until a separate native fault scenario validates it.
 
 ## Remaining acceptance
 
