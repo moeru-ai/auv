@@ -44,8 +44,8 @@ The new `AxNode.role` field carries the programmatic UIA name.
 Snapshots expose truncation, and focus rejects incomplete trees because they cannot establish an unambiguous match.
 Windows native focus accepts queries only.
 Raw paths remain unsupported until a typed reference can retain a control's identity across calls.
-Readback failures preserve existing error categories but do not yet carry a structured input-delivered flag.
-The operation never retries. Phase 2 owns the shared post-delivery progress contract.
+The Phase 1 baseline preserved error categories without structured delivery progress.
+The Phase 2 follow-up below adds that progress. The operation never retries.
 
 Track B currently uses localized roles and chooses the first equal-score match.
 Its path branch also bypasses the query branch's role and bounds filters.
@@ -190,8 +190,8 @@ Affected CLI and Windows Driver targets compile.
 
 This is cancellation admission, not an interruption guarantee for synchronous providers.
 A provider call already in progress can still block until it returns.
-Cancellation after the last check can race with `SetFocus`, and delivery errors still lack structured progress.
-Those Phase 2 gaps remain marked at the native call sites.
+Cancellation after the last check can race with `SetFocus`.
+The shared progress contract below records known delivery boundaries; provider deadlines remain deferred at the native call site.
 No cancellation result authorizes a retry of an uncertain action.
 The macOS native thread contract remains unchanged.
 
@@ -209,6 +209,82 @@ matched SHA-256 `ec88f3664e272d3048fae01baffa3edcba77cdaa256f7399e687b45763cdda0
 GitHub retention ends 2026-11-11.
 These receipts validate the changed native thread path.
 Cancellation during a blocked provider read has deterministic unit evidence, not native fault-injection evidence.
+
+## Phase 2: failure progress
+
+Classification: approved feature from the owner's Phase 2 input-recovery goal.
+This slice connects Windows query focus to shared Driver errors, Runner rich errors, Invoke output, and recorded command failures.
+The names below remain provisional during review.
+
+An error code does not identify whether input already crossed the native boundary.
+The existing `KeyboardInputProgress` describes completed batch actions and repetitions.
+It cannot describe one UIA call without inventing a keyboard action index.
+This slice therefore adds single-action progress while reusing `InputActionResult` for every action fact.
+
+| Native boundary | Progress | Action evidence | Recovery boundary |
+| --- | --- | --- | --- |
+| Refusal before `SetFocus` | `not_delivered` | No input action | Read current state before another decision. |
+| `SetFocus` returns an error | `delivery_uncertain` | One failed AxFocus attempt; unverified | Stop and inspect state. The provider may have acted. |
+| `SetFocus` returns S_OK, but readback fails | `submitted` | One submitted AxFocus attempt; unverified | Stop and inspect state. Submission does not prove focus. |
+| Focus readback succeeds | Normal success | Existing verified AxFocus result | The requested focus effect is confirmed. |
+| No recognizable progress receipt | Unknown | Absent | Stop and inspect state. Absence never means zero input. |
+
+The domain contract uses one `InputActionProgress` enum beside the existing input types.
+The two post-delivery variants carry the existing `InputActionResult`.
+`DriverError::InputAction` retains the original error as its source and adds this progress.
+The producer must preserve an existing post-delivery error when adding outer preflight context.
+It must never replace uncertain delivery with `not_delivered`.
+
+Runner errors use `google.rpc.Status` and one typed `InputActionFailure` in `Any`.
+The message uses a `oneof`; an absent or unknown case is not `not_delivered`.
+The original gRPC category and message remain available.
+The shared protocol crate owns this encoding, following its existing Device-entry and capture-guard precedents.
+Rust clients project known details into `CapabilityError`; SDK readers use their existing rich-error bytes.
+Unknown or malformed details preserve the original failure and leave progress unknown.
+
+Invoke adds optional `input_progress` to `failure_details`.
+Its existing command-finished event serializes the complete failure, so progress survives run recording.
+No new execution service, action-result schema, or client roundtrip for evidence is needed.
+
+The first producer is Windows `focus_text` only.
+Legacy raw-path focus, selection, keyboard batches, pointer operations, and provider deadlines stay outside this slice.
+Their existing result contracts remain in place.
+Tests must reproduce missing post-delivery facts before the producer changes.
+They must check direct error progress, wire roundtrips, Invoke JSON and tracing, SDK decoding, and refusal without retries.
+
+Three producer regressions reproduced lost progress before the native changes.
+Both a failed `SetFocus` call and failed readback could report the same permission error.
+The follow-up preserves their distinct delivery facts and original causes.
+The 32 focus tests pass.
+All 423 affected Rust library tests pass, including rich-error decoding and recorded failure progress.
+The SDK's 35 Driver, Device-entry, and failure-progress tests pass.
+SDK typecheck, changed-file lint, Buf format/lint/generation, and breaking detection against `1c72f553` pass.
+The shared SDK status reader replaces the existing Device-entry envelope loop; healthy Device-entry behavior remains covered by its tests.
+
+Rust callers must handle the new `DriverError::InputAction` and `CapabilityError::InputAction` variants in exhaustive matches.
+`InvokeFailure` also adds an optional `input_progress` field, so explicit Rust struct literals need that field.
+Success result signatures stay unchanged.
+The wire addition is compatible: older readers can ignore the new rich-error detail, and missing details remain unknown.
+Native post-delivery fault injection is not claimed by these unit and transport tests.
+The updated receiver scenario requires an explicit `not_delivered` receipt plus independent zero-input checks for missing queries.
+
+The [isolated Windows acceptance run](https://github.com/moeru-ai/auv/actions/runs/40699276058)
+passed at source `927201cdfa18efc1851933e85f93ea6b10651189`, based on `1c72f553a78f4f0e6527b89155f492a84cccefdd`.
+The temporary workflow used evidence commit `f5a99fd4e1eb239a12590ecc505345068433323b`.
+Independent artifact checks confirmed 12 complete workflows across direct Rust, local Invoke, and selected Runner, each run twice in baseline and semantic modes.
+The six semantic refusals retain raw `not_found` / `not_delivered` receipts with independent zero-input checks.
+The six successful focus operations retain application-owned focus readback.
+All 24 captures matched application state, all 18 pointer deliveries matched their planned coordinates, and all four Runner cleanup receipts passed.
+No capture retry or input-action retry occurred; physical input remained zero and system-state restoration passed.
+
+The [raw progress artifact](https://github.com/moeru-ai/auv/actions/runs/40699276058/artifacts/12819959927)
+matched SHA-256 `db18a1899b96189bd675e899de75501b9ce5feb8f9364ac9cf2ce724f6174133` after download.
+GitHub retention ends 2026-11-11.
+The environment was Windows Server 2025 build 26100, interactive session 2, with one 1024 by 768 display.
+Actual DPI was not recorded; these receipts do not establish scaled-coordinate coverage.
+The source's [Check run](https://github.com/moeru-ai/auv/actions/runs/40699687747)
+and [JavaScript run](https://github.com/moeru-ai/auv/actions/runs/40699687353) passed.
+Post-delivery refusal remains unit and transport evidence until a separate native fault scenario validates it.
 
 ## Remaining acceptance
 

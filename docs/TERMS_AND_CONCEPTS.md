@@ -1153,6 +1153,33 @@ partial effects. A list is not a transaction or an automatic retry unit. See
 the [keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md#keyboard-operation-hierarchy)
 for current capability limits and evidence.
 
+## Failed input progress
+
+Failed input progress identifies the native boundary reached by one failed action.
+`InputActionProgress` carries three states:
+
+- `not_delivered`: the operation refused before calling its native input boundary.
+- `delivery_uncertain`: a native call failed and may already have affected the application.
+- `submitted`: native submission succeeded, but the requested effect remains unverified.
+
+The two post-delivery states contain the existing `InputActionResult`.
+They do not introduce another action-result model.
+Neither state proves that the application consumed the input.
+Missing progress is unknown; it must never be interpreted as zero input.
+Even `not_delivered` requires a fresh state check before another decision.
+Uncertain or submitted input must not be retried blindly.
+
+`DriverError::InputAction` retains the original error as its source.
+Runner failures carry `InputActionFailure` in standard gRPC rich-error details.
+Invoke exposes optional `failure_details.input_progress` and records it in the command-finished event.
+The SDK's `inputActionProgress(error)` reads known details while retaining the original RPC error.
+Its generated oneof uses `case` values `notDelivered`, `deliveryUncertain`, and `submitted`.
+Unknown or malformed metadata leaves progress unknown.
+
+The first native producer is Windows query focus.
+`KeyboardInputProgress` remains the separate completed-action and repetition receipt for keyboard batches.
+See the [Windows contract and evidence](ai/references/driver/2026-10-28-windows-core-convergence.md).
+
 ## Screen
 
 A screen is the logical desktop capture and input surface. It is the user-facing

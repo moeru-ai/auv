@@ -1,5 +1,39 @@
 use super::*;
 
+#[test]
+fn input_action_status_preserves_original_category_and_native_progress() {
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let status = driver_status(auv_driver::DriverError::InputAction {
+    cause: Box::new(auv_driver::DriverError::PermissionDenied {
+      permission: "UI Automation",
+      message: Some("readback denied".into()),
+      recovery: None,
+    }),
+    progress: auv_driver::InputActionProgress::Submitted { action },
+  });
+  assert_eq!(status.code(), tonic::Code::PermissionDenied);
+  assert!(status.message().contains("readback denied"));
+  let failure = auv_api_proto::input_action_failure::failure(&status).expect("rich failure receipt");
+  let Some(proto::input_action_failure::Progress::Submitted(action)) = failure.progress else {
+    panic!("submitted progress was lost");
+  };
+  assert!(!action.verified);
+  assert!(action.attempts[0].succeeded);
+}
+
+#[tokio::test]
+async fn malformed_focus_rpc_returns_explicit_zero_delivery_progress() {
+  let service = LocalAccessibilityService {
+    session: auv::local::open().expect("local session without input"),
+  };
+  let status = service.focus_text(Request::new(proto::FocusTextRequest::default())).await.expect_err("missing selector");
+  assert_eq!(status.code(), tonic::Code::InvalidArgument);
+  assert!(matches!(
+    auv_api_proto::input_action_failure::failure(&status).unwrap().progress,
+    Some(proto::input_action_failure::Progress::NotDelivered(()))
+  ));
+}
+
 fn test_capture_store() -> CaptureStore {
   CaptureStore::new(CaptureStoreOptions::default())
 }

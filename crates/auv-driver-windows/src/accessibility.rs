@@ -69,17 +69,28 @@ pub fn snapshot_window(window: &Window) -> DriverResult<AxTreeSnapshot> {
 /// Resolves a text query, rechecks its live identity, and reads back focus.
 /// This operation never falls back to pointer input or text writes.
 pub fn focus_text(options: FocusTextOptions) -> DriverResult<AxFocusResult> {
-  options.validate()?;
-  // TODO(windows-focus-reference): raw child paths cannot identify the same
-  // control across calls. Enable path delivery only with a typed identity
-  // receipt; see 2026-10-28-windows-core-convergence.md.
-  if matches!(options.selector, AxTextSelector::Path(_)) {
-    return Err(auv_driver_common::DriverError::unsupported("accessibility.focus_text with an unbound UIA path"));
-  }
-  let window = crate::window::resolve_window(
-    &auv_driver_common::selector::Window::main_visible().owned_by(auv_driver_common::selector::App::id(options.app.trim())),
-  )?;
-  native::focus_text(&window, &options)
+  let result = (|| {
+    options.validate()?;
+    // TODO(windows-focus-reference): raw child paths cannot identify the same
+    // control across calls. Enable path delivery only with a typed identity
+    // receipt; see 2026-10-28-windows-core-convergence.md.
+    if matches!(options.selector, AxTextSelector::Path(_)) {
+      return Err(auv_driver_common::DriverError::unsupported("accessibility.focus_text with an unbound UIA path"));
+    }
+    let window = crate::window::resolve_window(
+      &auv_driver_common::selector::Window::main_visible().owned_by(auv_driver_common::selector::App::id(options.app.trim())),
+    )?;
+    native::focus_text(&window, &options)
+  })();
+  result.map_err(|cause| match cause {
+    // Native focus stamps every error after SetFocus. An outer preflight
+    // boundary must preserve those facts instead of claiming zero delivery.
+    cause @ auv_driver_common::DriverError::InputAction { .. } => cause,
+    cause => auv_driver_common::DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::NotDelivered,
+    },
+  })
 }
 
 /// Moves keyboard focus to a node from a fresh [`AxTreeSnapshot`].
@@ -89,6 +100,9 @@ pub fn focus_text(options: FocusTextOptions) -> DriverResult<AxFocusResult> {
 /// refresh the snapshot and retry when the tree changes between observation
 /// and action.
 pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+  // NOTICE: failure progress belongs to query focus in this slice. This
+  // legacy Apple Music path remains delivery-only; migrate it only with an
+  // owner-named consumer. See the Windows core convergence record.
   let indices = child_indices(node_path)?;
   native::focus_node(window, &indices)?;
   Ok(InputActionResult {
@@ -287,25 +301,37 @@ fn focus_selected(
   if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
     return Err(invalid_input("UIA focus cancelled before delivery"));
   }
-  focus()?;
-  // TODO(windows-focus-progress): Phase 2 owns structured post-delivery
-  // failure metadata. Keep existing error categories here and never retry;
-  // see `2026-10-28-windows-core-convergence.md`.
-  let current = read_current()?;
+  let mut action = InputActionResult::single_success(InputDeliveryPath::AxFocus);
+  action.focus_disturbance = DisturbanceLevel::Foreground;
+  focus().map_err(|cause| {
+    let mut uncertain = action.clone();
+    uncertain.attempts[0].succeeded = false;
+    uncertain.focus_disturbance = DisturbanceLevel::Unknown;
+    auv_driver_common::DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::DeliveryUncertain { action: uncertain },
+    }
+  })?;
+  // Every error beyond this boundary follows accepted native submission.
+  // Preserve that receipt even when the provider refuses the readback.
   expected.focused = true;
-  if current != expected {
-    return Err(crate::error::backend(
-      "UIA SetFocus returned, but focus readback did not confirm the selected control; inspect state before retrying",
-    ));
+  let readback = read_current().and_then(|current| {
+    if current == expected {
+      Ok(())
+    } else {
+      Err(crate::error::backend(
+        "UIA SetFocus returned, but focus readback did not confirm the selected control; inspect state before retrying",
+      ))
+    }
+  });
+  if let Err(cause) = readback {
+    return Err(auv_driver_common::DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::Submitted { action },
+    });
   }
-  Ok(InputActionResult {
-    selected_path: InputDeliveryPath::AxFocus,
-    attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-    verified: true,
-    mouse_disturbance: DisturbanceLevel::None,
-    focus_disturbance: DisturbanceLevel::Foreground,
-    clipboard_disturbance: DisturbanceLevel::None,
-  })
+  action.verified = true;
+  Ok(action)
 }
 
 /// Builds a screen-space rectangle from UIA bounding-rectangle edges.

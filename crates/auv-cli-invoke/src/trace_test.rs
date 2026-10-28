@@ -98,6 +98,33 @@ fn a_rejected_command_still_records_why_it_failed() {
 }
 
 #[test]
+fn a_failed_input_command_records_unverified_submission_progress() {
+  let store = Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch");
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  let mut input = scan_frame_input(BTreeMap::new());
+  input.command_id = "input.focusText".into();
+  input.dry_run = false;
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let failure = crate::InvokeFailure::from(auv_driver::DriverError::InputAction {
+    cause: Box::new(auv_driver::DriverError::PermissionDenied {
+      permission: "UI Automation",
+      message: Some("readback denied".into()),
+      recovery: None,
+    }),
+    progress: auv_driver::InputActionProgress::Submitted { action },
+  });
+  let future = root.in_scope(|| super::record_command(input, super::Execution::Local, |_| async { Err(failure) }));
+  assert!(futures_executor::block_on(root.instrument(future)).is_err());
+  futures_executor::block_on(dispatch.flush()).expect("flush");
+  let finished = event_payload(&store.records(), "auv.invoke.command_finished");
+  assert_eq!(finished["failure"]["code"], "permission_denied");
+  assert_eq!(finished["failure"]["input_progress"]["state"], "submitted");
+  assert_eq!(finished["failure"]["input_progress"]["action"]["verified"], false);
+  assert_eq!(finished["failure"]["input_progress"]["action"]["attempts"][0]["succeeded"], true);
+}
+
+#[test]
 fn a_long_input_is_recorded_as_a_bounded_prefix_with_its_length() {
   // ROOT CAUSE:
   //
