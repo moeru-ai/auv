@@ -283,6 +283,67 @@ fn window_text_match_failures_carry_the_shared_failure_codes() {
   assert_eq!(out_of_range.message, "window.clickText --index 1 is out of range for 1 text match(es)");
 }
 
+#[test]
+fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery() {
+  let window = Window {
+    reference: WindowRef {
+      id: "test_win".into(),
+    },
+    title: Some("Test".into()),
+    app_name: Some("test.exe".into()),
+    application_id: None,
+    process_id: Some(100),
+    frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+
+  let ocr_match_at = |center_x: f64, center_y: f64| auv_driver::OcrMatch {
+    text: "Target".to_string(),
+    confidence: 0.95,
+    bounds: auv_driver::Rect::new(center_x - 10.0, center_y - 10.0, 20.0, 20.0),
+  };
+
+  // 1. Interior point: screen (100, 200) -> window (50, 50)
+  let inside = ocr_match_at(100.0, 200.0);
+  let point = matched_window_point(&window, &inside).expect("inside point should map");
+  assert_eq!(point, auv_driver::geometry::WindowPoint::new(50.0, 50.0));
+
+  // 2. Exact boundaries: (0.0, 0.0) and (width, height) are inclusive
+  let top_left = ocr_match_at(50.0, 150.0);
+  assert_eq!(
+    matched_window_point(&window, &top_left).expect("top-left boundary should map"),
+    auv_driver::geometry::WindowPoint::new(0.0, 0.0)
+  );
+
+  let bottom_right = ocr_match_at(450.0, 450.0);
+  assert_eq!(
+    matched_window_point(&window, &bottom_right).expect("bottom-right boundary should map"),
+    auv_driver::geometry::WindowPoint::new(400.0, 300.0)
+  );
+
+  // 3. Out of bounds: screen (600, 500) -> window (550, 350), exceeds 400x300
+  let outside = ocr_match_at(600.0, 500.0);
+  let error = matched_window_point(&window, &outside).expect_err("outside point must be rejected");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+  assert!(error.message.contains("outside resolved window bounds; no input delivered"));
+
+  // Negative coordinate relative to window
+  let negative_x = ocr_match_at(49.9, 200.0);
+  let err_neg = matched_window_point(&window, &negative_x).expect_err("negative x must be rejected");
+  assert_eq!(err_neg.code, crate::FailureCode::InvalidTarget);
+
+  // 4. Non-finite coordinates (NaN and Inf) must be rejected
+  let nan_match = ocr_match_at(f64::NAN, 200.0);
+  let err_nan = matched_window_point(&window, &nan_match).expect_err("NaN must be rejected");
+  assert_eq!(err_nan.code, crate::FailureCode::InvalidTarget);
+
+  let inf_match = ocr_match_at(f64::INFINITY, 200.0);
+  let err_inf = matched_window_point(&window, &inf_match).expect_err("Infinity must be rejected");
+  assert_eq!(err_inf.code, crate::FailureCode::InvalidTarget);
+}
+
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

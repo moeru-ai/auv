@@ -513,6 +513,29 @@ pub fn selected_window_text_match<'a>(
   })
 }
 
+/// Projects an OCR match point into window space and verifies it falls within
+/// the resolved window bounds. Both direct local invoke and selected Runner routes
+/// share this check so out-of-bounds candidates are rejected before input delivery.
+pub(crate) fn matched_window_point(
+  window: &auv_driver::Window,
+  matched: &auv_driver::OcrMatch,
+) -> Result<auv_driver::geometry::WindowPoint, crate::InvokeFailure> {
+  let screen_point = matched.action_point();
+  let point = auv_driver::geometry::WindowPoint::new(screen_point.x - window.frame.origin.x, screen_point.y - window.frame.origin.y);
+  let point_value = point.point();
+  if !point_value.x.is_finite()
+    || !point_value.y.is_finite()
+    || !(0.0..=window.frame.size.width).contains(&point_value.x)
+    || !(0.0..=window.frame.size.height).contains(&point_value.y)
+  {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::InvalidTarget,
+      format!("recognized text point {:.1},{:.1} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
+    ));
+  }
+  Ok(point)
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn click_recognized_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
@@ -532,7 +555,7 @@ async fn click_recognized_window_text_with_session(
   }
   let matched = selected_window_text_match(&matches, &query, index)?;
   let point = auv_driver::geometry::ScreenPoint::from(matched.action_point());
-  let window_point = session.window().to_window_point(&window, point).map_err(crate::InvokeFailure::from)?;
+  let window_point = matched_window_point(&window, matched)?;
   let action = session.window().click(&window, window_point, options.clone()).map_err(crate::InvokeFailure::from)?;
   emit_capture("auv.driver.window_ocr_source", &capture);
   Ok(WindowTextClick {
