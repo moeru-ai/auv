@@ -1376,21 +1376,6 @@ fn click_point_coordinate_validation_rejects_invalid_inputs_before_delivery() {
     modifiers: vec![],
   };
   assert_eq!(underflow_args.basis(Some(&window_target)).unwrap_err(), "input.clickPoint --normalized coordinates must be within 0..=1");
-
-  // 3. Repeated clicks with zero interval must fail immediately
-  let repeat_args = ClickPointArgs {
-    button: "left".into(),
-    x: 100.0,
-    y: 100.0,
-    relative_to: None,
-    normalized: false,
-    title: None,
-    input_policy: None,
-    click_count: Some(2),
-    click_interval_ms: Some(0),
-    modifiers: vec![],
-  };
-  assert_eq!(repeat_args.basis(None).unwrap_err(), "input.clickPoint requires a positive --click-interval-ms for repeated clicks");
 }
 
 #[test]

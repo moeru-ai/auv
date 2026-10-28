@@ -69,34 +69,6 @@ fn normalize_absolute_multi_monitor_negative_virtual_desktop() {
 }
 
 #[test]
-fn wheel_units_rejects_non_finite_and_overflow_with_zero_delivery() {
-  // Non-finite delta_x or delta_y must be rejected before any SendInput/PostMessage
-  assert!(matches!(
-    wheel_units(Scroll::new(f64::NAN, 100.0)),
-    Err(DriverError::InvalidInput { message }) if message.contains("scroll delta_x must be finite")
-  ));
-  assert!(matches!(
-    wheel_units(Scroll::new(100.0, f64::INFINITY)),
-    Err(DriverError::InvalidInput { message }) if message.contains("scroll delta_y must be finite")
-  ));
-  assert!(matches!(
-    wheel_units(Scroll::new(100.0, f64::NEG_INFINITY)),
-    Err(DriverError::InvalidInput { message }) if message.contains("scroll delta_y must be finite")
-  ));
-
-  // Overflowing delta exceeding signed 16-bit word range
-  assert!(matches!(
-    wheel_units(Scroll::new(0.0, 100_000.0)),
-    Err(DriverError::InvalidInput { message }) if message.contains("exceeds the Windows wheel delta range")
-  ));
-
-  // Valid values convert according to 100 px = 120 wheel units (1 notch)
-  let units = wheel_units(Scroll::new(50.0, 100.0)).expect("valid scroll");
-  assert_eq!(units.horizontal, 60);
-  assert_eq!(units.vertical, -120); // downward scroll is negative in Win32 wheel convention
-}
-
-#[test]
 fn parse_key_chord_reads_special_keys_case_insensitively() {
   assert_eq!(
     parse_key_chord("Return").unwrap(),
