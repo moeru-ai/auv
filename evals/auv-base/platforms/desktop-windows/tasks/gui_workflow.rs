@@ -24,6 +24,8 @@ pub struct Options {
   pub observe_only: bool,
   /// Use UIA query focus for the text field instead of an OCR pointer click.
   pub semantic_focus: bool,
+  /// Exercise Runner-owned capture guards against deliberate fixture changes.
+  pub capture_guard: bool,
   pub routes: Vec<Route>,
 }
 
@@ -758,6 +760,131 @@ fn unverified_focus(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut
   Ok(())
 }
 
+/// Uses the existing Runner capture store and dedicated guarded RPC. The
+/// receiver changes its own UI between capture and input; AUV never repairs a
+/// refusal by falling back to ordinary input.
+fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, original: [i32; 2]) -> Result<()> {
+  let hwnd = target.hwnd();
+  let args = |capture_id: &str| {
+    vec![
+      entry.layout.button_center[0].to_string(),
+      entry.layout.button_center[1].to_string(),
+      "--relative-to".into(),
+      "screen".into(),
+      "--target".into(),
+      format!("window:{hwnd}"),
+      "--capture".into(),
+      capture_id.into(),
+      "--input-policy".into(),
+      "background-only".into(),
+    ]
+  };
+  let reference = |run: &Invocation| -> Result<String> {
+    run
+      .json
+      .as_ref()
+      .and_then(|json| json["result"]["capture"]["capture_id"].as_str())
+      .map(str::to_owned)
+      .context("guarded workflow requires a Runner-owned capture reference")
+  };
+  let baseline = capture(scenario, entry, target, false)?;
+  let capture_id = reference(&baseline)?;
+  let before = target.request(json!({"cmd": "state"}))?;
+  scenario.wait_until_idle()?;
+  reject_user_input(entry.start, &scenario.watch.snapshot())?;
+  if !owns_point(target.hwnd(), entry.layout.button_center) {
+    bail!("guarded click's owned button is covered; no input sent");
+  }
+  let delivered = call(scenario, entry, "input.clickPoint", &args(&capture_id), true)?;
+  let after = target.request(json!({"cmd": "state"}))?;
+  let result = delivered.json.as_ref().context("guarded click omitted its result")?;
+  let point: auv_driver_common::ScreenPoint = serde_json::from_value(result["result"]["screen_point"].clone())?;
+  let action = &result["result"]["action"];
+  let verified = after["clicks"].as_u64() == before["clicks"].as_u64().map(|count| count + 1)
+    && after["submitted_text"] == before["typing"]["text"]
+    && after["typing"] == before["typing"]
+    && point.point() == auv_driver_common::Point::new(f64::from(entry.layout.button_center[0]), f64::from(entry.layout.button_center[1]))
+    && action["selected_path"] == "window_targeted_mouse"
+    && action["attempts"].as_array().is_some_and(|attempts| attempts.len() == 1 && attempts[0]["succeeded"] == true);
+  scenario.records.write(
+    "guarded_click_verification",
+    json!({"capture_id": capture_id, "response": delivered.json, "application_before": before,
+      "application_after": after, "input_action_retries": 0, "verified": verified}),
+  )?;
+  if !verified {
+    bail!("unchanged capture did not deliver exactly one click to the owned button");
+  }
+
+  let caption = after["button_caption"].as_str().context("receiver omitted its button caption")?;
+  // TODO(windows-capture-faults): close, resize, and provider-error cases need
+  // separate fault receipts. Add them when a fixture can prove those effects
+  // without losing this workflow's live receiver and final cleanup checks.
+  let changes = [
+    (
+      "caption",
+      json!({"cmd": "set_button_caption", "caption": "AUV stale capture control"}),
+      json!({"cmd": "set_button_caption", "caption": caption}),
+    ),
+    (
+      "moved",
+      json!({"cmd": "move", "left": original[0] + 24, "top": original[1] + 16}),
+      json!({"cmd": "move", "left": original[0], "top": original[1]}),
+    ),
+    ("minimized", json!({"cmd": "minimize"}), json!({"cmd": "restore"})),
+  ];
+  for (change, request, reset) in changes {
+    let baseline = capture(scenario, entry, target, false)?;
+    let capture_id = reference(&baseline)?;
+    let layout_before = target.request(json!({"cmd": "layout"}))?;
+    let mutation = target.request(request.clone())?;
+    let state_before = target.request(json!({"cmd": "state"}))?;
+    let layout_after = target.request(json!({"cmd": "layout"}))?;
+    let changed = match change {
+      "caption" => state_before["button_caption"] == request["caption"],
+      "moved" => layout_before != layout_after,
+      "minimized" => state_before["minimized"] == true,
+      _ => unreachable!(),
+    };
+    if mutation["ok"] != true || !changed {
+      bail!("receiver did not apply the {change} capture fault");
+    }
+    let before = scenario.watch.snapshot();
+    reject_user_input(entry.start, &before)?;
+    let refused = entry.call("input.clickPoint", &args(&capture_id))?;
+    let state_after = target.request(json!({"cmd": "state"}))?;
+    let after = scenario.watch.snapshot();
+    reject_user_input(entry.start, &after)?;
+    let quiet = before.cursor == after.cursor
+      && before.foreground == after.foreground
+      && before.injected_mouse == after.injected_mouse
+      && before.injected_keys == after.injected_keys;
+    let verified = refused.exit != Some(0)
+      && refused.json.as_ref().is_some_and(|response| response["failure_details"]["code"] == "recapture_required")
+      && state_before == state_after
+      && quiet;
+    scenario.records.write(
+      "capture_guard_refusal",
+      json!({"change": change, "capture_id": capture_id, "fixture_request": request, "fixture_response": mutation,
+        "layout_before": layout_before, "layout_after": layout_after, "application_before": state_before,
+        "application_after": state_after, "failure_response": refused.json, "desktop_unchanged": quiet,
+        "input_action_retries": 0, "verified": verified}),
+    )?;
+    if !verified {
+      bail!("{change} capture was not refused with zero input; no retry or fallback");
+    }
+    let reset_response = target.request(reset)?;
+    let state = target.request(json!({"cmd": "state"}))?;
+    let layout = target.request(json!({"cmd": "layout"}))?;
+    let restored =
+      reset_response["ok"] == true && state["button_caption"] == caption && state["minimized"] == false && layout == layout_before;
+    scenario.records.write("capture_guard_fixture_reset", json!({"change": change, "response": reset_response, "verified": restored}))?;
+    if !restored {
+      bail!("receiver did not reset the {change} capture fault");
+    }
+  }
+  Ok(())
+}
+
 fn retry_initial_blank_capture(initial: bool, attempt: u32, decoded: Option<(u8, u8)>, expected: (u8, u8), identified: bool) -> bool {
   // NOTICE: hosted run 40453112779 decoded an initial owned frame as zero against a nonzero
   // calibration. Its cause is unconfirmed; retry only that startup mismatch. See
@@ -765,7 +892,7 @@ fn retry_initial_blank_capture(initial: bool, attempt: u32, decoded: Option<(u8,
   initial && attempt < 3 && identified && expected.0 != 0 && expected.1 == 0 && decoded == Some((0, 0))
 }
 
-fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, initial: bool) -> Result<()> {
+fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, initial: bool) -> Result<Invocation> {
   let mut attempt = 0;
   loop {
     attempt += 1;
@@ -799,7 +926,7 @@ fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
       "window_identity_verified": identified, "verified": verified, "retry_initial_blank": retry}),
     )?;
     if verified {
-      return Ok(());
+      return Ok(run);
     }
     if !retry {
       bail!("captured pixels do not show the application's state");
@@ -1125,7 +1252,8 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     json!({"route": route, "round": round, "system": system_facts(), "hwnd": hwnd.to_string(),
     "pid": layout.pid, "window_rect": layout.window_rect, "typing_rect": layout.typing_rect, "button_rect": layout.button_rect,
     "runner_run": runner.as_ref().map(|runner| &runner.run), "foreground_guard_atomic": false, "observe_only": options.observe_only,
-    "calibration_click_count": calibration, "calibration_is_input_delivery": false, "semantic_focus": options.semantic_focus}),
+    "calibration_click_count": calibration, "calibration_is_input_delivery": false, "semantic_focus": options.semantic_focus,
+    "capture_guard": options.capture_guard}),
   )?;
   let mut scenario = Scenario {
     auv: &auv,
@@ -1257,6 +1385,10 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     )?;
     if !(rejected && no_keys && unchanged) {
       bail!("wrong-focus guard did not prevent key dispatch");
+    }
+
+    if options.capture_guard {
+      guarded_click_checks(&mut scenario, &entry, &mut target, [left, top])?;
     }
 
     // A second window owned by this harness becomes the foreground through AUV pointer input.
@@ -1394,7 +1526,8 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     "foreground_restored": (!options.observe_only).then_some(finish.foreground == start.foreground),
     "cursor_unchanged": finish.cursor == start.cursor, "foreground_unchanged": finish.foreground == start.foreground,
     "physical_mouse": finish.physical_mouse - start.physical_mouse, "physical_keys": finish.physical_keys - start.physical_keys,
-    "input_action_retries": 0, "foreground_input_expected": !options.observe_only, "semantic_focus": options.semantic_focus}),
+    "input_action_retries": 0, "foreground_input_expected": !options.observe_only, "semantic_focus": options.semantic_focus,
+    "capture_guard": options.capture_guard}),
   )?;
   println!(
     "{} {route} round {round}: {}",
@@ -1422,6 +1555,9 @@ pub fn run(options: &Options) -> Result<bool> {
   if options.semantic_focus && options.observe_only {
     bail!("semantic focus sends input and cannot be combined with observe-only");
   }
+  if options.capture_guard && (options.observe_only || options.routes != [Route::Runner]) {
+    bail!("capture guard checks send input and require --routes runner without --observe-only");
+  }
   if options.routes.is_empty() || options.routes.iter().enumerate().any(|(index, route)| options.routes[..index].contains(route)) {
     bail!("workflow routes must be nonempty and unique");
   }
@@ -1441,6 +1577,26 @@ pub fn run(options: &Options) -> Result<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn capture_guard_rejects_routes_without_a_capture_store_before_creating_output() {
+    let directory = tempfile::tempdir().expect("temporary parent");
+    let mut options = Options {
+      output: directory.path().join("not-created"),
+      auv: directory.path().join("not-an-auv.exe"),
+      rounds: 1,
+      observe_only: false,
+      semantic_focus: false,
+      capture_guard: true,
+      routes: vec![Route::Rust],
+    };
+    assert!(run(&options).unwrap_err().to_string().contains("--routes runner"));
+    assert!(!options.output.exists());
+    options.routes = vec![Route::Runner];
+    options.observe_only = true;
+    assert!(run(&options).unwrap_err().to_string().contains("--observe-only"));
+    assert!(!options.output.exists());
+  }
 
   // https://github.com/moeru-ai/auv/actions/runs/40453112779
   #[test]
@@ -1681,6 +1837,7 @@ mod tests {
       rounds: 1,
       observe_only: true,
       semantic_focus: false,
+      capture_guard: false,
       routes: vec![Route::Runner],
     };
     let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");
@@ -1722,6 +1879,7 @@ mod tests {
       rounds: 1,
       observe_only: true,
       semantic_focus: false,
+      capture_guard: false,
       routes: vec![Route::Runner],
     };
     let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");

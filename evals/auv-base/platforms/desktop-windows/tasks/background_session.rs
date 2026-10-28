@@ -150,6 +150,9 @@ fn main() -> std::process::ExitCode {
       /// Focus the text field through UIA instead of clicking its OCR result.
       #[arg(long, conflicts_with = "observe_only")]
       semantic_focus: bool,
+      /// Check guarded clicks against changed owned UI; requires --routes runner.
+      #[arg(long, conflicts_with = "observe_only")]
+      capture_guard: bool,
       /// Execute only these routes; every selected route writes its own evidence.
       #[arg(
         long,
@@ -261,6 +264,7 @@ fn main() -> std::process::ExitCode {
       rounds,
       observe_only,
       semantic_focus,
+      capture_guard,
       routes,
     } => auv_base_evals::desktop_windows::foreground_commands::workflow::run(
       &auv_base_evals::desktop_windows::foreground_commands::workflow::Options {
@@ -269,6 +273,7 @@ fn main() -> std::process::ExitCode {
         rounds,
         observe_only,
         semantic_focus,
+        capture_guard,
         routes,
       },
     ),

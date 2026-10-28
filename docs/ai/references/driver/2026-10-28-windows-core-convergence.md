@@ -318,6 +318,19 @@ The environment remained Windows Server 2025 build 26100, interactive session 2,
 This fixture validates native `submitted` readback failure; failed-HRESULT `delivery_uncertain` still has unit and wire evidence only.
 The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
 
+## Phase 2: native capture admission scenario (pending)
+
+Classification: test-only, using the existing capture-guard implementation from PR #429.
+The evaluation flag `workflow --capture-guard --routes runner` requires an integration build with its dedicated guarded RPC.
+It first requires one unchanged-target click to reach the owned receiver's button exactly once.
+The receiver then changes its own caption, moves, and minimizes, each after a fresh Runner capture.
+Every stale-reference request must return `recapture_required` with unchanged application state, pointer, foreground, and injected mouse/key counts.
+The record retains the raw failures, capture IDs, application states, layouts, and independent fixture reset receipts.
+The scenario adds no Driver behavior, capture policy, fallback, or input retry.
+Compilation, all ten no-desktop workflow regression tests, CLI help, formatting, and whitespace checks pass.
+Isolated native acceptance is pending.
+Closed-window, resize, and provider-error native cases still need separate fault receipts.
+
 ## Remaining acceptance
 
 The local capture/focus integration combines focus source `46c2ba723c83fc1b66595d5733d979ee794100ff`

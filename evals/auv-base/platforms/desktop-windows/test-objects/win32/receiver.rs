@@ -949,6 +949,7 @@ mod native {
       "minimized": minimized,
       "foreground": foreground,
       "button_focused": unsafe { GetFocus() } == handle(&BUTTON),
+      "button_caption": window_text(handle(&BUTTON)),
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
@@ -989,6 +990,19 @@ mod native {
     let mut reply = match request["cmd"].as_str() {
       Some("state") => state(hwnd),
       Some("layout") => layout(hwnd),
+      // Controlled UI change for stale-capture checks. The application changes
+      // its own caption; this is fixture setup, not AUV input delivery.
+      Some("set_button_caption") if FOREGROUND_INPUT.load(Relaxed) => {
+        if let Some(caption) = request["caption"].as_str() {
+          // SAFETY: the button belongs to this GUI thread and is already created.
+          match unsafe { SetWindowTextW(handle(&BUTTON), &HSTRING::from(caption)) } {
+            Ok(()) => json!({"caption": window_text(handle(&BUTTON))}),
+            Err(error) => json!({"ok": false, "error": error.to_string()}),
+          }
+        } else {
+          json!({"ok": false, "error": "set_button_caption needs caption"})
+        }
+      }
       // The receiver moves, resizes and minimizes itself, so the evaluation can inject
       // those faults without the driver or the runner touching the window.
       Some("minimize") => {

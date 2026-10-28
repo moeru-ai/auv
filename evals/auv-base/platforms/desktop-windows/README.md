@@ -101,6 +101,16 @@ An explicit subset, such as `--routes rust,invoke`, runs only those routes.
 One route's result never establishes another route's behavior.
 The [semantic-focus record](../../../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md) states the current evidence level.
 
+`workflow --capture-guard --routes runner` adds checks for the Runner-owned capture precondition from PR #429.
+It needs the integration build with that RPC; an older Runner must refuse it without ordinary-click fallback.
+The unchanged control must receive exactly one background click with the expected coordinates and submitted text.
+The receiver then changes its own button caption, moves itself, and minimizes itself, each after a new capture.
+Each request with the old capture reference must return `recapture_required` and leave application and desktop input state unchanged.
+Raw capture references, command failures, fixture states, layouts, and reset receipts remain in the workflow record.
+There is no input retry. The flag requires only the Runner route and conflicts with `--observe-only`.
+It can be combined with `--semantic-focus`.
+Closed-window, resize, and provider-error native cases remain deferred until they have separate fixture receipts.
+
 `workflow` runs the same owned Win32 record-entry workflow through direct Rust APIs, local
 Invoke, and a real daemon-owned Runner selected by `--run`: resolve and capture the window,
 OCR the input caption, click, verify foreground and control focus, select the existing
