@@ -852,6 +852,19 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     if settlement["ok"] != true {
       bail!("receiver did not settle its post-{change} mouse messages");
     }
+    // Keep the old capture and planned point. This read-only control separates
+    // target-query effects from the subsequent guarded input request.
+    let query_before = scenario.watch.snapshot();
+    reject_user_input(entry.start, &query_before)?;
+    let target_query = entry.call("window.list", &[])?;
+    let query_after = scenario.watch.snapshot();
+    reject_user_input(entry.start, &query_after)?;
+    if target_query.exit != Some(0)
+      || query_before.injected_mouse != query_after.injected_mouse
+      || query_before.injected_keys != query_after.injected_keys
+    {
+      bail!("read-only target query failed or injected input after the {change} fixture fault");
+    }
     let state_before = target.request(json!({"cmd": "state"}))?;
     let layout_after = target.request(json!({"cmd": "layout"}))?;
     let changed = match change {
@@ -881,6 +894,7 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
       "capture_guard_refusal",
       json!({"change": change, "capture_id": capture_id, "fixture_request": request, "fixture_response": mutation,
         "application_after_mutation": state_after_mutation, "fixture_settlement": settlement,
+        "readonly_target_query": target_query.json,
         "layout_before": layout_before, "layout_after": layout_after, "application_before": state_before,
         "application_after": state_after, "failure_response": refused.json, "desktop_unchanged": quiet,
         "foreground": [before.foreground, after.foreground], "injected_mouse": [before.injected_mouse, after.injected_mouse],

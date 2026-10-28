@@ -341,6 +341,13 @@ Windows can generate this message after window changes, as described in
 The [failed-attempt artifact](https://github.com/moeru-ai/auv/actions/runs/40710275511/artifacts/12827460004)
 matched SHA-256 `1d4b49e31bcc7e16ea0770bad7526fd941231b25bcff7407714dddecdd8343ca` after download.
 Minimized-window admission was not reached in that attempt.
+The [queue-peek attempt](https://github.com/moeru-ai/auv/actions/runs/40715970079)
+reproduced the same two moved-window failures at `d30b61b9`.
+Its settlement replies reported zero drained messages; the protected requests still returned `recapture_required` while `raw.button_move` advanced.
+The next attempt adds a read-only `window.list` control before sampling the guarded-call baseline.
+It retains the old capture ID and planned point, records the query response, and keeps the complete application-state comparison.
+This separates target-query effects from input delivery without discarding a counter.
+The queue-peek artifact matched SHA-256 `2f89818919ad2732449d8909138182c2ec84de685366964d432f2ceb3590435e` after download.
 Closed-window, resize, and provider-error native cases still need separate fault receipts.
 
 ## Remaining acceptance
