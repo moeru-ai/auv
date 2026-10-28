@@ -219,15 +219,20 @@ pub(super) fn deliver<T>(
   let id = &reference.capture_id;
   let expected =
     captures.get(id).ok_or_else(|| refusal(id, Reason::CaptureUnavailable, "capture expired, was evicted, or belongs to another Runner"))?;
-  // TODO: OCR, region and streamed captures have no click baseline yet. Add
-  // provenance at their producers only in an owner-approved follow-up slice.
-  let state = captures.click_state(id).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
   // NOTICE: AT-SPI can report (0,0) for moved GTK4 windows on Wayland.
   // This crop cannot prove window location. Re-enable after the driver
   // exposes reliable screen placement; see PR #429, discussion_r4382693034.
   if expected.backend.starts_with("atspi.extents+") {
-    return Err(refusal(id, Reason::CheckUnavailable, "AT-SPI window crops cannot establish reliable screen placement"));
+    return Err(refusal_with_cause(
+      id,
+      &Status::unimplemented(
+        "AT-SPI window crops cannot establish reliable screen placement; use a display capture with screen coordinates",
+      ),
+    ));
   }
+  // TODO: OCR, region and streamed captures have no click baseline yet. Add
+  // provenance at their producers only in an owner-approved follow-up slice.
+  let state = captures.click_state(id).map_err(|cause| refusal(id, Reason::CheckUnavailable, &cause))?;
   match &state.target {
     CaptureTarget::Window(target) if window.is_none_or(|window| window.reference != target.reference) => {
       return Err(refusal(id, Reason::TargetMismatch, "click does not name the captured window"));
@@ -285,6 +290,11 @@ pub(super) fn deliver<T>(
   if auv_driver::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
     return Err(Status::cancelled("click cancelled during capture admission"));
   }
+  // NOTICE: Admission covers the whole Click operation once. Double/Repeated
+  // delivery can continue after its first press changes the UI. See
+  // `proto/auv/api/driver/v1/docs/input.click.md`.
+  // TODO(per-press-capture): a separate owner-approved policy must preserve
+  // native double-click timing before checks can run between presses.
   input()
 }
 
@@ -305,9 +315,18 @@ fn refuse(capture_id: &str, reason: Reason, cause: &str, cause_code: Option<toni
     reason: reason.as_str_name(),
     cause: &cause,
     cause_code: cause_code.map(|code| code as i32),
-    recovery: "new_capture",
+    recovery: if cause_code == Some(tonic::Code::Unimplemented) {
+      "change_target"
+    } else {
+      "new_capture"
+    },
     input_delivered: false,
   });
+  // An unsupported check cannot recover by capturing the same target again.
+  // Use the existing capability category in every SDK and command frontend.
+  if cause_code == Some(tonic::Code::Unimplemented) {
+    return Status::unimplemented(format!("click capture guard unsupported for capture {capture_id}: {cause}"));
+  }
   match cause_code {
     Some(code) => auv_api_proto::click_precondition::status_with_cause(capture_id, reason, &Status::new(code, cause)),
     None => auv_api_proto::click_precondition::status(capture_id, reason, &cause),

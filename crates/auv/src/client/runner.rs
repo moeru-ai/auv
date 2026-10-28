@@ -1022,7 +1022,9 @@ impl WindowClient {
   }
 
   /// Checks an optional Runner-owned capture immediately before delivery.
-  /// A failed check returns `CapabilityError::CapturePrecondition` with no input.
+  /// Checks once for the entire click sequence, not between repeated presses.
+  /// Evidence refusals return `CapabilityError::CapturePrecondition` with no input.
+  /// Unsupported guards return a client error with the unsupported category.
   pub async fn click_with_capture(
     &self,
     target: impl Into<PointerTarget>,
@@ -1789,6 +1791,8 @@ impl InputClient {
 
   /// Checks a full window or display capture on this Runner before delivery.
   /// The capture reference must belong to this route. Pixels remain on the Runner.
+  /// Checks once for the entire click sequence, not between repeated presses.
+  /// Unsupported guards return a client error with the unsupported category.
   pub async fn click_with_capture(
     &self,
     target: &impl auv_driver::Positional,

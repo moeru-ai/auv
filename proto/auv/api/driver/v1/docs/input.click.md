@@ -53,6 +53,13 @@ Unrelated window metadata outside that area does not invalidate the click.
 The pixel comparison still covers the full captured image.
 Animation, caret blinking, and backend changes can therefore cause refusal.
 
+The check admits one complete click operation. It runs once before `Single`,
+`Double`, or `Repeated`, including a sequence of 255 clicks.
+It does not run between presses. If the first click replaces button A with
+button B, later clicks in that operation can reach B.
+For a new decision after each click, send single-click operations with a new capture between calls.
+Checks between presses need a separate policy that preserves native double-click timing.
+
 A window capture requires the same target window. A display capture requires
 the click point to remain inside that captured display.
 Expired, evicted, foreign, or unknown references refuse input.
@@ -60,7 +67,7 @@ An unreadable target or an unstable capture also refuses input.
 Region, OCR-produced, and streamed captures currently have no click baseline
 and return `CHECK_UNAVAILABLE`.
 
-Refusal returns `FAILED_PRECONDITION` with `ClickPreconditionFailure` packed
+An evidence refusal returns `FAILED_PRECONDITION` with `ClickPreconditionFailure` packed
 in `google.rpc.Status.details` as `Any`. Every reason requests a new capture
 and a new target decision. CLI and MCP return `recapture_required`.
 The Runner records `auv.input.click_refused` in traced runs, including the
@@ -84,15 +91,20 @@ This requirement concerns receipt during the request, not a compositor timestamp
 
 The check and delivery are not atomic. The UI can change after the final
 capture, during native activation, fallback, or event submission.
-Repeated clicks also retain their interval between events.
+Repeated clicks retain their interval between events, without another capture check.
 Changes absent from both pixels and window metadata cannot be detected.
 Window lists do not provide a portable guarantee about every occluder.
 An unchanged display capture does not prove that a named background recipient is visible.
 The recipient can remain covered throughout the check.
 This policy does not establish semantic success or trigger automatic replanning.
-Linux window-targeted guards and AT-SPI window crops return `CHECK_UNAVAILABLE`.
+Linux window-targeted guards and AT-SPI window crops return `UNIMPLEMENTED`.
 AT-SPI extents cannot establish reliable screen placement on GNOME Wayland.
 Linux callers can use display captures with screen or display coordinates.
+These capability refusals carry no `ClickPreconditionFailure` detail or `new_capture` recovery.
+Rust reports an unsupported client error. JavaScript preserves the original `AuvRpcError` with code 12.
+CLI and MCP return `unsupported`. The refusal event records `cause_code: 12`,
+`recovery: "change_target"`, and `input_delivered: false`.
+Another capture of the same window cannot enable this operation.
 
 Recapture runs inside the input task and delays other input operations.
 Exact pixels can reject an unchanged target because of caret blinking or animation.
@@ -151,11 +163,14 @@ selection through `--run`. Recapture alone cannot fix this configuration.
 Frontend target-resolution failures return `recapture_required` in the command
 record, but currently have no `auv.input.click_refused` Runner event.
 Their optional `cause_code` preserves the original resolution category, such as `permission_denied` or `backend`.
+Invalid coordinates return `invalid_input`, with or without `--capture`, before the input RPC.
+Unsupported target resolution retains `unsupported`. Neither error requests recapture.
 Rust refusal errors retain the server status as `source`, including its diagnostic message.
 Runner check failures also retain the original gRPC category in
 `ClickPreconditionFailure.cause_code` (optional `google.rpc.Code`, field 3).
 This includes target resolution, recapture, and the window queries around recapture.
-The outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+For recoverable check failures, the outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+An unsupported check returns `UNIMPLEMENTED` instead.
 Rust exposes `CapabilityError::CapturePrecondition.cause_code` and `capture_cause_kind()`;
 JavaScript exposes `ClickPreconditionError.causeCode`.
 CLI and MCP JSON expose `failure_details.cause_code`: `permission_denied`,

@@ -676,7 +676,7 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
   after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 640 360 --target app:com.apple.TextEdit --relative-to screen\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
 )]
 struct ClickPointArgs {
-  /// Runner-owned full window/display capture. Refuse input if its state changed or cannot be checked. Requires a selected Run.
+  /// Runner-owned full window/display capture. Check once before the entire click sequence, not between repeated clicks. Requires a selected Run.
   #[arg(long, value_name = "CAPTURE_ID")]
   #[serde(default)]
   capture: Option<String>,

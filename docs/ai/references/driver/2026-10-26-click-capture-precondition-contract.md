@@ -4,6 +4,7 @@ Classification: bug fix. Evidence: automated regressions, maintainer reports, an
 [Linux native validation](2026-10-27-linux-click-capture-freshness.md).
 The native results apply to the named environment and fixture boundaries.
 No general platform support claim is made.
+The [October 29 review](2026-10-29-pr-429-recovery-and-click-sequence-review.md) records recovery corrections and full daemon recording evidence.
 
 ## Problem and contract
 
@@ -27,6 +28,14 @@ The Runner resolves coordinates, recaptures, checks, and calls delivery in one
 blocking task. There is no asynchronous scheduling boundary between the check
 and the input capability call. A refused click never calls that capability.
 The input result remains the existing `InputActionResult`.
+
+Admission covers one complete `Click` operation. `Double` and `Repeated` receive
+one check before the first press, including sequences of 255 clicks.
+If the first click changes button A into button B, subsequent clicks can reach B.
+There is no capture check between presses. A later operation checks its reference again.
+Per-press decisions require separate single-click calls and fresh captures.
+An inline TODO reserves checks between presses for an approved policy that preserves double-click timing.
+This boundary addresses [review 4403200221](https://github.com/moeru-ai/auv/pull/429#discussion_r4403200221).
 
 Guarded admission acquires the shared desktop input reservation before checking
 the baseline or recapturing. It retains the reservation through delivery.
@@ -69,7 +78,10 @@ There is no automatic retry or replanning.
 Runner check failures retain their original gRPC category in the optional
 `ClickPreconditionFailure.cause_code` field (field 3, `google.rpc.Code`).
 Target resolution, recapture, and surrounding window queries preserve this category.
-The outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+For recoverable checks, the outer status remains `FAILED_PRECONDITION` with reason `CHECK_UNAVAILABLE`.
+Unsupported checks return `UNIMPLEMENTED`, without a capture-precondition detail or a recapture instruction.
+CLI and MCP map these failures to `unsupported` through the existing SDK error category.
+Their refusal events use `cause_code: 12` and `recovery: "change_target"`.
 Policy refusals and older Runners omit the cause code.
 Callers must resolve the underlying cause before taking a new capture.
 Rust exposes `cause_code` and `capture_cause_kind()`; JavaScript exposes `causeCode`.
@@ -123,6 +135,8 @@ They do not reach the Runner and currently emit no `auv.input.click_refused` eve
 The inline TODO in `selected_click_point` records this admission-recording gap.
 These frontend failures keep `recapture_required` and add `cause_code` for the original resolution category.
 For example, permission failures retain `permission_denied`, while connection failures retain `backend`.
+Coordinate validation returns `invalid_input` with or without `--capture`, before any input RPC.
+Invalid input and unsupported resolution failures do not enter recapture recovery.
 
 ## Review evidence and limits
 
@@ -154,7 +168,7 @@ They are small samples, not general failure rates or new measurements of the fix
 | macOS | 0/16 unchanged clicks delivered. Ignoring Window Server improved this to 7/10. | Scope window metadata to the target or click point. No process-name exceptions. |
 | Windows display | 5/12 unchanged clicks refused, with 171–252 differing bytes and equal metadata. | Retain exact pixels and document the observed false refusals. |
 | GNOME display | 1/10 unchanged clicks refused, possibly from caret blinking. | Retain exact pixels and document the observed false refusal. |
-| GNOME Wayland window | GTK4 AT-SPI extents stayed at `(0,0)` after movement, so a moved window passed. | Refuse AT-SPI window crops and Linux window-targeted guards with `CHECK_UNAVAILABLE`. |
+| GNOME Wayland window | GTK4 AT-SPI extents stayed at `(0,0)` after movement, so a moved window passed. | Refuse AT-SPI window crops and Linux window-targeted guards with `UNIMPLEMENTED`. A new capture cannot enable this operation. |
 
 Sources: [macOS window churn](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693014),
 [pixel false refusals](https://github.com/moeru-ai/auv/pull/429#discussion_r4382693024),

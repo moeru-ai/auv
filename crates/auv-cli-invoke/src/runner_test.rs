@@ -1,5 +1,209 @@
 use super::*;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4403372886
+// ROOT CAUSE:
+//
+// If coordinates were outside the target, adding --capture changed their
+// error to recapture_required because validation used target-failure recovery.
+// Before the fix, even unguarded bounds errors lost their input category.
+// The fix keeps coordinate errors as invalid_input before any input RPC.
+#[tokio::test]
+async fn click_coordinate_errors_remain_invalid_input_with_capture_pr_429() {
+  use auv_api_proto::auv::api::daemon::v1 as daemon;
+  use auv_api_proto::auv::api::driver::v1 as proto;
+  struct Targets;
+  // Use the public client placement path. No constructor is exposed for tests.
+  #[tonic::async_trait]
+  impl daemon::device_service_server::DeviceService for Targets {
+    async fn list_devices(
+      &self,
+      _: tonic::Request<daemon::ListDevicesRequest>,
+    ) -> Result<tonic::Response<daemon::ListDevicesResponse>, tonic::Status> {
+      Ok(tonic::Response::new(daemon::ListDevicesResponse {
+        devices: vec![daemon::Device {
+          r#ref: Some(daemon::DeviceRef {
+            device_id: "a".repeat(64),
+          }),
+          name: "fixture".into(),
+          local: true,
+          ..Default::default()
+        }],
+      }))
+    }
+    async fn get_device(
+      &self,
+      _: tonic::Request<daemon::GetDeviceRequest>,
+    ) -> Result<tonic::Response<daemon::GetDeviceResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn list_user_sessions(
+      &self,
+      _: tonic::Request<daemon::ListUserSessionsRequest>,
+    ) -> Result<tonic::Response<daemon::ListUserSessionsResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn get_user_session(
+      &self,
+      _: tonic::Request<daemon::GetUserSessionRequest>,
+    ) -> Result<tonic::Response<daemon::GetUserSessionResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn ensure_user_session_unlocked(
+      &self,
+      _: tonic::Request<daemon::EnsureUserSessionUnlockedRequest>,
+    ) -> Result<tonic::Response<daemon::EnsureUserSessionUnlockedResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn ensure_user_session_locked(
+      &self,
+      _: tonic::Request<daemon::EnsureUserSessionLockedRequest>,
+    ) -> Result<tonic::Response<daemon::EnsureUserSessionLockedResponse>, tonic::Status> {
+      panic!("unused")
+    }
+  }
+  #[tonic::async_trait]
+  impl daemon::run_service_server::RunService for Targets {
+    async fn create_run(
+      &self,
+      request: tonic::Request<daemon::CreateRunRequest>,
+    ) -> Result<tonic::Response<daemon::CreateRunResponse>, tonic::Status> {
+      Ok(tonic::Response::new(daemon::CreateRunResponse {
+        run: Some(daemon::Run {
+          r#ref: Some(daemon::RunRef {
+            run_id: "0123456789abcdef0123456789abcdef".into(),
+          }),
+          devices: request.into_inner().devices,
+          phase: daemon::RunPhase::Running as i32,
+          ..Default::default()
+        }),
+      }))
+    }
+    async fn list_runs(
+      &self,
+      _: tonic::Request<daemon::ListRunsRequest>,
+    ) -> Result<tonic::Response<daemon::ListRunsResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn get_run(&self, _: tonic::Request<daemon::GetRunRequest>) -> Result<tonic::Response<daemon::GetRunResponse>, tonic::Status> {
+      panic!("unused")
+    }
+    async fn stop_run(&self, _: tonic::Request<daemon::StopRunRequest>) -> Result<tonic::Response<daemon::StopRunResponse>, tonic::Status> {
+      panic!("unused")
+    }
+  }
+  #[tonic::async_trait]
+  impl proto::window_service_server::WindowService for Targets {
+    async fn list_windows(
+      &self,
+      _: tonic::Request<proto::ListWindowsRequest>,
+    ) -> Result<tonic::Response<proto::ListWindowsResponse>, tonic::Status> {
+      Ok(tonic::Response::new(proto::ListWindowsResponse {
+        windows: vec![proto::Window {
+          r#ref: Some(proto::WindowRef {
+            window_id: "window-1".into(),
+          }),
+          frame: Some(proto::ScreenRect {
+            x: 10.0,
+            y: 20.0,
+            width: 800.0,
+            height: 600.0,
+          }),
+          is_visible: true,
+          ..Default::default()
+        }],
+      }))
+    }
+    async fn resolve_window(
+      &self,
+      _: tonic::Request<proto::ResolveWindowRequest>,
+    ) -> Result<tonic::Response<proto::ResolveWindowResponse>, tonic::Status> {
+      panic!("the explicit window ID requires only ListWindows")
+    }
+  }
+  #[tonic::async_trait]
+  impl proto::display_service_server::DisplayService for Targets {
+    async fn list_displays(
+      &self,
+      _: tonic::Request<proto::ListDisplaysRequest>,
+    ) -> Result<tonic::Response<proto::ListDisplaysResponse>, tonic::Status> {
+      Ok(tonic::Response::new(proto::ListDisplaysResponse {
+        displays: vec![proto::Display {
+          display_id: "display-1".into(),
+          frame: Some(proto::ScreenRect {
+            width: 800.0,
+            height: 600.0,
+            ..Default::default()
+          }),
+          scale_factor: 1.0,
+          ..Default::default()
+        }],
+      }))
+    }
+  }
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  let incoming =
+    futures_util::stream::unfold(listener, |listener| async { Some((listener.accept().await.map(|(stream, _)| stream), listener)) });
+  let server = tokio::spawn(async move {
+    tonic::transport::Server::builder()
+      .add_service(daemon::device_service_server::DeviceServiceServer::new(Targets))
+      .add_service(daemon::run_service_server::RunServiceServer::new(Targets))
+      .add_service(proto::window_service_server::WindowServiceServer::new(Targets))
+      .add_service(proto::display_service_server::DisplayServiceServer::new(Targets))
+      .serve_with_incoming(incoming)
+      .await
+      .unwrap();
+  });
+  let client = auv::client::Client::connect(&format!("http://{address}"), None).await.unwrap();
+  let run = client.run(Default::default()).await.unwrap();
+  let runner = run.runner(Default::default()).await.unwrap();
+  for (target, basis) in [
+    (
+      crate::ExecutionTarget::Window {
+        id: "window-1".into(),
+      },
+      "window",
+    ),
+    (
+      crate::ExecutionTarget::Window {
+        id: "window-1".into(),
+      },
+      "screen",
+    ),
+    (
+      crate::ExecutionTarget::Display {
+        id: "display-1".into(),
+      },
+      "display",
+    ),
+  ] {
+    for guarded in [false, true] {
+      let mut input = crate::InvokeCommandInput {
+        command_id: "input.clickPoint".into(),
+        target: Some(target.clone()),
+        inputs: [
+          ("x".into(), "9999".into()),
+          ("y".into(), "100".into()),
+          ("relative-to".into(), basis.into()),
+        ]
+        .into(),
+        typed_args: None,
+        dry_run: false,
+        cancellation: Default::default(),
+      };
+      if guarded {
+        input.inputs.insert("capture".into(), "capture-test".into());
+      }
+      let error = selected_click_point(&input, &runner).await.unwrap_err();
+      assert_eq!(error.code, crate::FailureCode::InvalidInput, "{basis}, guarded={guarded}: {error:?}");
+      assert_eq!(error.cause_code, None);
+      assert!(error.message.contains("outside"));
+      assert!(!error.message.contains("take a new capture"));
+    }
+  }
+  server.abort();
+}
+
 #[tokio::test]
 async fn selected_pointer_position_dry_run_never_resolves_a_daemon_or_observes_input() {
   let output = invoke(
@@ -724,4 +928,8 @@ fn guarded_target_failure_retains_resolution_category_pr_429() {
   assert!(disconnected.message.contains("connection closed"));
   let plain = crate::InvokeFailure::new(crate::FailureCode::PermissionDenied, "permission denied");
   assert_eq!(capture_target_failure(None, plain.clone()), plain);
+  let invalid = crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "invalid selector");
+  assert_eq!(capture_target_failure(Some(&capture), invalid.clone()), invalid);
+  let unsupported = crate::InvokeFailure::new(crate::FailureCode::Unsupported, "target lookup unsupported");
+  assert_eq!(capture_target_failure(Some(&capture), unsupported.clone()), unsupported);
 }

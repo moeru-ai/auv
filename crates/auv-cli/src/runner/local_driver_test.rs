@@ -51,6 +51,59 @@ fn test_capture_store() -> CaptureStore {
   CaptureStore::new(CaptureStoreOptions::default())
 }
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4403271085
+// ROOT CAUSE:
+//
+// If Linux rejected window placement, the common evidence-refusal path
+// requested recapture even though no new window capture could enable it.
+// Before the fix, clients received recapture_required for this capability gap.
+// The fix preserves unsupported and records change_target before delivery.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn linux_window_guard_reports_unsupported_and_change_target_pr_429() {
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+  let records = std::sync::Arc::new(MemoryTracingStore::new());
+  let dispatch = configure().tracing_store(records.clone()).build().unwrap();
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    captures: test_capture_store(),
+  };
+  let status = root
+    .instrument(service.click_point_with_capture(Request::new(proto::ClickPointWithCaptureRequest {
+      click: Some(proto::ClickPointRequest {
+        position: Some(position_to_proto(auv_driver::Position {
+          point: auv_driver::Point::new(5.0, 5.0),
+          coordinate_space: auv_driver::CoordinateSpace::Window("unresolved-window".into()),
+        })),
+        ..Default::default()
+      }),
+      capture: Some(proto::CaptureRef {
+        capture_id: "window-or-display-baseline".into(),
+      }),
+    })))
+    .await
+    .unwrap_err();
+  assert_eq!(status.code(), tonic::Code::Unimplemented);
+  assert!(status.message().contains("display capture with screen coordinates"));
+  assert!(!status.message().contains("take a new capture"));
+  assert!(auv_api_proto::click_precondition::failure(&status).is_none());
+  dispatch.flush().await.unwrap();
+  let payload = records
+    .records()
+    .into_iter()
+    .find_map(|record| match record {
+      TraceRecord::Event {
+        schema, payload, ..
+      } if schema.name().as_str() == "auv.input.click_refused" => Some(serde_json::from_str::<serde_json::Value>(payload.get()).unwrap()),
+      _ => None,
+    })
+    .expect("unsupported admission is recorded before target lookup or input");
+  assert_eq!(payload["recovery"], "change_target");
+  assert_eq!(payload["cause_code"], tonic::Code::Unimplemented as i32);
+  assert_eq!(payload["input_delivered"], false);
+}
+
 #[tokio::test]
 async fn streamed_mouse_motion_rejects_cancel_before_begin() {
   let mut requests = tokio_stream::iter([Ok(proto::StreamMouseMotionRequest {

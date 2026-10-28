@@ -353,8 +353,97 @@ fn atspi_crop_cannot_prove_window_location() {
   store.set_click_state(&reference.capture_id, Ok(state.clone()));
   let calls = Cell::new(0);
   let error = attempt(&store, &reference, &window(), Ok((pixels, Ok(state))), &calls).unwrap_err();
-  assert_eq!(reason(error), Reason::CheckUnavailable);
+  assert_eq!(error.code(), tonic::Code::Unimplemented);
+  assert!(!error.message().contains("take a new capture"));
   assert_eq!(calls.get(), 0);
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4403271085
+#[test]
+fn atspi_crop_without_baseline_still_reports_unsupported_pr_429() {
+  let store = CaptureStore::new(CaptureStoreOptions::default());
+  let mut pixels = capture();
+  pixels.backend = "atspi.extents+pipewire.crop".into();
+  let reference = proto::CaptureRef {
+    capture_id: store.insert(pixels),
+  };
+  store.set_click_state(&reference.capture_id, Err("placement unavailable".into()));
+  let calls = Cell::new(0);
+  let error = deliver(
+    &store,
+    Some(&reference),
+    &Position {
+      point: auv_driver::Point::new(15.0, 25.0),
+      coordinate_space: CoordinateSpace::Screen,
+    },
+    None,
+    ScreenPoint::new(15.0, 25.0),
+    |_| panic!("unsupported crop must not recapture"),
+    || {
+      calls.set(calls.get() + 1);
+      Ok(())
+    },
+  )
+  .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::Unimplemented);
+  assert_eq!(calls.get(), 0);
+}
+
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4403200221
+// The guard admits one complete native operation. This boundary fixture
+// deliberately changes the receiver after its first press; later presses in
+// that same operation continue. Native receiver evidence is recorded separately.
+#[test]
+fn repeated_click_admission_runs_once_before_the_operation_pr_429() {
+  use auv_driver::Click;
+  for click in [
+    Click::Double {
+      interval: std::time::Duration::ZERO,
+    },
+    Click::Repeated {
+      count: 255,
+      interval: std::time::Duration::ZERO,
+    },
+  ] {
+    let (store, reference, baseline) = stored();
+    let recaptures = Cell::new(0);
+    let receiver_changed = Cell::new(false);
+    let mut pressed_targets = Vec::new();
+    deliver(
+      &store,
+      Some(&reference),
+      &Position {
+        point: auv_driver::Point::new(5.0, 5.0),
+        coordinate_space: window().coordinate_space,
+      },
+      Some(&window()),
+      ScreenPoint::new(15.0, 25.0),
+      |_| {
+        recaptures.set(recaptures.get() + 1);
+        assert!(!receiver_changed.get());
+        Ok((capture(), Ok(baseline)))
+      },
+      || {
+        for _ in 0..click.count() {
+          pressed_targets.push(if receiver_changed.get() { "B" } else { "A" });
+          receiver_changed.set(true);
+        }
+        Ok(())
+      },
+    )
+    .unwrap();
+    assert_eq!(recaptures.get(), 1);
+    assert_eq!(pressed_targets.len(), usize::from(click.count()));
+    assert_eq!(pressed_targets[0], "A");
+    assert!(pressed_targets[1..].iter().all(|target| *target == "B"));
+    let mut changed = capture();
+    changed.image.put_pixel(0, 0, image::Rgba([0, 0, 0, 255]));
+    let calls = Cell::new(0);
+    let error =
+      attempt(&store, &reference, &window(), Ok((changed, Ok(state(CaptureTarget::Window(window()), vec![window()])))), &calls).unwrap_err();
+    assert_eq!(reason(error), Reason::StateChanged, "a subsequent operation checks the stale reference again");
+    assert_eq!(calls.get(), 0);
+  }
 }
 
 #[test]

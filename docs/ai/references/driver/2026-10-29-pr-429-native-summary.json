@@ -1,0 +1,163 @@
+{
+  "reviewed_head": "7cce1d93bbcdd2ccf8405dd943879f6e8528282b",
+  "run_id": "e6bce53d5cb5d36ba9cebbc691bedbbe",
+  "binary_sha256": "24455d8d98e65262d98e924b829c44a62f578071dbb18dad84ddbb4da58df734",
+  "receiver_source_sha256": "022d4f13d6565295ef9dcd95747fe52e8d40b16ecb479041bc07e94781ba2205",
+  "receiver_log_sha256": "5dcf15a1950551c557a33cd79afdc240cf1ca59341532f14388928837223116b",
+  "sequence": [
+    {
+      "case": "single",
+      "count": 1,
+      "interval_ms": 75,
+      "capture_id": "cap-01a183e0-5c68-76e1-83e2-2c7e4f2ebd22-3",
+      "received_presses": 1,
+      "received_releases": 1,
+      "first_target": "A",
+      "later_target": null,
+      "first_press_us": 5566515780,
+      "render_B_us": 5566515921,
+      "second_press_us": null,
+      "last_press_us": 5566515780,
+      "success_rpc_span": "01a183e3-3dfd-7102-988a-3f317333eb0e",
+      "stale_rpc_span": "01a183e3-4096-741a-8253-9181153be4d0",
+      "stale_reason": "STATE_CHANGED",
+      "stale_grpc_status": 9,
+      "stale_input_delivered": false
+    },
+    {
+      "case": "double",
+      "count": 2,
+      "interval_ms": 250,
+      "capture_id": "cap-01a183e0-5c68-76e1-83e2-2c7e4f2ebd22-5",
+      "received_presses": 2,
+      "received_releases": 2,
+      "first_target": "A",
+      "later_target": "B",
+      "first_press_us": 5571456305,
+      "render_B_us": 5571456385,
+      "second_press_us": 5571741644,
+      "last_press_us": 5571741644,
+      "success_rpc_span": "01a183e3-5169-7593-8815-df9bf3475d7e",
+      "stale_rpc_span": "01a183e3-54f9-7374-8dba-df9afd82eccd",
+      "stale_reason": "STATE_CHANGED",
+      "stale_grpc_status": 9,
+      "stale_input_delivered": false
+    },
+    {
+      "case": "repeated",
+      "count": 3,
+      "interval_ms": 150,
+      "capture_id": "cap-01a183e0-5c68-76e1-83e2-2c7e4f2ebd22-7",
+      "received_presses": 3,
+      "received_releases": 3,
+      "first_target": "A",
+      "later_target": "B",
+      "first_press_us": 5576606276,
+      "render_B_us": 5576607425,
+      "second_press_us": 5576791239,
+      "last_press_us": 5576976409,
+      "success_rpc_span": "01a183e3-658b-7780-968a-a585bb3455c3",
+      "stale_rpc_span": "01a183e3-696e-720e-9ecb-aebc6191aa3a",
+      "stale_reason": "STATE_CHANGED",
+      "stale_grpc_status": 9,
+      "stale_input_delivered": false
+    },
+    {
+      "case": "maximum",
+      "count": 255,
+      "interval_ms": 75,
+      "capture_id": "cap-01a183e0-5c68-76e1-83e2-2c7e4f2ebd22-9",
+      "received_presses": 255,
+      "received_releases": 255,
+      "first_target": "A",
+      "later_target": "B",
+      "first_press_us": 5582041958,
+      "render_B_us": 5582042055,
+      "second_press_us": 5582152021,
+      "last_press_us": 5609945563,
+      "success_rpc_span": "01a183e3-7abb-7298-b04d-0f8bfaeadbc3",
+      "stale_rpc_span": "01a183e3-ea3b-71ab-9657-c9e4c9650a9b",
+      "stale_reason": "STATE_CHANGED",
+      "stale_grpc_status": 9,
+      "stale_input_delivered": false
+    }
+  ],
+  "refusal_matrix": {
+    "cases": [
+      {
+        "name": "unsupported-window",
+        "code": "unsupported"
+      },
+      {
+        "name": "invalid-window-false",
+        "code": "invalid_input"
+      },
+      {
+        "name": "invalid-window-true",
+        "code": "invalid_input"
+      },
+      {
+        "name": "invalid-screen-false",
+        "code": "invalid_input"
+      },
+      {
+        "name": "invalid-screen-true",
+        "code": "invalid_input"
+      },
+      {
+        "name": "invalid-display-false",
+        "code": "invalid_input"
+      },
+      {
+        "name": "invalid-display-true",
+        "code": "invalid_input"
+      },
+      {
+        "name": "unknown-capture",
+        "code": "recapture_required"
+      }
+    ],
+    "receiver_unchanged": true,
+    "invalid_input_rpc_count": 0
+  },
+  "window_reference": {
+    "backend": "atspi.extents+xdg-desktop-portal.screencast.pipewire.crop",
+    "capture_id": "cap-01a183e0-5c68-76e1-83e2-2c7e4f2ebd22-11",
+    "height": 571,
+    "image_bytes": 41497,
+    "kind": "unsupported",
+    "width": 800
+  },
+  "recording": {
+    "runner_records_sha256": "2f4a71439ccb5e09d92587388febf72629aea57a79c7b269cb85b8ab5a597445",
+    "frontend_records_sha256": "b6ca41a9669582499cd8d44cf047506b6afd01f52a21c7beefb7460d22c91916",
+    "successful_guarded_operations": 4,
+    "stale_refusals": 4,
+    "unsupported_refusals": [
+      {
+        "span": "01a183e5-0814-70fc-b2db-7eee1e7fb381",
+        "cause_code": 12,
+        "recovery": "change_target",
+        "input_delivered": false
+      },
+      {
+        "span": "01a183e6-4989-72b8-a672-29e3dc7cf3bb",
+        "cause_code": 12,
+        "recovery": "change_target",
+        "input_delivered": false
+      },
+      {
+        "span": "01a183eb-548d-77ab-9365-edfb8a3c0820",
+        "cause_code": 12,
+        "recovery": "change_target",
+        "input_delivered": false
+      },
+      {
+        "span": "01a183ed-5a85-777a-a826-317c987bd575",
+        "cause_code": 12,
+        "recovery": "change_target",
+        "input_delivered": false
+      }
+    ]
+  }
+}

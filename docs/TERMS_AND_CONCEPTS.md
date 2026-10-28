@@ -1476,6 +1476,10 @@ pixels for OCR, recognition, or immediate interaction logic.
 The click guard uses this requirement for recapture.
 A static Linux stream can refuse the check when no new buffer arrives.
 This requirement does not establish a compositor timestamp or atomic capture/input delivery.
+The click guard admits one complete click operation before delivery.
+Double and repeated clicks share that check, without new checks between presses.
+Per-press decisions require separate single-click operations and new captures.
+Unsupported capture guards return an unsupported capability error, not a request to repeat the same capture.
 
 Across the Runner API, a capture frame stays in the Runner that produced it
 (see "Image Payloads" in `AGENTS.md`):

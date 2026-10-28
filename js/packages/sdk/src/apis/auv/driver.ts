@@ -91,7 +91,11 @@ export interface CaptureOptions extends OperationOptions {
  */
 export type CaptureTarget = string | { captureId: string } | { ref?: { captureId: string } }
 
-/** A full capture from this Runner. A failed check delivers no input. */
+/**
+ * A full capture from this Runner. A failed check delivers no input.
+ * The check runs once for the whole click sequence, not between repeated presses.
+ * Unsupported guards return an AuvRpcError with code 12, without recapture recovery.
+ */
 export interface ClickOperationOptions extends OperationOptions {
   capturePrecondition?: CaptureTarget
 }

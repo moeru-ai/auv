@@ -2900,7 +2900,7 @@ fn execute_click(
   if let Some(reference) = precondition
     && let Some(cause) = click_precondition::window_guard_unavailable()
   {
-    return Err(click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable, cause));
+    return Err(click_precondition::refusal_with_cause(&reference.capture_id, &Status::unimplemented(cause)));
   }
   let window = resolve_window_ref(session, window_ref).map_err(target_error)?;
   let point = window_point_for_position(&window, &position, |id| display_origin(session, id)).map_err(target_error)?;

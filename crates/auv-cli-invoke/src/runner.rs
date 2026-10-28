@@ -591,15 +591,17 @@ async fn selected_click_point(
   // record but have no Runner RPC/event. Unify admission recording when an
   // owner-approved shared frontend/Runner refusal boundary is available.
   let target_failure = |failure| capture_target_failure(capture.as_ref(), failure);
-  let requested = selected_screen_point(input, "input.clickPoint")?;
+  let invalid_input = |message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message);
+  let requested = selected_screen_point(input, "input.clickPoint").map_err(invalid_input)?;
   let normalized = input
     .inputs
     .get("normalized")
     .map(|value| value.parse::<bool>().map_err(|error| format!("input.clickPoint has invalid --normalized value: {error}")))
-    .transpose()?
+    .transpose()
+    .map_err(invalid_input)?
     .unwrap_or(false);
   if normalized && (!(0.0..=1.0).contains(&requested.point().x) || !(0.0..=1.0).contains(&requested.point().y)) {
-    return Err("input.clickPoint --normalized coordinates must be within 0..=1".to_string().into());
+    return Err(invalid_input("input.clickPoint --normalized coordinates must be within 0..=1".to_string()));
   }
   let basis = crate::commands::input::point_basis(
     "input.clickPoint",
@@ -608,9 +610,10 @@ async fn selected_click_point(
     normalized,
     input.inputs.contains_key("input-policy"),
     input.inputs.contains_key("title"),
-  )?;
+  )
+  .map_err(invalid_input)?;
   let requested_point = requested.point();
-  let click_options = selected_click_options(input)?;
+  let click_options = selected_click_options(input).map_err(invalid_input)?;
   match basis {
     crate::commands::input::RelativeToArg::Screen if !crate::commands::input::targets_window(input.target.as_ref()) => {
       let response = runner
@@ -644,8 +647,7 @@ async fn selected_click_point(
       };
       let window = resolved.resource();
       let target: auv::client::runner::PointerTarget = if basis == crate::commands::input::RelativeToArg::Screen {
-        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)
-          .map_err(|error| target_failure(error.into()))?;
+        crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame).map_err(invalid_input)?;
         // Send the screen point itself: the Runner converts it with the frame
         // it reads at delivery, so a window that moved since ResolveWindow
         // still gets the requested screen point.
@@ -659,7 +661,7 @@ async fn selected_click_point(
           window.frame.size,
           "window",
         )
-        .map_err(|error| target_failure(error.into()))?;
+        .map_err(invalid_input)?;
         auv_driver::WindowPoint::new(point.x, point.y).into()
       };
       let response =
@@ -697,7 +699,7 @@ async fn selected_click_point(
         display.frame.size,
         "display",
       )
-      .map_err(|error| target_failure(error.into()))?;
+      .map_err(invalid_input)?;
       let position = auv_driver::Position {
         point,
         coordinate_space: auv_driver::CoordinateSpace::Display(display.id.clone()),
@@ -725,7 +727,9 @@ async fn selected_click_point(
 /// Preserve the resolution category alongside capture recovery. A new capture
 /// cannot by itself repair a disconnected Runner or a denied permission.
 fn capture_target_failure(capture: Option<&auv::client::runner::CaptureRef>, mut failure: crate::InvokeFailure) -> crate::InvokeFailure {
-  if let Some(capture) = capture {
+  if let Some(capture) = capture
+    && !matches!(failure.code, crate::FailureCode::InvalidInput | crate::FailureCode::Unsupported)
+  {
     failure.cause_code = Some(failure.code);
     failure.code = crate::FailureCode::RecaptureRequired;
     failure.message =

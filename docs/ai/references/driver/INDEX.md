@@ -6,6 +6,8 @@
   paused-stream reproduction, native receiver evidence, and conservative freshness admission.
 - [PR #429 Linux review validation](2026-10-27-pr-429-linux-review-handoff.md):
   error-category and baseline fixes, native enumeration counts, capture timing, and remaining Runner blocking.
+- [PR #429 recovery and click sequence review](2026-10-29-pr-429-recovery-and-click-sequence-review.md):
+  unsupported recovery, coordinate categories, sequence admission, and full daemon recording evidence.
 
 Platform drivers, input, window, capture, permissions
 
