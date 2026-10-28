@@ -747,40 +747,31 @@ impl InputService for LocalInputService {
 
   async fn click_point(&self, request: Request<proto::ClickPointRequest>) -> Result<Response<proto::ClickPointResponse>, Status> {
     let request = request.into_inner();
-    let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
-    let window_ref = match (request.window, &position.coordinate_space) {
-      (Some(window_ref), _) => Some(window_ref),
-      (None, auv_driver::CoordinateSpace::Window(id)) => Some(proto::WindowRef {
-        window_id: id.clone(),
-      }),
-      (None, _) => None,
-    };
-    let Some(window_ref) = window_ref else {
-      let options = global_click_options_from_proto(request.options)?;
-      let point = screen_point_for_position(&position, |id| display_origin(&self.session, id))?;
-      let session = self.session.clone();
-      let action =
-        run_input_blocking(move || session.input().click_at(point.point(), options.button, options.click, options.modifiers)).await?;
-      return Ok(Response::new(proto::ClickPointResponse {
-        window: None,
-        screen_point: Some(screen_point_to_proto(point)),
-        action: Some(input_action_to_proto(action)?),
-        window_point: None,
-      }));
-    };
-    let options = click_options_from_proto(request.options)?;
-    let window = resolve_window_ref(&self.session, window_ref)?;
-    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
-    require_point_inside_window(&window, point)?;
     let session = self.session.clone();
-    let target = window.clone();
-    let action = run_input_blocking(move || session.window().click(&target, point, options)).await?;
-    let screen_point = auv_driver::ScreenPoint::new(window.frame.origin.x + point.point().x, window.frame.origin.y + point.point().y);
-    Ok(Response::new(proto::ClickPointResponse {
-      window: Some(window_to_proto(window)),
-      screen_point: Some(screen_point_to_proto(screen_point)),
-      action: Some(input_action_to_proto(action)?),
-      window_point: Some(window_point_to_proto(point)),
+    let captures = self.captures.clone();
+    let context = auv_tracing::Context::current();
+    // Resolve, recapture, check and deliver in one blocking task. In particular,
+    // a queued task must not use a check completed before it entered the queue.
+    let response = run_input_blocking(move || Ok(context.in_scope(|| execute_click(&session, &captures, request, None)))).await??;
+    Ok(Response::new(response))
+  }
+
+  async fn click_point_with_capture(
+    &self,
+    request: Request<proto::ClickPointWithCaptureRequest>,
+  ) -> Result<Response<proto::ClickPointWithCaptureResponse>, Status> {
+    let request = request.into_inner();
+    let capture = request.capture.ok_or_else(|| Status::invalid_argument("capture is required"))?;
+    if capture.capture_id.trim().is_empty() {
+      return Err(Status::invalid_argument("capture_id must not be empty"));
+    }
+    let click = request.click.ok_or_else(|| Status::invalid_argument("click is required"))?;
+    let session = self.session.clone();
+    let captures = self.captures.clone();
+    let context = auv_tracing::Context::current();
+    let result = run_input_blocking(move || Ok(context.in_scope(|| execute_click(&session, &captures, click, Some(&capture))))).await??;
+    Ok(Response::new(proto::ClickPointWithCaptureResponse {
+      result: Some(result),
     }))
   }
 
@@ -2437,8 +2428,19 @@ impl CaptureService for LocalCaptureService {
       resolution: capture_resolution_from_proto(request.resolution)?,
       ..Default::default()
     };
-    let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
+    let resolution = options.resolution;
+    // TODO(capture-baseline-latency): native timing confirms that synchronous
+    // capture delays other RPCs. A scheduling follow-up must preserve platform
+    // thread ownership; see 2026-10-27-pr-429-linux-review-handoff.md.
+    let (capture, state) = super::click_precondition::CaptureState::capture_window(
+      window.clone(),
+      resolution,
+      super::click_precondition::window_guard_unavailable(),
+      || self.session.window().list().map_err(|error| error.to_string()),
+      || self.session.window().capture_with(&window, options).map_err(driver_status),
+    )?;
     let capture = stored_capture_to_proto(&self.captures, capture);
+    self.captures.set_click_state(&capture.r#ref.as_ref().expect("stored reference").capture_id, state);
     record_stored_capture(&self.captures, &capture, "auv.driver.window_capture");
     Ok(Response::new(proto::CaptureWindowResponse {
       window: Some(window_to_proto(window)),
@@ -2452,16 +2454,29 @@ impl CaptureService for LocalCaptureService {
   ) -> Result<Response<proto::CaptureDisplayResponse>, Status> {
     let request = request.into_inner();
     let display = display_selector_from_proto(request.selector)?;
+    let resolution = capture_resolution_from_proto(request.resolution)?;
+    // TODO(capture-baseline-latency): measured display snapshots delay other
+    // RPCs, but guards still need both. Review platform scheduling constraints;
+    // measurements and the deferred scheduling decision are recorded in
+    // docs/ai/references/driver/2026-10-27-pr-429-linux-review-handoff.md.
+    let before = self.session.window().list().map_err(|error| error.to_string());
     let captured = self
       .session
       .display()
       .capture(auv_driver::CaptureOptions {
         display,
-        resolution: capture_resolution_from_proto(request.resolution)?,
+        resolution,
         ..Default::default()
       })
       .map_err(driver_status)?;
+    let state = super::click_precondition::CaptureState::new(
+      super::click_precondition::CaptureTarget::Display(captured.display.clone()),
+      resolution,
+      before,
+      self.session.window().list().map_err(|error| error.to_string()),
+    );
     let capture = stored_capture_to_proto(&self.captures, captured.capture);
+    self.captures.set_click_state(&capture.r#ref.as_ref().expect("stored reference").capture_id, state);
     record_stored_capture(&self.captures, &capture, "auv.driver.display_capture");
     Ok(Response::new(proto::CaptureDisplayResponse {
       display: Some(display_to_proto(captured.display)),
@@ -2677,7 +2692,7 @@ fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFr
   }
 }
 
-fn driver_status(error: auv_driver::DriverError) -> Status {
+pub(super) fn driver_status(error: auv_driver::DriverError) -> Status {
   let message = error.to_string();
   match error {
     auv_driver::DriverError::InputAction { cause, progress } => {
@@ -2859,6 +2874,75 @@ pub async fn serve_inherited() -> Result<(), String> {
 
 fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, Status> {
   auv::protocol::position::decode(position).map_err(|error| Status::invalid_argument(error.to_string()))
+}
+
+/// Resolve coordinates and enforce capture admission in the same input task.
+fn execute_click(
+  session: &auv_driver::LocalDriverSession,
+  captures: &CaptureStore,
+  request: proto::ClickPointRequest,
+  precondition: Option<&proto::CaptureRef>,
+) -> Result<proto::ClickPointResponse, Status> {
+  use super::click_precondition;
+  // Target lookup and coordinate failures are uncheckable preconditions too.
+  let target_error = |error: Status| match precondition {
+    Some(reference) => click_precondition::refusal_with_cause(&reference.capture_id, &error),
+    None => error,
+  };
+  let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
+  let window_ref = match (request.window, &position.coordinate_space) {
+    (Some(window_ref), _) => Some(window_ref),
+    (None, auv_driver::CoordinateSpace::Window(id)) => Some(proto::WindowRef {
+      window_id: id.clone(),
+    }),
+    (None, _) => None,
+  };
+  let Some(window_ref) = window_ref else {
+    let options = global_click_options_from_proto(request.options)?;
+    let point = screen_point_for_position(&position, |id| display_origin(session, id)).map_err(target_error)?;
+    let action = click_precondition::deliver(
+      captures,
+      precondition,
+      &position,
+      None,
+      point,
+      |state| state.recapture(session, None),
+      || session.input().click_at(point.point(), options.button, options.click, options.modifiers).map_err(driver_status),
+    )?;
+    return Ok(proto::ClickPointResponse {
+      window: None,
+      screen_point: Some(screen_point_to_proto(point)),
+      action: Some(input_action_to_proto(action)?),
+      window_point: None,
+    });
+  };
+  let options = click_options_from_proto(request.options)?;
+  // Refuse even with a display baseline when window placement is unreliable.
+  // The same policy skips unusable baseline collection during window capture.
+  if let Some(reference) = precondition
+    && let Some(cause) = click_precondition::window_guard_unavailable()
+  {
+    return Err(click_precondition::refusal(&reference.capture_id, proto::ClickPreconditionFailureReason::CheckUnavailable, cause));
+  }
+  let window = resolve_window_ref(session, window_ref).map_err(target_error)?;
+  let point = window_point_for_position(&window, &position, |id| display_origin(session, id)).map_err(target_error)?;
+  require_point_inside_window(&window, point).map_err(target_error)?;
+  let screen_point = auv_driver::ScreenPoint::new(window.frame.origin.x + point.point().x, window.frame.origin.y + point.point().y);
+  let action = click_precondition::deliver(
+    captures,
+    precondition,
+    &position,
+    Some(&window),
+    screen_point,
+    |state| state.recapture(session, Some(&window)),
+    || session.window().click(&window, point, options).map_err(driver_status),
+  )?;
+  Ok(proto::ClickPointResponse {
+    window: Some(window_to_proto(window)),
+    screen_point: Some(screen_point_to_proto(screen_point)),
+    action: Some(input_action_to_proto(action)?),
+    window_point: Some(window_point_to_proto(point)),
+  })
 }
 
 #[cfg(test)]

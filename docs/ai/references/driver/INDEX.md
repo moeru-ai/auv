@@ -1,5 +1,12 @@
 # driver
 
+- [Click capture precondition](2026-10-26-click-capture-precondition-contract.md):
+  guarded RPC admission, typed refusal, shared frontends, and platform evidence.
+- [Linux click capture freshness](2026-10-27-linux-click-capture-freshness.md):
+  paused-stream reproduction, native receiver evidence, and conservative freshness admission.
+- [PR #429 Linux review validation](2026-10-27-pr-429-linux-review-handoff.md):
+  error-category and baseline fixes, native enumeration counts, capture timing, and remaining Runner blocking.
+
 Platform drivers, input, window, capture, permissions
 
 Executable GUI evaluations live in

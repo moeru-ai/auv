@@ -5,6 +5,73 @@ use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, di
 use std::sync::Arc;
 
 #[test]
+fn click_capture_survives_cli_protocol_and_replay_arguments() {
+  let crate::InvokeCommandCliParse::Invoke {
+    inputs, typed_args, ..
+  } = click_point_invoke_command()
+    .parse_cli_args(&[
+      "10".into(),
+      "20".into(),
+      "--capture".into(),
+      "cap-test".into(),
+    ])
+    .unwrap()
+  else {
+    panic!("expected parsed click");
+  };
+  assert_eq!(inputs["capture"], "cap-test");
+  assert_eq!(typed_args.get::<ClickPointArgs>().unwrap().capture.as_deref(), Some("cap-test"));
+  let args: ClickPointArgs = crate::command::decode_args(&InvokeCommandInput {
+    command_id: "input.clickPoint".into(),
+    target: None,
+    inputs,
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  })
+  .unwrap();
+  let replay: ClickPointArgs = serde_json::from_value(serde_json::to_value(&args).unwrap()).unwrap();
+  assert_eq!(replay.capture.as_deref(), Some("cap-test"));
+}
+
+#[test]
+fn runner_capture_output_exposes_the_reference_for_the_next_click() {
+  let capture = auv::client::runner::RunnerCapture {
+    reference: auv::client::runner::CaptureRef::new("cap-for-next-click"),
+    bounds: auv_driver::Rect::new(10.0, 20.0, 40.0, 30.0),
+    origin: None,
+    scale_factor: 1.0,
+    pixel_size: auv_driver::PixelSize::new(40, 30),
+    backend: "fixture".into(),
+    fallback_reason: None,
+    thumbhash: vec![],
+  };
+  let result = serde_json::to_value(super::super::runner_capture_result(&capture)).unwrap();
+  assert_eq!(result["capture_id"], "cap-for-next-click");
+  assert!(result.get("image").is_none(), "pixel bytes stay on the Runner");
+}
+
+#[test]
+fn local_click_refuses_capture_that_only_a_runner_can_check() {
+  let input = InvokeCommandInput {
+    command_id: "input.clickPoint".into(),
+    target: None,
+    inputs: [
+      ("x".into(), "10".into()),
+      ("y".into(), "20".into()),
+      ("capture".into(), "cap-test".into()),
+    ]
+    .into(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  };
+  let failure = futures_executor::block_on(click_point_invoke_command().invoke(input)).unwrap_err();
+  assert_eq!(failure.code, crate::FailureCode::InvalidTarget);
+  assert!(failure.message.contains("--run"));
+}
+
+#[test]
 fn pointer_position_has_no_arguments_and_reports_logical_screen_coordinates() {
   let registry = crate::default_registry();
   let command = registry.resolve("input.pointerPosition").expect("pointer-position command");

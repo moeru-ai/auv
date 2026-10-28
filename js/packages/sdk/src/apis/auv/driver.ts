@@ -56,11 +56,12 @@ import { AccessibilityService } from '../../gen/auv/api/driver/v1/accessibility_
 import { ApplicationService } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureService } from '../../gen/auv/api/driver/v1/capture_pb'
 import { DisplayService } from '../../gen/auv/api/driver/v1/display_pb'
-import { InputPolicy, InputService } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPreconditionFailureReason, ClickPreconditionFailureSchema, InputPolicy, InputService } from '../../gen/auv/api/driver/v1/input_pb'
 import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
+import { rpcDetail } from '../../transport/rpc-details'
 import { durationsFromMillis } from './duration'
 import { center } from './geometry'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
@@ -89,6 +90,11 @@ export interface CaptureOptions extends OperationOptions {
  * so plain objects work).
  */
 export type CaptureTarget = string | { captureId: string } | { ref?: { captureId: string } }
+
+/** A full capture from this Runner. A failed check delivers no input. */
+export interface ClickOperationOptions extends OperationOptions {
+  capturePrecondition?: CaptureTarget
+}
 
 export interface FindDisplayTextOptions extends InputFields<typeof FindDisplayTextRequestSchema, 'query' | 'selector'>, OperationOptions {}
 
@@ -149,7 +155,7 @@ export interface RunnerClient {
      * `clickOptions.policy` and `windowStrategy`; a screen or display position
      * is a global click, which takes neither (the Runner rejects them).
      */
-    click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
+    click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: ClickOperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
     holdKeys: (request: Init<typeof InputService.method.holdKeys.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdKeys.output>>
@@ -237,6 +243,7 @@ export interface ScrollStreamController {
   setVelocity: (velocity: Init<typeof ScrollVelocitySchema>) => Promise<void>
   stop: () => Promise<void>
 }
+
 export interface ScrollUntilCallOptions extends OperationOptions {
   /** Receives every update in order, including the last one. */
   onUpdate?: (update: ScrollUntilUpdate) => Promise<void> | void
@@ -247,7 +254,6 @@ export interface ScrollUntilCallOptions extends OperationOptions {
    */
   until?: (update: ScrollUntilUpdate) => boolean | Promise<boolean>
 }
-
 /**
  * `scrollUntil` begin fields; the window, point, and decision mode come from
  * the call. Without a `condition`, the loop stops at the end (no visual motion).
@@ -269,7 +275,7 @@ export interface ScrollWithStep {
 export interface WindowClient {
   capture: (options?: CaptureOptions) => Promise<Shape<typeof CaptureService.method.captureWindow.output>>
   /** Clicks in this window; see `PointTarget` for what `target` accepts. */
-  click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
+  click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: ClickOperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
@@ -342,6 +348,16 @@ export type WindowPasteTextOptions = Init<typeof PasteTextOptionsSchema> & { pol
 
 /** Options for `WindowClient.pressKeys`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
 export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 'keys'> & { policy?: InputPolicy }
+
+/** No input was delivered. Capture again and select the target before retrying. */
+export class ClickPreconditionError extends AuvRpcError {
+  readonly recovery = 'new_capture' as const
+
+  constructor(readonly captureId: string, readonly reason: ClickPreconditionFailureReason, source: AuvRpcError, readonly causeCode?: number) {
+    super(source.rpcCode, source.message, source, source.details)
+    this.name = 'ClickPreconditionError'
+  }
+}
 /**
  * What a Runner uses for an omitted scroll-until field: 50 steps, 2 no-motion
  * confirmations and 400 ms settle. `scrollUntil` leaves omitted fields unset
@@ -408,6 +424,24 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     service: method.parent.typeName,
     ...callOptions(options),
   })
+  // Method selection is an admission guarantee: never retry an unsupported
+  // guarded method through ClickPoint on an older Runner.
+  const click = async (request: Init<typeof InputService.method.clickPoint.input>, options?: ClickOperationOptions) => {
+    try {
+      if (options?.capturePrecondition === undefined)
+        return await unary(InputService.method.clickPoint, request, options)
+      const response = await unary(InputService.method.clickPointWithCapture, {
+        capture: captureRefOf(options.capturePrecondition),
+        click: request,
+      }, options)
+      if (!response.result)
+        throw new AuvProtocolError('ClickPointWithCapture response omitted result')
+      return response.result
+    }
+    catch (error) {
+      return clickFailure(error)
+    }
+  }
   const serverStream = <I extends DescMessage, O extends DescMessage>(
     method: DescMethodServerStreaming<I, O>,
     request: Init<I>,
@@ -474,7 +508,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     const local = { case: 'windowId', value: id } as const
     return {
       capture: ({ resolution, ...options } = {}) => unary(CaptureService.method.captureWindow, { resolution, window: { windowId: id } }, options),
-      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
+      click: (target, clickOptions, options) => click({
         options: clickOptions,
         position: positionOf(target, local),
         window: { windowId: id },
@@ -595,7 +629,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       list: async options => (await unary(DisplayService.method.listDisplays, {}, options)).displays,
     },
     input: {
-      click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
+      click: (target, clickOptions, options) => click({
         options: clickOptions,
         position: positionOf(target, { case: 'screen', value: true }),
       }, options),
@@ -674,6 +708,17 @@ function captureRefOf(target: CaptureTarget): Init<typeof CaptureRefSchema> {
   if (!target.ref)
     throw new TypeError('CapturedFrame has no capture reference; pass a frame returned by the Runner')
   return { captureId: target.ref.captureId }
+}
+
+/** A recognized rich-error detail adds recovery information; all others pass through. */
+function clickFailure(error: unknown): never {
+  if (error instanceof AuvRpcError && error.rpcCode === 9 && error.details?.length) {
+    const failure = rpcDetail(error.details, ClickPreconditionFailureSchema, detail =>
+      [ClickPreconditionFailureReason.CAPTURE_UNAVAILABLE, ClickPreconditionFailureReason.CHECK_UNAVAILABLE, ClickPreconditionFailureReason.STATE_CHANGED, ClickPreconditionFailureReason.TARGET_MISMATCH].includes(detail.reason))
+    if (failure)
+      throw new ClickPreconditionError(failure.captureId, failure.reason, error, failure.causeCode && failure.causeCode >= 1 && failure.causeCode <= 16 ? failure.causeCode : undefined)
+  }
+  throw error
 }
 
 function combineSignals(first?: AbortSignal, second?: AbortSignal): AbortSignal | undefined {

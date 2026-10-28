@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType, Stream};
 use ashpd::desktop::{PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
+use auv_driver_common::CaptureFreshness;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Rect;
 use pipewire as pw;
@@ -121,12 +122,17 @@ impl ScreenCastSession {
     Ok(capture)
   }
 
-  pub fn capture_monitor_frame(&mut self, target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
+  pub fn capture_monitor_frame(&mut self, target_bounds: Option<Rect>, freshness: CaptureFreshness) -> DriverResult<ScreenCastFrame> {
     let stream = select_stream(&self.streams, target_bounds)?.clone();
-    let image = self.receivers.capture(stream.id, || {
-      let fd = run("open PipeWire remote", self.screencast.open_pipe_wire_remote(&self.session, Default::default()))?;
-      Ok(Box::new(PipeWireFrameReceiver::open(fd, stream.id)?))
-    })?;
+    let image = self
+      .receivers
+      .capture(stream.id, freshness, || {
+        let fd = run("open PipeWire remote", self.screencast.open_pipe_wire_remote(&self.session, Default::default()))?;
+        Ok(Box::new(PipeWireFrameReceiver::open(fd, stream.id)?))
+      })?
+      .ok_or_else(|| {
+        backend("PipeWire capture freshness unavailable: no new buffer arrived during the refresh wait (static or stalled stream)")
+      })?;
     Ok(ScreenCastFrame { stream, image })
   }
 }
@@ -162,11 +168,14 @@ struct PipeWireCaptureState {
   terminal_error: Rc<RefCell<Option<String>>>,
 }
 
-type WorkerFrameResult = Result<Arc<image::RgbaImage>, String>;
+// None is a bounded freshness miss, not a broken receiver. Keep its cache for
+// ordinary captures and keep the stream connected for the next request.
+type WorkerFrameResult = Result<Option<Arc<image::RgbaImage>>, String>;
 
 struct PendingFrameRequest {
   sender: mpsc::SyncSender<WorkerFrameResult>,
   stale_after: Option<Instant>,
+  freshness: CaptureFreshness,
 }
 
 /// Newest frame the stream delivered.
@@ -232,19 +241,28 @@ impl LatestFrame {
 fn take_stale_frame_response(
   pending: &RefCell<Option<PendingFrameRequest>>,
   latest: &RefCell<LatestFrame>,
+  terminal_error: &RefCell<Option<String>>,
   now: Instant,
 ) -> Option<(mpsc::SyncSender<WorkerFrameResult>, WorkerFrameResult)> {
+  if let Some(error) = terminal_error.borrow().as_ref() {
+    latest.borrow_mut().clear();
+    return pending.borrow_mut().take().map(|request| (request.sender, Err(error.clone())));
+  }
   let is_stale = pending.borrow().as_ref().and_then(|request| request.stale_after).is_some_and(|deadline| now >= deadline);
   if !is_stale {
     return None;
   }
-  let image = latest.borrow_mut().image()?.map_err(|error| error.to_string());
+  let image = if pending.borrow().as_ref()?.freshness == CaptureFreshness::RequireNewFrame {
+    Ok(None)
+  } else {
+    latest.borrow_mut().image()?.map(Some).map_err(|error| error.to_string())
+  };
   let sender = pending.borrow_mut().take()?.sender;
   Some((sender, image))
 }
 
 trait FrameReceiver: Send {
-  fn capture_frame(&mut self) -> DriverResult<image::RgbaImage>;
+  fn capture_frame(&mut self, freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>>;
 }
 
 #[derive(Default)]
@@ -259,11 +277,16 @@ impl fmt::Debug for FrameReceiverPool {
 }
 
 impl FrameReceiverPool {
-  fn capture(&mut self, stream_id: u32, create: impl FnOnce() -> DriverResult<Box<dyn FrameReceiver>>) -> DriverResult<image::RgbaImage> {
+  fn capture(
+    &mut self,
+    stream_id: u32,
+    freshness: CaptureFreshness,
+    create: impl FnOnce() -> DriverResult<Box<dyn FrameReceiver>>,
+  ) -> DriverResult<Option<image::RgbaImage>> {
     if let std::collections::hash_map::Entry::Vacant(entry) = self.receivers.entry(stream_id) {
       entry.insert(create()?);
     }
-    let result = self.receivers.get_mut(&stream_id).expect("receiver was inserted above").capture_frame();
+    let result = self.receivers.get_mut(&stream_id).expect("receiver was inserted above").capture_frame(freshness);
     if result.is_err() {
       self.receivers.remove(&stream_id);
     }
@@ -276,7 +299,7 @@ impl FrameReceiverPool {
 }
 
 enum PipeWireWorkerCommand {
-  Capture(mpsc::SyncSender<WorkerFrameResult>),
+  Capture(CaptureFreshness, mpsc::SyncSender<WorkerFrameResult>),
   Stop,
 }
 
@@ -333,11 +356,14 @@ impl PipeWireFrameReceiver {
 }
 
 impl FrameReceiver for PipeWireFrameReceiver {
-  fn capture_frame(&mut self) -> DriverResult<image::RgbaImage> {
+  fn capture_frame(&mut self, freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>> {
     let (frame_sender, frame_receiver) = mpsc::sync_channel(1);
-    self.commands.send(PipeWireWorkerCommand::Capture(frame_sender)).map_err(|_| backend("PipeWire screencast receiver stopped"))?;
+    self
+      .commands
+      .send(PipeWireWorkerCommand::Capture(freshness, frame_sender))
+      .map_err(|_| backend("PipeWire screencast receiver stopped"))?;
     match frame_receiver.recv_timeout(PIPEWIRE_FRAME_TIMEOUT) {
-      Ok(Ok(image)) => Ok((*image).clone()),
+      Ok(Ok(image)) => Ok(image.map(|image| (*image).clone())),
       Ok(Err(error)) => Err(backend(error)),
       Err(mpsc::RecvTimeoutError::Timeout) => Err(backend("timed out waiting for PipeWire screencast frame")),
       Err(mpsc::RecvTimeoutError::Disconnected) => Err(backend("PipeWire screencast receiver stopped while waiting for a frame")),
@@ -385,10 +411,15 @@ fn run_pipewire_receiver(
   .map_err(|error| backend(format!("failed to create PipeWire stream: {error}")))?;
   let _listener = stream
     .add_local_listener_with_user_data(state)
-    .state_changed(|_, state, _, new| {
-      if let pw::stream::StreamState::Error(error) = new {
-        let error = format!("PipeWire stream error: {error}");
+    .state_changed(|_, state, old, new| {
+      let error = match new {
+        pw::stream::StreamState::Error(error) => Some(format!("PipeWire stream error: {error}")),
+        pw::stream::StreamState::Unconnected if old != pw::stream::StreamState::Unconnected => Some("PipeWire stream disconnected".into()),
+        _ => None,
+      };
+      if let Some(error) = error {
         *state.terminal_error.borrow_mut() = Some(error.clone());
+        state.latest.borrow_mut().clear();
         if let Some(pending) = state.pending.borrow_mut().take() {
           let _ = pending.sender.send(Err(error));
         }
@@ -414,6 +445,11 @@ fn run_pipewire_receiver(
       }
     })
     .process(|stream, state| {
+      // Format/state errors take precedence over pixels, including buffers
+      // already queued when the error arrived.
+      if state.terminal_error.borrow().is_some() {
+        return;
+      }
       let pending = state.pending.borrow_mut().take();
       let Some(mut buffer) = stream.dequeue_buffer() else {
         if let Some(pending) = pending {
@@ -443,10 +479,11 @@ fn run_pipewire_receiver(
           let image = Arc::new(image);
           state.latest.borrow_mut().store_decoded(Arc::clone(&image));
           if let Some(pending) = pending {
-            let _ = pending.sender.send(Ok(image));
+            let _ = pending.sender.send(Ok(Some(image)));
           }
         }
         Err(error) => {
+          state.latest.borrow_mut().clear();
           if let Some(pending) = pending {
             let _ = pending.sender.send(Err(error.to_string()));
           }
@@ -470,7 +507,7 @@ fn run_pipewire_receiver(
   ready.send(Ok(())).map_err(|_| backend("PipeWire receiver initializer stopped waiting"))?;
   loop {
     match commands.try_recv() {
-      Ok(PipeWireWorkerCommand::Capture(sender)) => {
+      Ok(PipeWireWorkerCommand::Capture(freshness, sender)) => {
         if let Some(error) = terminal_error.borrow().clone() {
           let _ = sender.send(Err(error));
         } else if pending.borrow().is_some() {
@@ -478,6 +515,7 @@ fn run_pipewire_receiver(
         } else {
           *pending.borrow_mut() = Some(PendingFrameRequest {
             sender,
+            freshness,
             stale_after: (!latest.borrow().is_empty()).then(|| Instant::now() + PIPEWIRE_REFRESH_WAIT),
           });
         }
@@ -486,7 +524,7 @@ fn run_pipewire_receiver(
       Err(mpsc::TryRecvError::Empty) => {}
     }
     mainloop.loop_().iterate(Duration::from_millis(20));
-    if let Some((sender, image)) = take_stale_frame_response(&pending, &latest, Instant::now()) {
+    if let Some((sender, image)) = take_stale_frame_response(&pending, &latest, &terminal_error, Instant::now()) {
       let _ = sender.send(image);
     }
   }

@@ -180,6 +180,7 @@ pub mod google {
   }
 }
 
+pub mod click_precondition;
 pub mod device_entry;
 pub mod input_action_failure;
 

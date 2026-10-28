@@ -43,6 +43,7 @@ thiserror = "2"
 [dev-dependencies]
 auv-tracing = { version = "0.0.38", path = "../auv-tracing", features = ["memory-store"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+tonic = "0.14"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { version = "0.0.38", path = "../auv-driver-macos" }

@@ -1,5 +1,58 @@
 use super::*;
 
+// https://github.com/moeru-ai/auv/pull/429
+// ROOT CAUSE:
+//
+// No-damage and stalled streams both returned cached pixels after 150 ms.
+// A guarded recapture could accept those pixels without a new frame.
+// The request now distinguishes cache reuse from fresh admission evidence.
+#[test]
+fn guarded_refresh_miss_keeps_cache_without_returning_pixels_pr_429() {
+  let now = Instant::now();
+  let (pending, receiver) = stale_request(now);
+  pending.borrow_mut().as_mut().unwrap().freshness = CaptureFreshness::RequireNewFrame;
+  let latest = RefCell::new(LatestFrame::default());
+  latest.borrow_mut().store_decoded(Arc::new(image::RgbaImage::from_pixel(1, 1, image::Rgba([10, 20, 30, 255]))));
+
+  let (sender, response) = take_stale_frame_response(&pending, &latest, &RefCell::new(None), now).unwrap();
+  sender.send(response).unwrap();
+  assert!(receiver.recv().unwrap().unwrap().is_none(), "cached pixels cannot satisfy a fresh request");
+  assert!(pending.borrow().is_none());
+
+  let (ordinary, _) = stale_request(now);
+  let (_, response) = take_stale_frame_response(&ordinary, &latest, &RefCell::new(None), now).unwrap();
+  assert_eq!(response.unwrap().unwrap().get_pixel(0, 0).0, [10, 20, 30, 255]);
+}
+
+#[test]
+fn terminal_error_during_refresh_rejects_cached_pixels_pr_429() {
+  let now = Instant::now();
+  let (pending, _) = stale_request(now);
+  // Even before the refresh deadline, a format/disconnection error wins.
+  pending.borrow_mut().as_mut().unwrap().stale_after = Some(now + PIPEWIRE_REFRESH_WAIT);
+  let latest = RefCell::new(LatestFrame::default());
+  latest.borrow_mut().store_decoded(Arc::new(image::RgbaImage::new(1, 1)));
+  let error = RefCell::new(Some("invalid stream format".to_string()));
+  let (_, response) = take_stale_frame_response(&pending, &latest, &error, now).unwrap();
+  assert_eq!(response.unwrap_err(), "invalid stream format");
+  assert!(latest.borrow().is_empty());
+  assert!(pending.borrow().is_none());
+}
+
+#[test]
+fn freshness_miss_does_not_reconnect_a_healthy_static_stream() {
+  struct StaticReceiver;
+  impl FrameReceiver for StaticReceiver {
+    fn capture_frame(&mut self, freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>> {
+      Ok((freshness == CaptureFreshness::LatestAvailable).then(|| image::RgbaImage::new(2, 3)))
+    }
+  }
+  let mut pool = FrameReceiverPool::default();
+  assert!(pool.capture(7, CaptureFreshness::RequireNewFrame, || Ok(Box::new(StaticReceiver))).unwrap().is_none());
+  let image = pool.capture(7, CaptureFreshness::LatestAvailable, || panic!("freshness miss must retain the receiver")).unwrap().unwrap();
+  assert_eq!(image.dimensions(), (2, 3));
+}
+
 #[test]
 fn bgrx_pixel_converts_to_rgba() {
   let mut dest = [0, 0, 0, 0];
@@ -25,8 +78,8 @@ fn frame_receiver_pool_reuses_a_connected_receiver_for_repeated_captures() {
   struct FakeReceiver;
 
   impl FrameReceiver for FakeReceiver {
-    fn capture_frame(&mut self) -> DriverResult<image::RgbaImage> {
-      Ok(image::RgbaImage::new(1, 1))
+    fn capture_frame(&mut self, _freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>> {
+      Ok(Some(image::RgbaImage::new(1, 1)))
     }
   }
 
@@ -42,7 +95,7 @@ fn frame_receiver_pool_reuses_a_connected_receiver_for_repeated_captures() {
   let mut pool = FrameReceiverPool::default();
   for _ in 0..2 {
     pool
-      .capture(7, || {
+      .capture(7, CaptureFreshness::LatestAvailable, || {
         creations.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(FakeReceiver))
       })
@@ -57,7 +110,7 @@ fn frame_receiver_pool_recreates_a_receiver_after_capture_failure() {
   struct FailingReceiver;
 
   impl FrameReceiver for FailingReceiver {
-    fn capture_frame(&mut self) -> DriverResult<image::RgbaImage> {
+    fn capture_frame(&mut self, _freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>> {
       Err(backend("stream stopped"))
     }
   }
@@ -65,14 +118,14 @@ fn frame_receiver_pool_recreates_a_receiver_after_capture_failure() {
   struct WorkingReceiver;
 
   impl FrameReceiver for WorkingReceiver {
-    fn capture_frame(&mut self) -> DriverResult<image::RgbaImage> {
-      Ok(image::RgbaImage::new(1, 1))
+    fn capture_frame(&mut self, _freshness: CaptureFreshness) -> DriverResult<Option<image::RgbaImage>> {
+      Ok(Some(image::RgbaImage::new(1, 1)))
     }
   }
 
   let mut pool = FrameReceiverPool::default();
-  assert!(pool.capture(7, || Ok(Box::new(FailingReceiver))).is_err());
-  pool.capture(7, || Ok(Box::new(WorkingReceiver))).expect("failed receiver was invalidated");
+  assert!(pool.capture(7, CaptureFreshness::LatestAvailable, || Ok(Box::new(FailingReceiver))).is_err());
+  pool.capture(7, CaptureFreshness::LatestAvailable, || Ok(Box::new(WorkingReceiver))).expect("failed receiver was invalidated");
 }
 
 #[test]
@@ -91,16 +144,17 @@ fn static_stream_returns_the_latest_frame_after_the_refresh_wait() {
   let pending = RefCell::new(Some(PendingFrameRequest {
     sender,
     stale_after: Some(now - Duration::from_millis(1)),
+    freshness: CaptureFreshness::LatestAvailable,
   }));
   let expected = Arc::new(image::RgbaImage::new(2, 3));
   let mut cached = LatestFrame::default();
   cached.store_decoded(Arc::clone(&expected));
   let latest = RefCell::new(cached);
 
-  let (sender, image) = take_stale_frame_response(&pending, &latest, now).expect("cached frame is ready");
+  let (sender, image) = take_stale_frame_response(&pending, &latest, &RefCell::new(None), now).expect("cached frame is ready");
   sender.send(image).expect("request is still receiving");
 
-  let actual = receiver.recv().expect("response arrives").expect("frame succeeds");
+  let actual = receiver.recv().expect("response arrives").expect("frame succeeds").expect("cached frame is permitted");
   assert_eq!(actual.dimensions(), expected.dimensions());
   assert!(pending.borrow().is_none());
 }
@@ -117,6 +171,7 @@ fn stale_request(now: Instant) -> (RefCell<Option<PendingFrameRequest>>, mpsc::R
   let pending = RefCell::new(Some(PendingFrameRequest {
     sender,
     stale_after: Some(now - Duration::from_millis(1)),
+    freshness: CaptureFreshness::LatestAvailable,
   }));
   (pending, receiver)
 }
@@ -143,10 +198,10 @@ fn stale_fallback_returns_the_newest_idle_frame_issue_244() {
   let now = Instant::now();
   let (pending, receiver) = stale_request(now);
 
-  let (sender, image) = take_stale_frame_response(&pending, &latest, now).expect("cached frame is ready");
+  let (sender, image) = take_stale_frame_response(&pending, &latest, &RefCell::new(None), now).expect("cached frame is ready");
   sender.send(image).expect("request is still receiving");
 
-  let actual = receiver.recv().expect("response arrives").expect("frame succeeds");
+  let actual = receiver.recv().expect("response arrives").expect("frame succeeds").expect("cached frame is permitted");
   assert_eq!(actual.get_pixel(0, 0).0, [0, 0, 255, 255], "BGRx blue idle frame, not the red first frame");
 }
 
@@ -180,6 +235,6 @@ fn stale_fallback_without_a_cached_frame_keeps_waiting() {
   let now = Instant::now();
   let (pending, _receiver) = stale_request(now);
 
-  assert!(take_stale_frame_response(&pending, &latest, now).is_none());
+  assert!(take_stale_frame_response(&pending, &latest, &RefCell::new(None), now).is_none());
   assert!(pending.borrow().is_some(), "the request still waits for a real frame");
 }

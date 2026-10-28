@@ -25,7 +25,7 @@ pub use application::{
   ActivationWindowObservation, ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification,
   ApplicationIdKind,
 };
-pub use capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
+pub use capture::{Activation, Capture, CaptureFreshness, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{

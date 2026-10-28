@@ -8,7 +8,6 @@ import {
   deviceServiceGetDevice,
   deviceServiceListDevices,
 } from '@auv-js/api-client'
-import { anyUnpack } from '@bufbuild/protobuf/wkt'
 
 import {
   DeviceEntryEffectKind,
@@ -30,7 +29,7 @@ import {
   UserSessionLockState as ProtoUserSessionLockState,
 } from '../../gen/auv/api/daemon/v1/device_pb'
 import { AuvConfigurationError, AuvProtocolError, AuvRemoteError, AuvRpcError } from '../../transport/errors'
-import { decodeRpcStatus } from '../../transport/rpc-status'
+import { rpcDetail } from '../../transport/rpc-details'
 import { unknownEnum } from './wire'
 
 /** One Device visible to the connected AUV caller. */
@@ -276,25 +275,9 @@ async function entryCall<T>(call: Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Reads the `DeviceEntryError` packed in a serialized `google.rpc.Status`.
- * Unknown or malformed details yield `undefined`. The shared transport reader
- * owns the standard envelope; this module owns the Device-entry reason.
- */
+/** Reads the Device entry reason without replacing unrelated RPC failures. */
 function entryReason(details: Uint8Array): ProtoDeviceEntryErrorReason | undefined {
-  try {
-    const status = decodeRpcStatus(details)
-    for (const detail of status?.details ?? []) {
-      const error = anyUnpack(detail, DeviceEntryErrorSchema)
-      if (error !== undefined && error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED) {
-        return error.reason
-      }
-    }
-  }
-  catch {
-    return undefined
-  }
-  return undefined
+  return rpcDetail(details, DeviceEntryErrorSchema, error => error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED)?.reason
 }
 
 function userSession(value: ProtoUserSession): UserSession {

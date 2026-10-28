@@ -10,6 +10,24 @@ use rmcp::{
 use super::{McpInvokeInput, McpServer, OpRunToolRequest, core_invoke_adapters, mcp_command_inputs};
 use crate::commands::op::ExecutionModeArg;
 
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+#[test]
+fn guarded_recapture_cause_reaches_mcp_json_pr_429() {
+  use auv::client::runner::{CapabilityError, ClickPreconditionFailureReason};
+  let source = auv_api_proto::click_precondition::status_with_cause("cap", ClickPreconditionFailureReason::CheckUnavailable, &tonic::Status::permission_denied("screen recording permission revoked"));
+  let failure = auv_cli_invoke::InvokeFailure::from(CapabilityError::CapturePrecondition {
+    capture_id: "cap".into(), reason: ClickPreconditionFailureReason::CheckUnavailable, cause_code: Some(tonic::Code::PermissionDenied), source,
+  });
+  let output = super::McpInvokePresentation::Failed {
+    run_id: auv_tracing::RunId::new(), failure: failure.to_string(), failure_details: failure,
+    command_id: "input.clickPoint".into(), recording_failure: None,
+  };
+  let json = serde_json::to_value(output).unwrap();
+  assert_eq!(json["failure_details"]["code"], "recapture_required");
+  assert_eq!(json["failure_details"]["cause_code"], "permission_denied");
+  assert!(json["failure"].as_str().unwrap().contains("screen recording permission revoked"));
+}
+
 #[test]
 fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
   McpServer::new(std::path::PathBuf::from(".")).expect("default MCP invoke catalogs should agree");
@@ -817,6 +835,20 @@ async fn click_point_mcp_defaults_to_screen_coordinates_without_optional_inputs(
   assert_eq!(success.result["relative_to"], "screen");
   assert_eq!(success.result["screen_point"]["x"], 120.0);
   assert!(success.result["action"].is_null());
+}
+
+#[tokio::test]
+async fn click_point_mcp_preserves_capture_and_refuses_uncheckable_local_delivery() {
+  let registry = auv_cli_invoke::default_registry();
+  let metadata = super::invoke_command_metadata(registry.resolve("input.clickPoint").unwrap());
+  assert!(metadata["arguments"].as_array().unwrap().iter().any(|arg| arg["input_key"] == "capture"));
+  let adapters = core_invoke_adapters();
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickPoint").unwrap();
+  let error = adapter.invoke(McpInvokeInput {
+    target: None, inputs: pairs(&[("x", "120"), ("y", "80"), ("capture", "cap-test")]),
+    dry_run: false, cancellation: Default::default(),
+  }).await.unwrap_err();
+  assert_eq!(error.code, auv_cli_invoke::FailureCode::InvalidTarget);
 }
 
 fn pairs(values: &[(&str, &str)]) -> BTreeMap<String, String> {

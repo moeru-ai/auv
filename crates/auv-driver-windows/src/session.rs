@@ -269,7 +269,8 @@ impl WindowApi<'_> {
   /// Delivers a window-targeted click.
   ///
   /// `ForegroundPreferred` foregrounds the window and uses the same
-  /// `SendInput` route as global clicks. `BackgroundOnly`/`BackgroundPreferred`
+  /// `SendInput` route as global clicks. Activation failure stops delivery.
+  /// `BackgroundOnly`/`BackgroundPreferred`
   /// instead post `WM_LBUTTONDOWN`/`WM_LBUTTONUP` directly to the control
   /// hit-tested under `point` (`background_input::click_at_window`), which
   /// does not raise or focus the window. `window_strategy` is a macOS
@@ -281,7 +282,10 @@ impl WindowApi<'_> {
     }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
-      let activation_attempt = foreground_window_attempt(window, "pointer delivery");
+      // Global input has no window recipient. If activation fails, sending it
+      // at this frame could click a covering window instead.
+      activate_window(window)?;
+      let activation_attempt = InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents);
       #[cfg(feature = "overlay")]
       let click = options.click.clone();
       // Delivered like a global click, but reported below as aimed at `window`, so the
@@ -406,6 +410,8 @@ impl WindowInput for WindowApi<'_> {
 /// Foregrounds `window` before a foreground-only input delivery, reporting the
 /// outcome as an attempt instead of failing the whole delivery on activation
 /// trouble (the subsequent `SendInput` call still targets the window's frame).
+// TODO(foreground-scroll-drag-admission): scroll and drag retain this policy;
+// this click-only fix leaves their failure semantics for an owner-approved slice.
 fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
   match activate_window(window) {
     Ok(()) => InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),

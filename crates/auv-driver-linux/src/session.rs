@@ -163,7 +163,7 @@ impl DisplayApi<'_> {
       return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
     let resolution = options.resolution;
-    capture_display(&self.session.state, options.display.as_deref()).map(|captured| DisplayCapture {
+    capture_display(&self.session.state, options.display.as_deref(), options.freshness).map(|captured| DisplayCapture {
       capture: captured.capture.at_resolution(resolution),
       ..captured
     })
@@ -179,7 +179,7 @@ impl DisplayApi<'_> {
     }
     let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
     let resolution = options.resolution;
-    capture_region(&self.session.state, options.display.as_deref(), region).map(|captured| RegionCapture {
+    capture_region(&self.session.state, options.display.as_deref(), region, options.freshness).map(|captured| RegionCapture {
       capture: captured.capture.at_resolution(resolution),
       ..captured
     })
@@ -208,7 +208,7 @@ impl WindowApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("window.capture_with cannot activate Linux Wayland windows in this slice"));
     }
-    capture_window(&self.session.state, window).map(|capture| capture.at_resolution(options.resolution))
+    capture_window(&self.session.state, window, options.freshness).map(|capture| capture.at_resolution(options.resolution))
   }
 
   pub fn find_text(&self, window: &Window, query: &str, region: RelativeRect, wait: WaitOptions) -> DriverResult<OcrMatches> {

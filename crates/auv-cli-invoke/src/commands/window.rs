@@ -167,8 +167,12 @@ fn window_capture_output_with_artifact(
   artifact: Option<ArtifactMetadata>,
 ) -> InvokeCommandResult {
   let pixel_size = capture.pixel_size_report();
+  let capture_id = capture.capture_id;
   let mut output = InvokeCommandOutput::from_result(&WindowCaptureResult { window, capture })?;
   let mut fields = window_report_fields(window);
+  if let Some(id) = capture_id {
+    fields.push(InvokeReportField::new("Capture ID", id));
+  }
   fields.push(InvokeReportField::new("Pixel size", pixel_size));
   output.report = Some(InvokeReport::new(fields, Vec::new()));
   Ok(output.with_artifacts(artifact))

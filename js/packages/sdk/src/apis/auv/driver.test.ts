@@ -1,19 +1,22 @@
 import type { UnaryCall } from '../../transport/types'
 
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import { BinaryWriter, WireType } from '@bufbuild/protobuf/wire'
+import { anyPack, AnySchema } from '@bufbuild/protobuf/wkt'
 import { describe, expect, it } from 'vitest'
 
 import { FocusTextRequestSchema, FocusTextResponseSchema } from '../../gen/auv/api/driver/v1/accessibility_pb'
 import { ActivateApplicationRequestSchema, ActivateApplicationResponseSchema, ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPointRequestSchema, ClickPointResponseSchema, ClickPointWithCaptureRequestSchema, ClickPointWithCaptureResponseSchema, ClickPreconditionFailureReason, ClickPreconditionFailureSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { connect } from '../../node/index'
+import { AuvRpcError } from '../../transport/errors'
 import { createAuv } from './client'
-import { splitKeyCombination } from './driver'
+import { ClickPreconditionError, splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
   it('uses the shared accessibility RPC and preserves focus readback', async () => {
@@ -73,6 +76,155 @@ describe('runner Driver control surface', () => {
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
     await expect(runner.accessibility.focusText({ application: 'fixture.exe', selector: { case: 'query', value: 'Search' } })).rejects.toThrow('focus RPC unavailable')
     expect(calls.map(call => call.method)).toEqual(['/auv.api.driver.v1.AccessibilityService/FocusText'])
+    await connection.close()
+  })
+
+  // https://github.com/moeru-ai/auv/pull/429#discussion_r4389303193
+  it.each([7, 14, 5, undefined])('preserves recapture cause code %s without retrying', async (causeCode) => {
+    const methods: string[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          methods.push(call.method)
+          const detail = anyPack(ClickPreconditionFailureSchema, create(ClickPreconditionFailureSchema, {
+            captureId: 'cap',
+            causeCode,
+            reason: ClickPreconditionFailureReason.CHECK_UNAVAILABLE,
+          }))
+          const envelope = new BinaryWriter().tag(3, WireType.LengthDelimited).bytes(toBinary(AnySchema, detail)).finish()
+          throw new AuvRpcError(9, 'recapture failed', undefined, envelope)
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await expect(runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'cap' })).rejects.toMatchObject({
+      causeCode,
+      name: 'ClickPreconditionError',
+      reason: ClickPreconditionFailureReason.CHECK_UNAVAILABLE,
+      rpcCode: 9,
+    })
+    expect(methods.map(method => method.split('/').pop())).toEqual(['ClickPointWithCapture'])
+    await connection.close()
+  })
+
+  // https://github.com/moeru-ai/auv/pull/429#discussion_r4383986620
+  it('never sends a guarded click to an older Runner through the unguarded method', async () => {
+    const methods: string[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          methods.push(call.method)
+          if (call.method.endsWith('/ClickPoint'))
+            return toBinary(ClickPointResponseSchema, create(ClickPointResponseSchema))
+          throw new AuvRpcError(12, 'unknown method')
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await expect(runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'capture' })).rejects.toMatchObject({ rpcCode: 12 })
+    await expect(runner.windows.from('window-1').click({ x: 1, y: 2 }, undefined, { capturePrecondition: 'capture' })).rejects.toMatchObject({ rpcCode: 12 })
+    expect(methods).toEqual(Array.from({ length: 2 }).fill('/auv.api.driver.v1.InputService/ClickPointWithCapture'))
+    await connection.close()
+  })
+
+  // https://github.com/moeru-ai/auv/pull/429#discussion_r4382693079
+  it('preserves an original RPC failure with malformed details', async () => {
+    const failure = new AuvRpcError(9, 'original failure', undefined, new Uint8Array([255]))
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary() { throw failure },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await expect(runner.input.click({ x: 10, y: 20 })).rejects.toBe(failure)
+    await connection.close()
+  })
+
+  it('preserves unrelated standard and unknown typed error details', async () => {
+    const details = [
+      create(AnySchema, { typeUrl: 'type.googleapis.com/other.Error', value: new Uint8Array([255]) }),
+      anyPack(ClickPreconditionFailureSchema, create(ClickPreconditionFailureSchema, { captureId: 'cap', reason: 99 as ClickPreconditionFailureReason })),
+    ]
+    for (const detail of details) {
+      const bytes = new BinaryWriter().tag(3, WireType.LengthDelimited).bytes(toBinary(AnySchema, detail)).finish()
+      const failure = new AuvRpcError(9, 'original failure', undefined, bytes)
+      const connection = await connect({ local: true, transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary() { throw failure },
+      } })
+      await expect(createAuv(connection).runner({ runnerClass: 'auv.core.local' }).input.click({ x: 1, y: 2 })).rejects.toBe(failure)
+      await connection.close()
+    }
+  })
+
+  it('unwraps successful guarded results while ordinary clicks keep their existing RPC', async () => {
+    const methods: string[] = []
+    const result = { screenPoint: { x: 10, y: 20 } }
+    const connection = await connect({ local: true, transport: {
+      close() {},
+      async connect() {},
+      async duplex() { throw new Error('unexpected duplex call') },
+      async unary(call) {
+        methods.push(call.method)
+        return call.method.endsWith('/ClickPointWithCapture')
+          ? toBinary(ClickPointWithCaptureResponseSchema, create(ClickPointWithCaptureResponseSchema, { result }))
+          : toBinary(ClickPointResponseSchema, create(ClickPointResponseSchema, result))
+      },
+    } })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    expect(await runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'capture' })).toMatchObject(result)
+    expect(await runner.input.click({ x: 10, y: 20 })).toMatchObject(result)
+    expect(methods.map(method => method.split('/').pop())).toEqual(['ClickPointWithCapture', 'ClickPoint'])
+    await connection.close()
+  })
+  it('binds window and global clicks to captures and preserves typed refusals without retrying', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          if (call.method.endsWith('/ResolveWindow')) {
+            return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, { window: { ref: { windowId: 'window-1' } } }))
+          }
+          const request = fromBinary(ClickPointWithCaptureRequestSchema, call.body)
+          const detail = anyPack(ClickPreconditionFailureSchema, create(ClickPreconditionFailureSchema, { captureId: request.capture!.captureId, reason: ClickPreconditionFailureReason.STATE_CHANGED }))
+          const envelope = new BinaryWriter().tag(3, WireType.LengthDelimited).bytes(toBinary(AnySchema, detail)).finish()
+          throw new AuvRpcError(9, 'take a new capture', undefined, envelope)
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const window = await runner.windows.resolve({ applicationId: 'Editor' })
+    const frame = { ref: { captureId: 'window-capture' } }
+    await expect(window.click({ x: 1, y: 2 }, undefined, { capturePrecondition: frame })).rejects.toMatchObject({
+      captureId: 'window-capture',
+      name: 'ClickPreconditionError',
+      reason: ClickPreconditionFailureReason.STATE_CHANGED,
+      recovery: 'new_capture',
+    })
+    await expect(runner.input.click({ x: 10, y: 20 }, undefined, { capturePrecondition: 'display-capture' })).rejects.toBeInstanceOf(ClickPreconditionError)
+    const clicks = calls.filter(call => call.method.endsWith('/ClickPointWithCapture')).map(call => fromBinary(ClickPointWithCaptureRequestSchema, call.body))
+    expect(clicks).toHaveLength(2)
+    expect(clicks[0]?.click?.window?.windowId).toBe('window-1')
+    expect(clicks.map(click => click.capture?.captureId)).toEqual(['window-capture', 'display-capture'])
     await connection.close()
   })
 

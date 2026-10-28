@@ -303,6 +303,13 @@ The scenario does not reproduce a blocked UIA provider or an in-flight cancellat
 
 ## Remaining acceptance
 
+The local capture/focus integration combines focus source `46c2ba723c83fc1b66595d5733d979ee794100ff`
+with reviewed capture-guard source `7cce1d93bbcdd2ccf8405dd943879f6e8528282b` from open PR #429.
+It preserves both features' rich errors and regression tests.
+The SDK's typed-detail lookup reuses the existing standard status decoder, including for Device-entry errors.
+Workspace all-target compilation, 469 affected Rust library tests, 44 SDK tests, SDK typecheck, and protocol generation pass.
+These are source, unit, and wire checks; native guarded-click integration acceptance remains pending.
+
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
 Phase 2 depends on the reviewed capture guard and separately scoped input-lifetime work.

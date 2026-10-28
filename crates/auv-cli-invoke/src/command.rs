@@ -201,6 +201,9 @@ pub type InvokeCommandResult = Result<InvokeCommandOutput, String>;
 #[error("{message}")]
 pub struct InvokeFailure {
   pub code: FailureCode,
+  /// Original category when recovery changes the outer failure category.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub cause_code: Option<FailureCode>,
   pub message: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub keyboard_progress: Option<auv_driver::KeyboardInputProgress>,
@@ -211,6 +214,8 @@ pub struct InvokeFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
+  /// No input was delivered. Capture again before selecting another click.
+  RecaptureRequired,
   CommandFailed,
   InvalidTarget,
   NotFound,
@@ -226,6 +231,7 @@ impl InvokeFailure {
   pub fn new(code: FailureCode, message: impl Into<String>) -> Self {
     Self {
       code,
+      cause_code: None,
       message: message.into(),
       keyboard_progress: None,
       input_progress: None,
@@ -293,6 +299,11 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
 
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
+    if matches!(error, auv::client::runner::CapabilityError::CapturePrecondition { .. }) {
+      let mut failure = Self::new(FailureCode::RecaptureRequired, error.to_string());
+      failure.cause_code = error.capture_cause_kind().map(|kind| client_failure_code(Some(kind)));
+      return failure;
+    }
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     match error {
       auv::client::runner::CapabilityError::KeyboardInput { progress, .. } => failure.keyboard_progress = Some(progress),

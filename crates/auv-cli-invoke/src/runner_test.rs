@@ -714,3 +714,18 @@ async fn selected_enabled_overlay_is_still_gated_on_an_unsupported_runner_platfo
   assert_eq!(error.code, crate::FailureCode::Unsupported);
   assert_eq!(error.message, "overlay.outline has no Linux Runner path; the declared Runner support for Linux is unsupported");
 }
+// https://github.com/moeru-ai/auv/pull/429#discussion_r4386585873
+#[test]
+fn guarded_target_failure_retains_resolution_category_pr_429() {
+  let capture = auv::client::runner::CaptureRef::new("capture-1");
+  let denied = capture_target_failure(Some(&capture), crate::InvokeFailure::new(crate::FailureCode::PermissionDenied, "permission denied"));
+  let disconnected = capture_target_failure(Some(&capture), crate::InvokeFailure::new(crate::FailureCode::Backend, "connection closed"));
+  assert_eq!(denied.code, crate::FailureCode::RecaptureRequired);
+  assert_eq!(denied.cause_code, Some(crate::FailureCode::PermissionDenied));
+  assert_eq!(disconnected.code, crate::FailureCode::RecaptureRequired);
+  assert_eq!(disconnected.cause_code, Some(crate::FailureCode::Backend));
+  assert_eq!(serde_json::to_value(&denied).unwrap()["cause_code"], "permission_denied");
+  assert!(disconnected.message.contains("connection closed"));
+  let plain = crate::InvokeFailure::new(crate::FailureCode::PermissionDenied, "permission denied");
+  assert_eq!(capture_target_failure(None, plain.clone()), plain);
+}

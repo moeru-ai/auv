@@ -158,6 +158,7 @@ impl ImageKey {
 #[derive(Clone)]
 pub(super) struct CaptureStore {
   options: CaptureStoreOptions,
+  identity: uuid::Uuid,
   inner: Arc<Mutex<Inner>>,
 }
 
@@ -175,6 +176,17 @@ struct Inner {
 struct Entry {
   blob: BlobKey,
   last_used: Instant,
+  click_state: Option<Result<super::click_precondition::CaptureState, String>>,
+}
+
+impl Entry {
+  fn provenance_bytes(&self) -> usize {
+    match &self.click_state {
+      Some(Ok(state)) => state.retained_bytes(),
+      Some(Err(cause)) => cause.capacity(),
+      None => 0,
+    }
+  }
 }
 
 struct Blob {
@@ -222,6 +234,7 @@ impl CaptureStore {
   pub(super) fn new(options: CaptureStoreOptions) -> Self {
     Self {
       options,
+      identity: uuid::Uuid::now_v7(),
       inner: Arc::new(Mutex::new(Inner::default())),
     }
   }
@@ -261,17 +274,43 @@ impl CaptureStore {
       }
     }
     inner.next += 1;
-    // The process ID keeps references from a restarted Runner from colliding.
-    let id = format!("cap-{}-{}", std::process::id(), inner.next);
+    // A store identity prevents old or foreign Runner references from matching
+    // after process ID reuse, including remote hosts with the same process ID.
+    let id = format!("cap-{}-{}", self.identity, inner.next);
     inner.entries.insert(
       id.clone(),
       Entry {
         blob: key,
         last_used: now,
+        click_state: None,
       },
     );
-    inner.fit(self.options.budget_bytes, Some(key));
+    inner.fit(self.options.budget_bytes, Some(&id));
     id
+  }
+
+  /// Provenance belongs to the reference, not the deduplicated pixel blob.
+  pub(super) fn set_click_state(&self, id: &str, state: Result<super::click_precondition::CaptureState, String>) {
+    let mut inner = self.inner.lock().expect("capture store lock");
+    if let Some(entry) = inner.entries.get_mut(id) {
+      let before = entry.provenance_bytes();
+      entry.click_state = Some(state);
+      let after = entry.provenance_bytes();
+      inner.total_bytes = inner.total_bytes - before + after;
+      inner.fit(self.options.budget_bytes, Some(id));
+    }
+  }
+
+  pub(super) fn click_state(&self, id: &str) -> Result<super::click_precondition::CaptureState, String> {
+    let mut inner = self.inner.lock().expect("capture store lock");
+    inner.expire(Instant::now(), self.options.idle);
+    inner
+      .entries
+      .get(id)
+      .ok_or_else(|| "capture baseline expired or was evicted".to_string())?
+      .click_state
+      .clone()
+      .unwrap_or_else(|| Err("capture producer did not establish a click baseline".into()))
   }
 
   /// Returns a stored capture and marks it used, or `None` once it was
@@ -286,7 +325,7 @@ impl CaptureStore {
     inner.expire(now, self.options.idle);
     let key = inner.touch(id, now)?;
     let capture = inner.unpack(&key)?;
-    inner.fit(self.options.budget_bytes, Some(key));
+    inner.fit(self.options.budget_bytes, Some(id));
     Some(capture)
   }
 
@@ -331,7 +370,7 @@ impl CaptureStore {
     let after = blob.derived_bytes();
     blob.bytes = blob.bytes + after - before;
     inner.total_bytes = inner.total_bytes + after - before;
-    inner.fit(self.options.budget_bytes, Some(key));
+    inner.fit(self.options.budget_bytes, Some(id));
   }
 
   /// Drops captures idle longer than the expiry and packs pixels idle longer
@@ -404,11 +443,17 @@ impl Inner {
 
   /// Gives memory back until the store fits `budget`: derived caches first,
   /// then packing hot pixels, then evicting captures, each least recently
-  /// used first. `keep` (the blob just used) is evicted last.
-  fn fit(&mut self, budget: usize, keep: Option<BlobKey>) {
+  /// used first. Protect only the current reference from eviction: other
+  /// references to its blob can still retain large independent baselines.
+  fn fit(&mut self, budget: usize, keep: Option<&str>) {
+    let keep_blob = keep.and_then(|id| self.entries.get(id)).map(|entry| entry.blob);
     while self.total_bytes > budget {
       let by_age = |blobs: &HashMap<BlobKey, Blob>, wanted: &dyn Fn(&Blob) -> bool| {
-        blobs.iter().filter(|(key, blob)| Some(**key) != keep && wanted(blob)).min_by_key(|(_, blob)| blob.last_used).map(|(key, _)| *key)
+        blobs
+          .iter()
+          .filter(|(key, blob)| Some(**key) != keep_blob && wanted(blob))
+          .min_by_key(|(_, blob)| blob.last_used)
+          .map(|(key, _)| *key)
       };
       if let Some(key) = by_age(&self.blobs, &|blob| blob.derived_bytes() > 0) {
         let blob = self.blobs.get_mut(&key).expect("blob exists");
@@ -425,7 +470,7 @@ impl Inner {
         continue;
       }
       let oldest =
-        self.entries.iter().filter(|(_, entry)| Some(entry.blob) != keep).min_by_key(|(_, entry)| entry.last_used).map(|(id, _)| id.clone());
+        self.entries.iter().filter(|(id, _)| Some(id.as_str()) != keep).min_by_key(|(_, entry)| entry.last_used).map(|(id, _)| id.clone());
       match oldest {
         Some(id) => self.remove(&id),
         None => break,
@@ -485,6 +530,7 @@ impl Inner {
     let Some(entry) = self.entries.remove(id) else {
       return;
     };
+    self.total_bytes -= entry.provenance_bytes();
     let Some(blob) = self.blobs.get_mut(&entry.blob) else {
       return;
     };

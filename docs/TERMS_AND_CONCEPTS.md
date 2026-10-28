@@ -1510,6 +1510,13 @@ to persist them as artifacts. This keeps the operation path from requiring
 synchronous filename allocation or image writes when the caller only needs
 pixels for OCR, recognition, or immediate interaction logic.
 
+`CaptureOptions.freshness` controls whether a request can reuse earlier pixels.
+`LatestAvailable` preserves ordinary capture behavior.
+`RequireNewFrame` requires an on-demand capture or a stream buffer received during the request.
+The click guard uses this requirement for recapture.
+A static Linux stream can refuse the check when no new buffer arrives.
+This requirement does not establish a compositor timestamp or atomic capture/input delivery.
+
 Across the Runner API, a capture frame stays in the Runner that produced it
 (see "Image Payloads" in `AGENTS.md`):
 
@@ -1530,6 +1537,8 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   fetched images are cached on the pixels; pixels idle for 30 s are packed
   losslessly (QOI). Over budget, the store drops cached results first, then
   packs, then evicts.
+  Click provenance belongs to each reference and shares this budget.
+  Equal pixel blobs do not merge their window snapshots or retained failure causes.
 - **Image regions.** OCR, find-text and image fetches take `region`, a
   `RelativeRect` in 0–1 fractions of the image, or
   `screen_region`, a `ScreenRect` in logical screen coordinates that is clipped
@@ -1539,6 +1548,12 @@ Across the Runner API, a capture frame stays in the Runner that produced it
 - **Capture image fetch** (`GetCaptureImage`): the explicit call that moves
   pixels to a client, optionally cropped to a relative region, fit inside a
   maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.
+- **Click capture precondition**: an opt-in binding through `ClickPointWithCapture`
+  to a full window or display capture on the same Runner. The Runner compares
+  geometry, relevant windows, capture metadata, and pixels before input delivery.
+  A changed or uncheckable state refuses input and requests a new capture.
+  It does not establish semantic success or make the check and delivery atomic.
+  See the [click contract](../proto/auv/api/driver/v1/docs/input.click.md).
 - **Image evidence artifacts** (screenshots, OCR sources, overlays) are
   lossless WebP (`image/webp`), encoded by `auv_tracing::image_artifact`.
   Captures are stored at logical resolution (`ImageResolution::Logical`), so

@@ -164,6 +164,9 @@ fn display_capture_report(display: &auv_driver::Display, capture: &super::Captur
     InvokeReportField::new("Pixel size", capture.pixel_size_report()),
     InvokeReportField::new("Scale factor", format!("{:.3}", capture.scale_factor)),
   ];
+  if let Some(id) = capture.capture_id {
+    fields.push(InvokeReportField::new("Capture ID", id));
+  }
   if let Some(reason) = capture.fallback_reason {
     fields.push(InvokeReportField::new("Fallback reason", reason));
   }

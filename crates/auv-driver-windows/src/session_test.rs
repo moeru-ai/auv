@@ -79,6 +79,37 @@ fn sample_window() -> Window {
   }
 }
 
+// https://github.com/moeru-ai/auv/pull/429
+// ROOT CAUSE:
+//
+// A failed foreground activation was recorded as an attempt, then global input
+// still ran at the target's coordinates. A covering window could receive it.
+// An activation failure must stop the click before global delivery.
+#[cfg(target_os = "windows")]
+#[test]
+fn foreground_click_stops_on_activation_failure_pr_429() {
+  let mut window = sample_window();
+  window.reference.id = "not-a-window-handle".into();
+  let error = session()
+    .window()
+    .click(
+      &window,
+      WindowPoint::new(25.0, 30.0),
+      ClickOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        // Tripwire: the old fallthrough fails click validation here, so this
+        // regression test cannot send native input even before the fix.
+        click: auv_driver_common::Click::Repeated {
+          count: 0,
+          interval: std::time::Duration::ZERO,
+        },
+        ..Default::default()
+      },
+    )
+    .unwrap_err();
+  assert!(error.to_string().contains("not-a-window-handle"), "activation error must survive: {error}");
+}
+
 #[test]
 fn window_point_converts_to_screen_point() {
   let window = sample_window();

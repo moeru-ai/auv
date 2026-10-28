@@ -10,6 +10,10 @@ pub mod window;
 
 #[derive(serde::Serialize)]
 pub struct CaptureResult<'a> {
+  /// Runner reference for subsequent OCR, image fetches and guarded clicks.
+  /// Local captures have no Runner resource and omit this field.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  capture_id: Option<&'a str>,
   bounds: &'a auv_driver::Rect,
   pixel_dimensions: auv_driver::PixelSize,
   scale_factor: f64,
@@ -24,9 +28,10 @@ impl CaptureResult<'_> {
   }
 }
 
-/// Facts of a Runner-held capture; the same JSON as an in-process capture.
+/// Facts of a Runner-held capture, including its reference for later operations.
 pub fn runner_capture_result(capture: &auv::client::runner::RunnerCapture) -> CaptureResult<'_> {
   CaptureResult {
+    capture_id: Some(capture.reference.id()),
     bounds: &capture.bounds,
     pixel_dimensions: capture.pixel_size,
     scale_factor: capture.scale_factor,
@@ -37,6 +42,7 @@ pub fn runner_capture_result(capture: &auv::client::runner::RunnerCapture) -> Ca
 
 pub fn capture_result(capture: &auv_driver::Capture) -> CaptureResult<'_> {
   CaptureResult {
+    capture_id: None,
     bounds: &capture.bounds,
     pixel_dimensions: auv_driver::PixelSize::new(capture.image.width(), capture.image.height()),
     scale_factor: capture.scale_factor,
