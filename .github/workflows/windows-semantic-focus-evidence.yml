@@ -74,10 +74,17 @@ jobs:
           cargo build --locked --package auv-base-evals --bin win32-receiver --bin background-session-eval
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run the Windows workspace test suite
+      # The PR's standard Check workflow owns the full workspace suite. Keep
+      # native acceptance independent of that duplicate long-running build.
+      - name: Run affected contract and no-desktop regression tests
+        timeout-minutes: 10
         shell: pwsh
         run: |
-          cargo test --workspace --locked --no-fail-fast
+          cargo test --locked -p auv-api-proto -p auv-core -p auv-cli-invoke -p auv-cli --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p auv-driver-windows --lib accessibility:: -- --skip snapshot_window_captures_root_node_for_a_live_window
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p auv-base-evals --lib desktop_windows::foreground_commands::workflow::tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo run --quiet -- invoke --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
