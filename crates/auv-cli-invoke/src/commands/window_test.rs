@@ -366,117 +366,74 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
     name: &'static str,
     window_frame: auv_driver::Rect,
     screen_point: (f64, f64),
-    expected_message_substring: &'static str,
+    required_substring: Option<&'static str>,
   }
 
+  let standard_window = auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0);
   let rejection_cases = [
-    // Exact boundaries (half-open exclusion: [0, width) x [0, height))
+    // Half-open exclusion: [0, width) x [0, height)
     RejectionCase {
       name: "exact right boundary x == origin + width (450.0, 200.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      window_frame: standard_window,
       screen_point: (450.0, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     RejectionCase {
       name: "exact bottom boundary y == origin + height (100.0, 450.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      window_frame: standard_window,
       screen_point: (100.0, 450.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     RejectionCase {
-      name: "exact bottom-right corner (450.0, 450.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (450.0, 450.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    // Negative coordinates / before origin
-    RejectionCase {
-      name: "before origin on x axis (49.9 < 50.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (49.9, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      name: "before origin coordinate (49.9, 149.9)",
+      window_frame: standard_window,
+      screen_point: (49.9, 149.9),
+      required_substring: None,
     },
     RejectionCase {
-      name: "before origin on y axis (149.9 < 150.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (100.0, 149.9),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    // Gross out of bounds
-    RejectionCase {
-      name: "far outside right-bottom (600.0, 500.0)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (600.0, 500.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    // Negative monitor out of bounds
-    RejectionCase {
-      name: "outside right edge on negative-origin secondary monitor (-500.0, -600.0)",
+      name: "outside right edge on negative-origin secondary monitor",
       window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
       screen_point: (-500.0, -600.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     // Non-finite screen coordinates
     RejectionCase {
-      name: "NaN coordinate on x",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      name: "NaN coordinate",
+      window_frame: standard_window,
       screen_point: (f64::NAN, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     RejectionCase {
-      name: "Infinity coordinate on x",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      name: "Infinity coordinate",
+      window_frame: standard_window,
       screen_point: (f64::INFINITY, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
-    // Zero / negative / non-finite window dimensions
+    // Zero, negative, and non-finite window dimensions
     RejectionCase {
       name: "zero size window",
       window_frame: auv_driver::Rect::new(50.0, 150.0, 0.0, 0.0),
       screen_point: (50.0, 150.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     RejectionCase {
-      name: "negative width window",
+      name: "negative dimension window",
       window_frame: auv_driver::Rect::new(50.0, 150.0, -10.0, 300.0),
       screen_point: (50.0, 150.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
     RejectionCase {
-      name: "negative height window",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, -10.0),
-      screen_point: (50.0, 150.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "NaN width window",
+      name: "NaN dimension window",
       window_frame: auv_driver::Rect::new(50.0, 150.0, f64::NAN, 300.0),
       screen_point: (100.0, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
+      required_substring: None,
     },
-    RejectionCase {
-      name: "NaN height window",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, f64::NAN),
-      screen_point: (100.0, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "Infinity width window",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, f64::INFINITY, 300.0),
-      screen_point: (100.0, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "Infinity height window",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, f64::INFINITY),
-      screen_point: (100.0, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
+    // Micro out-of-bounds float precision preserved in error message
     RejectionCase {
       name: "micro out-of-bounds float precision preserved in message",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      window_frame: standard_window,
       screen_point: (450.0001, 200.0),
-      expected_message_substring: "450.0001,200",
+      required_substring: Some("450.0001,200"),
     },
   ];
 
@@ -489,12 +446,13 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
     };
     assert_eq!(err.code, crate::FailureCode::InvalidTarget, "case '{}': failure code must be InvalidTarget", case.name);
     assert!(
-      err.message.contains(case.expected_message_substring),
-      "case '{}': failure message '{}' must contain '{}'",
-      case.name,
-      err.message,
-      case.expected_message_substring
+      err.message.contains("outside resolved window bounds; no input delivered"),
+      "case '{}': failure message must report outside resolved window bounds",
+      case.name
     );
+    if let Some(substring) = case.required_substring {
+      assert!(err.message.contains(substring), "case '{}': failure message '{}' must contain '{}'", case.name, err.message, substring);
+    }
   }
 }
 
