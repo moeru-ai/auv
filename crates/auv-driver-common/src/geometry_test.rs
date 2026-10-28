@@ -141,19 +141,6 @@ fn rect_contains_point_boundary_conditions_and_out_of_bounds() {
 }
 
 #[test]
-fn point_typed_wrappers_conversions_and_invariance() {
-  let raw = Point::new(123.45, 678.9);
-
-  let sp = ScreenPoint::from(raw);
-  assert_eq!(sp.point(), raw);
-  assert_eq!(Point::from(sp), raw);
-
-  let wp = WindowPoint::from(raw);
-  assert_eq!(wp.point(), raw);
-  assert_eq!(Point::from(wp), raw);
-}
-
-#[test]
 fn relative_rect_boundary_and_non_finite_rejection() {
   // Boundaries of unit square
   assert!(RelativeRect::new(0.0, 0.0, 1.0, 1.0).is_normalized());

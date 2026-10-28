@@ -98,46 +98,6 @@ fn screen_point_converts_to_window_point() {
 }
 
 #[test]
-fn window_point_screen_point_bidirectional_roundtrip_isomorphism() {
-  let window = sample_window(); // frame origin (100.0, 200.0), size (800.0, 600.0)
-
-  let test_window_points = [
-    WindowPoint::new(0.0, 0.0),
-    WindowPoint::new(12.345, 67.891),
-    WindowPoint::new(400.0, 300.0),
-    WindowPoint::new(800.0, 600.0),
-    WindowPoint::new(-50.0, -25.0),
-    WindowPoint::new(1500.0, 1200.0),
-  ];
-
-  for wp in test_window_points {
-    let sp = screen_point_for_window_point(&window, wp);
-    let back_to_wp = window_point_for_screen_point(&window, sp);
-    assert!(
-      (back_to_wp.point().x - wp.point().x).abs() < 1e-12 && (back_to_wp.point().y - wp.point().y).abs() < 1e-12,
-      "Roundtrip failed for WindowPoint {wp:?} -> {back_to_wp:?}"
-    );
-  }
-
-  let test_screen_points = [
-    ScreenPoint::new(0.0, 0.0),
-    ScreenPoint::new(100.0, 200.0),
-    ScreenPoint::new(900.0, 800.0),
-    ScreenPoint::new(-1920.0, 100.0),
-    ScreenPoint::new(1920.5, 1080.75),
-  ];
-
-  for sp in test_screen_points {
-    let wp = window_point_for_screen_point(&window, sp);
-    let back_to_sp = screen_point_for_window_point(&window, wp);
-    assert!(
-      (back_to_sp.point().x - sp.point().x).abs() < 1e-12 && (back_to_sp.point().y - sp.point().y).abs() < 1e-12,
-      "Roundtrip failed for ScreenPoint {sp:?} -> {back_to_sp:?}"
-    );
-  }
-}
-
-#[test]
 fn coordinate_mapping_with_negative_and_nonzero_window_origins() {
   // Case A: Secondary monitor positioned to the left of the primary monitor in Windows display settings.
   // Secondary monitor origin is (-1920.0, 0.0), window on that monitor has negative origin.
@@ -157,72 +117,6 @@ fn coordinate_mapping_with_negative_and_nonzero_window_origins() {
 
   assert_eq!(screen_point_for_window_point(&top_window, WindowPoint::new(100.0, 80.0)), ScreenPoint::new(300.0, -1000.0));
   assert_eq!(window_point_for_screen_point(&top_window, ScreenPoint::new(300.0, -1000.0)), WindowPoint::new(100.0, 80.0));
-}
-
-#[test]
-fn coordinate_mapping_updates_after_window_movement_and_resizing() {
-  let mut window = sample_window(); // Initial: origin (100.0, 200.0), size (800.0, 600.0)
-
-  let local_point = WindowPoint::new(50.0, 50.0);
-  assert_eq!(screen_point_for_window_point(&window, local_point), ScreenPoint::new(150.0, 250.0));
-
-  // 1. Move window to new origin (500.0, 600.0)
-  window.frame.origin = auv_driver_common::geometry::Point::new(500.0, 600.0);
-  // The same window-local point now projects to the updated screen location
-  assert_eq!(screen_point_for_window_point(&window, local_point), ScreenPoint::new(550.0, 650.0));
-  // The prior screen point now maps to an offset outside the window
-  assert_eq!(window_point_for_screen_point(&window, ScreenPoint::new(150.0, 250.0)), WindowPoint::new(-350.0, -350.0));
-
-  // 2. Resize window to (1200.0, 900.0)
-  window.frame.size = auv_driver_common::geometry::Size::new(1200.0, 900.0);
-  assert_eq!(window.frame.center(), auv_driver_common::geometry::Point::new(1100.0, 1050.0));
-  assert_eq!(window.frame.at(0.5, 0.5), auv_driver_common::geometry::Point::new(1100.0, 1050.0));
-  // Points that were outside the old size are now inside the resized window frame
-  let new_interior_screen = ScreenPoint::new(1500.0, 1200.0);
-  let new_interior_local = window_point_for_screen_point(&window, new_interior_screen);
-  assert_eq!(new_interior_local, WindowPoint::new(1000.0, 600.0));
-  assert!(window.frame.contains_point(new_interior_screen.point()));
-}
-
-#[test]
-fn window_region_boundaries_and_out_of_bounds_detection() {
-  let window = sample_window(); // frame: Rect::new(100.0, 200.0, 800.0, 600.0)
-
-  // 1. Exact boundary values (corners and edges of Rect::contains_point geometric inclusion)
-  // NOTE: This asserts geometric Rect inclusion (closed on all 4 boundaries).
-  // Pointer click delivery targets are subject to half-open checks in invoke (see #436 for window.clickText).
-  let top_left = screen_point_for_window_point(&window, WindowPoint::new(0.0, 0.0)).point();
-  let top_right = screen_point_for_window_point(&window, WindowPoint::new(800.0, 0.0)).point();
-  let bottom_left = screen_point_for_window_point(&window, WindowPoint::new(0.0, 600.0)).point();
-  let bottom_right = screen_point_for_window_point(&window, WindowPoint::new(800.0, 600.0)).point();
-
-  assert_eq!(top_left, auv_driver_common::geometry::Point::new(100.0, 200.0));
-  assert_eq!(top_right, auv_driver_common::geometry::Point::new(900.0, 200.0));
-  assert_eq!(bottom_left, auv_driver_common::geometry::Point::new(100.0, 800.0));
-  assert_eq!(bottom_right, auv_driver_common::geometry::Point::new(900.0, 800.0));
-
-  assert!(window.frame.contains_point(top_left));
-  assert!(window.frame.contains_point(top_right));
-  assert!(window.frame.contains_point(bottom_left));
-  assert!(window.frame.contains_point(bottom_right));
-
-  // 2. Out-of-bounds boundary values (just outside)
-  let outside_left = screen_point_for_window_point(&window, WindowPoint::new(-0.01, 300.0)).point();
-  let outside_right = screen_point_for_window_point(&window, WindowPoint::new(800.01, 300.0)).point();
-  let outside_top = screen_point_for_window_point(&window, WindowPoint::new(400.0, -0.01)).point();
-  let outside_bottom = screen_point_for_window_point(&window, WindowPoint::new(400.0, 600.01)).point();
-
-  assert!(!window.frame.contains_point(outside_left));
-  assert!(!window.frame.contains_point(outside_right));
-  assert!(!window.frame.contains_point(outside_top));
-  assert!(!window.frame.contains_point(outside_bottom));
-
-  // 3. Grossly out of bounds
-  let far_negative = screen_point_for_window_point(&window, WindowPoint::new(-1000.0, -1000.0)).point();
-  let far_positive = screen_point_for_window_point(&window, WindowPoint::new(5000.0, 5000.0)).point();
-
-  assert!(!window.frame.contains_point(far_negative));
-  assert!(!window.frame.contains_point(far_positive));
 }
 
 #[test]

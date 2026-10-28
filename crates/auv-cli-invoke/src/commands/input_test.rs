@@ -1401,9 +1401,10 @@ fn resolve_local_point_boundary_conditions_and_rejections() {
   assert_eq!(resolve_local_point("test", 0.0, 0.0, false, size, "window").unwrap(), auv_driver::Point::new(0.0, 0.0));
 
   // NOTE: resolve_local_point currently implements a closed interval (0.0..=width, 0.0..=height).
-  // This pins the existing production function behavior. Notice that unlike window.clickText
-  // (which enforces a half-open [0, width) check in #436), input.clickPoint still permits x == width
-  // at this layer. The pointer delivery boundary risk for input.clickPoint is tracked separately.
+  // This pins the existing production parsing behavior of input.clickPoint, which accepts the right/bottom
+  // border coordinate at this layer. This test does NOT endorse x == width as safe for pointer click delivery
+  // (which on Windows/macOS targets the first pixel outside the window perimeter).
+  // Aligning input.clickPoint to pointer-safe half-open boundaries is tracked separately as a follow-up.
   assert_eq!(resolve_local_point("test", 1280.0, 720.0, false, size, "window").unwrap(), auv_driver::Point::new(1280.0, 720.0));
 
   // Boundary out-of-bounds rejections

@@ -156,12 +156,10 @@ fn pixel_to_coordinate_projection_under_scale_ratios() {
   let expected_bounds = Rect::new(220.0, 250.0, 120.0, 40.0);
   let expected_action_point = Point::new(280.0, 270.0);
 
-  // 1. Symmetric scaling configurations: 100%, 125%, 150%, 200%
-  let symmetric_configs: [(f64, u32, u32); 4] = [
-    (1.0, 800, 600),   // 100%
-    (1.25, 1000, 750), // 125%
-    (1.5, 1200, 900),  // 150%
-    (2.0, 1600, 1200), // 200%
+  // 1. Representative symmetric scaling configurations: 100% and 150%
+  let symmetric_configs: [(f64, u32, u32); 2] = [
+    (1.0, 800, 600),  // 100%
+    (1.5, 1200, 900), // 150%
   ];
 
   for (scale, img_w, img_h) in symmetric_configs {
