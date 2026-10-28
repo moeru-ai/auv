@@ -516,6 +516,11 @@ pub fn selected_window_text_match<'a>(
 /// Projects an OCR match point into window space and verifies it falls within
 /// the resolved window bounds. Both direct local invoke and selected Runner routes
 /// share this check so out-of-bounds candidates are rejected before input delivery.
+///
+/// Enforces both continuous half-open bounds `[0, width) x [0, height)` and
+/// discrete delivery quantization bounds: any point whose rounded screen coordinates
+/// would land on or beyond the window perimeter when delivered via Win32 `PostMessage`
+/// (`round_to_i32`) or `SendInput` (`normalize_absolute`) is rejected before delivery.
 pub(crate) fn matched_window_point(
   window: &auv_driver::Window,
   matched: &auv_driver::OcrMatch,
@@ -541,6 +546,29 @@ pub(crate) fn matched_window_point(
       format!("recognized text point {},{} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
     ));
   }
+
+  // Discrete delivery quantization check:
+  // Windows pointer input is delivered to discrete integer pixels. When rounded
+  // for Win32 PostMessage (round_to_i32) or normalized for SendInput, continuous
+  // points near the boundary (e.g. 449.9 on a [50, 450) window) round up to 450,
+  // landing on or outside the window border. Reject any candidate whose discrete
+  // screen coordinates fall outside the window's discrete pixel span.
+  let discrete_x = screen_point.x.round() as i64;
+  let discrete_y = screen_point.y.round() as i64;
+  let min_x = window.frame.origin.x.round() as i64;
+  let min_y = window.frame.origin.y.round() as i64;
+  let max_x = min_x + window.frame.size.width.round() as i64;
+  let max_y = min_y + window.frame.size.height.round() as i64;
+  let bound_x = (window.frame.origin.x + window.frame.size.width).round() as i64;
+  let bound_y = (window.frame.origin.y + window.frame.size.height).round() as i64;
+  if discrete_x < min_x || discrete_x >= max_x || discrete_x >= bound_x || discrete_y < min_y || discrete_y >= max_y || discrete_y >= bound_y
+  {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::InvalidTarget,
+      format!("recognized text point {},{} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
+    ));
+  }
+
   Ok(point)
 }
 

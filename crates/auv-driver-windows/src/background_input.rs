@@ -293,7 +293,7 @@ mod native {
     unsafe { PostMessageW(hwnd, message, wparam, lparam) }.map_err(|error| backend(format!("PostMessageW failed: {error}")))
   }
 
-  fn round_to_i32(value: f64) -> i32 {
+  pub(super) fn round_to_i32(value: f64) -> i32 {
     value.round() as i32
   }
 

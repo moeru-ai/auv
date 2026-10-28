@@ -49,6 +49,56 @@ fn normalize_absolute_clamps_out_of_range_and_handles_degenerate_extent() {
 }
 
 #[test]
+fn foreground_sendinput_quantization_verifies_virtual_desktop_mapping() {
+  // Windows SendInput with MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK normalizes
+  // screen coordinates across the entire virtual desktop extent (0..=65535).
+  // The Windows mouse input subsystem unquantizes normalized coordinates back to
+  // virtual screen pixels using the desktop dimensions.
+  //
+  // Here we independently verify:
+  // 1. Coordinates near the perimeter (e.g. 449.9 on a [50, 450) window) map to
+  //    normalized dx values that unquantize back to pixel 450, demonstrating discrete
+  //    boundary overflow on foreground delivery.
+  // 2. Safe interior points (e.g. 449.4) unquantize back to pixel 449, staying within bounds.
+  // 3. Multi-monitor setups with negative virtual desktop origins unquantize consistently.
+
+  let desktop_origin_x = 0;
+  let desktop_extent_x = 1920;
+
+  // Windows unquantizes: origin + round(dx * (extent - 1) / 65535.0)
+  let unquantize =
+    |dx: i32, origin: i32, extent: i32| -> i32 { origin + ((f64::from(dx) * f64::from(extent - 1)) / 65535.0).round() as i32 };
+
+  // 1. Right boundary of a [50..450) window: point at 449.9
+  let dx_edge = normalize_absolute(449.9, desktop_origin_x, desktop_extent_x);
+  let pixel_edge = unquantize(dx_edge, desktop_origin_x, desktop_extent_x);
+  assert_eq!(pixel_edge, 450); // 450 >= window right boundary (450), lands outside!
+
+  // Safe point at 449.4
+  let dx_safe = normalize_absolute(449.4, desktop_origin_x, desktop_extent_x);
+  let pixel_safe = unquantize(dx_safe, desktop_origin_x, desktop_extent_x);
+  assert_eq!(pixel_safe, 449); // 449 < 450, lands inside!
+
+  // 2. Dual-monitor virtual desktop (3840 extent)
+  let dual_extent = 3840;
+  let dx_dual = normalize_absolute(449.9, 0, dual_extent);
+  let pixel_dual = unquantize(dx_dual, 0, dual_extent);
+  assert_eq!(pixel_dual, 450); // Still unquantizes to 450!
+
+  // 3. Multi-monitor with negative virtual origin: desktop [-1920..1920), extent = 3840
+  // Window at [-1500..-500). Point at -500.1 (continuous: inside).
+  let neg_desktop_origin = -1920;
+  let dx_neg = normalize_absolute(-500.1, neg_desktop_origin, dual_extent);
+  let pixel_neg = unquantize(dx_neg, neg_desktop_origin, dual_extent);
+  assert_eq!(pixel_neg, -500); // -500 >= -500, lands on/outside right boundary!
+
+  // Safe point at -500.6
+  let dx_neg_safe = normalize_absolute(-500.6, neg_desktop_origin, dual_extent);
+  let pixel_neg_safe = unquantize(dx_neg_safe, neg_desktop_origin, dual_extent);
+  assert_eq!(pixel_neg_safe, -501); // -501 < -500, lands inside!
+}
+
+#[test]
 fn parse_key_chord_reads_special_keys_case_insensitively() {
   assert_eq!(
     parse_key_chord("Return").unwrap(),
