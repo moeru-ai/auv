@@ -1,0 +1,157 @@
+name: Windows app environment evidence
+
+on:
+  push:
+    branches:
+      - codex/windows-app-preflight
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c7d6b53f5d348bd57391514c61f0cdfe67e4d69c
+          persist-credentials: false
+
+      - name: Inspect the isolated desktop and installed application tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          public static class AppEnvironmentProbe {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern bool CloseDesktop(IntPtr desktop);
+              [DllImport("user32.dll", SetLastError = true)]
+              static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+              [DllImport("user32.dll")]
+              static extern IntPtr GetThreadDpiAwarenessContext();
+              [DllImport("user32.dll")]
+              static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+              [DllImport("user32.dll")]
+              static extern bool AreDpiAwarenessContextsEqual(IntPtr left, IntPtr right);
+              [DllImport("user32.dll")]
+              static extern uint GetDpiForWindow(IntPtr window);
+              [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              static extern IntPtr CreateWindowExW(uint extra, string kind, string title, uint style,
+                  int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr data);
+              [DllImport("user32.dll", SetLastError = true)]
+              static extern bool DestroyWindow(IntPtr window);
+
+              public static uint ReadPrimaryWindowDpi() {
+                  // SDK DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. Only this
+                  // thread changes context; no system scale or registry is set.
+                  var perMonitor = new IntPtr(-4);
+                  var previous = SetThreadDpiAwarenessContext(perMonitor);
+                  if (previous == IntPtr.Zero) throw new Win32Exception();
+                  var window = IntPtr.Zero;
+                  try {
+                      // Standard STATIC class, hidden and non-activating, on
+                      // the primary monitor. It cannot receive workflow input.
+                      window = CreateWindowExW(0x08000080, "STATIC", "AUV DPI preflight", 0,
+                          0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                      if (window == IntPtr.Zero) throw new Win32Exception();
+                      if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), perMonitor))
+                          throw new InvalidOperationException("DPI probe window is not per-monitor aware v2");
+                      var dpi = GetDpiForWindow(window);
+                      if (dpi == 0) throw new InvalidOperationException("GetDpiForWindow returned zero");
+                      return dpi;
+                  }
+                  finally {
+                      var destroyed = window == IntPtr.Zero || DestroyWindow(window);
+                      var restored = SetThreadDpiAwarenessContext(previous) != IntPtr.Zero
+                          && AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), previous);
+                      if (!destroyed || !restored)
+                          throw new InvalidOperationException("DPI probe cleanup or thread-context restoration failed");
+                  }
+              }
+          }
+          '@
+          $source = git rev-parse HEAD
+          if ($source -ne 'c7d6b53f5d348bd57391514c61f0cdfe67e4d69c') { throw "Unexpected source $source" }
+          $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
+          $accessible = $desktop -ne [IntPtr]::Zero
+          if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
+          $screens = @([System.Windows.Forms.Screen]::AllScreens)
+          if (-not [Environment]::UserInteractive -or -not $accessible -or $screens.Count -ne 1) {
+            throw 'Later app tests need one accessible isolated interactive display'
+          }
+          $dpi = [AppEnvironmentProbe]::ReadPrimaryWindowDpi()
+          $programFiles = [Environment]::GetFolderPath('ProgramFiles')
+          $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
+          $candidates = [ordered]@{
+            edge = @((Join-Path $programFilesX86 'Microsoft/Edge/Application/msedge.exe'), (Join-Path $programFiles 'Microsoft/Edge/Application/msedge.exe'))
+            vscode = @((Join-Path $programFiles 'Microsoft VS Code/Code.exe'), (Join-Path $env:LOCALAPPDATA 'Programs/Microsoft VS Code/Code.exe'))
+            vlc = @((Join-Path $programFiles 'VideoLAN/VLC/vlc.exe'))
+            qbittorrent = @((Join-Path $programFiles 'qBittorrent/qbittorrent.exe'))
+            ilspy = @((Join-Path $programFiles 'ILSpy/ILSpy.exe'))
+          }
+          $applications = [ordered]@{}
+          foreach ($name in $candidates.Keys) {
+            $path = @($candidates[$name] | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
+            if ($path.Count -eq 0) { $applications[$name] = @{ present = $false }; continue }
+            $file = Get-Item -LiteralPath $path[0]
+            $applications[$name] = @{
+              present = $true
+              path = $file.FullName
+              file_version = $file.VersionInfo.FileVersion
+              product_version = $file.VersionInfo.ProductVersion
+              sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          $commands = [ordered]@{}
+          foreach ($name in @('dotnet', 'node', 'code', 'choco', 'winget', 'rustc', 'cargo')) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            $commands[$name] = if ($command) { @{ present = $true; source = $command.Source } } else { @{ present = $false } }
+          }
+          $runtimes = @()
+          $sdks = @()
+          if ($commands.dotnet.present) {
+            $env:DOTNET_NOLOGO = '1'
+            $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+            $runtimes = @(& $commands.dotnet.source --list-runtimes)
+            if ($LASTEXITCODE -ne 0) { throw 'dotnet runtime inventory failed' }
+            $sdks = @(& $commands.dotnet.source --list-sdks)
+            if ($LASTEXITCODE -ne 0) { throw 'dotnet SDK inventory failed' }
+          }
+          $facts = [ordered]@{
+            evidence_level = 'environment_preflight_only'
+            source_sha = $source
+            workflow_sha = '${{ github.sha }}'
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+            os = [Environment]::OSVersion.VersionString
+            session_id = (Get-Process -Id $PID).SessionId
+            user_interactive = [Environment]::UserInteractive
+            input_desktop_accessible = $accessible
+            screens_reported_to_powershell = @($screens | ForEach-Object { $_.Bounds.ToString() })
+            primary_window_dpi = $dpi
+            primary_effective_scale_percent = 100.0 * $dpi / 96
+            dpi_method = 'GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored'
+            applications = $applications
+            commands = $commands
+            dotnet_runtimes = $runtimes
+            dotnet_sdks = $sdks
+          }
+          $output = Join-Path $env:RUNNER_TEMP 'auv-app-preflight'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $facts | ConvertTo-Json -Depth 8 | Tee-Object -FilePath (Join-Path $output 'environment.json')
+
+      - name: Preserve the environment inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app-environment-preflight
+          path: ${{ runner.temp }}/auv-app-preflight/
+          if-no-files-found: warn
+          retention-days: 14
