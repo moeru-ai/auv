@@ -356,6 +356,23 @@ struct Entry<'a> {
 }
 
 impl Entry<'_> {
+  /// Keep the owned point, exact recipient, and capture on every guarded
+  /// request. Background-only prevents an implicit foreground fallback.
+  fn guarded_click_args(&self, capture_id: &str) -> Vec<String> {
+    vec![
+      self.layout.button_center[0].to_string(),
+      self.layout.button_center[1].to_string(),
+      "--relative-to".into(),
+      "screen".into(),
+      "--target".into(),
+      format!("window:{}", self.window.reference.id),
+      "--capture".into(),
+      capture_id.into(),
+      "--input-policy".into(),
+      "background-only".into(),
+    ]
+  }
+
   fn call(&self, command: &str, args: &[String]) -> Result<Invocation> {
     let started = Instant::now();
     if self.route == "rust" {
@@ -764,38 +781,15 @@ fn unverified_focus(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut
 /// receiver changes its own UI between capture and input; AUV never repairs a
 /// refusal by falling back to ordinary input.
 fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, original: [i32; 2]) -> Result<()> {
-  let hwnd = target.hwnd();
-  let args = |capture_id: &str| {
-    vec![
-      entry.layout.button_center[0].to_string(),
-      entry.layout.button_center[1].to_string(),
-      "--relative-to".into(),
-      "screen".into(),
-      "--target".into(),
-      format!("window:{hwnd}"),
-      "--capture".into(),
-      capture_id.into(),
-      "--input-policy".into(),
-      "background-only".into(),
-    ]
-  };
-  let reference = |run: &Invocation| -> Result<String> {
-    run
-      .json
-      .as_ref()
-      .and_then(|json| json["result"]["capture"]["capture_id"].as_str())
-      .map(str::to_owned)
-      .context("guarded workflow requires a Runner-owned capture reference")
-  };
   let baseline = capture(scenario, entry, target, false)?;
-  let capture_id = reference(&baseline)?;
+  let capture_id = capture_reference(&baseline)?;
   let before = target.request(json!({"cmd": "state"}))?;
   scenario.wait_until_idle()?;
   reject_user_input(entry.start, &scenario.watch.snapshot())?;
   if !owns_point(target.hwnd(), entry.layout.button_center) {
     bail!("guarded click's owned button is covered; no input sent");
   }
-  let delivered = call(scenario, entry, "input.clickPoint", &args(&capture_id), true)?;
+  let delivered = call(scenario, entry, "input.clickPoint", &entry.guarded_click_args(&capture_id), true)?;
   let after = target.request(json!({"cmd": "state"}))?;
   let result = delivered.json.as_ref().context("guarded click omitted its result")?;
   let point: auv_driver_common::ScreenPoint = serde_json::from_value(result["result"]["screen_point"].clone())?;
@@ -817,7 +811,7 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
   }
 
   let caption = after["button_caption"].as_str().context("receiver omitted its button caption")?;
-  // TODO(windows-capture-faults): close, resize, and provider-error cases need
+  // TODO(windows-capture-faults): resize and provider-error cases need
   // separate fault receipts. Add them when a fixture can prove those effects
   // without losing this workflow's live receiver and final cleanup checks.
   let changes = [
@@ -835,23 +829,19 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
   ];
   for (change, request, reset) in changes {
     let baseline = capture(scenario, entry, target, false)?;
-    let capture_id = reference(&baseline)?;
+    let capture_id = capture_reference(&baseline)?;
     let layout_before = target.request(json!({"cmd": "layout"}))?;
     let mutation = target.request(request.clone())?;
     let state_after_mutation = target.request(json!({"cmd": "state"}))?;
     // https://github.com/moeru-ai/auv/actions/runs/40710275511
     // ROOT CAUSE:
     //
-    // If the fixture moved, Windows generated WM_MOUSEMOVE after the baseline
-    // because its pending queue flag had not been processed.
+    // If the fixture moved, its mouse counter could advance before input.
+    // A read-only target query exposed that transition in run 40722661080.
     //
     // Before the fix, correct refusals failed the whole-state comparison.
-    // The fix processes pending moves before sampling and keeps every counter
-    // in the strict zero-input comparison.
-    let settlement = target.request(json!({"cmd": "settle_mouse_moves"}))?;
-    if settlement["ok"] != true {
-      bail!("receiver did not settle its post-{change} mouse messages");
-    }
+    // The fix separates target-query state from the input baseline and keeps
+    // every counter in the strict zero-input comparison.
     // Keep the old capture and planned point. This read-only control separates
     // target-query effects from the subsequent guarded input request.
     let query_before = scenario.watch.snapshot();
@@ -878,7 +868,7 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     }
     let before = scenario.watch.snapshot();
     reject_user_input(entry.start, &before)?;
-    let refused = entry.call("input.clickPoint", &args(&capture_id))?;
+    let refused = entry.call("input.clickPoint", &entry.guarded_click_args(&capture_id))?;
     let state_after = target.request(json!({"cmd": "state"}))?;
     let after = scenario.watch.snapshot();
     reject_user_input(entry.start, &after)?;
@@ -887,14 +877,19 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
       && before.injected_mouse == after.injected_mouse
       && before.injected_keys == after.injected_keys;
     let verified = refused.exit != Some(0)
+      // TODO(windows-capture-cause): minimized geometry currently carries a
+      // generic command_failed cause. Require a typed cause when Invoke's
+      // geometry-failure contract lands; this slice checks refusal/no input.
       && refused.json.as_ref().is_some_and(|response| response["failure_details"]["code"] == "recapture_required")
       && state_before == state_after
       && quiet;
     scenario.records.write(
       "capture_guard_refusal",
       json!({"change": change, "capture_id": capture_id, "fixture_request": request, "fixture_response": mutation,
-        "application_after_mutation": state_after_mutation, "fixture_settlement": settlement,
+        "application_after_mutation": state_after_mutation,
         "readonly_target_query": target_query.json,
+        "query_injected_mouse": [query_before.injected_mouse, query_after.injected_mouse],
+        "query_injected_keys": [query_before.injected_keys, query_after.injected_keys],
         "layout_before": layout_before, "layout_after": layout_after, "application_before": state_before,
         "application_after": state_after, "failure_response": refused.json, "desktop_unchanged": quiet,
         "foreground": [before.foreground, after.foreground], "injected_mouse": [before.injected_mouse, after.injected_mouse],
@@ -913,6 +908,92 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     if !restored {
       bail!("receiver did not reset the {change} capture fault");
     }
+  }
+  Ok(())
+}
+
+/// A local capture cannot authorize a guarded Runner request.
+fn capture_reference(run: &Invocation) -> Result<String> {
+  run
+    .json
+    .as_ref()
+    .and_then(|json| json["result"]["capture"]["capture_id"].as_str())
+    .map(str::to_owned)
+    .context("guarded workflow requires a Runner-owned capture reference")
+}
+
+/// Close the existing decoy after its wrong-window control. The primary
+/// receiver stays alive for state checks and normal foreground restoration.
+fn close_decoy(
+  scenario: &mut Scenario<'_>,
+  entry: &Entry<'_>,
+  decoy: &mut Receiver,
+  title: &str,
+  target: &mut Receiver,
+  capture_guard: bool,
+) -> Result<()> {
+  let hwnd = decoy.hwnd();
+  let resources = if capture_guard {
+    let windows = entry.driver.window().list().map_err(anyhow::Error::msg)?;
+    let window = auv_driver_common::window::find_window(windows, &hwnd.to_string()).map_err(anyhow::Error::msg)?;
+    Some((window, decoy.layout.clone()))
+  } else {
+    None
+  };
+  let victim = resources.as_ref().map(|(window, layout)| Entry {
+    window,
+    layout,
+    title,
+    ..*entry
+  });
+  let baseline = victim.as_ref().map(|victim| capture(scenario, victim, decoy, true)).transpose()?;
+  let closed = decoy.close();
+  // SAFETY: read-only query of the handle this harness created and just closed.
+  let window_closed = !unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(HWND(hwnd as *mut c_void)) }.as_bool();
+  let verified = closed.is_ok() && window_closed;
+  scenario.records.write(
+    "decoy_cleanup",
+    json!({"window_id": hwnd.to_string(), "window_closed": window_closed,
+      "process_exit_confirmed": closed.is_ok(), "error": closed.as_ref().err().map(ToString::to_string), "verified": verified}),
+  )?;
+  if !verified {
+    bail!("decoy cleanup did not confirm process exit and window closure");
+  }
+  let (Some(victim), Some(baseline)) = (victim, baseline) else {
+    return Ok(());
+  };
+  let capture_id = capture_reference(&baseline)?;
+  let query = entry.call("window.list", &[])?;
+  if query.exit != Some(0) {
+    bail!("closed-target read-only window query failed");
+  }
+  let application_before = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  reject_user_input(entry.start, &before)?;
+  let refused = victim.call("input.clickPoint", &victim.guarded_click_args(&capture_id))?;
+  let application_after = target.request(json!({"cmd": "state"}))?;
+  let after = scenario.watch.snapshot();
+  reject_user_input(entry.start, &after)?;
+  let quiet = before.cursor == after.cursor
+    && before.foreground == after.foreground
+    && before.injected_mouse == after.injected_mouse
+    && before.injected_keys == after.injected_keys;
+  let verified = refused.exit != Some(0)
+    && refused.json.as_ref().is_some_and(|response| {
+      response["failure_details"]["code"] == "recapture_required" && response["failure_details"]["cause_code"] == "not_found"
+    })
+    && application_before == application_after
+    && quiet;
+  scenario.records.write(
+    "closed_capture_guard_refusal",
+    json!({"window_id": hwnd.to_string(), "capture_id": capture_id, "window_closed": window_closed,
+      "readonly_target_query": query.json, "failure_response": refused.json, "application_before": application_before,
+      "application_after": application_after, "desktop_unchanged": quiet, "foreground": [before.foreground, after.foreground],
+      "injected_mouse": [before.injected_mouse, after.injected_mouse], "injected_keys": [before.injected_keys, after.injected_keys],
+      "pointer_unchanged": before.cursor == after.cursor, "input_action_retries": 0, "verified": verified}),
+  )?;
+  if !verified {
+    bail!("closed recipient was not refused with its not-found cause and zero input; no retry or fallback");
   }
   Ok(())
 }
@@ -955,6 +1036,7 @@ fn capture(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
     scenario.records.write(
       "capture_verification",
       json!({"route": entry.route, "initial": initial, "attempt": attempt, "decoded": decoded, "application_state": expected,
+      "window_id": target.hwnd().to_string(), "process_id": entry.layout.pid,
       "window_identity_verified": identified, "verified": verified, "retry_initial_blank": retry}),
     )?;
     if verified {
@@ -1474,6 +1556,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     if !verified {
       bail!("wrong-window guard failed or the control did not become foreground");
     }
+    close_decoy(&mut scenario, &entry, &mut decoy, &decoy_spec.title, &mut target, options.capture_guard)?;
     Ok(())
   })();
   let elapsed = started.elapsed().as_secs_f64() * 1000.0;

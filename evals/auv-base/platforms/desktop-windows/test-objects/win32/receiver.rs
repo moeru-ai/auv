@@ -77,13 +77,13 @@ mod native {
   use windows::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
     ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PM_REMOVE, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS,
-    WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP,
+    WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
   };
   use windows::core::{HSTRING, PCWSTR, w};
 
@@ -990,32 +990,6 @@ mod native {
     let mut reply = match request["cmd"].as_str() {
       Some("state") => state(hwnd),
       Some("layout") => layout(hwnd),
-      Some("settle_mouse_moves") if FOREGROUND_INPUT.load(Relaxed) => {
-        // NOTICE: moving or hiding a window can generate WM_MOUSEMOVE without
-        // pointer input. Process those existing messages before sampling the
-        // post-fault baseline. See `https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343`.
-        // Remove this separate request when mutation replies include an
-        // equivalent queue-completion receipt. Never discard the counters.
-        let mut message = MSG::default();
-        let mut drained = 0;
-        while drained < 64 {
-          // SAFETY: PeekMessage reads only this GUI thread's queue. Only
-          // existing mouse-move messages for its owned windows are dispatched;
-          // no button/key event is removed, created, or sent to another thread.
-          unsafe {
-            if !PeekMessageW(&mut message, None, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE).as_bool() {
-              break;
-            }
-            DispatchMessageW(&message);
-          }
-          drained += 1;
-        }
-        if drained == 64 {
-          json!({"ok": false, "error": "mouse-move queue did not settle within the fixture bound", "drained_mouse_moves": drained})
-        } else {
-          json!({"drained_mouse_moves": drained})
-        }
-      }
       // Controlled UI change for stale-capture checks. The application changes
       // its own caption; this is fixture setup, not AUV input delivery.
       Some("set_button_caption") if FOREGROUND_INPUT.load(Relaxed) => {

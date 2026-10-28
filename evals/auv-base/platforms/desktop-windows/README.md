@@ -109,7 +109,12 @@ Each request with the old capture reference must return `recapture_required` and
 Raw capture references, command failures, fixture states, layouts, and reset receipts remain in the workflow record.
 There is no input retry. The flag requires only the Runner route and conflicts with `--observe-only`.
 It can be combined with `--semantic-focus`.
-Closed-window, resize, and provider-error native cases remain deferred until they have separate fixture receipts.
+After the wrong-window control, the existing decoy becomes a second capture target and then closes.
+Its process exit and window closure must be confirmed before the stale-reference request.
+That request must retain `recapture_required` with the underlying `not_found` cause and leave the live primary receiver and desktop input unchanged.
+Every functional workflow now records explicit decoy cleanup, including when capture guards are disabled.
+The primary receiver remains alive for its normal final checks and foreground restoration.
+Resize and provider-error native cases remain deferred until they have separate fixture receipts.
 
 `workflow` runs the same owned Win32 record-entry workflow through direct Rust APIs, local
 Invoke, and a real daemon-owned Runner selected by `--run`: resolve and capture the window,

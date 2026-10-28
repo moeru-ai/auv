@@ -318,7 +318,7 @@ The environment remained Windows Server 2025 build 26100, interactive session 2,
 This fixture validates native `submitted` readback failure; failed-HRESULT `delivery_uncertain` still has unit and wire evidence only.
 The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
 
-## Phase 2: native capture admission scenario (pending)
+## Phase 2: native capture admission scenario
 
 Classification: test-only, using the existing capture-guard implementation from PR #429.
 The evaluation flag `workflow --capture-guard --routes runner` requires an integration build with its dedicated guarded RPC.
@@ -328,27 +328,45 @@ Every stale-reference request must return `recapture_required` with unchanged ap
 The record retains the raw failures, capture IDs, application states, layouts, and independent fixture reset receipts.
 The scenario adds no Driver behavior, capture policy, fallback, or input retry.
 Compilation, all ten no-desktop workflow regression tests, CLI help, formatting, and whitespace checks pass.
-Isolated native acceptance is pending.
-The [first isolated attempt](https://github.com/moeru-ai/auv/actions/runs/40710275511)
-passed all 12 original workflows and both unchanged guarded-click controls.
-Both changed-caption requests were refused with independent zero-input checks.
-Both moved-window requests returned `recapture_required` with unchanged desktop input.
-Their application comparisons failed because `raw.button_move` advanced from 3 to 4 after the baseline sample.
-The receiver now processes its existing mouse-move queue before taking the post-fault baseline.
-It retains the settlement receipt and raw states; no input counter is ignored and no Driver behavior changes.
-Windows can generate this message after window changes, as described in
-[Microsoft's message-queue explanation](https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343).
-The [failed-attempt artifact](https://github.com/moeru-ai/auv/actions/runs/40710275511/artifacts/12827460004)
-matched SHA-256 `1d4b49e31bcc7e16ea0770bad7526fd941231b25bcff7407714dddecdd8343ca` after download.
-Minimized-window admission was not reached in that attempt.
-The [queue-peek attempt](https://github.com/moeru-ai/auv/actions/runs/40715970079)
-reproduced the same two moved-window failures at `d30b61b9`.
-Its settlement replies reported zero drained messages; the protected requests still returned `recapture_required` while `raw.button_move` advanced.
-The next attempt adds a read-only `window.list` control before sampling the guarded-call baseline.
-It retains the old capture ID and planned point, records the query response, and keeps the complete application-state comparison.
-This separates target-query effects from input delivery without discarding a counter.
-The queue-peek artifact matched SHA-256 `2f89818919ad2732449d8909138182c2ec84de685366964d432f2ceb3590435e` after download.
-Closed-window, resize, and provider-error native cases still need separate fault receipts.
+The [isolated native run](https://github.com/moeru-ai/auv/actions/runs/40722661080)
+passed at source `58938f515bbd35a77d9f555e0c3c7c12e3ccabc3`, based on integration `4a3ec71c22f673b9470d21e61cd3e82e9e4fd91f`.
+Evidence workflow `bc50c72df982e1b0a980cecdd841d9d2b5c0a7ac` ran 12 original workflows and two guarded Runner workflows.
+Independent artifact checks confirmed two exact guarded deliveries and all six caption, move, and minimize refusals.
+The protected requests retained `recapture_required`; complete application state and desktop input remained unchanged across each request.
+Both moved-window cases recorded the mouse counter at 3 after mutation, then 4 after a read-only target query.
+It stayed at 4 across the guarded input request.
+The old capture ID and planned point remain unchanged during that query.
+
+The same run retains eight successful focus checks, eight missing-query refusals, and eight submitted-but-unverified focus refusals.
+All 44 accepted captures matched application state, all 20 ordinary pointer destinations matched their plans, and all six Runner cleanups passed.
+The first baseline Rust capture decoded blank once, then recovered with the existing bounded read-only retry.
+No input action was retried; physical input was zero and pointer/foreground restoration passed.
+The [raw artifact](https://github.com/moeru-ai/auv/actions/runs/40722661080/artifacts/12831787344)
+matched SHA-256 `ac7f1c3aed5a2c342a7eb4b3df6c4a5ab8ff3713daad86e334a2692eaf70ebc1` after download.
+GitHub retention ends 2026-11-11. Actual DPI was not recorded.
+
+The [first attempt](https://github.com/moeru-ai/auv/actions/runs/40710275511)
+and [queue-peek attempt](https://github.com/moeru-ai/auv/actions/runs/40715970079)
+stopped at moved-window comparisons: the counter advanced from 3 to 4 after the early baseline.
+The queue peek drained zero messages and did not fix that ordering.
+It has been removed; the explicit read-only target query separates preflight effects from input without ignoring a counter.
+Windows can generate mouse-move messages after window changes; see
+[Microsoft's explanation](https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343).
+The failed artifact digests are `1d4b49e31bcc7e16ea0770bad7526fd941231b25bcff7407714dddecdd8343ca` and
+`2f89818919ad2732449d8909138182c2ec84de685366964d432f2ceb3590435e`.
+Minimized geometry currently exposes the generic underlying `command_failed` cause; typed geometry causes remain a separate Invoke slice.
+The closed-window scenario below and queue-peek removal still need final native acceptance.
+
+## Phase 2: closed capture target scenario (pending)
+
+Classification: test-only, reusing the existing decoy from the wrong-window control.
+After that control completes, guarded workflows capture the decoy and confirm its process exit and HWND destruction.
+The stale-reference click must return `recapture_required` with the underlying `not_found` cause.
+The live primary receiver's full state, pointer, foreground, and injected input counts must remain unchanged.
+The primary stays alive for normal final checks and foreground restoration.
+All functional routes now require an explicit decoy cleanup receipt instead of relying on Drop alone.
+No new Driver, RPC, command flag, input retry, or fallback is added.
+Compilation and all ten no-desktop workflow regression tests pass; native target-loss acceptance is pending.
 
 ## Remaining acceptance
 
@@ -357,7 +375,8 @@ with reviewed capture-guard source `7cce1d93bbcdd2ccf8405dd943879f6e8528282b` fr
 It preserves both features' rich errors and regression tests.
 The SDK's typed-detail lookup reuses the existing standard status decoder, including for Device-entry errors.
 Workspace all-target compilation, 469 affected Rust library tests, 44 SDK tests, SDK typecheck, and protocol generation pass.
-These are source, unit, and wire checks; native guarded-click integration acceptance remains pending.
+Native evidence at `58938f51` covers the caption, move, and minimize guards above.
+Closed targets, resized targets, provider faults, and final queue-peek removal remain outside that run's acceptance.
 
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
