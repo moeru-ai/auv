@@ -329,6 +329,18 @@ The record retains the raw failures, capture IDs, application states, layouts, a
 The scenario adds no Driver behavior, capture policy, fallback, or input retry.
 Compilation, all ten no-desktop workflow regression tests, CLI help, formatting, and whitespace checks pass.
 Isolated native acceptance is pending.
+The [first isolated attempt](https://github.com/moeru-ai/auv/actions/runs/40710275511)
+passed all 12 original workflows and both unchanged guarded-click controls.
+Both changed-caption requests were refused with independent zero-input checks.
+Both moved-window requests returned `recapture_required` with unchanged desktop input.
+Their application comparisons failed because `raw.button_move` advanced from 3 to 4 after the baseline sample.
+The receiver now processes its existing mouse-move queue before taking the post-fault baseline.
+It retains the settlement receipt and raw states; no input counter is ignored and no Driver behavior changes.
+Windows can generate this message after window changes, as described in
+[Microsoft's message-queue explanation](https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343).
+The [failed-attempt artifact](https://github.com/moeru-ai/auv/actions/runs/40710275511/artifacts/12827460004)
+matched SHA-256 `1d4b49e31bcc7e16ea0770bad7526fd941231b25bcff7407714dddecdd8343ca` after download.
+Minimized-window admission was not reached in that attempt.
 Closed-window, resize, and provider-error native cases still need separate fault receipts.
 
 ## Remaining acceptance

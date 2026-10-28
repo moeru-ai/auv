@@ -838,6 +838,20 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     let capture_id = reference(&baseline)?;
     let layout_before = target.request(json!({"cmd": "layout"}))?;
     let mutation = target.request(request.clone())?;
+    let state_after_mutation = target.request(json!({"cmd": "state"}))?;
+    // https://github.com/moeru-ai/auv/actions/runs/40710275511
+    // ROOT CAUSE:
+    //
+    // If the fixture moved, Windows generated WM_MOUSEMOVE after the baseline
+    // because its pending queue flag had not been processed.
+    //
+    // Before the fix, correct refusals failed the whole-state comparison.
+    // The fix processes pending moves before sampling and keeps every counter
+    // in the strict zero-input comparison.
+    let settlement = target.request(json!({"cmd": "settle_mouse_moves"}))?;
+    if settlement["ok"] != true {
+      bail!("receiver did not settle its post-{change} mouse messages");
+    }
     let state_before = target.request(json!({"cmd": "state"}))?;
     let layout_after = target.request(json!({"cmd": "layout"}))?;
     let changed = match change {
@@ -866,6 +880,7 @@ fn guarded_click_checks(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: 
     scenario.records.write(
       "capture_guard_refusal",
       json!({"change": change, "capture_id": capture_id, "fixture_request": request, "fixture_response": mutation,
+        "application_after_mutation": state_after_mutation, "fixture_settlement": settlement,
         "layout_before": layout_before, "layout_after": layout_after, "application_before": state_before,
         "application_after": state_after, "failure_response": refused.json, "desktop_unchanged": quiet,
         "foreground": [before.foreground, after.foreground], "injected_mouse": [before.injected_mouse, after.injected_mouse],
