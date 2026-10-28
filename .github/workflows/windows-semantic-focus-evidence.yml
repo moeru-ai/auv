@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 58938f515bbd35a77d9f555e0c3c7c12e3ccabc3
+          ref: c7d6b53f5d348bd57391514c61f0cdfe67e4d69c
           submodules: recursive
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '58938f515bbd35a77d9f555e0c3c7c12e3ccabc3') { throw "Unexpected source: $actual" }
+          if ($actual -ne 'c7d6b53f5d348bd57391514c61f0cdfe67e4d69c') { throw "Unexpected source: $actual" }
           New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-focus-preflight" -Force | Out-Null
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -123,6 +123,8 @@ jobs:
               $summary = $summaries[0]
               if ($summary.passed -ne $true -or $summary.user_interrupted -ne $false) { throw "Failed workflow in $($record.FullName)" }
               if ($summary.quiet_inconclusive -ne 0 -or $summary.quiet_violated -ne 0 -or $summary.input_action_retries -ne 0) { throw "Unsafe workflow in $($record.FullName)" }
+              $decoy = @($rows | Where-Object { $_.kind -eq 'decoy_cleanup' })
+              if ($decoy.Count -ne 1 -or $decoy[0].verified -ne $true -or $decoy[0].window_closed -ne $true -or $decoy[0].process_exit_confirmed -ne $true) { throw "Missing explicit decoy cleanup in $($record.FullName)" }
               if ($mode -ne 'baseline') {
                 $refusals = @($rows | Where-Object { $_.kind -eq 'missing_focus_query' })
                 $focus = @($rows | Where-Object { $_.kind -eq 'semantic_focus_verification' })
@@ -152,12 +154,18 @@ jobs:
                 foreach ($proof in $refusals) {
                   if ($proof.verified -ne $true -or $proof.failure_response.failure_details.code -ne 'recapture_required' -or $proof.desktop_unchanged -ne $true -or $proof.pointer_unchanged -ne $true -or $proof.input_action_retries -ne 0) { throw "Unsafe refusal in $($record.FullName)" }
                   if ($proof.foreground[0] -ne $proof.foreground[1] -or $proof.injected_mouse[0] -ne $proof.injected_mouse[1] -or $proof.injected_keys[0] -ne $proof.injected_keys[1]) { throw "Refusal changed native input in $($record.FullName)" }
-                  if ($proof.fixture_settlement.ok -ne $true -or $proof.fixture_settlement.drained_mouse_moves -lt 0 -or $proof.fixture_settlement.drained_mouse_moves -ge 64) { throw "Missing bounded fixture settlement in $($record.FullName)" }
                   if ($proof.readonly_target_query.status -ne 'completed') { throw "Missing read-only target control in $($record.FullName)" }
+                  if ($proof.query_injected_mouse[0] -ne $proof.query_injected_mouse[1] -or $proof.query_injected_keys[0] -ne $proof.query_injected_keys[1]) { throw "Read-only query injected input in $($record.FullName)" }
                   if (($proof.application_before | ConvertTo-Json -Depth 20 -Compress) -ne ($proof.application_after | ConvertTo-Json -Depth 20 -Compress)) { throw "Refusal changed application state in $($record.FullName)" }
                 }
                 $resets = @($rows | Where-Object { $_.kind -eq 'capture_guard_fixture_reset' })
                 if ($resets.Count -ne 3 -or @($resets | Where-Object { $_.verified -ne $true }).Count -ne 0) { throw "Missing fixture resets in $($record.FullName)" }
+                $closed = @($rows | Where-Object { $_.kind -eq 'closed_capture_guard_refusal' })
+                if ($closed.Count -ne 1 -or $closed[0].verified -ne $true) { throw "Missing closed-target proof in $($record.FullName)" }
+                $proof = $closed[0]
+                if ($proof.window_id -ne $decoy[0].window_id -or $proof.window_closed -ne $true -or $proof.failure_response.failure_details.code -ne 'recapture_required' -or $proof.failure_response.failure_details.cause_code -ne 'not_found' -or $proof.desktop_unchanged -ne $true -or $proof.pointer_unchanged -ne $true -or $proof.input_action_retries -ne 0) { throw "Unsafe closed-target refusal in $($record.FullName)" }
+                if ($proof.foreground[0] -ne $proof.foreground[1] -or $proof.injected_mouse[0] -ne $proof.injected_mouse[1] -or $proof.injected_keys[0] -ne $proof.injected_keys[1]) { throw "Closed target changed native input in $($record.FullName)" }
+                if (($proof.application_before | ConvertTo-Json -Depth 20 -Compress) -ne ($proof.application_after | ConvertTo-Json -Depth 20 -Compress)) { throw "Closed target changed the live receiver in $($record.FullName)" }
               }
               $summary | ConvertTo-Json -Depth 5 -Compress
             }
@@ -181,7 +189,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-capture-guard-58938f51
+          name: windows-capture-guard-c7d6b53f
           path: |
             ${{ runner.temp }}/auv-focus-preflight/
             ${{ runner.temp }}/auv-focus-baseline/
