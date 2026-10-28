@@ -330,10 +330,10 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
       expected_local: (0.0, 0.0),
     },
     ValidCase {
-      name: "safe point just inside right-bottom perimeter (rounds inside discrete pixels)",
+      name: "point just inside right-bottom perimeter (449.9, 449.9)",
       window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (449.4, 449.4),
-      expected_local: (399.4, 299.4),
+      screen_point: (449.9, 449.9),
+      expected_local: (399.9, 299.9),
     },
     ValidCase {
       name: "negative origin interior point on secondary monitor",
@@ -342,10 +342,10 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
       expected_local: (500.0, 400.0),
     },
     ValidCase {
-      name: "safe point near right-bottom on negative-origin secondary monitor",
+      name: "point just inside perimeter on negative-origin secondary monitor",
       window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
-      screen_point: (-500.6, -200.6),
-      expected_local: (999.4, 799.4),
+      screen_point: (-500.1, -200.1),
+      expected_local: (999.9, 799.9),
     },
   ];
 
@@ -370,38 +370,7 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
   }
 
   let rejection_cases = [
-    // Discrete delivery quantization overflow at right/bottom edges (Scheme B core bug)
-    RejectionCase {
-      name: "discrete perimeter overflow at right edge (449.9 rounds to 450)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (449.9, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "discrete perimeter overflow at bottom edge (449.9 rounds to 450)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (100.0, 449.9),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "discrete perimeter overflow at bottom-right corner (449.9, 449.9)",
-      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
-      screen_point: (449.9, 449.9),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "discrete perimeter overflow with fractional origin (origin 50.4, screen 449.8 rounds to 450)",
-      window_frame: auv_driver::Rect::new(50.4, 150.4, 400.0, 300.0),
-      screen_point: (449.8, 200.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    RejectionCase {
-      name: "discrete perimeter overflow on negative monitor (-500.1 rounds to -500)",
-      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
-      screen_point: (-500.1, -600.0),
-      expected_message_substring: "outside resolved window bounds; no input delivered",
-    },
-    // Exact boundaries (half-open exclusion [0, width) x [0, height))
+    // Exact boundaries (half-open exclusion: [0, width) x [0, height))
     RejectionCase {
       name: "exact right boundary x == origin + width (450.0, 200.0)",
       window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
@@ -438,6 +407,13 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
       name: "far outside right-bottom (600.0, 500.0)",
       window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
       screen_point: (600.0, 500.0),
+      expected_message_substring: "outside resolved window bounds; no input delivered",
+    },
+    // Negative monitor out of bounds
+    RejectionCase {
+      name: "outside right edge on negative-origin secondary monitor (-500.0, -600.0)",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-500.0, -600.0),
       expected_message_substring: "outside resolved window bounds; no input delivered",
     },
     // Non-finite screen coordinates

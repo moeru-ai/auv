@@ -432,6 +432,32 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
   );
 }
 
+#[test]
+fn selected_window_text_click_rejects_out_of_bounds_match_before_runner_delivery() {
+  let window = auv_driver::Window {
+    reference: auv_driver::WindowRef {
+      id: "window_fixture".to_string(),
+    },
+    title: None,
+    app_name: None,
+    application_id: None,
+    process_id: None,
+    frame: auv_driver::Rect::new(100.0, 200.0, 400.0, 300.0),
+    coordinate_space: auv_driver::CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+  // Exact right edge: screen x = 500.0 (100.0 + 400.0), y = 250.0
+  let boundary_matched = auv_driver::OcrMatch {
+    text: "Out".to_string(),
+    confidence: 0.9,
+    bounds: auv_driver::Rect::new(490.0, 240.0, 20.0, 20.0),
+  };
+  let err = matched_window_point(&window, &boundary_matched).expect_err("out of bounds match must be rejected");
+  assert_eq!(err.code, crate::FailureCode::InvalidTarget);
+  assert!(err.message.contains("outside resolved window bounds; no input delivered"));
+}
+
 // ROOT CAUSE:
 //
 // If a command without a Runner adapter ran with a selected Run or Device (the fixture commands
