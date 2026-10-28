@@ -181,7 +181,9 @@ The worker retains its native input reservation until it exits.
 
 Focus admission checks cancellation before the final identity read and immediately before `SetFocus`.
 A cancellation during that read must refuse delivery.
-Two deterministic regressions failed before this change: an already-cancelled request still read the target, and cancellation during readback still delivered once.
+Two regressions failed before the change.
+An already-cancelled request still read the target.
+Cancellation during identity readback still delivered once.
 After the change, all 31 focus tests pass.
 The 53 Runner boundary tests pass, including a readiness/release test for cancellation before worker completion.
 Affected CLI and Windows Driver targets compile.
@@ -193,8 +195,20 @@ Those Phase 2 gaps remain marked at the native call sites.
 No cancellation result authorizes a retry of an uncertain action.
 The macOS native thread contract remains unchanged.
 
-The Phase 1 native receipts above predate this worker change.
-New native acceptance is required for the changed Windows Runner path.
+The [worker regression run](https://github.com/moeru-ai/auv/actions/runs/40686205760)
+checked out `d7b5494153096f83de32b0f44dd4b00a4bc29ba3` exactly, based on `4242acd5`.
+Its evidence workflow is `ae51342290c55a979f06bcb0deaa1b9601c9dd6e`.
+Preflight again recorded build 26100, interactive session 2, an accessible input desktop, and one 1024 x 768 display.
+All twelve original and semantic workflows passed across the three routes.
+Independent inspection confirmed six focus readbacks, six zero-input missing-query refusals, twenty-four matching pixel/state captures, and eighteen exact planned clicks.
+All fixture and Runner cleanups passed, with no root-only fallback.
+No capture or input action needed a retry in this run.
+
+The [raw worker artifact](https://github.com/moeru-ai/auv/actions/runs/40686205760/artifacts/12815018810)
+matched SHA-256 `ec88f3664e272d3048fae01baffa3edcba77cdaa256f7399e687b45763cdda09` after download.
+GitHub retention ends 2026-11-11.
+These receipts validate the changed native thread path.
+Cancellation during a blocked provider read has deterministic unit evidence, not native fault-injection evidence.
 
 ## Remaining acceptance
 
