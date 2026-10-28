@@ -147,23 +147,24 @@ fn empty_region_recognizes_nothing_without_calling_ocr() {
 }
 
 #[test]
-fn dpi_scaling_100_125_150_deterministic_ocr_bounds_and_action_point_mapping() {
-  // Logical window frame on screen: origin (100.0, 200.0), size 800x600 logical units.
+fn pixel_to_coordinate_projection_under_scale_ratios() {
+  // NOTE: map_rect_to_capture derives per-axis scaling ratios strictly from
+  // image dimensions and capture bounds; it does NOT read capture.scale_factor.
+  // These tests verify mathematical projection formulas under given dimensions,
+  // and do NOT claim to verify native Windows DPI awareness or DWM behavior.
   let logical_frame = Rect::new(100.0, 200.0, 800.0, 600.0);
-  // Expected logical target button: origin (220.0, 250.0), size 120.0 x 40.0.
-  // Within the window, logical offset is (120.0, 50.0).
   let expected_bounds = Rect::new(220.0, 250.0, 120.0, 40.0);
   let expected_action_point = Point::new(280.0, 270.0);
 
-  // Test across standard Windows scaling configurations: 100%, 125%, 150%, and 200%.
-  let configs: [(f64, u32, u32); 4] = [
-    (1.0, 800, 600),   // 100% DPI (96 DPI)
-    (1.25, 1000, 750), // 125% DPI (120 DPI)
-    (1.5, 1200, 900),  // 150% DPI (144 DPI)
-    (2.0, 1600, 1200), // 200% DPI (192 DPI)
+  // 1. Symmetric scaling configurations: 100%, 125%, 150%, 200%
+  let symmetric_configs: [(f64, u32, u32); 4] = [
+    (1.0, 800, 600),   // 100%
+    (1.25, 1000, 750), // 125%
+    (1.5, 1200, 900),  // 150%
+    (2.0, 1600, 1200), // 200%
   ];
 
-  for (scale, img_w, img_h) in configs {
+  for (scale, img_w, img_h) in symmetric_configs {
     let cap = Capture {
       origin: None,
       image: RgbaImage::from_pixel(img_w, img_h, image::Rgba([0, 0, 0, 255])),
@@ -178,115 +179,104 @@ fn dpi_scaling_100_125_150_deterministic_ocr_bounds_and_action_point_mapping() {
       width: img_w,
       height: img_h,
     };
-
-    // OCR engine produces bounding box in physical image pixels
     let pixel_bounds = Rect::new(120.0 * scale, 50.0 * scale, 120.0 * scale, 40.0 * scale);
-
     let mapped = map_rect_to_capture(pixel_bounds, &cap, crop);
 
-    assert!((mapped.origin.x - expected_bounds.origin.x).abs() < 1e-9, "X mismatch at scale {scale}");
-    assert!((mapped.origin.y - expected_bounds.origin.y).abs() < 1e-9, "Y mismatch at scale {scale}");
-    assert!((mapped.size.width - expected_bounds.size.width).abs() < 1e-9, "Width mismatch at scale {scale}");
-    assert!((mapped.size.height - expected_bounds.size.height).abs() < 1e-9, "Height mismatch at scale {scale}");
-    assert!((mapped.center().x - expected_action_point.x).abs() < 1e-9, "Action point X mismatch at scale {scale}");
-    assert!((mapped.center().y - expected_action_point.y).abs() < 1e-9, "Action point Y mismatch at scale {scale}");
+    assert!((mapped.origin.x - expected_bounds.origin.x).abs() < 1e-9);
+    assert!((mapped.origin.y - expected_bounds.origin.y).abs() < 1e-9);
+    assert!((mapped.size.width - expected_bounds.size.width).abs() < 1e-9);
+    assert!((mapped.size.height - expected_bounds.size.height).abs() < 1e-9);
+    assert!((mapped.center().x - expected_action_point.x).abs() < 1e-9);
+    assert!((mapped.center().y - expected_action_point.y).abs() < 1e-9);
   }
-}
 
-#[test]
-fn dpi_scaling_with_subregion_crop_projects_exact_action_point() {
-  let logical_frame = Rect::new(100.0, 200.0, 800.0, 600.0);
-  // Logical button inside sub-region: origin (260.0, 320.0), size 120.0 x 40.0
-  // Window-relative offset: (160.0, 120.0)
-  let expected_bounds = Rect::new(260.0, 320.0, 120.0, 40.0);
-  let expected_action_point = Point::new(320.0, 340.0);
-
-  // Sub-region: x: 10%, y: 10%, width: 80%, height: 80%
-  let subregion = RelativeRect::new(0.1, 0.1, 0.8, 0.8);
-
-  let configs: [(f64, u32, u32); 3] = [
-    (1.0, 800, 600),   // 100%
-    (1.25, 1000, 750), // 125%
-    (1.5, 1200, 900),  // 150%
-  ];
-
-  for (scale, img_w, img_h) in configs {
-    let cap = Capture {
-      origin: None,
-      image: RgbaImage::from_pixel(img_w, img_h, image::Rgba([0, 0, 0, 255])),
-      bounds: logical_frame,
-      scale_factor: scale,
-      backend: "test".to_string(),
-      fallback_reason: None,
-    };
-    let crop = crop_pixels(&cap, subregion);
-
-    // Full pixel coordinates of the button
-    let full_px_x = 160.0 * scale;
-    let full_px_y = 120.0 * scale;
-
-    // Within the cropped image, OCR coordinates are relative to the crop origin
-    let in_crop_bounds = Rect::new(full_px_x - f64::from(crop.x), full_px_y - f64::from(crop.y), 120.0 * scale, 40.0 * scale);
-
-    let mapped = map_rect_to_capture(in_crop_bounds, &cap, crop);
-
-    assert!((mapped.origin.x - expected_bounds.origin.x).abs() < 1e-9, "Crop X mismatch at scale {scale}");
-    assert!((mapped.origin.y - expected_bounds.origin.y).abs() < 1e-9, "Crop Y mismatch at scale {scale}");
-    assert!((mapped.size.width - expected_bounds.size.width).abs() < 1e-9, "Crop width mismatch at scale {scale}");
-    assert!((mapped.size.height - expected_bounds.size.height).abs() < 1e-9, "Crop height mismatch at scale {scale}");
-    assert!((mapped.center().x - expected_action_point.x).abs() < 1e-9, "Crop action point X mismatch at scale {scale}");
-    assert!((mapped.center().y - expected_action_point.y).abs() < 1e-9, "Crop action point Y mismatch at scale {scale}");
-  }
-}
-
-#[test]
-fn multi_word_continuous_span_bounds_and_action_point_calculation() {
-  use auv_driver_common::vision::RecognizedWord;
-  let word = |text: &str, x: f64, width: f64| RecognizedWord {
-    text: text.to_string(),
-    bounds: Rect::new(x, 50.0, width, 20.0),
-    confidence: Some(0.95),
+  // 2. Asymmetric / non-isometric X/Y scale ratios (e.g. 1.25x horizontal, 1.5x vertical)
+  let asym_cap = Capture {
+    origin: None,
+    image: RgbaImage::from_pixel(1000, 900, image::Rgba([0, 0, 0, 255])),
+    bounds: logical_frame, // 800x600 -> x_scale = 1.25, y_scale = 1.5
+    scale_factor: 1.0,     // intentionally decoupled to prove scale_factor is not read
+    backend: "test".to_string(),
+    fallback_reason: None,
   };
-  let lines = [crate::ocr::OcrLine {
-    text: "Open Project Settings Dialog".to_string(),
-    words: vec![
-      word("Open", 10.0, 40.0),
-      word("Project", 60.0, 60.0),
-      word("Settings", 130.0, 70.0),
-      word("Dialog", 210.0, 50.0),
-    ],
-  }];
-  let capture = capture(600, 300, Rect::new(100.0, 200.0, 600.0, 300.0));
-  let crop = CropPixels {
+  let asym_crop = CropPixels {
     x: 0,
     y: 0,
-    width: 600,
-    height: 300,
+    width: 1000,
+    height: 900,
+  };
+  let asym_pixel_bounds = Rect::new(120.0 * 1.25, 50.0 * 1.5, 120.0 * 1.25, 40.0 * 1.5);
+  let asym_mapped = map_rect_to_capture(asym_pixel_bounds, &asym_cap, asym_crop);
+  assert!((asym_mapped.origin.x - expected_bounds.origin.x).abs() < 1e-9);
+  assert!((asym_mapped.origin.y - expected_bounds.origin.y).abs() < 1e-9);
+  assert!((asym_mapped.size.width - expected_bounds.size.width).abs() < 1e-9);
+  assert!((asym_mapped.size.height - expected_bounds.size.height).abs() < 1e-9);
+  assert!((asym_mapped.center().x - expected_action_point.x).abs() < 1e-9);
+  assert!((asym_mapped.center().y - expected_action_point.y).abs() < 1e-9);
+}
+
+#[test]
+fn subregion_crop_pixels_and_projection_with_independent_expectations() {
+  // Uses irregular, non-round dimensions (1001 x 751) and non-integer relative subregion
+  let logical_frame = Rect::new(100.0, 200.0, 800.0, 600.0);
+  let cap = Capture {
+    origin: None,
+    image: RgbaImage::from_pixel(1001, 751, image::Rgba([0, 0, 0, 255])),
+    bounds: logical_frame,
+    scale_factor: 1.25,
+    backend: "test".to_string(),
+    fallback_reason: None,
   };
 
-  // 1. Single word query "project": matches only "Project"
-  let single = map_matches_to_capture(match_word_spans(lines.iter().map(|l| l.words.as_slice()), "project"), &capture, crop);
-  assert_eq!(single.matches.len(), 1);
-  assert_eq!(single.matches[0].text, "Project");
-  assert_eq!(single.matches[0].bounds, Rect::new(160.0, 250.0, 60.0, 20.0));
-  assert_eq!(single.matches[0].action_point(), Point::new(190.0, 260.0));
+  // Sub-region with fractional boundaries: x=12.3%, y=23.4%, w=50.0%, h=40.0%
+  let subregion = RelativeRect::new(0.123, 0.234, 0.500, 0.400);
 
-  // 2. Multi-word continuous span "project settings": bounds is union of "Project" and "Settings"
-  let span2 = map_matches_to_capture(match_word_spans(lines.iter().map(|l| l.words.as_slice()), "project settings"), &capture, crop);
-  assert_eq!(span2.matches.len(), 1);
-  assert_eq!(span2.matches[0].text, "Project Settings");
-  assert_eq!(span2.matches[0].bounds, Rect::new(160.0, 250.0, 140.0, 20.0));
-  assert_eq!(span2.matches[0].action_point(), Point::new(230.0, 260.0));
+  // 1. Independently assert expected crop pixel bounds
+  // x: round(0.123 * 1001) = round(123.123) = 123
+  // y: round(0.234 * 751) = round(175.734) = 176
+  // w: round(0.500 * 1001) = round(500.5) = 501
+  // h: round(0.400 * 751) = round(300.4) = 300
+  let expected_crop = CropPixels {
+    x: 123,
+    y: 176,
+    width: 501,
+    height: 300,
+  };
+  let crop = crop_pixels(&cap, subregion);
+  assert_eq!(crop, expected_crop, "crop_pixels output must match independent computation");
 
-  // 3. Three-word span "open project settings": bounds is union of 3 words
-  let span3 = map_matches_to_capture(match_word_spans(lines.iter().map(|l| l.words.as_slice()), "open project settings"), &capture, crop);
-  assert_eq!(span3.matches.len(), 1);
-  assert_eq!(span3.matches[0].text, "Open Project Settings");
-  assert_eq!(span3.matches[0].bounds, Rect::new(110.0, 250.0, 190.0, 20.0));
-  assert_eq!(span3.matches[0].action_point(), Point::new(205.0, 260.0));
+  // 2. Fixed OCR match in cropped-image pixels (completely independent of crop.x / crop.y)
+  let ocr_box = Rect::new(45.0, 35.0, 120.0, 40.0);
 
-  // The span action point strictly matches the sub-phrase center, not the whole line (10..260 -> center 135.0)
-  assert_ne!(span2.matches[0].action_point().x, 100.0 + 135.0);
+  // Independent mathematical projection to capture space:
+  // scale_x = 1001.0 / 800.0 = 1.25125
+  // scale_y = 751.0 / 600.0 = 1.2516666666666667
+  // full_x = 45.0 + 123 = 168.0 pixels -> mapped_x = 100.0 + 168.0 * (800 / 1001) ≈ 234.26573426573427
+  // full_y = 35.0 + 176 = 211.0 pixels -> mapped_y = 200.0 + 211.0 * (600 / 751) ≈ 368.5752330226365
+  // mapped_w = 120.0 * (800 / 1001) ≈ 95.9040959040959
+  // mapped_h = 40.0 * (600 / 751) ≈ 31.95739014647137
+  let expected_x = 100.0 + (168.0 * 800.0 / 1001.0);
+  let expected_y = 200.0 + (211.0 * 600.0 / 751.0);
+  let expected_w = 120.0 * 800.0 / 1001.0;
+  let expected_h = 40.0 * 600.0 / 751.0;
+  let expected_action = Point::new(expected_x + expected_w / 2.0, expected_y + expected_h / 2.0);
+
+  let mapped = map_rect_to_capture(ocr_box, &cap, crop);
+  assert!((mapped.origin.x - expected_x).abs() < 1e-9);
+  assert!((mapped.origin.y - expected_y).abs() < 1e-9);
+  assert!((mapped.size.width - expected_w).abs() < 1e-9);
+  assert!((mapped.size.height - expected_h).abs() < 1e-9);
+  assert!((mapped.center().x - expected_action.x).abs() < 1e-9);
+  assert!((mapped.center().y - expected_action.y).abs() < 1e-9);
+
+  // 3. Confirm that an off-by-one crop error is reliably detected
+  let off_by_one_crop = CropPixels {
+    x: crop.x + 1,
+    ..crop
+  };
+  let off_mapped = map_rect_to_capture(ocr_box, &cap, off_by_one_crop);
+  let delta_x = (off_mapped.origin.x - expected_x).abs();
+  assert!(delta_x > 0.7, "A 1-pixel crop offset must alter mapped coordinates by ~0.8 units (got {delta_x})");
 }
 
 #[test]

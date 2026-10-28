@@ -112,6 +112,8 @@ fn union_encloses_both_rects() {
 
 #[test]
 fn rect_contains_point_boundary_conditions_and_out_of_bounds() {
+  // NOTE: Rect::contains_point defines mathematical closed geometric inclusion (0.0..=width, 0.0..=height).
+  // Discrete pixel pointer delivery targets are subject to half-open checks in invoke commands (e.g. window.clickText in #436).
   let rect = Rect::new(50.0, 100.0, 400.0, 300.0);
 
   // Exact 4 corners are inclusive

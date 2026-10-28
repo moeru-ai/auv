@@ -1397,8 +1397,13 @@ fn click_point_coordinate_validation_rejects_invalid_inputs_before_delivery() {
 fn resolve_local_point_boundary_conditions_and_rejections() {
   let size = auv_driver::Size::new(1280.0, 720.0);
 
-  // Exact boundaries are inclusive
+  // Origin is inside the basis
   assert_eq!(resolve_local_point("test", 0.0, 0.0, false, size, "window").unwrap(), auv_driver::Point::new(0.0, 0.0));
+
+  // NOTE: resolve_local_point currently implements a closed interval (0.0..=width, 0.0..=height).
+  // This pins the existing production function behavior. Notice that unlike window.clickText
+  // (which enforces a half-open [0, width) check in #436), input.clickPoint still permits x == width
+  // at this layer. The pointer delivery boundary risk for input.clickPoint is tracked separately.
   assert_eq!(resolve_local_point("test", 1280.0, 720.0, false, size, "window").unwrap(), auv_driver::Point::new(1280.0, 720.0));
 
   // Boundary out-of-bounds rejections

@@ -188,7 +188,9 @@ fn coordinate_mapping_updates_after_window_movement_and_resizing() {
 fn window_region_boundaries_and_out_of_bounds_detection() {
   let window = sample_window(); // frame: Rect::new(100.0, 200.0, 800.0, 600.0)
 
-  // 1. Exact boundary values (corners and edges must be inclusive)
+  // 1. Exact boundary values (corners and edges of Rect::contains_point geometric inclusion)
+  // NOTE: This asserts geometric Rect inclusion (closed on all 4 boundaries).
+  // Pointer click delivery targets are subject to half-open checks in invoke (see #436 for window.clickText).
   let top_left = screen_point_for_window_point(&window, WindowPoint::new(0.0, 0.0)).point();
   let top_right = screen_point_for_window_point(&window, WindowPoint::new(800.0, 0.0)).point();
   let bottom_left = screen_point_for_window_point(&window, WindowPoint::new(0.0, 600.0)).point();
@@ -327,7 +329,7 @@ fn short_wait() -> WaitOptions {
 #[test]
 fn find_text_returns_no_match_for_unmatchable_query_on_a_live_window() {
   let session = session();
-  let Some(window) = session.window().list().expect("list windows").into_iter().find(|w| session.window().capture(w).is_ok()) else {
+  let Some(window) = session.window().list().expect("list windows").into_iter().next() else {
     return;
   };
 
@@ -343,7 +345,7 @@ fn find_text_returns_no_match_for_unmatchable_query_on_a_live_window() {
 #[test]
 fn wait_text_fails_with_not_found_for_unmatchable_query_on_a_live_window() {
   let session = session();
-  let Some(window) = session.window().list().expect("list windows").into_iter().find(|w| session.window().capture(w).is_ok()) else {
+  let Some(window) = session.window().list().expect("list windows").into_iter().next() else {
     return;
   };
 
