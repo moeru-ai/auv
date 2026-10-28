@@ -12,6 +12,7 @@ use auv_driver_common::window::Window;
 use auv_driver_common::{Click, MouseButton};
 use auv_driver_windows::WindowsDriverSession;
 
+use super::super::background::error_kind;
 use super::super::watch::{Snapshot, Verdict};
 use super::*;
 
@@ -629,14 +630,10 @@ fn focus_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Recei
   keys_may_go(scenario, entry, target)
 }
 
-/// Exercises a real missing-query refusal and judges zero input independently.
-fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
-  let query = "AUV absent semantic control 2b9dbd58";
+/// Invokes focus once and retains the actual failure facts for either route.
+fn attempt_focus(entry: &Entry<'_>, query: &str) -> Result<(bool, Value)> {
   let app = entry.window.app_name.as_deref().context("receiver window omitted its executable name")?;
-  let state_before = target.request(json!({"cmd": "state"}))?;
-  let before = scenario.watch.snapshot();
-  reject_user_input(entry.start, &before)?;
-  let (refused, failure_response) = if entry.route == "rust" {
+  if entry.route == "rust" {
     let result = entry.driver.accessibility().focus_text(auv_driver_common::FocusTextOptions {
       app: app.into(),
       selector: auv_driver_common::AxTextSelector::Query(query.into()),
@@ -649,25 +646,29 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
           auv_driver_common::DriverError::InputAction { progress, .. } => Some(progress),
           _ => None,
         };
-        json!({"message": error.to_string(), "input_progress": progress})
+        json!({"code": error_kind(error), "message": error.to_string(), "input_progress": progress})
       }
     };
-    let refused = matches!(
-      result,
-      Err(auv_driver_common::DriverError::InputAction {
-        cause,
-        progress: auv_driver_common::InputActionProgress::NotDelivered,
-      }) if matches!(*cause, auv_driver_common::DriverError::NotFound { .. })
-    );
-    (refused, Some(response))
+    Ok((result.is_err(), response))
   } else {
     let result = entry.call("input.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
-    let refused = result.exit != Some(0)
-      && result.json.as_ref().is_some_and(|value| {
-        value["failure_details"]["code"] == "not_found" && value["failure_details"]["input_progress"]["state"] == "not_delivered"
-      });
-    (refused, result.json)
+    Ok((result.exit != Some(0), result.json.unwrap_or(Value::Null)))
+  }
+}
+
+/// Exercises a real missing-query refusal and judges zero input independently.
+fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
+  let query = "AUV absent semantic control 2b9dbd58";
+  let state_before = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  reject_user_input(entry.start, &before)?;
+  let (failed, failure_response) = attempt_focus(entry, query)?;
+  let details = if entry.route == "rust" {
+    &failure_response
+  } else {
+    &failure_response["failure_details"]
   };
+  let refused = failed && details["code"] == "not_found" && details["input_progress"]["state"] == "not_delivered";
   let after = scenario.watch.snapshot();
   reject_user_input(entry.start, &after)?;
   let state_after = target.request(json!({"cmd": "state"}))?;
@@ -691,6 +692,68 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
   )?;
   if !verified {
     bail!("missing UIA query did not refuse with zero input; no retry");
+  }
+  Ok(())
+}
+
+/// The receiver receives native focus, then redirects it to its own button.
+/// This proves side effects occurred even though the focus operation failed.
+fn unverified_focus(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, query: &str) -> Result<()> {
+  let armed = target.request(json!({"cmd": "reject_typing_focus", "enabled": true}))?;
+  if armed["enabled"] != true {
+    bail!("receiver did not arm focus rejection");
+  }
+  let state_before = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  reject_user_input(entry.start, &before)?;
+  let (failed, response) = attempt_focus(entry, query)?;
+  let after = scenario.watch.snapshot();
+  let state_after = target.request(json!({"cmd": "state"}))?;
+  target.request(json!({"cmd": "reject_typing_focus", "enabled": false}))?;
+  reject_user_input(entry.start, &after)?;
+  let details = if entry.route == "rust" {
+    &response
+  } else {
+    &response["failure_details"]
+  };
+  let progress = &details["input_progress"];
+  let submitted = progress["state"] == "submitted";
+  let uncertain = progress["state"] == "delivery_uncertain";
+  let action = &progress["action"];
+  let receipt = (submitted || uncertain)
+    && action["verified"] == false
+    && action["selected_path"] == "ax_focus"
+    && action["attempts"]
+      .as_array()
+      .is_some_and(|attempts| attempts.len() == 1 && attempts[0]["path"] == "ax_focus" && attempts[0]["succeeded"] == submitted);
+  let focus_received =
+    state_after["typing"]["focus_received"].as_u64().unwrap_or(0) > state_before["typing"]["focus_received"].as_u64().unwrap_or(u64::MAX);
+  let focus_rejected =
+    state_after["typing"]["focus_rejected"].as_u64().unwrap_or(0) > state_before["typing"]["focus_rejected"].as_u64().unwrap_or(u64::MAX);
+  let unchanged = state_before["typing"]["text"] == state_after["typing"]["text"]
+    && state_before["typing"]["keys"] == state_after["typing"]["keys"]
+    && state_before["clicks"] == state_after["clicks"];
+  let no_pointer_or_keys =
+    before.cursor == after.cursor && before.injected_mouse == after.injected_mouse && before.injected_keys == after.injected_keys;
+  let verified = failed
+    && receipt
+    && focus_received
+    && focus_rejected
+    && unchanged
+    && no_pointer_or_keys
+    && state_after["typing"]["focused"] == false
+    && state_after["button_focused"] == true;
+  scenario.records.write(
+    "focus_rejection_verification",
+    json!({
+      "failure_response": response, "focus_received": focus_received, "focus_rejected": focus_rejected,
+      "receiver_typing_focused": state_after["typing"]["focused"], "receiver_button_focused": state_after["button_focused"],
+      "text_keys_clicks_unchanged": unchanged, "pointer_keys_unchanged": no_pointer_or_keys,
+      "input_action_retries": 0, "verified": verified,
+    }),
+  )?;
+  if !verified {
+    bail!("received-then-rejected focus did not retain unverified delivery progress; no retry or fallback");
   }
   Ok(())
 }
@@ -1171,6 +1234,11 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       bail!("the application did not submit the typed record exactly once");
     }
     capture(&mut scenario, &entry, &mut target, false)?;
+
+    if options.semantic_focus {
+      unverified_focus(&mut scenario, &entry, &mut target, &text)?;
+      capture(&mut scenario, &entry, &mut target, false)?;
+    }
 
     // The submit button now has the focus. Test the guard before calling any key dispatch path.
     let before_guard = target.request(json!({"cmd": "state"}))?;
