@@ -284,9 +284,10 @@ The environment was Windows Server 2025 build 26100, interactive session 2, with
 Actual DPI was not recorded; these receipts do not establish scaled-coordinate coverage.
 The source's [Check run](https://github.com/moeru-ai/auv/actions/runs/40699687747)
 and [JavaScript run](https://github.com/moeru-ai/auv/actions/runs/40699687353) passed.
-Post-delivery refusal remains unit and transport evidence until a separate native fault scenario validates it.
+At that source, post-delivery refusal had unit and transport evidence only.
+The following scenario adds native submission/readback evidence.
 
-## Phase 2: native focus refusal scenario (pending)
+## Phase 2: native focus refusal scenario
 
 Classification: test-only, scoped to the owner's failure-recovery acceptance.
 The existing semantic workflow now arms its receiver to redirect text-box focus to its own button.
@@ -298,7 +299,23 @@ The scenario adds no fallback, input retry, Driver branch, RPC, or command flag.
 
 The receiver and evaluation binaries pass all-target compilation.
 All nine no-desktop workflow regression tests pass; formatting and whitespace checks pass.
-Native acceptance is pending in an isolated Windows session.
+The [isolated Windows run](https://github.com/moeru-ai/auv/actions/runs/40704562930)
+passed at source `46c2ba723c83fc1b66595d5733d979ee794100ff`, based on `1e80a5fd8b56043195160d773891dcb94239899a`.
+The evidence workflow used commit `d7dd586f6ae70c7e547763f2b11496b4b50c22f1`.
+Independent artifact checks confirmed all 12 workflows and six post-delivery refusals.
+Every refusal retained `backend` / `submitted`, one AxFocus attempt, and `verified: false` through its selected route.
+The application confirmed received and redirected focus, with final focus on its own button.
+Text, keys, clicks, pointer position, and injected mouse/key counts stayed unchanged during each refusal.
+The six missing-query refusals still retained `not_found` / `not_delivered` with zero-input checks.
+All 30 captures matched application state; all 18 pointer deliveries matched their planned coordinates.
+All fixture and four Runner cleanups passed, physical input was zero, and pointer/foreground restoration passed.
+No capture or input-action retry occurred.
+
+The [raw fault artifact](https://github.com/moeru-ai/auv/actions/runs/40704562930/artifacts/12824311947)
+matched SHA-256 `e42912c430ba15a4beeceee8313eeef3aa1bbb911cdeb650bcca725407b77d57` after download.
+GitHub retention ends 2026-11-11.
+The environment remained Windows Server 2025 build 26100, interactive session 2, with one 1024 by 768 display and no recorded actual DPI.
+This fixture validates native `submitted` readback failure; failed-HRESULT `delivery_uncertain` still has unit and wire evidence only.
 The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
 
 ## Remaining acceptance
