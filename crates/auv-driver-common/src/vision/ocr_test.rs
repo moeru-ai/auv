@@ -222,3 +222,37 @@ fn word_spans_keep_the_narrower_of_nested_matches() {
   assert_eq!(matches.matches.len(), 1);
   assert_eq!(matches.matches[0].bounds, Rect::new(0.0, 0.0, 20.0, 10.0));
 }
+
+#[test]
+fn multi_word_continuous_span_unions_bounds_and_computes_exact_action_point() {
+  let word = |text: &str, x: f64, width: f64| RecognizedWord {
+    text: text.into(),
+    bounds: Rect::new(x, 10.0, width, 20.0),
+    confidence: Some(0.95),
+  };
+  let line = [
+    word("Quick", 0.0, 40.0),
+    word("Brown", 45.0, 45.0),
+    word("Fox", 95.0, 30.0),
+    word("Jumps", 130.0, 45.0),
+  ];
+
+  // 1. Two-word continuous span: "Brown Fox"
+  let matches2 = match_word_spans([&line[..]], "brown fox");
+  assert_eq!(matches2.matches.len(), 1);
+  assert_eq!(matches2.matches[0].text, "Brown Fox");
+  // Span union: [45.0..125.0] (width 80.0), height 20.0
+  assert_eq!(matches2.matches[0].bounds, Rect::new(45.0, 10.0, 80.0, 20.0));
+  assert_eq!(matches2.matches[0].action_point(), Point::new(85.0, 20.0));
+
+  // 2. Three-word continuous span: "Quick Brown Fox"
+  let matches3 = match_word_spans([&line[..]], "quick brown fox");
+  assert_eq!(matches3.matches.len(), 1);
+  assert_eq!(matches3.matches[0].text, "Quick Brown Fox");
+  // Span union: [0.0..125.0] (width 125.0), height 20.0
+  assert_eq!(matches3.matches[0].bounds, Rect::new(0.0, 10.0, 125.0, 20.0));
+  assert_eq!(matches3.matches[0].action_point(), Point::new(62.5, 20.0));
+
+  // The span action point is distinctly centered on the sub-phrase, NOT the entire line (which ends at 175.0, center 87.5)
+  assert_ne!(matches3.matches[0].action_point().x, 87.5);
+}

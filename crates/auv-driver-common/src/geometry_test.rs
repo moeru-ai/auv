@@ -109,3 +109,65 @@ fn round_out_covers_a_fractional_rect_with_whole_units() {
 fn union_encloses_both_rects() {
   assert_eq!(Rect::new(10.0, 20.0, 30.0, 10.0).union(Rect::new(50.0, 18.0, 20.0, 14.0)), Rect::new(10.0, 18.0, 60.0, 14.0));
 }
+
+#[test]
+fn rect_contains_point_boundary_conditions_and_out_of_bounds() {
+  let rect = Rect::new(50.0, 100.0, 400.0, 300.0);
+
+  // Exact 4 corners are inclusive
+  assert!(rect.contains_point(Point::new(50.0, 100.0))); // top-left
+  assert!(rect.contains_point(Point::new(450.0, 100.0))); // top-right
+  assert!(rect.contains_point(Point::new(50.0, 400.0))); // bottom-left
+  assert!(rect.contains_point(Point::new(450.0, 400.0))); // bottom-right
+
+  // Exact 4 edges are inclusive
+  assert!(rect.contains_point(Point::new(50.0, 250.0))); // left edge
+  assert!(rect.contains_point(Point::new(450.0, 250.0))); // right edge
+  assert!(rect.contains_point(Point::new(250.0, 100.0))); // top edge
+  assert!(rect.contains_point(Point::new(250.0, 400.0))); // bottom edge
+
+  // Epsilon outside edges must be rejected
+  assert!(!rect.contains_point(Point::new(49.999, 250.0)));
+  assert!(!rect.contains_point(Point::new(450.001, 250.0)));
+  assert!(!rect.contains_point(Point::new(250.0, 99.999)));
+  assert!(!rect.contains_point(Point::new(250.0, 400.001)));
+
+  // Negative coordinates and distant coordinates must be rejected
+  assert!(!rect.contains_point(Point::new(-50.0, 200.0)));
+  assert!(!rect.contains_point(Point::new(200.0, -100.0)));
+  assert!(!rect.contains_point(Point::new(10_000.0, 10_000.0)));
+}
+
+#[test]
+fn point_typed_wrappers_conversions_and_invariance() {
+  let raw = Point::new(123.45, 678.9);
+
+  let sp = ScreenPoint::from(raw);
+  assert_eq!(sp.point(), raw);
+  assert_eq!(Point::from(sp), raw);
+
+  let wp = WindowPoint::from(raw);
+  assert_eq!(wp.point(), raw);
+  assert_eq!(Point::from(wp), raw);
+}
+
+#[test]
+fn relative_rect_boundary_and_non_finite_rejection() {
+  // Boundaries of unit square
+  assert!(RelativeRect::new(0.0, 0.0, 1.0, 1.0).is_normalized());
+  assert!(RelativeRect::new(0.5, 0.5, 0.5, 0.5).is_normalized());
+
+  // Non-finite coordinates must be rejected
+  assert!(!RelativeRect::new(f64::NAN, 0.0, 0.5, 0.5).is_normalized());
+  assert!(!RelativeRect::new(0.0, f64::INFINITY, 0.5, 0.5).is_normalized());
+  assert!(!RelativeRect::new(0.0, 0.0, f64::NEG_INFINITY, 0.5).is_normalized());
+
+  // Zero and negative dimensions must be rejected
+  assert!(!RelativeRect::new(0.0, 0.0, 0.0, 1.0).is_normalized());
+  assert!(!RelativeRect::new(0.0, 0.0, 1.0, 0.0).is_normalized());
+  assert!(!RelativeRect::new(0.0, 0.0, -0.5, 0.5).is_normalized());
+
+  // Sum exceeding 1.0 must be rejected
+  assert!(!RelativeRect::new(0.8, 0.0, 0.3, 0.5).is_normalized());
+  assert!(!RelativeRect::new(0.0, 0.7, 0.5, 0.4).is_normalized());
+}
