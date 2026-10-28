@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 2d30101922551769eff9ecec2bfa23934dbe20d0
+          ref: d7b5494153096f83de32b0f44dd4b00a4bc29ba3
           submodules: recursive
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '2d30101922551769eff9ecec2bfa23934dbe20d0') { throw "Unexpected source: $actual" }
+          if ($actual -ne 'd7b5494153096f83de32b0f44dd4b00a4bc29ba3') { throw "Unexpected source: $actual" }
           New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-focus-preflight" -Force | Out-Null
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -44,7 +44,7 @@ jobs:
           $screens = [System.Windows.Forms.Screen]::AllScreens
           $facts = [ordered]@{
             source_sha = $actual
-            integration_base = '5b722b027c5270074b11c0296134c29584060f4e'
+            integration_base = '4242acd57d91dcf92ee843bda64437aa30964b0b'
             os = [Environment]::OSVersion.VersionString
             session_id = (Get-Process -Id $PID).SessionId
             user_interactive = [Environment]::UserInteractive
@@ -144,7 +144,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-semantic-focus-2d301019
+          name: windows-focus-cancellation-d7b54941
           path: |
             ${{ runner.temp }}/auv-focus-preflight/
             ${{ runner.temp }}/auv-focus-baseline/
