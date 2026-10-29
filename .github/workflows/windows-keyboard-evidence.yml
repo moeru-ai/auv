@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 02d1425a8f59f3a0553e3393e31028870814af4d
+          ref: beef622247b71b419ab7fdf5608b09d2282870e0
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '02d1425a8f59f3a0553e3393e31028870814af4d') { throw "Unexpected source $actual" }
+          if ($actual -ne 'beef622247b71b419ab7fdf5608b09d2282870e0') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -131,7 +131,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-baseline-02d1425a
+          name: windows-keyboard-baseline-beef6222
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
