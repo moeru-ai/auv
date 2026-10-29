@@ -33,7 +33,7 @@ impl TestWindow {
       let brush = CreateSolidBrush(COLORREF(color_bgr));
       assert!(!brush.is_invalid(), "failed to create replacement brush");
       let previous = SetClassLongPtrW(self.hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
-      assert_eq!(previous, self.brush.0 as isize, "window class brush changed unexpectedly");
+      assert_eq!(previous, self.brush.0 as usize, "window class brush changed unexpectedly");
       let previous = std::mem::replace(&mut self.brush, brush);
       assert!(RedrawWindow(self.hwnd, None, None, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW).as_bool());
       let _ = DeleteObject(previous);
