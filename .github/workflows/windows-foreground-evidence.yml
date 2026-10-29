@@ -1,0 +1,124 @@
+name: Windows foreground activation evidence
+
+on:
+  push:
+    branches:
+      - codex/windows-foreground-evidence
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  activation-failure-regression:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: e1010ab3bac156819b366c8e23b68fbb5444e19e
+          persist-credentials: false
+
+      - name: Record exact source and isolated desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = git rev-parse HEAD
+          if ($actual -ne 'e1010ab3bac156819b366c8e23b68fbb5444e19e') { throw "Unexpected source $actual" }
+          $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-foreground-evidence" -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class ForegroundDesktopProbe {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+              [DllImport("user32.dll")]
+              public static extern bool CloseDesktop(IntPtr desktop);
+              [DllImport("user32.dll")]
+              static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+              [DllImport("user32.dll")]
+              static extern bool AreDpiAwarenessContextsEqual(IntPtr left, IntPtr right);
+              [DllImport("user32.dll")]
+              static extern IntPtr GetThreadDpiAwarenessContext();
+              [DllImport("user32.dll")]
+              static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+              [DllImport("user32.dll")]
+              static extern uint GetDpiForWindow(IntPtr window);
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              static extern IntPtr CreateWindowExW(uint extra, string kind, string title, uint style,
+                  int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr data);
+              [DllImport("user32.dll")]
+              static extern bool DestroyWindow(IntPtr window);
+              public static uint ReadDpi() {
+                  var requested = new IntPtr(-4);
+                  var previous = SetThreadDpiAwarenessContext(requested);
+                  if (previous == IntPtr.Zero) throw new InvalidOperationException("DPI context failed");
+                  var window = IntPtr.Zero;
+                  try {
+                      window = CreateWindowExW(0x08000080, "STATIC", "AUV foreground DPI preflight", 0,
+                          0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                      if (window == IntPtr.Zero || !AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), requested))
+                          throw new InvalidOperationException("DPI window creation failed");
+                      var dpi = GetDpiForWindow(window);
+                      if (dpi == 0) throw new InvalidOperationException("DPI query failed");
+                      return dpi;
+                  } finally {
+                      var destroyed = window == IntPtr.Zero || DestroyWindow(window);
+                      var restored = SetThreadDpiAwarenessContext(previous) != IntPtr.Zero
+                          && AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), previous);
+                      if (!destroyed || !restored) throw new InvalidOperationException("DPI probe cleanup failed");
+                  }
+              }
+          }
+          '@
+          $desktop = [ForegroundDesktopProbe]::OpenInputDesktop(0, $false, 1)
+          $accessible = $desktop -ne [IntPtr]::Zero
+          if ($accessible -and -not [ForegroundDesktopProbe]::CloseDesktop($desktop)) { throw 'Desktop handle did not close' }
+          $screens = @([System.Windows.Forms.Screen]::AllScreens)
+          if (-not [Environment]::UserInteractive -or -not $accessible -or $screens.Count -ne 1) {
+            throw 'Stop before native tests: one accessible isolated interactive display is required'
+          }
+          [ordered]@{
+            source_sha = $actual
+            base_sha = 'd9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3'
+            workflow_sha = '${{ github.sha }}'
+            os = [Environment]::OSVersion.VersionString
+            image_version = $env:ImageVersion
+            session_id = (Get-Process -Id $PID).SessionId
+            user_interactive = [Environment]::UserInteractive
+            input_desktop_accessible = $accessible
+            screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
+            primary_window_dpi = [ForegroundDesktopProbe]::ReadDpi()
+            expected_baseline_failure = $true
+          } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Reproduce input after failed foreground activation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = "$env:RUNNER_TEMP/auv-foreground-evidence"
+          cargo test --locked -p auv-driver-windows --test click_buttons foreground_activation_failure_refuses_ -- --ignored --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath "$directory/regression.log"
+          $code = $LASTEXITCODE
+          $log = Get-Content -LiteralPath "$directory/regression.log" -Raw
+          $reproduced = $code -ne 0 -and $log.Contains('0 passed; 3 failed; 0 ignored')
+          foreach ($name in @('click', 'scroll', 'drag')) {
+            $reproduced = $reproduced -and $log.Contains("activation failure must refuse global $name input") -and $log.Contains("$($name): result=Ok(")
+          }
+          @{ source_sha = (git rev-parse HEAD); exit_code = $code; reproduced = $reproduced } | ConvertTo-Json | Set-Content -LiteralPath "$directory/result.json"
+          if (-not $reproduced) { throw 'The named three-path regression was not reproduced; inspect raw receipts before changing production code' }
+          exit 0
+
+      - name: Preserve preflight and exact regression output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-foreground-refusal-e1010ab3
+          path: ${{ runner.temp }}/auv-foreground-evidence/
+          if-no-files-found: error
+          retention-days: 14
