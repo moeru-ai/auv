@@ -1,0 +1,141 @@
+name: Windows foreground event coverage
+
+on:
+  push:
+    branches:
+      - codex/windows-foreground-event-evidence
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  foreground-event-coverage:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cdb89000a91b8d2b10db99dd09eae95774604be3
+          persist-credentials: false
+
+      - name: Record exact source and isolated desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = git rev-parse HEAD
+          if ($actual -ne 'cdb89000a91b8d2b10db99dd09eae95774604be3') { throw "Unexpected source $actual" }
+          $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-foreground-event-evidence" -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class ForegroundEventDesktopProbe {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+              [DllImport("user32.dll")]
+              public static extern bool CloseDesktop(IntPtr desktop);
+              [DllImport("user32.dll")]
+              static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+              [DllImport("user32.dll")]
+              static extern bool AreDpiAwarenessContextsEqual(IntPtr left, IntPtr right);
+              [DllImport("user32.dll")]
+              static extern IntPtr GetThreadDpiAwarenessContext();
+              [DllImport("user32.dll")]
+              static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+              [DllImport("user32.dll")]
+              static extern uint GetDpiForWindow(IntPtr window);
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              static extern IntPtr CreateWindowExW(uint extra, string kind, string title, uint style,
+                  int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr data);
+              [DllImport("user32.dll")]
+              static extern bool DestroyWindow(IntPtr window);
+              public static uint ReadDpi() {
+                  var requested = new IntPtr(-4);
+                  var previous = SetThreadDpiAwarenessContext(requested);
+                  if (previous == IntPtr.Zero) throw new InvalidOperationException("DPI context failed");
+                  var window = IntPtr.Zero;
+                  try {
+                      window = CreateWindowExW(0x08000080, "STATIC", "AUV foreground DPI preflight", 0,
+                          0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                      if (window == IntPtr.Zero || !AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), requested))
+                          throw new InvalidOperationException("DPI window creation failed");
+                      var dpi = GetDpiForWindow(window);
+                      if (dpi == 0) throw new InvalidOperationException("DPI query failed");
+                      return dpi;
+                  } finally {
+                      var destroyed = window == IntPtr.Zero || DestroyWindow(window);
+                      var restored = SetThreadDpiAwarenessContext(previous) != IntPtr.Zero
+                          && AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), previous);
+                      if (!destroyed || !restored) throw new InvalidOperationException("DPI probe cleanup failed");
+                  }
+              }
+          }
+          '@
+          $desktop = [ForegroundEventDesktopProbe]::OpenInputDesktop(0, $false, 1)
+          $accessible = $desktop -ne [IntPtr]::Zero
+          if ($accessible -and -not [ForegroundEventDesktopProbe]::CloseDesktop($desktop)) { throw 'Desktop handle did not close' }
+          $screens = @([System.Windows.Forms.Screen]::AllScreens)
+          if (-not [Environment]::UserInteractive -or -not $accessible -or $screens.Count -ne 1) {
+            throw 'Stop before native tests: one accessible isolated interactive display is required'
+          }
+          [ordered]@{
+            source_sha = $actual
+            base_sha = 'd9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3'
+            workflow_sha = '${{ github.sha }}'
+            os = [Environment]::OSVersion.VersionString
+            image_version = $env:ImageVersion
+            session_id = (Get-Process -Id $PID).SessionId
+            user_interactive = [Environment]::UserInteractive
+            input_desktop_accessible = $accessible
+            screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
+            primary_window_dpi = [ForegroundEventDesktopProbe]::ReadDpi()
+            diagnostic_only = $true
+          } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build probe and owned receivers
+        shell: pwsh
+        run: |
+          cargo build --locked -p auv-base-evals --bin win32-receiver --bin background-session-eval
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record controlled transitions and callback receipts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = "$env:RUNNER_TEMP/auv-foreground-event-evidence"
+          & target/debug/background-session-eval.exe foreground-events --output "$directory/records" --rounds 20 2>&1 | Tee-Object -FilePath "$directory/probe.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows = @(Get-Content -LiteralPath "$directory/records/foreground-events.jsonl" | ForEach-Object { $_ | ConvertFrom-Json })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $summary = @($rows | Where-Object kind -eq 'summary')
+          $cleanup = @($rows | Where-Object kind -eq 'cleanup')
+          if ($cases.Count -ne 60 -or $summary.Count -ne 1 -or -not $summary[0].complete -or -not $summary[0].pointer_restored) {
+            throw 'Missing complete diagnostic cases or pointer receipt'
+          }
+          foreach ($kind in @('stable', 'aba', 'background_click')) {
+            if (@($cases | Where-Object case -eq $kind).Count -ne 20) { throw "Missing $kind cases" }
+          }
+          if ($cleanup.Count -ne 3 -or @($cleanup | Where-Object { -not $_.process_exit_confirmed -or -not $_.window_destroyed }).Count -ne 0) {
+            throw 'Owned receiver teardown was not confirmed'
+          }
+          if (@($cases | Where-Object {
+            $_.after.physical_mouse -ne 0 -or $_.after.physical_keys -ne 0 -or
+            $_.after.injected_mouse -ne $_.before.injected_mouse -or
+            $_.after.injected_keys -ne $_.before.injected_keys -or $_.input_retries -ne 0
+          }).Count -ne 0) { throw 'Input witness rejected diagnostic scope' }
+          $summary[0] | ConvertTo-Json -Depth 8 | Tee-Object -FilePath "$directory/result.json"
+
+      - name: Preserve preflight and exact regression output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-foreground-events-cdb89000
+          path: ${{ runner.temp }}/auv-foreground-event-evidence/
+          if-no-files-found: error
+          retention-days: 14
