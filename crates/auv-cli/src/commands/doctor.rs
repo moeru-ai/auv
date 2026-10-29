@@ -157,11 +157,6 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-fn collect_permission_check() -> Result<PermissionCheckReport, String> {
-  Err("permission check is currently implemented only for macOS".to_string())
-}
-
 /// Probes the running process through the existing Windows driver readiness
 /// signals. Read-only: it opens this process's own token and maps its session
 /// ID; it never elevates, requests permissions, or touches the desktop.
@@ -404,7 +399,8 @@ mod tests {
     }
 
     // The human and JSON outputs are two renderings of one report: every
-    // signal status must read the same in both.
+    // signal status must read the same in both. All three signals vary over
+    // the full status vocabulary.
     #[test]
     fn human_and_json_outputs_agree_on_every_status() {
       for elevated in [
@@ -412,17 +408,23 @@ mod tests {
         auv_driver::PermissionStatus::Missing,
         auv_driver::PermissionStatus::Unknown,
       ] {
-        for interactive in [
+        for ui_access in [
           auv_driver::PermissionStatus::Granted,
           auv_driver::PermissionStatus::Missing,
           auv_driver::PermissionStatus::Unknown,
         ] {
-          let report = sample(elevated, auv_driver::PermissionStatus::Missing, interactive);
-          let text = human(&report);
-          let value = json(&report);
-          assert!(text.contains(&format!("elevated: {}", value["elevated"].as_str().unwrap())), "{text}");
-          assert!(text.contains(&format!("ui access: {}", value["ui_access"].as_str().unwrap())), "{text}");
-          assert!(text.contains(&format!("nonzero session: {}", value["nonzero_session"].as_str().unwrap())), "{text}");
+          for nonzero_session in [
+            auv_driver::PermissionStatus::Granted,
+            auv_driver::PermissionStatus::Missing,
+            auv_driver::PermissionStatus::Unknown,
+          ] {
+            let report = sample(elevated, ui_access, nonzero_session);
+            let text = human(&report);
+            let value = json(&report);
+            assert!(text.contains(&format!("elevated: {}", value["elevated"].as_str().unwrap())), "{text}");
+            assert!(text.contains(&format!("ui access: {}", value["ui_access"].as_str().unwrap())), "{text}");
+            assert!(text.contains(&format!("nonzero session: {}", value["nonzero_session"].as_str().unwrap())), "{text}");
+          }
         }
       }
     }
