@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: cdb89000a91b8d2b10db99dd09eae95774604be3
+          ref: 46b8aab607e5662f1413bb7ecfbb251b2551f820
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'cdb89000a91b8d2b10db99dd09eae95774604be3') { throw "Unexpected source $actual" }
+          if ($actual -ne '46b8aab607e5662f1413bb7ecfbb251b2551f820') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-foreground-event-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -135,7 +135,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-foreground-events-cdb89000
+          name: windows-foreground-events-46b8aab6
           path: ${{ runner.temp }}/auv-foreground-event-evidence/
           if-no-files-found: error
           retention-days: 14
