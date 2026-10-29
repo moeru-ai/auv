@@ -338,12 +338,52 @@ The environment remained Windows Server 2025 build 26100, interactive session 2,
 This fixture validates native `submitted` readback failure; failed-HRESULT `delivery_uncertain` still has unit and wire evidence only.
 The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
 
+## Independent Phase 2 repairs
+
+The following proposed PRs are based on `main@d9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3`.
+They are independent of the focus stack and the retired screenshot guard; this focus branch does not contain their production changes.
+
+- [#443](https://github.com/moeru-ai/auv/pull/443) moves on-demand WGC window/display images onto the existing continuously drained stream.
+  A test-only native run returned red after independent paint receipts confirmed yellow.
+  At repaired source `366d7e01`, the unchanged first-read regression returned yellow; all 19 WGC capture, COM, and unit checks passed.
+  The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40916911481/artifacts/12915803148)
+  matched SHA-256 `3b5ef713f2348452f433833b75a4d9913757bc86cba6c1ebfbe43565d69c1058` after download.
+  Latest received pixels do not establish post-request painting or click-premise validity; the separate health sampler remains unchanged.
+- [#444](https://github.com/moeru-ai/auv/pull/444) stops global click, wheel, and drag after foreground activation errors.
+  Before repair, all three closed-target calls delivered mouse messages to another owned receiver and moved the pointer.
+  At repaired source `8656b95a`, all three returned the original error with empty receiver messages and unchanged pointer/foreground.
+  Three valid-window controls and 18 existing button/count/modifier cases also passed; five native tests completed.
+  The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40921807996/artifacts/12919061447)
+  matched SHA-256 `7d381a995b6c57b523da0610256f1c992bd86402db778f341e0cb9918384ad37` after download.
+  This is activation-error admission, not an exact recipient lease or a full-desktop teardown receipt.
+
+Both repair runs recorded build 26100, image `20261021.278.1`, interactive session 2, one 1024 by 768 display, and 96 DPI.
+Their dated notes retain complete baseline/fix source identities and raw evidence links.
+This does not complete the full Phase 2 acceptance or promote general platform support.
+
+## Application and DPI environment preflight
+
+The independent [environment run](https://github.com/moeru-ai/auv/actions/runs/40733696621)
+used workflow `c858d081c31a00e83fe136bef483be2b6314be9b` and checked out source `c7d6b53f`.
+It performed read-only environment queries without invoking the retired capture guard.
+It recorded build 26100, image `20261021.278.1`, session 2, and one 1024 by 768 display.
+An owned hidden per-monitor-v2 window reported 96 DPI; the probe destroyed it and restored its thread context without changing system scaling.
+
+Edge `155.0.4283.62` was present at the checked Program Files path.
+VS Code, VLC, qBittorrent, and ILSpy were absent from the common paths checked; the `code` command was also absent.
+Windows Desktop .NET runtimes from the 8.0, 9.0, and 10.0 families were available.
+These facts describe that hosted image, not application-workflow or scaled-coordinate acceptance.
+Recheck application versions and DPI in each later functional run.
+The [environment artifact](https://github.com/moeru-ai/auv/actions/runs/40733696621/artifacts/12835068803)
+matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5e` after download; retention ends 2026-11-11.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
 Phase 2 remains incomplete after retirement of the screenshot guard.
-It still needs independent capture freshness, input-lifetime fault evidence, and an owner-reviewed replacement admission contract.
+The independent repairs above cover queued image frames and failed activation only.
+Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
