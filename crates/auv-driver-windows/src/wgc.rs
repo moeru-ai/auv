@@ -1,9 +1,8 @@
 //! Windows.Graphics.Capture (WGC) modern capture backend.
 //!
 //! Provides GPU-accelerated window and display capture using Direct3D 11
-//! and `Windows.Graphics.Capture` WinRT APIs. Delivers CPU-mapped RGBA frames
-//! with sub-10ms steady-state latency, coexisting with legacy GDI / PrintWindow
-//! backends under the `"wgc.windows"` backend tag.
+//! and `Windows.Graphics.Capture` WinRT APIs. Delivers CPU-mapped RGBA frames,
+//! coexisting with legacy GDI / PrintWindow backends under the `"wgc.windows"` tag.
 
 use std::time::{Duration, Instant};
 
@@ -291,7 +290,15 @@ mod native {
     }
   }
 
-  struct CachedSession {
+  /// One retained image stream. Background sessions own their separate per-window streams.
+  struct CachedCapture {
+    target_id: isize,
+    size: windows::Graphics::SizeInt32,
+    stream: FrameStream,
+    last_frame: Option<image::RgbaImage>,
+  }
+
+  struct HealthSession {
     target_id: isize,
     target_pid: Option<u32>,
     frame_pool: Direct3D11CaptureFramePool,
@@ -299,24 +306,23 @@ mod native {
     size: windows::Graphics::SizeInt32,
     receiver: std::sync::mpsc::Receiver<()>,
     staging_texture: Option<ID3D11Texture2D>,
-    last_frame: Option<image::RgbaImage>,
     last_health: Option<WindowHealth>,
   }
 
   // SAFETY: WinRT capture session and frame pool are thread-safe COM objects;
-  // all mutations are guarded behind ACTIVE_SESSION Mutex.
-  unsafe impl Send for CachedSession {}
-  unsafe impl Sync for CachedSession {}
+  // all mutations are guarded behind HEALTH_SESSION Mutex.
+  unsafe impl Send for HealthSession {}
+  unsafe impl Sync for HealthSession {}
 
-  impl Drop for CachedSession {
+  impl Drop for HealthSession {
     fn drop(&mut self) {
       let _ = self.session.Close();
       let _ = self.frame_pool.Close();
     }
   }
 
-  static ACTIVE_SESSION: Mutex<Option<CachedSession>> = Mutex::new(None);
-  static HEALTH_SESSION: Mutex<Option<CachedSession>> = Mutex::new(None);
+  static ACTIVE_SESSION: Mutex<Option<CachedCapture>> = Mutex::new(None);
+  static HEALTH_SESSION: Mutex<Option<HealthSession>> = Mutex::new(None);
 
   pub fn take_health_session() {
     if let Ok(mut session) = HEALTH_SESSION.lock() {
@@ -337,7 +343,7 @@ mod native {
       Err(e) => {
         // Propagate real WinRT COM errors (device removed, closed, access denied, etc.)
         // Notice: Do NOT invoke check_device_lost_error() / reset_d3d_context() here as
-        // caller holds the ACTIVE_SESSION lock. The outer recovery logic resets D3D context
+        // caller holds the HEALTH_SESSION lock. The outer recovery logic resets D3D context
         // after releasing the session lock.
         Err(backend(format!("Direct3D11CaptureFramePool::TryGetNextFrame failed: {e}")))
       }
@@ -357,7 +363,7 @@ mod native {
     result
   }
 
-  fn get_or_create_staging(d3d: &D3dContext, s: &mut CachedSession, desc: &D3D11_TEXTURE2D_DESC) -> DriverResult<ID3D11Texture2D> {
+  fn get_or_create_staging(d3d: &D3dContext, s: &mut HealthSession, desc: &D3D11_TEXTURE2D_DESC) -> DriverResult<ID3D11Texture2D> {
     if let Some(ref staging) = s.staging_texture {
       let mut staging_desc = D3D11_TEXTURE2D_DESC::default();
       unsafe { staging.GetDesc(&mut staging_desc) };
@@ -396,8 +402,8 @@ mod native {
 
   /// Captures a single frame from a `GraphicsCaptureItem` and maps it to an RGBA image.
   ///
-  /// Reuses active Direct3D11CaptureFramePool and GraphicsCaptureSession across consecutive
-  /// calls on the same target, avoiding the ~70ms DWM session negotiation on every frame.
+  /// Retains a continuously drained stream across consecutive calls on the same target.
+  /// A read returns its latest received frame; it does not wait for a post-request paint.
   pub fn capture_item_rgba(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<(image::RgbaImage, bool)> {
     let d3d = get_or_init_d3d_context()?;
     capture_with_device_lost_recovery(
@@ -410,13 +416,12 @@ mod native {
   }
 
   fn capture_item_rgba_impl(
-    d3d: &D3dContext,
+    d3d: &Arc<D3dContext>,
     target_id: isize,
     item: &GraphicsCaptureItem,
     timeout: Duration,
   ) -> DriverResult<(image::RgbaImage, bool)> {
     let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
-
     if size.Width <= 0 || size.Height <= 0 {
       return Err(crate::error::invalid_input(format!(
         "target has zero or invalid dimensions ({}x{}); target may be minimized",
@@ -425,147 +430,49 @@ mod native {
     }
 
     let mut session_guard = ACTIVE_SESSION.lock().map_err(|_| backend("active session mutex poisoned"))?;
-
-    let is_match = match &*session_guard {
-      Some(s) => s.target_id == target_id && s.target_pid.is_none() && s.size.Width == size.Width && s.size.Height == size.Height,
-      None => false,
-    };
-
+    // TODO(wgc-capture-identity): this repair preserves the handle/size cache key. PID and typed
+    // window/display identity receipts need the separate owner-approved capture-identity slice.
+    let is_match =
+      session_guard.as_ref().is_some_and(|s| s.target_id == target_id && s.size.Width == size.Width && s.size.Height == size.Height);
     if !is_match {
+      // Close the previous target before opening another. FrameStream owns capture-session cleanup.
       session_guard.take();
-
-      let frame_pool =
-        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
-          .map_err(|e| backend(format!("failed to create Direct3D11CaptureFramePool: {e}")))?;
-
-      let (sender, receiver) = sync_channel::<()>(4);
-      // NOTICE: Discarding the WinRT EventRegistrationToken does not unregister the handler;
-      // the callback remains registered until frame_pool is closed via Close().
-      let _token = frame_pool
-        .FrameArrived(&TypedEventHandler::new(move |pool: &Option<Direct3D11CaptureFramePool>, _| {
-          if pool.is_some() {
-            let _ = sender.try_send(());
-          }
-          Ok(())
-        }))
-        .map_err(|e| backend(format!("failed to register FrameArrived handler: {e}")))?;
-
-      let session = frame_pool.CreateCaptureSession(item).map_err(|e| backend(format!("failed to create GraphicsCaptureSession: {e}")))?;
-
-      let _ = session.SetIsBorderRequired(false);
-      let _ = session.SetIsCursorCaptureEnabled(false);
-
-      session.StartCapture().map_err(|e| backend(format!("failed to start GraphicsCaptureSession: {e}")))?;
-
-      *session_guard = Some(CachedSession {
+      *session_guard = Some(CachedCapture {
         target_id,
-        target_pid: None,
-        frame_pool,
-        session,
         size,
-        receiver,
-        staging_texture: None,
+        stream: FrameStream::open_item(Arc::clone(d3d), item)?,
         last_frame: None,
-        last_health: None,
       });
     }
+    let session = session_guard.as_mut().expect("capture session was just ensured");
 
-    let s = session_guard.as_mut().unwrap();
-
-    // TODO(wgc-capture-latest-frame): this reads the pool's oldest queued frame, and waits on a
-    // wake-up token that frames it already consumed may have left behind. After several changes in a
-    // row it returns an older state of the window, and with both buffers full it can miss the newest
-    // one until the window changes again (measured: after three clicks a frame apart the first
-    // capture showed the latest state in 1 of 10 trials). Background sessions read `FrameStream`
-    // instead, which drains the pool on arrival and keeps only the newest frame. Left as is because
-    // this path and the health check beside it are covered by the frozen Windows latency baseline.
-    // Trigger: an owner-approved slice that moves single-shot capture onto the stream, or re-baselines.
-    // Evidence: docs/ai/references/driver/2026-10-10-windows-background-session.md.
-
-    // Try to get next frame. If none ready immediately, wait on receiver.
-    let mut frame_opt = try_get_next_frame(&s.frame_pool)?;
-    if frame_opt.is_none() {
-      let wait_timeout = if s.last_frame.is_none() {
-        timeout
-      } else {
-        Duration::from_millis(15)
-      };
-      let _ = s.receiver.recv_timeout(wait_timeout);
-      frame_opt = try_get_next_frame(&s.frame_pool)?;
-    }
-
-    match frame_opt {
-      Some(frame) => {
-        let surface = frame.Surface().map_err(|e| backend(format!("failed to obtain frame surface: {e}")))?;
-
-        let access: IDirect3DDxgiInterfaceAccess =
-          surface.cast().map_err(|e| backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}")))?;
-
-        let texture: ID3D11Texture2D =
-          unsafe { access.GetInterface().map_err(|e| backend(format!("failed to obtain ID3D11Texture2D from surface: {e}")))? };
-
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        unsafe { texture.GetDesc(&mut desc) };
-
-        // HDR tonemapping guard: fail explicitly on non-B8G8R8A8 formats
-        if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM {
-          return Err(backend(format!(
-            "unsupported pixel format {:?}: WGC v1 only supports B8G8R8A8_UNORM; HDR / 10-bit tonemapping is not implemented",
-            desc.Format
-          )));
-        }
-
-        let staging = get_or_create_staging(d3d, s, &desc)?;
-
-        let ctx = d3d.context.lock().map_err(|_| backend("d3d context mutex poisoned"))?;
-        unsafe {
-          ctx.CopyResource(&staging, &texture);
-
-          let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
-
-          if mapped.pData.is_null() {
-            ctx.Unmap(&staging, 0);
-            return Err(backend("D3D11 mapped staging texture pData is null"));
-          }
-
-          let width = desc.Width as usize;
-          let height = desc.Height as usize;
-          let row_pitch = mapped.RowPitch as usize;
-          let mut rgba = vec![0u8; width * height * 4];
-
-          let src_ptr = mapped.pData as *const u8;
-          for y in 0..height {
-            let src_row = std::slice::from_raw_parts(src_ptr.add(y * row_pitch), width * 4);
-            let dst_row = &mut rgba[y * width * 4..(y + 1) * width * 4];
-            for x in 0..width {
-              dst_row[x * 4] = src_row[x * 4 + 2];
-              dst_row[x * 4 + 1] = src_row[x * 4 + 1];
-              dst_row[x * 4 + 2] = src_row[x * 4];
-              dst_row[x * 4 + 3] = src_row[x * 4 + 3];
-            }
-          }
-
-          ctx.Unmap(&staging, 0);
-
-          let image = image::RgbaImage::from_raw(desc.Width, desc.Height, rgba)
-            .ok_or_else(|| backend("failed to decode captured RGBA image buffer"))?;
-          s.last_frame = Some(image.clone());
-          Ok((image, true))
-        }
+    // Drain on arrival, even while the caller is idle. Reading a full FIFO here cannot recover
+    // a final paint that the compositor dropped before this request. See the regression and
+    // latest-received boundary in docs/ai/references/driver/2026-10-30-wgc-on-demand-freshness.md.
+    match session.stream.read(timeout) {
+      Ok(FrameUpdate::Fresh { image, .. }) => {
+        session.last_frame = Some(image.clone());
+        Ok((image, true))
       }
-      None => {
-        if let Some(ref img) = s.last_frame {
-          Ok((img.clone(), false))
-        } else {
-          Err(backend(format!("WGC frame arrival timed out after {:?}", timeout)))
-        }
+      Ok(FrameUpdate::Unchanged { .. }) => session
+        .last_frame
+        .as_ref()
+        .map(|image| (image.clone(), false))
+        .ok_or_else(|| backend("WGC stream reported unchanged before its first image")),
+      Err(error) => {
+        // Terminal stream state wins over retained pixels. A later call may open a new stream;
+        // this request returns the failure and never silently substitutes the previous image.
+        session_guard.take();
+        Err(backend(format!("WGC image stream failed: {error:?}")))
       }
     }
   }
 
   /// Lightweight health check: checks window dimensions, pixel activity, and freshness
   /// without allocating and decoding full RGBA image.
+  // TODO(wgc-health-latest-frame): this sampler still polls a FIFO and wake tokens. Its frozen
+  // latency/freshness contract needs a separate health-baseline slice; see
+  // docs/ai/references/driver/2026-10-30-wgc-on-demand-freshness.md.
   pub fn capture_item_health(
     target_id: isize,
     target_pid: u32,
@@ -634,7 +541,7 @@ mod native {
 
       session.StartCapture().map_err(|e| backend(format!("failed to start GraphicsCaptureSession: {e}")))?;
 
-      *session_guard = Some(CachedSession {
+      *session_guard = Some(HealthSession {
         target_id,
         target_pid: Some(target_pid),
         frame_pool,
@@ -642,7 +549,6 @@ mod native {
         size,
         receiver,
         staging_texture: None,
-        last_frame: None,
         last_health: None,
       });
     }
@@ -744,27 +650,6 @@ mod native {
           let mut stale = h.clone();
           stale.is_fresh = false;
           Ok(stale)
-        } else if let Some(ref img) = s.last_frame {
-          let total = (img.width() * img.height()) as usize;
-          let raw = img.as_raw();
-          let mut non_black = 0usize;
-          for chunk in raw.chunks_exact(4) {
-            if chunk[0] > 10 || chunk[1] > 10 || chunk[2] > 10 {
-              non_black += 1;
-            }
-          }
-          let ratio = if total > 0 {
-            non_black as f64 / total as f64 * 100.0
-          } else {
-            0.0
-          };
-          Ok(WindowHealth {
-            width: img.width(),
-            height: img.height(),
-            non_black_ratio: ratio,
-            is_fresh: false,
-            alive: ratio >= 50.0,
-          })
         } else {
           Err(backend(format!("WGC frame arrival timed out after {:?}", timeout)))
         }
@@ -840,7 +725,7 @@ mod native {
     HEALTH_REQUEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
   }
 
-  fn close_health_session_for_key(session_guard: &mut std::sync::MutexGuard<'_, Option<CachedSession>>, key: &HealthCacheKey) {
+  fn close_health_session_for_key(session_guard: &mut std::sync::MutexGuard<'_, Option<HealthSession>>, key: &HealthCacheKey) {
     if session_guard.as_ref().is_some_and(|session| {
       session.target_id == key.hwnd
         && session.target_pid == Some(key.pid)

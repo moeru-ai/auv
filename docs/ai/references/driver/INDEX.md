@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **82**
+Count: **83**
+
+- [`2026-10-30-wgc-on-demand-freshness.md`](2026-10-30-wgc-on-demand-freshness.md): On-demand WGC queued-frame reproduction and the private stream-reuse repair boundary.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
