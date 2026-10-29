@@ -4,16 +4,18 @@
 use auv_driver_common::geometry::Rect;
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{CoordinateSpace, Driver};
+use auv_driver_windows::wgc::{FrameStream, FrameUpdate};
 use auv_driver_windows::{
   WindowsDriver, capture_window_health_cached, capture_window_health_strict, check_window_liveness, clear_health_cache, prewarm_wgc_window,
 };
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH};
+use windows::Win32::Graphics::Dwm::DwmFlush;
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOW, SWP_FRAMECHANGED,
-  SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, UnregisterClassW, WINDOW_EX_STYLE, WNDCLASSW,
-  WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GCLP_HBRBACKGROUND, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
+  SW_SHOW, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOZORDER, SetClassLongPtrW, SetForegroundWindow, SetWindowPos, ShowWindow, UnregisterClassW,
+  WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::w;
 
@@ -21,6 +23,23 @@ struct TestWindow {
   hwnd: HWND,
   class_name: windows::core::PCWSTR,
   brush: HBRUSH,
+}
+
+impl TestWindow {
+  fn repaint(&mut self, color_bgr: u32) {
+    // SAFETY: this test owns the live window and its unique class. Replace the class brush before
+    // deleting the old brush, and synchronously repaint before reporting that the color changed.
+    unsafe {
+      let brush = CreateSolidBrush(COLORREF(color_bgr));
+      assert!(!brush.is_invalid(), "failed to create replacement brush");
+      let previous = SetClassLongPtrW(self.hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
+      assert_eq!(previous, self.brush.0 as isize, "window class brush changed unexpectedly");
+      let previous = std::mem::replace(&mut self.brush, brush);
+      assert!(RedrawWindow(self.hwnd, None, None, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW).as_bool());
+      let _ = DeleteObject(previous);
+      DwmFlush().expect("compositor flush failed");
+    }
+  }
 }
 
 impl Drop for TestWindow {
@@ -127,6 +146,79 @@ fn create_test_window(
 // The D3D11 device and WGC capture session are process-wide resources,
 // so live acceptance tests must serialize to prevent cross-test cache invalidation.
 static WGC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn center_rgb(image: &image::RgbaImage) -> [u8; 3] {
+  let pixel = image.get_pixel(image.width() / 2, image.height() / 2);
+  [pixel[0], pixel[1], pixel[2]]
+}
+
+/// Waits for an independent continuously drained pool to see the fixture's actual paint.
+/// It never consumes the one-shot pool whose next public capture is under test.
+fn wait_for_painted_color(control: &FrameStream, expected: [u8; 3]) -> u64 {
+  let deadline = Instant::now() + Duration::from_secs(3);
+  let mut last = None;
+  loop {
+    pump_messages(Duration::from_millis(10));
+    match control.read(Duration::from_millis(100)) {
+      Ok(FrameUpdate::Fresh {
+        image,
+        frame_number,
+      }) => {
+        last = Some(center_rgb(&image));
+        if last == Some(expected) {
+          // The control is the paint receipt. Give the other session's capture callback two
+          // compositor turns before its first read, without draining or retrying that capture.
+          // SAFETY: DwmFlush has no pointer arguments and changes no window or input state.
+          unsafe { DwmFlush() }.expect("compositor flush failed");
+          pump_messages(Duration::from_millis(100));
+          unsafe { DwmFlush() }.expect("compositor flush failed");
+          return frame_number;
+        }
+      }
+      Ok(FrameUpdate::Unchanged { .. }) => {}
+      Err(error) => panic!("paint control failed: {error:?}"),
+    }
+    assert!(Instant::now() < deadline, "fixture never painted {expected:?}; last control color {last:?}");
+  }
+}
+
+// ROOT CAUSE:
+//
+// If a window repainted several times between one-shot reads, WGC returned an older state
+// because its undrained FIFO filled and newer frames were dropped. Reading twice at the end
+// cannot recover a final paint that never entered the pool.
+//
+// Before the fix, the first capture after the independent paint receipt could be an old color.
+// The fix keeps the one-shot session drained while its caller is idle.
+#[test]
+fn one_shot_wgc_reads_latest_completed_paint_after_idle() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+  let (mut fixture, window) = create_test_window("AUV WGC Queued Paint Test", w!("AuvWgcQueuedPaintTest"), 200, 180, 400, 300, 0x00FF_0000);
+  let session = WindowsDriver::default().open_local().expect("failed to open driver session");
+  let control = FrameStream::open(fixture.hwnd).expect("failed to open independent paint control");
+  wait_for_painted_color(&control, [0, 0, 255]);
+  let initial = session.window().capture_wgc(&window).expect("initial capture failed");
+  assert_eq!(center_rgb(&initial.image), [0, 0, 255]);
+
+  for (color, expected) in [
+    (0x0000_00FF, [255, 0, 0]),
+    (0x0000_FF00, [0, 255, 0]),
+    (0x0000_FFFF, [255, 255, 0]),
+  ] {
+    fixture.repaint(color);
+    let painted = session.window().capture(&window).expect("PrintWindow paint readback failed");
+    assert_eq!(center_rgb(&painted.image), expected, "fixture paint differs from its requested state");
+    let frame = wait_for_painted_color(&control, expected);
+    println!("paint receipt: RGB {expected:?}, independent frame {frame}");
+  }
+
+  let started = Instant::now();
+  let captured = session.window().capture_wgc(&window).expect("first capture after paint failed");
+  println!("first post-idle WGC read: RGB {:?}, elapsed {:?}", center_rgb(&captured.image), started.elapsed());
+  assert_eq!(center_rgb(&captured.image), [255, 255, 0], "one-shot WGC returned an older queued paint");
+  let unchanged = session.window().capture_wgc(&window).expect("unchanged capture failed");
+  assert_eq!(center_rgb(&unchanged.image), [255, 255, 0]);
+}
 
 #[test]
 fn test_wgc_pixel_correctness_and_gdi_comparison() {
