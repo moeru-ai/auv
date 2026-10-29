@@ -67,6 +67,8 @@ just eval windows workflow --output evals/auv-base/results/windows-observation -
 background-only click per round and records event receipts without global keyboard or mouse
 injection. It stops on physical input or unrelated foreground activity. See the
 [coverage contract and limits](../../../../docs/ai/references/driver/2026-10-30-foreground-event-coverage.md).
+The desktop witness now records `inconclusive` with reason `foreground_event_ambiguous` when a
+callback names a different window from its foreground query. Such a receipt cannot prove `held`.
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
 output directory every time. Records stay in the ignored `results/`. `bench --ops click` or

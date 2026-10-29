@@ -9,7 +9,7 @@ use TypeScript. Raw run output stays local.
 
 Count: **83**
 
-- [`2026-10-30-foreground-event-coverage.md`](2026-10-30-foreground-event-coverage.md): Diagnostic foreground ABA and background-activation cases; native receipts and limits for the pending input-recipient contract.
+- [`2026-10-30-foreground-event-coverage.md`](2026-10-30-foreground-event-coverage.md): Native foreground ABA and background-activation diagnostics; ambiguous witness receipts now remain inconclusive, with limits for the pending input-recipient contract.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
