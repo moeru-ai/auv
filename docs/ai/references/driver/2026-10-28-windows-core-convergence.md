@@ -2,6 +2,26 @@
 
 Status: Phase 0 source audit complete. Phase 1 passed isolated Win32 receiver acceptance on one hosted Windows desktop.
 
+## Current direction (2026-10-30)
+
+PR #429 was closed without merging on 2026-10-28 UTC.
+The [maintainer's decision](https://github.com/moeru-ai/auv/pull/429#issuecomment-6481267529)
+rejects screenshot comparison as proof that a click's decision premise remains valid.
+Equal pixels cannot rule out intervening changes; unequal pixels can concern unrelated content.
+Waiting for a new capture also refuses static streams and adds capture latency.
+The capture-guard review below is historical and does not approve that design.
+
+Dependent PR #441 is closed and its capture/focus integration branch is retired.
+Its 14 passing controlled workflows describe that implementation's behavior only.
+They do not establish the rejected premise or complete Phase 2.
+The [raw experiment](https://github.com/moeru-ai/auv/actions/runs/40731551833/artifacts/12835702553)
+remains available as historical evidence, with SHA-256 `2003532fbe310a5e23b0349a8d7ce2476b2b0321a3e01acbd89252b82cb61cec`.
+
+Semantic focus, cancellation admission, and delivery-progress receipts do not depend on #429.
+WGC queued-frame freshness is also an independent capture bug.
+Replacement click admission needs a separate owner-reviewed contract for computable state, event coverage, missed changes, and unsupported platforms.
+No screenshot predicate, subscription API, or replacement token is approved by this note.
+
 ## Baseline and evidence
 
 The audit uses upstream `main@68c4cf7c4a0646fd471f7db48241cffb2fc37329` on 2026-10-28.
@@ -15,7 +35,7 @@ Those changes remain outside this work.
 | --- | --- | --- |
 | #409 | Merged as `8bf7e4f1`; three Win32 workflow routes have isolated hosted-desktop evidence. | Reuse its receiver and independent application checks. |
 | #425, #428, #430, #431, #432, #433, #434 | Present in the audited main history. | Start from main instead of the older benchmark checkout. |
-| Capture guard #429 | Open at `7cce1d93bbcdd2ccf8405dd943879f6e8528282b`. | Review and reuse its admission contract in Phase 2. Do not build a competing guard. |
+| Capture guard #429 | Closed without merging; reviewed source was `7cce1d93bbcdd2ccf8405dd943879f6e8528282b`, closed head was `e56b0ecc8f419c0925da9208727952042b71ed55`. | Retire the screenshot predicate. Preserve the review as history; replacement admission requires a new contract. |
 | Track A | Local `88807d0e7c9f37b9106b480a3b0f0ba2a75fad35`; not an ancestor of main. | Keep separate. Window-target deduplication is not a Phase 1 dependency and overlaps #429. |
 | Track B | Local `6452920493d936c1b084c69cc41dfaa2c0d46f95`; not an ancestor of main. | Reuse and revise the matcher before connecting native focus. |
 | Local isolated VM | VirtualBox lists one inaccessible registration and no running VM. | No foreground or DPI experiment on the owner's desktop. |
@@ -160,9 +180,9 @@ No timeout or test assertion was weakened.
 This evidence applies to native Win32 EDIT query focus on the recorded hosted desktop.
 It does not prove general application support, live MCP parity, provider cancellation, or other DPI behavior.
 
-## Capture guard review
+## Historical capture guard review
 
-The [#429 head](https://github.com/moeru-ai/auv/pull/429) uses a dedicated guarded-click RPC.
+The reviewed [#429 revision](https://github.com/moeru-ai/auv/commit/7cce1d93bbcdd2ccf8405dd943879f6e8528282b) used a dedicated guarded-click RPC.
 An older Runner therefore cannot silently ignore a new request field.
 Admission holds the shared desktop input reservation across recapture and delivery.
 Its tests cover changed pixels, moved or resized windows, target mismatches, unavailable evidence, and cancellation with zero delivery.
@@ -322,7 +342,8 @@ The scenario does not reproduce a blocked UIA provider or an in-flight cancellat
 
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
-Phase 2 depends on the reviewed capture guard and separately scoped input-lifetime work.
+Phase 2 remains incomplete after retirement of the screenshot guard.
+It still needs independent capture freshness, input-lifetime fault evidence, and an owner-reviewed replacement admission contract.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
