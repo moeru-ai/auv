@@ -240,6 +240,8 @@ mod native {
   static KEEP_IME: AtomicBool = AtomicBool::new(false);
   /// Explicit fault injection only: reject text focus by focusing our own button.
   static REJECT_TYPING_FOCUS: AtomicBool = AtomicBool::new(false);
+  /// Keyboard harness only: restore this receiver's typing child when its frame gains focus.
+  static KEYBOARD_READY: AtomicBool = AtomicBool::new(false);
   static TYPING: AtomicIsize = AtomicIsize::new(0);
   static TYPING_PROC: AtomicIsize = AtomicIsize::new(0);
   /// Key messages the text box received, oldest first, at most `KEY_LOG_LIMIT`. They can only be
@@ -744,6 +746,18 @@ mod native {
         arrange_children(hwnd);
         LRESULT(0)
       }
+      WM_SETFOCUS if KEYBOARD_READY.load(Relaxed) => {
+        // ROOT CAUSE:
+        //
+        // DefWindowProc focuses the top-level frame when it activates. Preparing B's child
+        // before activation therefore lost the keyboard control. Only the keyboard harness
+        // opts into restoring this owned first responder; the legacy receiver mode is unchanged.
+        // SAFETY: this frame and its typing child belong to the current GUI thread.
+        unsafe {
+          let _ = SetFocus(handle(&TYPING));
+        }
+        LRESULT(0)
+      }
       WM_PAINT => {
         let mut paint = PAINTSTRUCT::default();
         // SAFETY: the standard begin/end pairing on this thread's own window.
@@ -1073,6 +1087,7 @@ mod native {
       Some("prepare_keyboard") if FOREGROUND_INPUT.load(Relaxed) => {
         // Fixture initialization only: start with a blank first responder on its own GUI thread.
         let typing = handle(&TYPING);
+        KEYBOARD_READY.store(true, Relaxed);
         // SAFETY: both operations affect only this receiver's own live child control.
         unsafe {
           let _ = SetWindowTextW(typing, w!(""));
