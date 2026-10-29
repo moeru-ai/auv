@@ -273,7 +273,8 @@ impl WindowApi<'_> {
   /// Delivers a window-targeted click.
   ///
   /// `ForegroundPreferred` foregrounds the window and uses the same
-  /// `SendInput` route as global clicks. `BackgroundOnly`/`BackgroundPreferred`
+  /// `SendInput` route as global clicks. Activation failure stops delivery.
+  /// `BackgroundOnly`/`BackgroundPreferred`
   /// instead post `WM_LBUTTONDOWN`/`WM_LBUTTONUP` directly to the control
   /// hit-tested under `point` (`background_input::click_at_window`), which
   /// does not raise or focus the window. `window_strategy` is a macOS
@@ -285,13 +286,14 @@ impl WindowApi<'_> {
     }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
-      let activation = activate_window(window);
+      // Global input has no window recipient after an activation failure.
+      activate_window(window)?;
       #[cfg(feature = "overlay")]
       let click = options.click.clone();
       // Delivered like a global click, but reported below as aimed at `window`, so the
       // live overlay shows it with that window's cursor.
       let mut result = crate::input::deliver_click(screen_point, options.button, options.click, options.modifiers)?;
-      record_activation(&mut result, activation, "pointer delivery");
+      record_activation(&mut result, Ok(()), "pointer delivery");
       #[cfg(feature = "overlay")]
       {
         let mut events = vec![crate::overlay_follow::window_targeted(window)];
@@ -320,7 +322,7 @@ impl WindowApi<'_> {
   /// (`background_input::scroll_at_window`); `AxScroll` and
   /// `WindowTargetedKeyboardScroll` are not implemented on Windows and are
   /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
-  /// falls back to `SendInput`.
+  /// uses `SendInput` only after successful activation.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
@@ -355,10 +357,10 @@ impl WindowApi<'_> {
           if options.policy == InputPolicy::BackgroundOnly {
             continue;
           }
-          let activation = activate_window(window);
+          activate_window(window)?;
           let screen_point = self.to_screen_point(window, point)?.point();
           let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
-          record_activation(&mut result, activation, "wheel delivery");
+          record_activation(&mut result, Ok(()), "wheel delivery");
           attempts.append(&mut result.attempts);
           result.attempts = attempts;
           return Ok(result);
@@ -370,6 +372,9 @@ impl WindowApi<'_> {
 }
 
 impl WindowInput for WindowApi<'_> {
+  // TODO(windows-input-target-lease): successful activation can still race with later focus
+  // changes. An exact recipient guard needs its own lease contract; this slice only stops on
+  // activation errors. See 2026-10-30-windows-foreground-activation-admission.md.
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
@@ -387,7 +392,8 @@ impl WindowInput for WindowApi<'_> {
 
   /// `ForegroundPreferred` foregrounds the window like a foreground click and
   /// uses the `SendInput` desktop drag. Background policies post the held
-  /// gesture to the window's child receiver without raising it.
+  /// gesture to the window's child receiver without raising it. Activation failure stops
+  /// foreground drag delivery.
   fn drag(
     &self,
     window: &Window,
@@ -399,17 +405,17 @@ impl WindowInput for WindowApi<'_> {
       movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
       return self.session.input().drag_mouse(movement, button);
     }
-    let activation = activate_window(window);
+    activate_window(window)?;
     movement.target = Some(auv_driver_common::InputTarget::Foreground);
     let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
-    record_activation(&mut result, activation, "pointer drag");
+    record_activation(&mut result, Ok(()), "pointer drag");
     Ok((point, result))
   }
 }
 
 /// Folds the window activation that precedes a foreground-only input delivery
-/// into the delivery result. Activation trouble does not fail the delivery:
-/// the `SendInput` call still targets the window's frame.
+/// into the delivery result. Activation trouble fails the delivery before SendInput:
+/// global input has no window recipient.
 ///
 /// NOTICE: activating the window is input preparation, not a delivery
 /// attempt; `attempts` lists delivery paths. A successful activation shows
@@ -434,7 +440,6 @@ fn record_activation(result: &mut InputActionResult, activation: DriverResult<()
     ),
   }
 }
-
 /// Orders scroll delivery candidates for a policy, mirroring the macOS
 /// driver's candidate selection: `ForegroundPreferred` uses only `SendInput`;
 /// `BackgroundOnly` drops `ForegroundHid` from the caller's strategy;
