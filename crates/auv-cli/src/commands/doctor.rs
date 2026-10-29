@@ -42,10 +42,12 @@ struct PermissionCheckReport {
 }
 
 /// Read-only diagnostics for the process running `auv doctor` on Windows: the
-/// three automation-readiness signals [`auv_driver_windows::permission`]
-/// already probes (elevation, UIAccess, interactive session). They describe
-/// this process only, never a selected Runner or remote Device, and no single
-/// signal proves or refutes that automation will work.
+/// three signals [`auv_driver_windows::permission`] already probes (elevation,
+/// UIAccess, nonzero session). They describe this process only, never a
+/// selected Runner or remote Device. `nonzero_session` is the raw fact that
+/// the process's session ID is not 0; it is not evidence that an interactive
+/// desktop is reachable, and no single signal proves or refutes that
+/// automation will work.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct WindowsDiagnosticReport {
@@ -54,7 +56,7 @@ struct WindowsDiagnosticReport {
   executable: Option<String>,
   elevated: auv_driver::PermissionStatus,
   ui_access: auv_driver::PermissionStatus,
-  interactive_session: auv_driver::PermissionStatus,
+  nonzero_session: auv_driver::PermissionStatus,
   notes: Vec<&'static str>,
 }
 
@@ -64,7 +66,7 @@ const WINDOWS_RUNNER_SCOPE_NOTE: &str =
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_POSTURE_NOTE: &str = "a non-elevated process without UIAccess is the normal automation posture; UIPI only blocks input into windows of higher-integrity processes";
 #[cfg(any(target_os = "windows", test))]
-const WINDOWS_SESSION_NOTE: &str = "an interactive session does not prove that the desktop is unlocked, connected, or accepting input";
+const WINDOWS_SESSION_NOTE: &str = "nonzero_session only reports that this process's session ID is not 0; it does not prove that an interactive desktop is present, unlocked, connected, or accepting input";
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_SESSION_ZERO_NOTE: &str =
   "this process runs in Session 0 (non-interactive); input and capture cannot reach the user desktop from it";
@@ -172,7 +174,7 @@ fn collect_windows_diagnostics() -> WindowsDiagnosticReport {
     executable: std::env::current_exe().ok().map(|path| path.display().to_string()),
     elevated: probe.elevated,
     ui_access: probe.ui_access,
-    interactive_session: probe.interactive_session,
+    nonzero_session: probe.interactive_session,
     notes: windows_notes(probe.interactive_session),
   }
 }
@@ -182,13 +184,13 @@ fn collect_windows_diagnostics() -> WindowsDiagnosticReport {
 /// collector and the report-format tests share this so human output, JSON, and
 /// the tests describe the same report.
 #[cfg(any(target_os = "windows", test))]
-fn windows_notes(interactive_session: auv_driver::PermissionStatus) -> Vec<&'static str> {
+fn windows_notes(nonzero_session: auv_driver::PermissionStatus) -> Vec<&'static str> {
   let mut notes = vec![
     WINDOWS_RUNNER_SCOPE_NOTE,
     WINDOWS_POSTURE_NOTE,
     WINDOWS_SESSION_NOTE,
   ];
-  if interactive_session == auv_driver::PermissionStatus::Missing {
+  if nonzero_session == auv_driver::PermissionStatus::Missing {
     notes.push(WINDOWS_SESSION_ZERO_NOTE);
   }
   notes
@@ -212,7 +214,7 @@ fn write_windows_report(report: &WindowsDiagnosticReport, out: &mut impl std::io
   }
   writeln!(out, "elevated: {}", windows_status_line(report.elevated))?;
   writeln!(out, "ui access: {}", windows_status_line(report.ui_access))?;
-  writeln!(out, "interactive session: {}", windows_status_line(report.interactive_session))?;
+  writeln!(out, "nonzero session: {}", windows_status_line(report.nonzero_session))?;
   for note in &report.notes {
     writeln!(out, "note: {note}")?;
   }
@@ -295,7 +297,7 @@ mod tests {
     fn sample(
       elevated: auv_driver::PermissionStatus,
       ui_access: auv_driver::PermissionStatus,
-      interactive_session: auv_driver::PermissionStatus,
+      nonzero_session: auv_driver::PermissionStatus,
     ) -> WindowsDiagnosticReport {
       WindowsDiagnosticReport {
         platform: "windows",
@@ -303,8 +305,8 @@ mod tests {
         executable: Some("C:\\tools\\auv.exe".to_string()),
         elevated,
         ui_access,
-        interactive_session,
-        notes: windows_notes(interactive_session),
+        nonzero_session,
+        notes: windows_notes(nonzero_session),
       }
     }
 
@@ -328,7 +330,7 @@ mod tests {
       let text = human(&report);
       assert!(text.contains("elevated: missing"), "{text}");
       assert!(text.contains("ui access: missing"), "{text}");
-      assert!(text.contains("interactive session: granted"), "{text}");
+      assert!(text.contains("nonzero session: granted"), "{text}");
       assert!(!text.contains("all ok"), "{text}");
       assert!(!text.to_lowercase().contains("cannot use auv"), "{text}");
       assert!(text.contains(WINDOWS_POSTURE_NOTE), "{text}");
@@ -339,7 +341,7 @@ mod tests {
       assert_eq!(value["process_id"], 4242);
       assert_eq!(value["elevated"], "missing");
       assert_eq!(value["ui_access"], "missing");
-      assert_eq!(value["interactive_session"], "granted");
+      assert_eq!(value["nonzero_session"], "granted");
       assert!(value.get("all_ok").is_none(), "{value}");
     }
 
@@ -354,15 +356,15 @@ mod tests {
     }
 
     #[test]
-    fn session_zero_reports_missing_interactive_session_with_the_desktop_note() {
+    fn session_zero_reports_missing_nonzero_session_with_the_desktop_note() {
       let report =
         sample(auv_driver::PermissionStatus::Missing, auv_driver::PermissionStatus::Missing, auv_driver::PermissionStatus::Missing);
       let text = human(&report);
-      assert!(text.contains("interactive session: missing"), "{text}");
+      assert!(text.contains("nonzero session: missing"), "{text}");
       assert!(text.contains(WINDOWS_SESSION_ZERO_NOTE), "{text}");
 
       let value = json(&report);
-      assert_eq!(value["interactive_session"], "missing");
+      assert_eq!(value["nonzero_session"], "missing");
       let notes = value["notes"].as_array().expect("notes array");
       assert!(notes.iter().any(|note| note == WINDOWS_SESSION_ZERO_NOTE), "{value}");
     }
@@ -374,7 +376,7 @@ mod tests {
       let text = human(&report);
       assert!(text.contains("elevated: unknown"), "{text}");
       assert!(text.contains("ui access: unknown"), "{text}");
-      assert!(text.contains("interactive session: unknown"), "{text}");
+      assert!(text.contains("nonzero session: unknown"), "{text}");
       assert!(!text.contains("elevated: missing"), "{text}");
       assert!(!text.contains("elevated: granted"), "{text}");
       assert!(!text.contains(WINDOWS_SESSION_ZERO_NOTE), "an unknown session must not claim Session 0: {text}");
@@ -382,7 +384,7 @@ mod tests {
       let value = json(&report);
       assert_eq!(value["elevated"], "unknown");
       assert_eq!(value["ui_access"], "unknown");
-      assert_eq!(value["interactive_session"], "unknown");
+      assert_eq!(value["nonzero_session"], "unknown");
     }
 
     #[test]
@@ -420,7 +422,7 @@ mod tests {
           let value = json(&report);
           assert!(text.contains(&format!("elevated: {}", value["elevated"].as_str().unwrap())), "{text}");
           assert!(text.contains(&format!("ui access: {}", value["ui_access"].as_str().unwrap())), "{text}");
-          assert!(text.contains(&format!("interactive session: {}", value["interactive_session"].as_str().unwrap())), "{text}");
+          assert!(text.contains(&format!("nonzero session: {}", value["nonzero_session"].as_str().unwrap())), "{text}");
         }
       }
     }
