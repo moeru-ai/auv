@@ -266,6 +266,83 @@ fn foreground_activation_failure_refuses_drag_issue_429() {
   });
 }
 
+// Positive control for the same three public WindowApi routes as the closed-target regressions.
+#[test]
+#[ignore = "moves the pointer and injects input into an owned receiver; requires an isolated interactive desktop"]
+fn foreground_window_inputs_reach_owned_receiver() {
+  let receiver = Receiver::open();
+  // SAFETY: activating only the live window this test owns.
+  unsafe {
+    let _ = SetForegroundWindow(receiver.hwnd);
+  }
+  pump_for(Duration::from_millis(500));
+  // SAFETY: read-only foreground query before accepting any injection.
+  assert_eq!(unsafe { GetForegroundWindow() }, receiver.hwnd);
+  let session = WindowsDriver::default().open_local().expect("open driver session");
+  let id = (receiver.hwnd.0 as isize).to_string();
+  let window =
+    session.window().list().expect("list windows").into_iter().find(|window| window.reference.id == id).expect("find owned receiver");
+  let point = WindowPoint::new(150.0, 150.0);
+  // Separate the complete click and drag gestures past native double-click detection, as the
+  // existing button/count control does. No input operation is retried.
+  // SAFETY: Read-only system setting with no pointer arguments.
+  let reset = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }) + 100);
+  for (operation, expected) in [
+    ("click", vec![WM_LBUTTONDOWN, WM_LBUTTONUP]),
+    ("scroll", vec![WM_MOUSEWHEEL]),
+    ("drag", vec![WM_LBUTTONDOWN, WM_LBUTTONUP]),
+  ] {
+    pump_for(reset);
+    // SAFETY: no input may go to a different foreground window or merge with held user keys.
+    unsafe {
+      assert_eq!(GetForegroundWindow(), receiver.hwnd);
+      for key in [0x01, 0x02, 0x04, 0x10, 0x11, 0x12, 0x5b, 0x5c] {
+        assert!(GetAsyncKeyState(key) >= 0, "button/modifier already held: {key}");
+      }
+    }
+    RECEIPTS.with(|receipts| receipts.borrow_mut().clear());
+    let result = match operation {
+      "click" => session.window().click(
+        &window,
+        point,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          ..Default::default()
+        },
+      ),
+      "scroll" => session.window().scroll(
+        &window,
+        point,
+        Scroll {
+          delta_x: 0.0,
+          delta_y: -120.0,
+        },
+        ScrollOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          ..Default::default()
+        },
+      ),
+      "drag" => {
+        let screen = session.window().to_screen_point(&window, point).expect("map owned point").point();
+        session
+          .window()
+          .drag(&window, MoveMouseRequest::direct(screen), MouseButton::Left, InputPolicy::ForegroundPreferred)
+          .map(|(_, result)| result)
+      }
+      _ => unreachable!(),
+    }
+    .expect("valid foreground operation failed");
+    pump_for(Duration::from_millis(150));
+    let events = RECEIPTS.with(|receipts| receipts.borrow().iter().map(|(message, _)| *message).collect::<Vec<_>>());
+    assert_eq!(result.selected_path, InputDeliveryPath::ForegroundSystemEvents);
+    assert!(!result.verified, "delivery does not establish semantic verification");
+    assert_eq!(result.attempts.len(), 2);
+    assert!(result.attempts.iter().all(|attempt| attempt.succeeded));
+    assert_eq!(events, expected, "valid foreground {operation} missed the owned receiver");
+    println!("valid {operation}: receiver_messages={events:?}; result={result:?}");
+  }
+}
+
 #[test]
 #[ignore = "moves the pointer and injects clicks into a visible receiver; needs an unlocked interactive desktop"]
 fn foreground_receives_buttons_counts_and_modifiers() {
