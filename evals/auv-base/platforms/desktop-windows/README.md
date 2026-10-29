@@ -27,6 +27,9 @@ tasks/sustained.rs               `five`, `bench` and `faults`: five windows thro
 tasks/probe.rs                   `probe`, `freshness` and `geometry`: diagnostics behind the
                                  findings; `quiet`: the witness alone, for injected input from
                                  other programs.
+
+tasks/foreground_events.rs       `foreground-events`: compare controlled A-to-B-to-A transitions,
+                                 background activation, callback receipts, and application state.
 tasks/window_commands.rs         `window`: the `window.*` invoke commands, as the real `auv` binary, against a
                                  covered receiver and judged against what the receiver knows.
 tasks/screen_commands.rs         `screen`: `screen.findText` and `screen.waitForText`, as the real `auv` binary, against an
@@ -48,6 +51,7 @@ just eval windows five     --output evals/auv-base/results/windows-five
 just eval windows bench    --output evals/auv-base/results/windows-bench --minutes 10
 just eval windows faults   --output evals/auv-base/results/windows-faults --minutes 10
 just eval windows probe    --output evals/auv-base/results/windows-probe
+just eval windows foreground-events --output evals/auv-base/results/windows-foreground-events --rounds 10
 just eval windows freshness --output evals/auv-base/results/windows-freshness
 just eval windows geometry --output evals/auv-base/results/windows-geometry
 just eval windows apps     --output evals/auv-base/results/windows-apps
@@ -58,6 +62,11 @@ just eval windows foreground --output evals/auv-base/results/windows-foreground 
 just eval windows workflow --output evals/auv-base/results/windows-workflow --auv target/debug/auv.exe --rounds 2
 just eval windows workflow --output evals/auv-base/results/windows-observation --auv target/debug/auv.exe --rounds 2 --observe-only
 ```
+
+`foreground-events` activates three owned receivers on an isolated test desktop. It checks one
+background-only click per round and records event receipts without global keyboard or mouse
+injection. It stops on physical input or unrelated foreground activity. See the
+[coverage contract and limits](../../../../docs/ai/references/driver/2026-10-30-foreground-event-coverage.md).
 
 Each recipe builds in release mode first, because the latency figures need it. Choose a fresh
 output directory every time. Records stay in the ignored `results/`. `bench --ops click` or

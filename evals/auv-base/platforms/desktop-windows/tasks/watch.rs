@@ -124,7 +124,7 @@ fn now_ms() -> u64 {
 }
 
 /// What the desktop looked like at one instant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Snapshot {
   pub taken_ms: u64,
   pub foreground: isize,
@@ -138,7 +138,7 @@ pub struct Snapshot {
 }
 
 /// One `EVENT_SYSTEM_FOREGROUND`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ForegroundEvent {
   pub at: u64,
   /// The window the event names.
