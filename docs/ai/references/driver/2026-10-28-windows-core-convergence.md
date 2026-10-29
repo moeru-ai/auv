@@ -356,8 +356,17 @@ They are independent of the focus stack and the retired screenshot guard; this f
   The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40921807996/artifacts/12919061447)
   matched SHA-256 `7d381a995b6c57b523da0610256f1c992bd86402db778f341e0cb9918384ad37` after download.
   This is activation-error admission, not an exact recipient lease or a full-desktop teardown receipt.
+  [Check](https://github.com/moeru-ai/auv/actions/runs/40923181672) and [Check JS](https://github.com/moeru-ai/auv/actions/runs/40923181716) passed for #444 at `4781e120`.
+- [#445](https://github.com/moeru-ai/auv/pull/445) records native foreground event coverage and fixes an ambiguous witness verdict.
+  Its [isolated run](https://github.com/moeru-ai/auv/actions/runs/40931339602) at `46b8aab6` completed 20 stable, 20 A-to-B-to-A, and 20 background-click cases.
+  One C takeover/return was directly confirmed; another receipt named C while reading A without another application-reported takeover.
+  The [artifact](https://github.com/moeru-ai/auv/actions/runs/40931339602/artifacts/12923502019)
+  matched SHA-256 `db1f0c100bb67790b536446c04859d66be18fca5cab5e980040b93cecad64e6a` after download.
+  All three receiver teardowns and pointer/foreground restoration passed; injected and physical input stayed zero.
+  The original witness failed a delayed-ABA unit model. Repaired policy `b207fd8a` passes 11 pure tests and preserves named/current disagreement as `inconclusive`.
+  No native delayed-ABA reproduction or input lease is claimed; the raw diagnostic does not call the corrected verdict policy.
 
-Both repair runs recorded build 26100, image `20261021.278.1`, interactive session 2, one 1024 by 768 display, and 96 DPI.
+These accepted native runs recorded build 26100, image `20261021.278.1`, interactive session 2, one 1024 by 768 display, and 96 DPI.
 Their dated notes retain complete baseline/fix source identities and raw evidence links.
 This does not complete the full Phase 2 acceptance or promote general platform support.
 
@@ -382,8 +391,11 @@ matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
 Phase 2 remains incomplete after retirement of the screenshot guard.
-The independent repairs above cover queued image frames and failed activation only.
+The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
+The next candidate is foreground-preferred `input.keyboard` batches for `InputTarget::Window`, with identity checks before each native submission and preserved partial-delivery facts.
+Foreign or ambiguous foreground events must stop the batch without automatic reactivation.
+This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
