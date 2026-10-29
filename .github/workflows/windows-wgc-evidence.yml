@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 369fbdf20416bc21cecac9102cf2dc231a0a18ab
+          ref: 366d7e01b80ec4cd46d9a5bf2f9baa069827260e
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '369fbdf20416bc21cecac9102cf2dc231a0a18ab') { throw "Unexpected source $actual" }
+          if ($actual -ne '366d7e01b80ec4cd46d9a5bf2f9baa069827260e') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-wgc-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -92,30 +92,30 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [WgcDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $true
+            expected_baseline_failure = $false
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Reproduce old queued pixels through public capture API
+      - name: Verify native WGC image and apartment contracts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
           $directory = "$env:RUNNER_TEMP/auv-wgc-evidence"
-          cargo test --locked -p auv-driver-windows --test wgc_capture one_shot_wgc_reads_latest_completed_paint_after_idle -- --exact --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath "$directory/regression.log"
-          $code = $LASTEXITCODE
-          $log = Get-Content -LiteralPath "$directory/regression.log" -Raw
-          $reproduced = $code -ne 0 -and $log.Contains('one-shot WGC returned an older queued paint') -and $log.Contains('RGB [255, 255, 0], independent frame')
-          @{ source_sha = (git rev-parse HEAD); exit_code = $code; reproduced = $reproduced } | ConvertTo-Json | Set-Content -LiteralPath "$directory/result.json"
-          if (-not $reproduced) { throw 'The named stale-frame regression was not reproduced; inspect the raw log before changing production code' }
-          exit 0
+          cargo test --locked -p auv-driver-windows --test wgc_capture -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath "$directory/wgc-capture.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p auv-driver-windows --test wgc_apartment -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath "$directory/wgc-apartment.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p auv-driver-windows --lib wgc::tests:: -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath "$directory/wgc-unit.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @{ source_sha = (git rev-parse HEAD); completed = $true; capture_retries = 0 } | ConvertTo-Json | Set-Content -LiteralPath "$directory/result.json"
 
       - name: Preserve preflight and exact regression output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-wgc-queued-paint-369fbdf2
+          name: windows-wgc-latest-366d7e01
           path: ${{ runner.temp }}/auv-wgc-evidence/
           if-no-files-found: error
           retention-days: 14
