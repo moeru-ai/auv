@@ -41,14 +41,19 @@ pub fn run(output: &Path, rounds: u32) -> Result<bool> {
   };
   let mut anchor = Receiver::spawn_detached_with(&binary, &spec(0, "AUV event anchor", 80), &["--foreground-input"])?;
   let mut other = Receiver::spawn_detached_with(&binary, &spec(1, "AUV event alternate", 500), &["--foreground-input"])?;
-  let mut background = Receiver::spawn_detached(&binary, &spec(2, "AUV event background", 300))?;
   anchor.request(json!({"cmd": "keep_foreground"}))?;
   other.request(json!({"cmd": "keep_foreground"}))?;
   let (anchor_window, _) = discover_by_hwnd(&session, anchor.hwnd())?;
   let (other_window, _) = discover_by_hwnd(&session, other.hwnd())?;
-  let (background_window, _) = discover_by_hwnd(&session, background.hwnd())?;
   session.window().activate(&anchor_window).context("activate owned anchor")?;
   ensure!(anchor.state()?.foreground, "owned anchor did not confirm foreground");
+  // ROOT CAUSE:
+  //
+  // The receiver saves its initial foreground as HOME_FOREGROUND. Starting C before activating A
+  // made C's first posted click hand back to the host, which correctly interrupted the probe.
+  // Start C while A is foreground. Any takeover by C is still counted and recorded independently.
+  let mut background = Receiver::spawn_detached(&binary, &spec(2, "AUV event background", 300))?;
+  let (background_window, _) = discover_by_hwnd(&session, background.hwnd())?;
   records.write("setup", json!({
     "evidence_level": "native_event_probe_only", "rounds": rounds,
     "anchor": {"hwnd": anchor.hwnd(), "pid": anchor.layout.pid},
@@ -95,11 +100,12 @@ pub fn run(output: &Path, rounds: u32) -> Result<bool> {
         _ => unreachable!(),
       }
       let immediate = watch.snapshot();
+      let app_immediate = background.state()?;
+      // Read-only collection window for asynchronous receipts, not an input retry or a lease barrier.
+      std::thread::sleep(Duration::from_millis(150));
       let app_after = background.state()?;
       let anchor_after = anchor.state()?;
       let alternate_after = other.state()?;
-      // Read-only collection window for asynchronous receipts, not an input retry or a lease barrier.
-      std::thread::sleep(Duration::from_millis(150));
       let after = watch.snapshot();
       let events = watch.timeline(before.taken_ms, after.taken_ms).foreground_events;
       let names_alternate = events.iter().any(|event| event.window == other.hwnd());
@@ -121,6 +127,7 @@ pub fn run(output: &Path, rounds: u32) -> Result<bool> {
           "round": round, "case": kind, "before": before, "middle": middle,
           "immediate": immediate, "after": after, "events": events,
           "application_before": app_before, "application_after": app_after, "delivery": delivery,
+          "application_immediate": app_immediate,
           "anchor_application_after": anchor_after, "alternate_application_after": alternate_after,
           "named_alternate": names_alternate, "named_background": names_background,
           "application_reported_takeover": takeover,

@@ -16,6 +16,8 @@ The probe starts three detached Win32 receivers on an isolated interactive deskt
 - The Driver activates B, a direct OS query confirms B, and the Driver immediately returns to A. The independent hook thread records the intervening events.
 - A remains the intended foreground while one background-only click reaches C. C reports its button count, activation count, and whether it took foreground.
 
+C starts after A becomes foreground. Its existing test-fixture behavior hands foreground back to the window present at startup. This keeps any takeover and return within the owned A/C pair. A takeover still appears in C's counters and in the event receipts.
+
 The command records the before, middle, immediate, and collected desktop states. It also records callback-named windows, callback-time foreground, and application state. The event `process` field belongs to the callback-time foreground process.
 
 ```powershell
