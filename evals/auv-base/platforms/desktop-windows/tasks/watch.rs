@@ -611,6 +611,27 @@ mod tests {
     );
   }
 
+  // https://github.com/moeru-ai/auv/pull/445
+  // ROOT CAUSE:
+  //
+  // If B becomes foreground and returns to A before its asynchronous callback, both callback
+  // queries can read A. Filtering only by callback-time foreground incorrectly proved Held.
+  // The event's named window cannot distinguish this history from background queue activation.
+  #[test]
+  fn pr445_delayed_aba_receipts_cannot_prove_held() {
+    let timeline = Timeline {
+      foreground_events: vec![event(1004, 200, 100), event(1006, 100, 100)],
+      discrete_input: vec![],
+      injected_input: vec![],
+    };
+    assert_eq!(
+      Snapshot::judge(&at(1000), &at(1010), &timeline),
+      Verdict::Inconclusive {
+        reasons: vec!["foreground_event_ambiguous"]
+      }
+    );
+  }
+
   #[test]
   fn a_click_long_before_does_not_excuse_a_later_foreground_change() {
     let mut after = at(9010);
