@@ -14,11 +14,9 @@ impl MouseBackend for Receiver {
   }
   fn button(&self, _: Point, _: MouseButton, down: bool) -> DriverResult<InputActionResult> {
     self.events.lock().unwrap().push(if down { "down" } else { "up" }.into());
-    if !down {
-      if let Some((entered, release)) = &self.up_gate {
-        entered.send(()).map_err(|_| invalid("release fixture observer exited"))?;
-        release.lock().unwrap().recv_timeout(Duration::from_secs(2)).map_err(|_| invalid("release fixture was not resumed"))?;
-      }
+    if !down && let Some((entered, release)) = &self.up_gate {
+      entered.send(()).map_err(|_| invalid("release fixture observer exited"))?;
+      release.lock().unwrap().recv_timeout(Duration::from_secs(2)).map_err(|_| invalid("release fixture was not resumed"))?;
     }
     if !down && self.fail_up.load(Ordering::SeqCst) {
       return Err(invalid("injected release failure"));

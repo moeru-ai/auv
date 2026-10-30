@@ -66,6 +66,33 @@ B received no keys or text in all 14 protected cases. The global control alone p
 The first expanded run at `bd219a46`, [41098663509](https://github.com/moeru-ai/auv/actions/runs/41098663509), passed 14 cases and failed one evaluator assertion. That assertion incorrectly required an initially foreign foreground to be refused. The existing contract and producer allow one initial activation before admission. Its records showed A=`abc`, B empty, and six injected keys. The corrected case tests that preparation separately and requires later takeover cases to leave B foreground. The native producer is unchanged by this correction.
 Its artifact `12998200328` matched SHA-256 `bf3debf6af222baf96c137b86b0be958493af4959db175404c55b3018e7c7a2b`.
 
+## Frontend acceptance in progress
+
+The evaluation command `window-keyboard-routes --auv <AUV_EXE> --output <FRESH_DIR>`
+compares direct Driver, local Invoke, selected Runner, local MCP, and selected-Runner MCP.
+It requires `AUV_ISOLATED_DESKTOP_EVAL=1` and runs only on an isolated desktop.
+The command reuses the workflow's private Runner lifecycle and the locked rmcp client.
+MCP admission checks the actual handshake, invoke tool, and a dry run without input.
+It never substitutes CLI delivery for a failed MCP route.
+
+Twelve cases cover success and takeover on each route, plus cancellation on both MCP routes.
+Cancellation starts after the application acknowledges its first character.
+The evaluator then checks for late input over 1,400 ms, beyond the remaining repeat intervals.
+This finite check does not prove an unlimited quiet period or fabricate a native delivery receipt.
+Application state, injected-key counts, desktop events, owned-window PNGs, and frontend stores remain separate channels.
+The PNGs require independent visual review; capture success alone is not a text oracle.
+
+At `8cab8a76`, compilation passed and the
+[isolated frontend task](https://github.com/moeru-ai/auv/actions/runs/41109370775)
+is pending. No live frontend parity is claimed yet.
+
+The previous Windows CI run failed in
+[`abandoned_hold_releases_without_another_request`](https://github.com/moeru-ai/auv/actions/runs/41103991540/job/124228286676).
+A controlled backend gate reproduced the test's invalid assumption: recording `up`
+can precede completion of native release and reservation cleanup.
+The repair changes test synchronization, not the mouse controller.
+All 106 common-driver unit tests passed after that repair.
+
 ## Limits and follow-up gates
 
 The admission tuple retains a live process handle, HWND, owner thread, and class during one batch. It does not identify same-owner HWND reuse before admission. A versioned identity producer/consumer contract remains deferred at the code site.
