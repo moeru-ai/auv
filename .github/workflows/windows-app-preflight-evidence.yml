@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 06a8bb9fe6a2443f36f2be3144accf9a608f2d26
+          ref: 4c24a1847d7815dcd0b32564d3c3a6390f74ce65
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '06a8bb9fe6a2443f36f2be3144accf9a608f2d26') { throw "Unexpected source $source" }
+          if ($source -ne '4c24a1847d7815dcd0b32564d3c3a6390f74ce65') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -147,6 +147,45 @@ jobs:
           $output = Join-Path $env:RUNNER_TEMP 'auv-app-preflight'
           New-Item -ItemType Directory -Path $output -Force | Out-Null
           $facts | ConvertTo-Json -Depth 8 | Tee-Object -FilePath (Join-Path $output 'environment.json')
+
+      - name: Prepare pinned portable application packages without launching them
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'auv-portable-apps'
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+          $packages = @(
+            @{ id='notepadnext'; version='0.15'; exe='NotepadNext.exe'; toolkit='Qt';
+              url='https://github.com/dail8859/NotepadNext/releases/download/v0.15/NotepadNext-v0.15-win64.zip';
+              sha256='148aa88d706bb67a7c1f3727953ed686204be52876336971634b0223e6ed2148' },
+            @{ id='vscode'; version='1.144.0'; exe='Code.exe'; toolkit='Electron';
+              url='https://vscode.download.prss.microsoft.com/dbazure/download/stable/2c33b50b16c472efe58357d1d2a8a5414bc23fbf/VSCode-win32-x64-1.144.0.zip';
+              sha256='055722269e3c9531af0c50a8b757c14e8062a0d02fc973b038863d9732c567ea' }
+          )
+          $packageFacts = @()
+          foreach ($package in $packages) {
+            $archivePath = Join-Path $packageRoot ($package.id + '.zip')
+            $extractPath = Join-Path $packageRoot $package.id
+            Invoke-WebRequest -Uri $package.url -OutFile $archivePath
+            $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($archiveHash -ne $package.sha256) { throw "Package digest mismatch: $($package.id)" }
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath
+            $executables = @(Get-ChildItem -LiteralPath $extractPath -Recurse -File -Filter $package.exe)
+            if ($executables.Count -ne 1) { throw "Expected one package executable: $($package.id)" }
+            $executable = $executables[0]
+            $qtCore = @(Get-ChildItem -LiteralPath $extractPath -Recurse -File -Filter 'Qt6Core.dll')
+            $qtVersion = if ($qtCore.Count -eq 1) { $qtCore[0].VersionInfo.ProductVersion } else { $null }
+            if ($package.id -eq 'notepadnext' -and $qtCore.Count -ne 1) { throw 'Expected one bundled Qt 6 runtime' }
+            $packageFacts += [ordered]@{
+              id=$package.id; version=$package.version; toolkit=$package.toolkit;
+              url=$package.url; archive_sha256=$archiveHash; digest_verified=$true;
+              executable=$executable.FullName; file_version=$executable.VersionInfo.FileVersion;
+              executable_sha256=(Get-FileHash -LiteralPath $executable.FullName -Algorithm SHA256).Hash.ToLowerInvariant();
+              bundled_qt_version=$qtVersion; launched=$false
+            }
+          }
+          [ordered]@{ workflow_sha='${{ github.sha }}'; preflight_only=$true; packages=$packageFacts } |
+            ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'auv-app-preflight/portable-apps.json')
 
       - name: Preserve the environment inventory
         if: always()
