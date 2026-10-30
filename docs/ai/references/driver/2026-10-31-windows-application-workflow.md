@@ -57,4 +57,22 @@ The retired #429 predicate remains retired.
 ## Verification
 
 The first source passes Windows compilation and Clippy with existing warnings.
-Native launch, controls, capture, and cleanup evidence is pending isolated execution.
+The [first controls task](https://github.com/moeru-ai/auv/actions/runs/41124132593)
+at `bea0c294` captured Edge, VS Code, and NotepadNext.
+All four application jobs reached zero active processes, all helper roots exited,
+and the desktop's foreground and pointer were restored.
+Artifact `13010366462` matched SHA-256
+`84c3c3c3d7ef63cc5f27d9b7d76295d56ead0613386085acdd1e2165a2442f27` after download.
+Independent review confirmed the three captures show the controlled editor or file.
+
+The inventory failed because ISE kept the caption `Administrator: Windows PowerShell ISE`.
+The owned process had a visible main window, but the test required its filename in the caption.
+Selection now accepts exactly one such ISE main window within the controller's verified job.
+Three pure regressions cover that case, duplicate refusal, and retention of marker checks for other apps.
+
+Edge exposed a complete 27-node tree and its named editor.
+NotepadNext exposed a complete 71-node tree; its focusable editor region had no name or text value.
+VS Code exposed 173 nodes and its editor value, but marked the tree incomplete.
+Its maximum depth was 17, below the Driver's depth limit; no traversal limit was relaxed.
+The inspector now retains up to three read-only startup snapshots to distinguish transient tree changes.
+Input and edit/save acceptance still require new evidence.

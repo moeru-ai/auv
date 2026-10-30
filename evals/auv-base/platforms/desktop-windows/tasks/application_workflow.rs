@@ -68,15 +68,26 @@ pub fn snapshot_controls(window_id: &str, process_id: u32, output: &Path) -> Res
     .into_iter()
     .find(|window| window.reference.id == window_id && window.process_id == Some(process_id))
     .context("inspector window identity changed")?;
-  let tree = match auv_driver_windows::accessibility::snapshot_window(&window) {
-    Ok(tree) => json!({"truncated": tree.truncated, "nodes": tree.nodes.iter().map(|node| json!({
+  let mut tree_attempts = Vec::new();
+  for _ in 0..3 {
+    let tree = match auv_driver_windows::accessibility::snapshot_window(&window) {
+      Ok(tree) => json!({"truncated": tree.truncated, "nodes": tree.nodes.iter().map(|node| json!({
       "path": node.path, "depth": node.depth, "role": node.role, "control_type": node.control_type,
       "name": node.name, "value": node.value, "automation_id": node.automation_id,
       "class_name": node.class_name, "focused": node.focused, "enabled": node.enabled,
       "keyboard_focusable": node.keyboard_focusable, "offscreen": node.offscreen, "bounds": node.bounds,
     })).collect::<Vec<_>>() }),
-    Err(error) => json!({"error": error.to_string()}),
-  };
+      Err(error) => json!({"error": error.to_string()}),
+    };
+    let complete = tree["truncated"] == false && tree["nodes"].as_array().is_some_and(|nodes| !nodes.is_empty());
+    tree_attempts.push(tree);
+    if complete {
+      break;
+    }
+    // This retries only a read-only startup snapshot. No action has been delivered.
+    std::thread::sleep(Duration::from_millis(100));
+  }
+  let tree = tree_attempts.last().context("missing tree attempt")?;
   // Pixels are explicitly requested by this controller; no image bytes cross a client round trip.
   let capture = match session.window().capture(&window) {
     Ok(capture) => {
@@ -85,7 +96,10 @@ pub fn snapshot_controls(window_id: &str, process_id: u32, output: &Path) -> Res
     }
     Err(error) => json!({"error": error.to_string()}),
   };
-  std::fs::write(output.join("snapshot.json"), serde_json::to_vec_pretty(&json!({"window": window, "tree": tree, "capture": capture}))?)?;
+  std::fs::write(
+    output.join("snapshot.json"),
+    serde_json::to_vec_pretty(&json!({"window": window, "tree": tree, "tree_attempts": tree_attempts, "capture": capture}))?,
+  )?;
   Ok(true)
 }
 
@@ -108,6 +122,30 @@ fn owned_windows(session: &WindowsDriverSession, processes: &native::Processes) 
     }
   }
   Ok(owned)
+}
+
+/// The caller supplies only windows whose process handles belong to its job.
+fn editor_window<'a>(windows: &'a [Window], app: &str, marker: &str) -> Result<Option<&'a Window>> {
+  let matches: Vec<_> =
+    windows.iter().filter(|window| window.is_visible && window.title.as_deref().is_some_and(|title| title.contains(marker))).collect();
+  ensure!(matches.len() <= 1, "multiple owned windows have the document marker");
+  if let Some(window) = matches.first() {
+    return Ok(Some(*window));
+  }
+  if app == "powershell-ise" {
+    // NOTICE: ISE keeps an application caption even with an opened file. The
+    // failed inventory at job 124298121385 recorded this exact caption; require
+    // one owned main window rather than accepting another process by title.
+    let main: Vec<_> = windows
+      .iter()
+      .filter(|window| {
+        window.is_visible && window.is_main && window.title.as_deref().is_some_and(|title| title.ends_with("Windows PowerShell ISE"))
+      })
+      .collect();
+    ensure!(main.len() <= 1, "multiple owned ISE main windows");
+    return Ok(main.first().copied());
+  }
+  Ok(None)
 }
 
 /// Launches four real toolkits, records their controls/pixels, and verifies ownership cleanup.
@@ -208,9 +246,7 @@ pub fn run_controls(options: &Options) -> Result<bool> {
       let deadline = Instant::now() + Duration::from_secs(30);
       let window = loop {
         let windows = owned_windows(&session, &processes)?;
-        if let Some(window) =
-          windows.iter().find(|window| window.is_visible && window.title.as_deref().is_some_and(|title| title.contains(&marker)))
-        {
+        if let Some(window) = editor_window(&windows, name, &marker)? {
           break window.clone();
         }
         if Instant::now() >= deadline {
@@ -257,4 +293,41 @@ pub fn run_controls(options: &Options) -> Result<bool> {
     "foreground_restored": final_state.foreground == original.foreground, "pointer_restored": final_state.cursor == original.cursor,
     "physical_keys": final_state.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": final_state.physical_mouse.saturating_sub(original.physical_mouse)}))?;
   Ok(complete)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn ise_windows() -> Vec<Window> {
+    serde_json::from_str(include_str!("../cases/fixtures/powershell-ise-windows.json")).unwrap()
+  }
+
+  // https://github.com/moeru-ai/auv/actions/runs/41124132593/job/124298121385
+  // ROOT CAUSE:
+  // If ISE opened the owned file, discovery still timed out because its window
+  // caption omitted the document name. Selection now accepts exactly one ISE
+  // main window from the already verified controller job, never an unowned PID.
+  #[test]
+  fn ise_window_selection_ci_124298121385_accepts_application_caption() {
+    let windows = ise_windows();
+    let selected = editor_window(&windows, "powershell-ise", "auv-editor-owned").unwrap().unwrap();
+    assert_eq!(selected.reference.id, "393326");
+    assert_eq!(selected.process_id, Some(9368));
+  }
+
+  #[test]
+  fn ise_window_selection_refuses_two_owned_main_windows() {
+    let mut windows = ise_windows();
+    let mut other = windows[0].clone();
+    other.reference.id = "another-owned-window".into();
+    windows.push(other);
+    assert!(editor_window(&windows, "powershell-ise", "auv-editor-owned").unwrap_err().to_string().contains("multiple owned ISE"));
+  }
+
+  #[test]
+  fn other_apps_still_require_the_owned_document_marker() {
+    let windows = ise_windows();
+    assert!(editor_window(&windows, "edge", "auv-editor-owned").unwrap().is_none());
+  }
 }

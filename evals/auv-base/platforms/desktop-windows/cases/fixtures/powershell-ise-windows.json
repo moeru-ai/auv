@@ -1,0 +1,24 @@
+[
+  {
+    "app_name": "powershell_ise.exe",
+    "application_id": null,
+    "coordinate_space": "screen",
+    "frame": {
+      "origin": {
+        "x": 53.0,
+        "y": 31.0
+      },
+      "size": {
+        "height": 620.0,
+        "width": 908.0
+      }
+    },
+    "is_main": true,
+    "is_visible": true,
+    "process_id": 9368,
+    "reference": {
+      "id": "393326"
+    },
+    "title": "Administrator: Windows PowerShell ISE"
+  }
+]
