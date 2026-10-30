@@ -44,11 +44,14 @@ packages:
   - 'proto/sdk/js'
 
 catalog:
+  '@agentclientprotocol/sdk': ^1.8.0
   '@alint-js/agent-apeira': '^0.3.0'
   '@alint-js/cli': ^0.3.0
   '@alint-js/core': ^0.3.0
   '@alint-js/plugin': '^0.3.0'
   '@alint-js/tools-fs': '^0.3.0'
+  '@assistant-ui/react': ^0.15.26
+  '@assistant-ui/react-markdown': ^0.14.24
   '@base-ui/react': ^1.8.0
   '@bufbuild/buf': 1.72.0
   '@bufbuild/protobuf': 2.13.0
@@ -67,12 +70,17 @@ catalog:
   '@eslint-react/eslint-plugin': ^3.0.0
   '@grpc/grpc-js': 1.14.4
   '@guiiai/logg': ^1.2.11
+  '@hafbit/react-acp': ^0.1.9
   '@hey-api/openapi-ts': ^0.99.0
   '@iconify-json/ph': ^1.2.2
+  '@jitl/quickjs-singlefile-browser-release-sync': 0.32.0
   '@lezer/highlight': ^1.2.5
+  '@modelcontextprotocol/sdk': 1.32.1
   '@moeru/eslint-config': ^0.1.0-beta.20
   '@moeru/eventa': ^1.0.2
   '@moeru/std': 0.1.0-beta.20
+  # NOTICE(exterior-preview): pin the SDK preview until its npm release.
+  '@exterioragentprotocol/sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@aec6c44ae53b0a896f7b206a0e3b4a56a73fbc7e
   '@napi-rs/cli': ^3.8.6
   '@pnpm/find-workspace-dir': 1000.1.5
   '@types/node': ^26.0.1
@@ -101,9 +109,11 @@ catalog:
   oxlint: ^1.78.0
   playwright: 1.62.1
   publint: ^0.3.23
+  quickjs-emscripten-core: 0.32.0
   react: ^19.3.0
   react-dom: ^19.3.0
   react-markdown: ^10.1.0
+  remark-gfm: ^4.0.1
   react-resizable-panels: ^4.14.2
   simple-git-hooks: ^2.13.1
 
@@ -120,9 +130,13 @@ catalog:
   unocss: ^66.10.5
   unrun: ^0.3.1
   vite: ^8.1.0
+  ws: 8.21.0
   zustand: ^5.0.15
 
 catalogs:
   vitest:
     '@vitest/coverage-v8': ^4.1.9
     vitest: ^4.1.9
+
+patchedDependencies:
+  '@hafbit/react-acp@0.1.9': patches/@hafbit__react-acp@0.1.9.patch

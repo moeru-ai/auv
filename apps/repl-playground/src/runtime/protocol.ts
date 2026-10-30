@@ -1,9 +1,20 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+
 import type { BindSite, StepSite } from '../stepper/compile'
 
 // ---- Language worker (TypeScript service + cell compiler) ------------------
 
+/** Explicit agent output and JSON state from one isolated code call. */
+export interface CodeModeState {
+  content: CallToolResult['content']
+  store: Record<string, unknown>
+}
+
 export interface CompileRequest {
+  /** Codemode accepts return statements in the async script body. */
+  allowReturn?: boolean
   cellId: number
+  recordOnly?: boolean
   source: string
   /** Editor line where `source` starts. */
   startLine: number
@@ -45,10 +56,14 @@ export interface ExecWorkerApi {
   stop: () => void
 }
 
+// ---- Execution worker --------------------------------------------------------
+
 /** Host functions the execution worker calls. `on*` are fire-and-forget events. */
 export interface HostApi {
   /** Values bound by a declaration or loop header, right after assignment. */
   onBind: (bindId: number, values: Record<string, WireValue>, at: number) => void
+  /** Explicit codemode output; retained even if the worker is canceled. */
+  onCodeOutput: (content: CodeModeState['content'][number]) => void
   /** Editor-only overlay from `draw()`: an area, rectangle or point. */
   onDraw: (target: WireValue, label: string | undefined, stepId: null | number) => void
   /** Editor-only camera move from `focus()`. */
@@ -59,8 +74,6 @@ export interface HostApi {
   onStep: (stepId: number, at: number) => void
   onVars: (vars: Record<string, WireValue>) => void
 }
-
-// ---- Execution worker --------------------------------------------------------
 
 export interface HoverInfo {
   doc: string
@@ -86,14 +99,17 @@ export type LogLevel = 'error' | 'info' | 'log' | 'show' | 'warn'
 export type ResumeMode = 'continue' | 'step'
 
 export type RunOutcome
-  = | { line?: number, message: string, stack?: string, status: 'error' }
-    | { status: 'ok', value: WireValue }
-    | { status: 'stopped' }
+  = { codemode?: CodeModeState } & ({ line?: number, message: string, stack?: string, status: 'error' }
+    | { reason?: 'canceled' | 'timeout', status: 'stopped' }
+    | { status: 'ok', value: WireValue })
 
 export interface RunRequest {
   binds: BindSite[]
   breakpoints: number[]
   code: string
+  codemode?: { store: Record<string, unknown>, timeoutMs: number }
+  /** Reject late worker RPCs after the host starts another execution. */
+  executionId: number
   hoisted: string[]
   /** Pause at the first hook (`step`) or only at breakpoints (`run`). */
   mode: 'run' | 'step'
@@ -109,4 +125,4 @@ export interface RunRequest {
  */
 export type WireValue = unknown
 
-export const HOST_EVENTS = ['onBind', 'onDraw', 'onFocus', 'onLog', 'onPause', 'onResume', 'onStep', 'onVars'] as const satisfies (keyof HostApi)[]
+export const HOST_EVENTS = ['onBind', 'onCodeOutput', 'onDraw', 'onFocus', 'onLog', 'onPause', 'onResume', 'onStep', 'onVars'] as const satisfies (keyof HostApi)[]

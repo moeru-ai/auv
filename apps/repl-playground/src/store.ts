@@ -14,6 +14,7 @@ export interface BindEvent {
   hit: number
   line: number
   seq: number
+  scriptId: number
   values: Record<string, WireValue>
 }
 
@@ -34,6 +35,7 @@ export interface CallRecord {
   result?: WireValue
   /** A direct SDK call: its gRPC path and how the method presents itself. */
   rpc?: { path: string, presentation?: MethodPresentation }
+  script: ScriptSource
   /** Event-log position when the call started. */
   seq: number
   startedAt: number
@@ -107,7 +109,7 @@ export interface PlaygroundState {
   displays: DisplayInfo[]
   /** Lines whose hooks fired during the current run. */
   executedLines: number[]
-  /** `focus()` camera moves of the current run. */
+  /** `focus()` camera moves in the current timeline. */
   focuses: FocusEvent[]
   /** Whether a recording of the last live run is available for offline replay. */
   hasRecording: boolean
@@ -119,17 +121,17 @@ export interface PlaygroundState {
   live: boolean
   liveFrames: Record<string, LiveFrame>
   logs: LogEntry[]
-  /** `draw()` overlays of the current run. */
+  /** `draw()` overlays in the current timeline. */
   marks: Mark[]
-  /** Debugger pauses of the current run (epoch ms); excluded from the time strip. */
+  /** Debugger pauses in the current timeline (epoch ms); excluded from the time strip. */
   pauses: Array<{ end?: number, start: number }>
   pins: Pin[]
   resources: Record<string, Resource>
   run: RunState
-  /** Increments per run; scopes seq-based queries to the current run. */
-  runIndex: number
+  /** Increments when the timeline is cleared; codemode calls share one timeline. */
+  timelineId: number
   selectedAxPath: null | string
-  /** Call shown in the inspector's Call tab; per run. */
+  /** Call shown in the inspector's Call tab. */
   selectedCallId: null | number
   selectedRef: null | string
   /** Wall-clock time (epoch ms) of every event, indexed by seq. */
@@ -159,8 +161,8 @@ export type Resource = (
   | { handle: WindowHandle, kind: 'window' }
 ) & {
   callId?: number
-  /** Run that produced the resource; seqs are only comparable within one run. */
-  run: number
+  /** Timeline that produced the resource; seqs are comparable within it. */
+  timelineId: number
   seq: number
 }
 
@@ -174,11 +176,20 @@ export interface RunState {
   outcome?: RunOutcome
   /** AUV Run ID when the backend opened one. */
   runId?: string
+  script?: ScriptSource
   startedAt?: number
   status: RunStatus
 }
 
 export type RunStatus = 'compiling' | 'done' | 'error' | 'idle' | 'paused' | 'running' | 'stopped'
+
+/** Source shared by the SDK calls and hook events from one execution. */
+export interface ScriptSource {
+  id: number
+  kind: 'codemode' | 'editor'
+  source: string
+  startLine: number
+}
 
 export interface StepEvent {
   at: number
@@ -186,6 +197,7 @@ export interface StepEvent {
   hit: number
   line: number
   seq: number
+  scriptId: number
 }
 
 const emptyTimings: TimingSnapshot = { lines: [], statements: [] }
@@ -213,7 +225,7 @@ export const usePlayground = create<PlaygroundState>(() => ({
   pins: [],
   resources: {},
   run: { currentLine: null, mode: 'live', status: 'idle' },
-  runIndex: 0,
+  timelineId: 0,
   selectedAxPath: null,
   selectedCallId: null,
   selectedRef: null,
@@ -274,22 +286,22 @@ export const actions = {
     return id
   },
 
-  /** Clears per-run records but keeps resources so earlier handles stay inspectable. */
-  beginRun(mode: RunState['mode']): void {
+  /** Codemode appends to the timeline; an editor run starts a new one. */
+  beginRun(mode: RunState['mode'], script: ScriptSource, append: boolean): void {
     set(state => ({
-      binds: [],
-      calls: [],
+      binds: append ? state.binds : [],
+      calls: append ? state.calls : [],
       cursor: null,
       executedLines: [],
-      focuses: [],
+      focuses: append ? state.focuses : [],
       hoveredCallId: null,
-      marks: [],
-      pauses: [],
-      run: { currentLine: null, mode, startedAt: Date.now(), status: 'compiling' },
-      runIndex: state.runIndex + 1,
+      marks: append ? state.marks : [],
+      pauses: append ? state.pauses : [],
+      run: { currentLine: null, mode, script, startedAt: Date.now(), status: 'compiling' },
+      timelineId: state.timelineId + (append ? 0 : 1),
       selectedCallId: null,
-      seqAt: [],
-      steps: [],
+      seqAt: append ? state.seqAt : [],
+      steps: append ? state.steps : [],
       timings: emptyTimings,
     }))
   },

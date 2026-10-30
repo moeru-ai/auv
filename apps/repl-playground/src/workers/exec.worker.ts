@@ -8,9 +8,13 @@ import { createBirpc } from 'birpc'
 
 import * as sdk from '@auv-js/sdk'
 
+import { codeModeLimits } from '../runtime/codemode-limits'
 import { HOST_EVENTS } from '../runtime/protocol'
 import { createBridgeTransport, SDK_PORT_MESSAGE } from '../runtime/sdk-bridge'
+import { codeModeSdk } from '../script-api/codemode-sdk'
 import { areaOf } from './area'
+import { runCodeMode } from './codemode'
+import { toWire } from './wire-value'
 
 // NOTICE(exec-worker-isolation): this worker only isolates the playground
 // page from runaway loops (it can be terminated) and keeps the DOM out of
@@ -32,6 +36,8 @@ let breakpoints = new Set<number>()
 let resumeWaiter: ((next: 'stop' | ResumeMode) => void) | undefined
 let stopRequested = false
 let currentStep: null | number = null
+let executionId = 0
+let codemodeAbort: AbortController | undefined
 
 const globals = globalThis as unknown as Record<string, unknown>
 const persistentNames = new Set<string>()
@@ -43,13 +49,49 @@ const api: ExecWorkerApi = {
     resumeWaiter?.(next)
   },
   async run(request) {
+    executionId = request.executionId
     globals.auv = await runnerFor(request.sdkRoute)
+    if (request.codemode) {
+      steps = request.steps
+      mode = 'run'
+      breakpoints = new Set()
+      stopRequested = false
+      currentStep = null
+      codemodeAbort = new AbortController()
+      try {
+        const runner = globals.auv as sdk.RunnerClient
+        const outcome = await runCodeMode(request, {
+          __bind: globals.__bind,
+          __step: globals.__step,
+          __stepSync: globals.__stepSync,
+          auv: runner,
+          image: async (capture: sdk.CaptureTarget, options: sdk.CaptureImageOptions = {}) => {
+            const maxSize = options.maxSize ?? { height: codeModeLimits.maxImageDimension, width: codeModeLimits.maxImageDimension }
+            const encoding = options.encoding ?? sdk.ImageEncoding.PNG
+            if (![maxSize.height, maxSize.width].every(size => typeof size === 'number' && Number.isInteger(size) && size > 0 && size <= codeModeLimits.maxImageDimension)
+              || (encoding !== sdk.ImageEncoding.PNG && encoding !== sdk.ImageEncoding.JPEG)) {
+              throw new Error(`image() requires PNG or JPEG and positive maxSize dimensions at most ${codeModeLimits.maxImageDimension}`)
+            }
+            const pixels = await runner.captures.image(capture, { ...options, encoding, maxSize })
+            let binary = ''
+            for (const byte of pixels.data) binary += String.fromCharCode(byte)
+            return { data: btoa(binary), mimeType: encoding === sdk.ImageEncoding.JPEG ? 'image/jpeg' : 'image/png' }
+          },
+          // Only pure helpers and constants enter the VM; connect() and
+          // transport construction remain outside the script interface.
+          sdk: codeModeSdk,
+        }, codemodeAbort.signal, emitCodeOutput)
+        return outcome.status === 'error' ? { ...outcome, line: currentStep === null ? undefined : steps[currentStep]?.line } : outcome
+      }
+      finally { codemodeAbort = undefined }
+    }
     return await runCell(request)
   },
   setBreakpoints(lines) {
     breakpoints = new Set(lines)
   },
   stop() {
+    codemodeAbort?.abort()
     stopRequested = true
     resumeWaiter?.('stop')
   },
@@ -64,6 +106,10 @@ const host = createBirpc<HostApi, ExecWorkerApi>(api, {
   post: data => postMessage(data),
   timeout: 10 * 60_000,
 })
+
+function emitCodeOutput(item: Parameters<HostApi['onCodeOutput']>[0]): void {
+  host.onCodeOutput(item)
+}
 
 // ---- SDK -------------------------------------------------------------------
 // `auv` is the `@auv-js/sdk` Runner client for the selected Device and the
@@ -81,19 +127,15 @@ addEventListener('message', (event) => {
   if (!port)
     return
   const { context } = createHostChannel({ messagePort: port as unknown as Worker })
-  sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep) })
+  sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep, () => executionId) })
 })
 
 async function runnerFor(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
-  if (!route || !sdkConnection) {
-    // Fails on first use, with the reason, rather than as `auv is undefined`.
-    return new Proxy({} as sdk.RunnerClient, {
-      get() {
-        throw new Error('`auv` needs a device, the mock desktop, or a replay of a run that made the same calls')
-      },
-    })
-  }
-  return sdk.createAuv(await sdkConnection).runner(route)
+  if (!sdkConnection)
+    throw new Error('The execution worker SDK bridge is not initialized.')
+  // The bridge rejects device calls while no backend is selected. Construct
+  // the ordinary lazy SDK client so pure code and help can still execute.
+  return sdk.createAuv(await sdkConnection).runner(route ?? { runnerClass: 'auv.core.local' })
 }
 
 // ---- Step hooks -------------------------------------------------------------
@@ -173,44 +215,6 @@ async function runCell(request: RunRequest): Promise<RunOutcome> {
     const err = error instanceof Error ? error : new Error(String(error))
     return { line: errorLine(err), message: `${err.name}: ${err.message}`, stack: err.stack, status: 'error' }
   }
-}
-
-/** Structured-clone-safe summary of a script value; keeps protobuf `$typeName`s for lineage. */
-function toWire(value: unknown, depth = 0, seen = new WeakSet<object>()): WireValue {
-  if (value === null || value === undefined)
-    return value
-  switch (typeof value) {
-    case 'bigint':
-      return `${value}n`
-    case 'boolean':
-    case 'number':
-    case 'string':
-      return value
-    case 'function':
-      return { $fn: value.name || 'anonymous' }
-    case 'symbol':
-      return value.toString()
-  }
-  const object = value as object
-  if (seen.has(object))
-    return { $circular: true }
-  if (depth > 6)
-    return { $truncated: true }
-  seen.add(object)
-  if (object instanceof Error)
-    return { $error: `${object.name}: ${object.message}` }
-  if (ArrayBuffer.isView(object))
-    return { $bytes: object.byteLength }
-  if (object instanceof Map)
-    return { $map: [...object.entries()].slice(0, 200).map(([k, v]) => [toWire(k, depth + 1, seen), toWire(v, depth + 1, seen)]) }
-  if (object instanceof Set)
-    return { $set: [...object].slice(0, 200).map(v => toWire(v, depth + 1, seen)) }
-  if (Array.isArray(object))
-    return object.slice(0, 500).map(item => toWire(item, depth + 1, seen))
-  const out: Record<string, WireValue> = {}
-  for (const [key, item] of Object.entries(object))
-    out[key] = toWire(item, depth + 1, seen)
-  return out
 }
 
 // ---- Script globals -------------------------------------------------------------

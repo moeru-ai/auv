@@ -1,5 +1,6 @@
 import { Tooltip } from '@base-ui/react/tooltip'
 
+import { iconButtonClassName } from './icon-button-class'
 import { Kbd } from './Kbd'
 
 /** Icon-only button with a tooltip; used by the activity bar, debug bar and panel headers. */
@@ -14,17 +15,13 @@ export function IconButton({ active, disabled, hint, icon, keys, label, onClick,
   side?: 'bottom' | 'left' | 'right' | 'top'
   tone?: 'ghost' | 'primary'
 }) {
-  const base = label ? 'h-7 gap-1.5 px-2.5' : 'size-7 justify-center'
-  const style = tone === 'primary'
-    ? 'bg-accent text-white hover:bg-accent-strong'
-    : active ? 'bg-accent/18 text-accent' : 'text-fg-muted hover:(bg-surface-2 text-fg)'
   return (
     <Tooltip.Root>
       <Tooltip.Trigger
         render={(
           <button
             aria-label={hint}
-            className={`text-[12.5px] font-medium rounded-md inline-flex cursor-pointer transition-colors items-center disabled:(opacity-35 cursor-not-allowed) ${base}  ${style}`}
+            className={iconButtonClassName({ active, label, tone })}
             disabled={disabled}
             onClick={onClick}
             type="button"

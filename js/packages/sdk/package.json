@@ -16,6 +16,7 @@
       "node": "./src/node/index.ts",
       "default": "./src/web/index.ts"
     },
+    "./documentation": "./scripts/documentation.ts",
     "./node": "./src/node/index.ts",
     "./package.json": "./package.json"
   },
@@ -66,6 +67,7 @@
     "@bufbuild/buf": "catalog:",
     "@bufbuild/protoc-gen-es": "catalog:",
     "@guiiai/logg": "catalog:",
-    "@vitest/browser-playwright": "catalog:"
+    "@vitest/browser-playwright": "catalog:",
+    "typescript": "catalog:"
   }
 }

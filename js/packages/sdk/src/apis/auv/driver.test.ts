@@ -15,6 +15,26 @@ import { createAuv } from './client'
 import { splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
+  // ROOT CAUSE: capture() returns a response wrapper. The old error called
+  // that wrapper a CapturedFrame and did not identify its capture field.
+  it('explains how to use a capture response when the wrapper is passed as a capture', async () => {
+    const connection = await connect({ local: true, transport: {
+      close() {},
+      async connect() {},
+      async duplex() { throw new Error('Invalid capture input must not reach the transport') },
+      async unary() { throw new Error('Invalid capture input must not reach the transport') },
+    } })
+    try {
+      const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+      const response = create(CaptureWindowResponseSchema, { capture: { ref: { captureId: 'cap-1' } } })
+      // @ts-expect-error Check the runtime error for a response wrapper.
+      await expect(runner.captures.image(response)).rejects.toThrow('pass response.capture')
+    }
+    finally {
+      await connection.close()
+    }
+  })
+
   it('recognizes Runner captures by reference and fetches pixels only on request', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({
