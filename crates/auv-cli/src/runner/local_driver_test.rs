@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn keyboard_target_loss_preserves_native_and_batch_progress() {
+  use prost::Message;
+  // ROOT CAUSE:
+  //
+  // KeyboardInput previously replaced the native failure envelope with raw
+  // batch progress, losing the submitted prefix and target_lost reason.
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ForegroundSystemEvents);
+  let status = keyboard_input_status(auv_driver::KeyboardInputError {
+    cause: auv_driver::DriverError::InputAction {
+      cause: Box::new(auv_driver::DriverError::TargetLost {
+        target: "test-window".into(),
+        message: "foreground changed after the first press".into(),
+      }),
+      progress: auv_driver::InputActionProgress::Submitted { action: action.clone() },
+    },
+    progress: auv_driver::KeyboardInputProgress {
+      action_index: 1,
+      completed: vec![action],
+      completed_presses: 1,
+    },
+  });
+  assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+  let failure = auv_api_proto::input_action_failure::failure(&status).expect("native failure must survive keyboard wrapping");
+  assert!(matches!(failure.progress, Some(proto::input_action_failure::Progress::Submitted(_))));
+  let envelope = auv_api_proto::google::rpc::Status::decode(status.details()).expect("standard rich-error envelope");
+  let detail = envelope.details.iter().find(|detail| detail.type_url == "type.googleapis.com/auv.api.driver.v1.KeyboardInputProgress")
+    .expect("batch progress must coexist with the native receipt");
+  let batch = proto::KeyboardInputProgress::decode(detail.value.as_slice()).unwrap();
+  assert_eq!(batch.action_index, Some(1));
+  assert_eq!(batch.completed.len(), 1);
+  assert_eq!(batch.completed_presses, 1);
+}
+
+#[test]
 fn input_action_status_preserves_original_category_and_native_progress() {
   let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
   let status = driver_status(auv_driver::DriverError::InputAction {
