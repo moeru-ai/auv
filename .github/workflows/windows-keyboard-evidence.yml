@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 264143c4f0e6f8afe76269ffa4cb1d6445c65357
+          ref: 8cab8a763448025a3e5f0097cc6a75dc083336ca
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '264143c4f0e6f8afe76269ffa4cb1d6445c65357') { throw "Unexpected source $actual" }
+          if ($actual -ne '8cab8a763448025a3e5f0097cc6a75dc083336ca') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -102,6 +102,13 @@ jobs:
         run: |
           cargo build --locked -p auv-base-evals --bin win32-receiver --bin background-session-eval
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked -p auv-cli --bin auv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binaryHashes = [ordered]@{}
+          foreach ($binary in @('auv', 'win32-receiver', 'background-session-eval')) {
+            $binaryHashes[$binary] = (Get-FileHash -LiteralPath "target/debug/$binary.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $binaryHashes | ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/auv-keyboard-evidence/binary-sha256.json"
 
       - name: Verify guarded recipient and actual application effects
         shell: pwsh
@@ -134,11 +141,56 @@ jobs:
           }
           $summary[0] | ConvertTo-Json -Depth 5 | Tee-Object -FilePath "$directory/result.json"
 
+      - name: Verify real keyboard frontend routing and cancellation
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+          AUV_EVAL_SOURCE_SHA: 8cab8a763448025a3e5f0097cc6a75dc083336ca
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = "$env:RUNNER_TEMP/auv-keyboard-evidence"
+          $auv = (Resolve-Path 'target/debug/auv.exe').Path
+          & target/debug/background-session-eval.exe window-keyboard-routes --auv $auv --output "$directory/route-records" 2>&1 | Tee-Object -FilePath "$directory/routes.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows = @(Get-Content -LiteralPath "$directory/route-records/keyboard-routes.jsonl" | ForEach-Object { $_ | ConvertFrom-Json })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $expectedCases = @('rust/success', 'rust/takeover', 'invoke/success', 'invoke/takeover',
+            'runner/success', 'runner/takeover', 'mcp-local/success', 'mcp-local/takeover', 'mcp-local/cancel',
+            'mcp-runner/success', 'mcp-runner/takeover', 'mcp-runner/cancel')
+          $actualCases = @($cases | ForEach-Object { "$($_.route)/$($_.case)" })
+          if ($cases.Count -ne 12 -or @(Compare-Object $expectedCases $actualCases).Count -ne 0 -or
+              @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Keyboard frontend application receipts failed' }
+          $receiverCleanup = @($rows | Where-Object kind -eq 'receiver_cleanup')
+          if ($receiverCleanup.Count -ne 24 -or @($receiverCleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) {
+            throw 'Frontend receiver cleanup failed'
+          }
+          $mcpAdmission = @($rows | Where-Object kind -eq 'mcp_admission')
+          $mcpRoutes = @($rows | Where-Object kind -eq 'mcp_route_admission')
+          $mcpCleanup = @($rows | Where-Object kind -eq 'mcp_cleanup')
+          if ($mcpAdmission.Count -ne 2 -or @($mcpAdmission | Where-Object { -not $_.admitted }).Count -ne 0 -or
+              $mcpRoutes.Count -ne 6 -or @($mcpRoutes | Where-Object { -not $_.admitted }).Count -ne 0 -or
+              $mcpCleanup.Count -ne 2 -or @($mcpCleanup | Where-Object { -not $_.receipt.process_exited -or $_.receipt.forced_kill }).Count -ne 0) {
+            throw 'MCP admission or lifecycle receipts failed'
+          }
+          $runnerCleanup = @($rows | Where-Object kind -eq 'runner_cleanup')
+          if ($runnerCleanup.Count -ne 1 -or -not $runnerCleanup[0].receipt.daemon_exited -or
+              $runnerCleanup[0].receipt.run_stop_exit -ne 0 -or $runnerCleanup[0].receipt.owned_tree_kill_exit -ne 0 -or
+              $runnerCleanup[0].receipt.fallback_root_kill) { throw 'Owned Runner cleanup failed' }
+          $summary = @($rows | Where-Object kind -eq 'summary')
+          if ($summary.Count -ne 1 -or -not $summary[0].passed -or -not $summary[0].pointer_restored -or
+              -not $summary[0].foreground_restored -or $summary[0].physical_keys -ne 0 -or $summary[0].physical_mouse -ne 0) {
+            throw 'Frontend desktop restoration failed'
+          }
+          $pictures = @(Get-ChildItem -LiteralPath "$directory/route-records" -Recurse -File -Filter '*-after.png')
+          if ($pictures.Count -ne 24) { throw 'Missing owned-window visual evidence' }
+          $summary[0] | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$directory/routes-result.json"
+
       - name: Preserve preflight and exact regression output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-guard-264143c4
+          name: windows-keyboard-routes-8cab8a76
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
