@@ -442,7 +442,7 @@ impl TargetPolicy {
         "Required app:<application-id> (the id window.list reports: a bundle id on macOS, an executable name on Windows; bare ids accepted); window and display targets are unsupported."
       }
       Self::OptionalKeyboard => {
-        "Optional app:<application-id> (bare ids accepted) or window:<window-id>. Default foreground-preferred activates the app; a window target also requires exact window focus. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
+        "Optional app:<application-id> (bare ids accepted) or window:<window-id>. Foreground-preferred may prepare focus where the platform supports it. Windows Window batches require the window to be foreground already; Application targets and targeted holds are unsupported. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
       }
       Self::OptionalPoint => {
         "Optional app:<application-id>, window:<window-id>, or display:<display-id>; coordinate basis defaults from target. Bare values select an application."

@@ -52,6 +52,24 @@ proven level, not a target. `not claimed` means no public level is asserted.
 | App-local recorded operation: TextEdit document write | `auv_apple_textedit::invoke` with the `invoke` feature | `live-validated` | `not claimed` | `not claimed` | [core registry exclusion test](../crates/auv-cli/tests/integrated/core_registry/cases.rs), [app-owned invoke integration](../supported/apps/auv-apple-textedit/src/invoke.rs), [live closure record](ai/references/apps/textedit/2026-07-13-textedit-document-write-live-closure.md) | The operation is app-owned and is not registered by the root `auv` CLI. Live closure was manually validated on one macOS environment (2026-07-15, `semantic_matched=true`); `state_changed` remains `false` because no pre-write AX observation is recorded. Not yet `supported`. |
 | JS/TS and Python bindings | none | `not claimed` | `not claimed` | `not claimed` | [README planning statement](../README.md) | JS/TS and Python bindings are planned, not shipped. Native macOS Swift interop is an internal implementation boundary, not a public language binding. |
 
+## Windows Window Keyboard Batches
+
+Evidence level: `live-validated` for direct Win32 text delivery in the
+[keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md#native-evidence).
+The six-case source `af374c5b` ran on one hosted Windows desktop at 96 DPI.
+A valid batch typed `abc`. Foreground loss, A-to-B-to-A, minimization, and closure
+stopped later characters. The alternate receiver received no keys in protected cases.
+All receivers exited, with separate pointer and foreground restoration receipts.
+
+The current typed producer also guards repeated presses, combinations, and paste.
+Their expanded 15-case native gate is pending at source `bd219a46`.
+Runner/Invoke failure projections have automated tests; this does not establish
+live keyboard parity through Runner or MCP.
+The Window must already be foreground, and the caller establishes control focus.
+Application targets, background delivery, and targeted holds remain unsupported.
+The guard cannot atomically bind `SendInput` to its recipient.
+This evidence does not cover real applications or 125/150% desktop DPI.
+
 ## Windows Background Session By Application
 
 Each window was operated while covered by another window and never activated, raised or
