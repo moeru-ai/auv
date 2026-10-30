@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 8cab8a763448025a3e5f0097cc6a75dc083336ca
+          ref: 925e29f59cbf1703d2166554adcb9f58858d4577
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '8cab8a763448025a3e5f0097cc6a75dc083336ca') { throw "Unexpected source $actual" }
+          if ($actual -ne '925e29f59cbf1703d2166554adcb9f58858d4577') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -145,7 +145,7 @@ jobs:
         shell: pwsh
         env:
           AUV_ISOLATED_DESKTOP_EVAL: '1'
-          AUV_EVAL_SOURCE_SHA: 8cab8a763448025a3e5f0097cc6a75dc083336ca
+          AUV_EVAL_SOURCE_SHA: 925e29f59cbf1703d2166554adcb9f58858d4577
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
@@ -190,7 +190,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-routes-8cab8a76
+          name: windows-keyboard-routes-925e29f5
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
