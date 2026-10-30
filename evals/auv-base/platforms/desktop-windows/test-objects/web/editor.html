@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>AUV Editor AUV_EDITOR_MARKER</title>
+<style>
+body { font: 20px sans-serif; margin: 24px; background: #eef3f8; color: #102030; }
+textarea { display: block; width: 90%; height: 260px; font: 22px monospace; }
+</style>
+<h1>AUV controlled editor</h1>
+<label for="editor">AUV editor</label>
+<textarea id="editor" aria-label="AUV editor" spellcheck="false"></textarea>
+<p id="state">No input received</p>
+<script>
+const editor = document.getElementById("editor");
+editor.addEventListener("input", event => {
+  document.getElementById("state").textContent = JSON.stringify({
+    text: editor.value, trusted: event.isTrusted, focused: document.activeElement === editor
+  });
+});
+// TODO(windows-application-workflow): app-owned save/readback is added after the
+// controls inventory identifies the real focus target; this page does not accept a workflow yet.
+</script>
+</html>

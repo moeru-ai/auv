@@ -1,0 +1,260 @@
+//! Real application controls and independent evidence. Setup and teardown belong
+//! to the controller; application input belongs to AUV's typed execution path.
+
+use std::ffi::OsString;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, ensure};
+use auv_driver_common::{Driver, window::Window};
+use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
+use serde_json::{Value, json};
+
+use super::super::super::background::run_id;
+use super::super::super::records::Records;
+use super::super::super::watch::DesktopWatch;
+
+#[path = "application_process.rs"]
+mod native;
+
+/// Executables prepared by the isolated controller, never the user's profiles.
+pub struct Options {
+  pub output: PathBuf,
+  pub edge: PathBuf,
+  pub vscode: PathBuf,
+  pub notepadnext: PathBuf,
+  pub powershell_ise: PathBuf,
+}
+
+fn isolated() -> Result<()> {
+  ensure!(std::env::var("AUV_ISOLATED_DESKTOP_EVAL").as_deref() == Ok("1"), "requires AUV_ISOLATED_DESKTOP_EVAL=1");
+  Ok(())
+}
+
+fn admitted() -> Result<()> {
+  isolated()?;
+  let mut byte = [0];
+  std::io::stdin().read_exact(&mut byte).context("controller admission pipe closed")?;
+  ensure!(byte == *b"\n", "invalid controller admission");
+  Ok(())
+}
+
+/// Internal subprocess entry. It cannot create an app before job assignment.
+#[doc(hidden)]
+pub fn launch_host(program: &Path, logs: &Path, args: &[OsString]) -> Result<bool> {
+  admitted()?;
+  let mut child = Command::new(program)
+    .args(args)
+    .stdin(Stdio::null())
+    .stdout(std::fs::File::create(logs.join("app.stdout.log"))?)
+    .stderr(std::fs::File::create(logs.join("app.stderr.log"))?)
+    .spawn()?;
+  std::fs::write(logs.join("launch.json"), serde_json::to_vec_pretty(&json!({"pid": child.id(), "program": program}))?)?;
+  let status = child.wait()?;
+  std::fs::write(logs.join("launcher-exit.json"), serde_json::to_vec_pretty(&json!({"exit": status.code()}))?)?;
+  Ok(status.success())
+}
+
+/// Internal subprocess entry. A bounded owner can end a blocked provider call.
+#[doc(hidden)]
+pub fn snapshot_controls(window_id: &str, process_id: u32, output: &Path) -> Result<bool> {
+  admitted()?;
+  let session = WindowsDriver::new().open_local()?;
+  let window = session
+    .window()
+    .list()?
+    .into_iter()
+    .find(|window| window.reference.id == window_id && window.process_id == Some(process_id))
+    .context("inspector window identity changed")?;
+  let tree = match auv_driver_windows::accessibility::snapshot_window(&window) {
+    Ok(tree) => json!({"truncated": tree.truncated, "nodes": tree.nodes.iter().map(|node| json!({
+      "path": node.path, "depth": node.depth, "role": node.role, "control_type": node.control_type,
+      "name": node.name, "value": node.value, "automation_id": node.automation_id,
+      "class_name": node.class_name, "focused": node.focused, "enabled": node.enabled,
+      "keyboard_focusable": node.keyboard_focusable, "offscreen": node.offscreen, "bounds": node.bounds,
+    })).collect::<Vec<_>>() }),
+    Err(error) => json!({"error": error.to_string()}),
+  };
+  // Pixels are explicitly requested by this controller; no image bytes cross a client round trip.
+  let capture = match session.window().capture(&window) {
+    Ok(capture) => {
+      capture.image.save(output.join("window.png"))?;
+      json!({"file": "window.png", "backend": capture.backend, "width": capture.image.width(), "height": capture.image.height()})
+    }
+    Err(error) => json!({"error": error.to_string()}),
+  };
+  std::fs::write(output.join("snapshot.json"), serde_json::to_vec_pretty(&json!({"window": window, "tree": tree, "capture": capture}))?)?;
+  Ok(true)
+}
+
+fn helper_command(mode: &str, directory: &Path) -> Result<Command> {
+  let mut command = Command::new(std::env::current_exe()?);
+  command
+    .arg(mode)
+    .stdout(std::fs::File::create(directory.join(format!("{mode}.stdout.log")))?)
+    .stderr(std::fs::File::create(directory.join(format!("{mode}.stderr.log")))?);
+  Ok(command)
+}
+
+fn owned_windows(session: &WindowsDriverSession, processes: &native::Processes) -> Result<Vec<Window>> {
+  let mut owned = Vec::new();
+  for window in session.window().list()? {
+    if let Some(pid) = window.process_id
+      && processes.contains(pid)?
+    {
+      owned.push(window);
+    }
+  }
+  Ok(owned)
+}
+
+/// Launches four real toolkits, records their controls/pixels, and verifies ownership cleanup.
+/// NOTICE: this inventory issues no application input and never accepts an edit/save workflow.
+pub fn run_controls(options: &Options) -> Result<bool> {
+  isolated()?;
+  ensure!(!options.output.exists(), "controls output must be a fresh directory");
+  std::fs::create_dir_all(&options.output)?;
+  let session = WindowsDriver::new().open_local()?;
+  let watch = DesktopWatch::start()?;
+  let original = watch.snapshot();
+  let original_window = session.window().list()?.into_iter().find(|window| window.reference.id == original.foreground.to_string());
+  let run = run_id();
+  let mut records = Records::create(&options.output.join("application-controls.jsonl"), &run, "application-controls")?;
+  let mut complete = true;
+  let mut attempts = 0;
+  for (name, program) in [
+    ("edge", &options.edge),
+    ("vscode", &options.vscode),
+    ("notepadnext", &options.notepadnext),
+    ("powershell-ise", &options.powershell_ise),
+  ] {
+    let before = watch.snapshot();
+    if before.physical_keys != original.physical_keys || before.physical_mouse != original.physical_mouse {
+      records.write("abort", json!({"reason": "physical input", "next_app": name}))?;
+      complete = false;
+      break;
+    }
+    attempts += 1;
+    let directory = options.output.join(name);
+    std::fs::create_dir(&directory)?;
+    let marker = format!("auv-editor-{run}");
+    let fixture = directory.join(format!(
+      "{marker}.{}",
+      if name == "edge" {
+        "html"
+      } else if name == "powershell-ise" {
+        "ps1"
+      } else {
+        "txt"
+      }
+    ));
+    if name == "edge" {
+      std::fs::write(&fixture, include_str!("../test-objects/web/editor.html").replace("AUV_EDITOR_MARKER", &marker))?;
+    } else {
+      std::fs::write(&fixture, format!("# AUV controlled editor {marker}\r\n"))?;
+    }
+    let mut processes = native::Processes::new()?;
+    let attempt = (|| -> Result<Value> {
+      let mut host = helper_command("app-host", &directory)?;
+      host.arg("--program").arg(program).arg("--logs").arg(&directory).arg("--");
+      match name {
+        "edge" => {
+          let url = url::Url::from_file_path(&fixture).map_err(|_| anyhow::anyhow!("invalid fixture URL"))?;
+          host
+            .arg(format!("--user-data-dir={}", directory.join("profile").display()))
+            .args([
+              "--no-first-run",
+              "--no-default-browser-check",
+              "--force-renderer-accessibility",
+              "--window-size=800,620",
+            ])
+            .arg(format!("--app={url}"));
+        }
+        "vscode" => {
+          let settings = directory.join("profile/User");
+          std::fs::create_dir_all(&settings)?;
+          std::fs::write(
+            settings.join("settings.json"),
+            serde_json::to_vec_pretty(&json!({
+              "editor.accessibilitySupport": "on", "workbench.startupEditor": "none", "window.restoreWindows": "none",
+              "security.workspace.trust.enabled": false, "files.autoSave": "off", "files.hotExit": "off",
+              "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.autoCheckUpdates": false,
+            }))?,
+          )?;
+          host
+            .arg("--user-data-dir")
+            .arg(directory.join("profile"))
+            .arg("--extensions-dir")
+            .arg(directory.join("extensions"))
+            .args([
+              "--disable-extensions",
+              "--disable-workspace-trust",
+              "--new-window",
+              "--force-renderer-accessibility",
+            ])
+            .arg(&fixture);
+        }
+        "powershell-ise" => {
+          host.args(["-NoProfile", "-File"]).arg(&fixture);
+        }
+        "notepadnext" => {
+          host.env("QT_ACCESSIBILITY", "1").arg(&fixture);
+        }
+        _ => unreachable!(),
+      }
+      processes.start(host)?;
+      let deadline = Instant::now() + Duration::from_secs(30);
+      let window = loop {
+        let windows = owned_windows(&session, &processes)?;
+        if let Some(window) =
+          windows.iter().find(|window| window.is_visible && window.title.as_deref().is_some_and(|title| title.contains(&marker)))
+        {
+          break window.clone();
+        }
+        if Instant::now() >= deadline {
+          records.write("owned_windows", json!({"app": name, "windows": windows}))?;
+          anyhow::bail!("owned editor window did not appear");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+      };
+      let pid = window.process_id.context("owned window omitted PID")?;
+      let mut inspect = helper_command("app-snapshot", &directory)?;
+      inspect.arg("--window-id").arg(&window.reference.id).arg("--process-id").arg(pid.to_string()).arg("--output").arg(&directory);
+      let inspector = processes.start(inspect)?;
+      ensure!(processes.wait(inspector, Duration::from_secs(25))? == 0, "application inspector failed");
+      let snapshot: Value = serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?;
+      Ok(json!({"window": window, "snapshot": snapshot, "fixture": fixture, "launched_program": program}))
+    })();
+    let cleanup = processes.finish();
+    let after = watch.snapshot();
+    let restored = if after.physical_keys == original.physical_keys && after.physical_mouse == original.physical_mouse {
+      if let Some(window) = &original_window {
+        session.window().activate(window).map_err(|error| error.to_string())
+      } else {
+        Ok(())
+      }
+    } else {
+      Err("physical input: foreground restoration skipped".to_string())
+    };
+    complete &= attempt.is_ok() && cleanup.is_ok();
+    records.write("app", json!({"app": name, "inventory": attempt.as_ref().ok(), "error": attempt.as_ref().err().map(ToString::to_string),
+      "cleanup": cleanup.as_ref().ok(), "cleanup_error": cleanup.as_ref().err().map(ToString::to_string), "restore_error": restored.err(),
+      "physical_keys": after.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": after.physical_mouse.saturating_sub(original.physical_mouse),
+      "injected_keys": after.injected_keys.saturating_sub(original.injected_keys), "injected_mouse": after.injected_mouse.saturating_sub(original.injected_mouse),
+      "foreground_before": before.foreground, "foreground_after": after.foreground}))?;
+  }
+  let final_state = watch.snapshot();
+  let restored = final_state.foreground == original.foreground && final_state.cursor == original.cursor;
+  complete &= attempts == 4
+    && restored
+    && final_state.physical_keys == original.physical_keys
+    && final_state.physical_mouse == original.physical_mouse;
+  // TODO(windows-application-workflow): focus/edit/save acceptance follows the
+  // recorded real control selectors; a completed inventory is never that acceptance.
+  records.write("summary", json!({"apps": attempts, "inventory_complete": complete, "workflow_accepted": false,
+    "foreground_restored": final_state.foreground == original.foreground, "pointer_restored": final_state.cursor == original.cursor,
+    "physical_keys": final_state.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": final_state.physical_mouse.saturating_sub(original.physical_mouse)}))?;
+  Ok(complete)
+}
