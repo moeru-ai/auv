@@ -5,7 +5,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use auv_driver_common::window::Window;
+use auv_driver_common::{Driver, window::Window};
+use auv_driver_windows::WindowsDriver;
 use serde_json::{Value, json};
 
 use super::super::super::super::records::Records;
@@ -70,6 +71,15 @@ pub(super) fn run(
   let window_target = format!("window:{}", window.reference.id);
   let before_file = std::fs::read(fixture)?;
   let result = (|| -> Result<Value> {
+    // The public semantic command selects by application. Refuse a competing
+    // main window before using that selector; check the result's PID as well.
+    let windows = WindowsDriver::new().open_local()?.window().list()?;
+    let candidates: Vec<_> =
+      windows.iter().filter(|candidate| candidate.is_visible && candidate.is_main && candidate.app_name == window.app_name).collect();
+    ensure!(
+      candidates.len() == 1 && candidates[0].reference == window.reference && candidates[0].process_id == window.process_id,
+      "application selector has competing or changed main windows"
+    );
     let before = watch.snapshot();
     let missing = format!("AUV-ABSENT-{marker}");
     let refusal = invoke(processes, auv, &directory.join("01-refusal"), "input.focusText", &[&missing], &app_target, watch)?;

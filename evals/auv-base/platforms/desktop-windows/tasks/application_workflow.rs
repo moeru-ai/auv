@@ -160,7 +160,15 @@ fn inspect_controls(processes: &mut native::Processes, window: &Window, director
   inspect.arg("--window-id").arg(&window.reference.id).arg("--process-id").arg(pid.to_string()).arg("--output").arg(directory);
   let inspector = processes.start(inspect)?;
   ensure!(processes.wait(inspector, Duration::from_secs(25))? == 0, "application inspector failed");
-  Ok(serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?)
+  let snapshot: Value = serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?;
+  ensure!(snapshot["tree"]["nodes"].is_array(), "inspector omitted controls; inspect snapshot.json");
+  ensure!(
+    snapshot["capture"]["width"].as_u64().is_some_and(|width| width > 0)
+      && snapshot["capture"]["height"].as_u64().is_some_and(|height| height > 0)
+      && directory.join("window.png").is_file(),
+    "inspector omitted pixels; inspect snapshot.json"
+  );
+  Ok(snapshot)
 }
 
 /// Launches four real toolkits, records their controls/pixels, and verifies ownership cleanup.
@@ -305,6 +313,7 @@ fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
           "after_editor",
           json!({"app": name, "snapshot": readback.as_ref().ok(), "error": readback.as_ref().err().map(ToString::to_string)}),
         )?;
+        readback?;
       }
       Ok(json!({"window": window, "snapshot": snapshot, "fixture": fixture, "launched_program": program, "editor": editor_result}))
     })();
