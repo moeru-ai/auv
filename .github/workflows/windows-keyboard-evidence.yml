@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: af374c5bce7a45112a56a8999387ec64fade7356
+          ref: bd219a46d5b1767d67dd13e7138237476653c61a
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'af374c5bce7a45112a56a8999387ec64fade7356') { throw "Unexpected source $actual" }
+          if ($actual -ne 'bd219a46d5b1767d67dd13e7138237476653c61a') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -115,10 +115,14 @@ jobs:
           $cases = @($rows | Where-Object kind -eq 'case')
           $cleanup = @($rows | Where-Object kind -eq 'cleanup')
           $summary = @($rows | Where-Object kind -eq 'summary')
-          if ($cases.Count -ne 6 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) {
-            throw 'Missing complete six-case keyboard application receipts'
+          $expectedCases = @('legacy_stay', 'bound_success', 'bound_stay', 'bound_aba', 'bound_minimize', 'bound_close',
+            'bound_press_success', 'bound_press_stay', 'bound_combo_stay', 'bound_paste_success', 'bound_paste_stay',
+            'bound_cancel_after_char', 'bound_pre_cancel', 'bound_foreign_admission', 'bound_owner_admission')
+          if ($cases.Count -ne 15 -or @(Compare-Object $expectedCases @($cases.case)).Count -ne 0 -or
+              @($cases | Where-Object { -not $_.passed -or -not $_.modifiers_released -or -not $_.clipboard_text_restored }).Count -ne 0) {
+            throw 'Missing complete fifteen-case keyboard application receipts'
           }
-          if ($cleanup.Count -ne 12 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) {
+          if ($cleanup.Count -ne 30 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) {
             throw 'Owned receiver cleanup did not complete'
           }
           if ($summary.Count -ne 1 -or -not $summary[0].passed -or -not $summary[0].pointer_restored -or -not $summary[0].foreground_restored) {
@@ -134,7 +138,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-guard-af374c5b
+          name: windows-keyboard-guard-bd219a46
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
