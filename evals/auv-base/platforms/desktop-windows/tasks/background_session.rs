@@ -60,6 +60,21 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       powershell_ise: PathBuf,
     },
+    /// Real editor focus/type/save cases with independent file verification.
+    AppEditor {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long)]
+      auv: PathBuf,
+      #[arg(long)]
+      edge: PathBuf,
+      #[arg(long)]
+      vscode: PathBuf,
+      #[arg(long)]
+      notepadnext: PathBuf,
+      #[arg(long)]
+      powershell_ise: PathBuf,
+    },
     #[command(hide = true)]
     AppHost {
       #[arg(long)]
@@ -221,6 +236,23 @@ fn main() -> std::process::ExitCode {
   }
 
   let result = match Cli::parse().scenario {
+    Scenario::AppEditor {
+      output,
+      auv,
+      edge,
+      vscode,
+      notepadnext,
+      powershell_ise,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::run_editor(
+      &auv_base_evals::desktop_windows::foreground_commands::workflow::AppControlsOptions {
+        output,
+        edge,
+        vscode,
+        notepadnext,
+        powershell_ise,
+      },
+      &auv,
+    ),
     Scenario::AppControls {
       output,
       edge,

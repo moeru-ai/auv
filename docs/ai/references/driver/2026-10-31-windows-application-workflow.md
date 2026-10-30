@@ -1,6 +1,6 @@
 # Windows application workflow acceptance
 
-Status: test-only controls inventory; functional workflows are not accepted yet.
+Status: test-only controls inventory accepted; edit/save cases await isolated execution.
 
 The owner goal names Edge, Electron, Qt, and WPF application validation.
 The prepared cohort is Edge, VS Code 1.144.0, NotepadNext 0.15 with Qt 6.5.3,
@@ -31,7 +31,7 @@ Desktop witness counts, foreground restoration, pointer restoration, and process
 remain separate from controls and pixels.
 
 The internal `app-host` and `app-snapshot` subprocess commands are hidden evaluation helpers.
-Their Rust entries and `run_controls` belong to the unpublished evaluation crate.
+Their Rust entries, `run_controls`, and `run_editor` belong to the unpublished evaluation crate.
 This slice adds no root AUV command, Driver capability, Protobuf field, or SDK API.
 
 ## Acceptance gates
@@ -49,7 +49,9 @@ The next functional cases must use the same typed focus and input execution surf
 - Keep CLI, selected Runner, and MCP results, failure codes, cancellation, and durable records comparable.
 
 For text editors, the saved fixture is the independent application result.
-The controlled Edge page still needs its app-owned save/readback path.
+The controlled Edge page accepts a trusted Ctrl+S or save-button event.
+It downloads the textarea's text to the owned profile's configured download directory.
+The page's `save_requested` state is not evidence of persistence; the controller reads the file.
 No ValuePattern write, automatic semantic-to-mouse fallback, screenshot equality guard,
 or full application-support claim belongs to the inventory.
 The retired #429 predicate remains retired.
@@ -75,4 +77,28 @@ NotepadNext exposed a complete 71-node tree; its focusable editor region had no 
 VS Code exposed 173 nodes and its editor value, but marked the tree incomplete.
 Its maximum depth was 17, below the Driver's depth limit; no traversal limit was relaxed.
 The inspector now retains up to three read-only startup snapshots to distinguish transient tree changes.
-Input and edit/save acceptance still require new evidence.
+The [corrected inventory](https://github.com/moeru-ai/auv/actions/runs/41125933697)
+at `cbd34975` completed all four applications.
+Artifact `13010443371` matched SHA-256
+`d2560e1abf8e802d99fa0afe52e124f8c90f14ed639ca2b1998b1ae3e07e7ef1` after download.
+All four captures were reviewed independently; job cleanup and desktop restoration passed.
+Its trees were complete: Edge 27 nodes, VS Code 175, Qt 71, and ISE 116.
+VS Code's initial incomplete tree was transient; no Driver traversal policy changed.
+
+## Edit/save execution
+
+`background-session-eval app-editor` uses the same four paths plus an explicit `--auv` executable.
+It invokes AUV's JSON CLI inside the owned job; every step retains stdout, stderr, and its run store.
+An absent semantic query must return `not_found` with `not_delivered`, leave the fixture unchanged,
+and inject no input before the positive case proceeds.
+Edge uses `AUV editor`, VS Code uses the controlled filename, and ISE uses `Text Editor`.
+Qt uses an explicitly planned `window.clickText` of the visible controlled marker.
+This strategy follows its unnamed UIA editor; it is never a retry after uncertain semantic delivery.
+The controller reads focus independently before Ctrl+A, text entry, and Ctrl+S.
+For ISE, the payload is comment-only and no execution shortcut is sent.
+
+The saved file must equal the complete expected text, allowing only BOM decoding and CRLF normalization.
+A new controls tree, window capture, desktop witness, and process cleanup remain separate evidence.
+The first failed or uncertain step stops the input run and preserves its partial records.
+Input is never retried. These cases can accept `edit_save_accepted` while keeping
+`workflow_accepted=false`; scrolling, dialogs, loss cases, DPI, and all frontend routes remain separate gates.

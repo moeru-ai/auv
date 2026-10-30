@@ -4,7 +4,7 @@
 
 #[path = "application_workflow.rs"]
 mod applications;
-pub use applications::{Options as AppControlsOptions, launch_host, run_controls, snapshot_controls};
+pub use applications::{Options as AppControlsOptions, launch_host, run_controls, run_editor, snapshot_controls};
 
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};

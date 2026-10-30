@@ -3,6 +3,7 @@
 
 use std::ffi::OsString;
 use std::io::Read;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -11,11 +12,14 @@ use anyhow::{Context, Result, ensure};
 use auv_driver_common::{Driver, window::Window};
 use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
 use serde_json::{Value, json};
+use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use super::super::super::background::run_id;
 use super::super::super::records::Records;
 use super::super::super::watch::DesktopWatch;
 
+#[path = "application_editor.rs"]
+mod editor;
 #[path = "application_process.rs"]
 mod native;
 
@@ -46,6 +50,7 @@ fn admitted() -> Result<()> {
 pub fn launch_host(program: &Path, logs: &Path, args: &[OsString]) -> Result<bool> {
   admitted()?;
   let mut child = Command::new(program)
+    .creation_flags(CREATE_NO_WINDOW.0)
     .args(args)
     .stdin(Stdio::null())
     .stdout(std::fs::File::create(logs.join("app.stdout.log"))?)
@@ -148,9 +153,30 @@ fn editor_window<'a>(windows: &'a [Window], app: &str, marker: &str) -> Result<O
   Ok(None)
 }
 
+fn inspect_controls(processes: &mut native::Processes, window: &Window, directory: &Path) -> Result<Value> {
+  let pid = window.process_id.context("owned window omitted PID")?;
+  ensure!(processes.contains(pid)?, "inspector target no longer belongs to controller");
+  let mut inspect = helper_command("app-snapshot", directory)?;
+  inspect.arg("--window-id").arg(&window.reference.id).arg("--process-id").arg(pid.to_string()).arg("--output").arg(directory);
+  let inspector = processes.start(inspect)?;
+  ensure!(processes.wait(inspector, Duration::from_secs(25))? == 0, "application inspector failed");
+  Ok(serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?)
+}
+
 /// Launches four real toolkits, records their controls/pixels, and verifies ownership cleanup.
 /// NOTICE: this inventory issues no application input and never accepts an edit/save workflow.
 pub fn run_controls(options: &Options) -> Result<bool> {
+  run(options, None)
+}
+
+/// Runs explicit AUV editor/save cases and verifies app-owned files. This does
+/// not accept the later scroll/dialog, DPI, or full cross-frontend workflow gates.
+pub fn run_editor(options: &Options, auv: &Path) -> Result<bool> {
+  ensure!(auv.is_file(), "explicit AUV executable is required");
+  run(options, Some(auv))
+}
+
+fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
   isolated()?;
   ensure!(!options.output.exists(), "controls output must be a fresh directory");
   std::fs::create_dir_all(&options.output)?;
@@ -159,8 +185,14 @@ pub fn run_controls(options: &Options) -> Result<bool> {
   let original = watch.snapshot();
   let original_window = session.window().list()?.into_iter().find(|window| window.reference.id == original.foreground.to_string());
   let run = run_id();
-  let mut records = Records::create(&options.output.join("application-controls.jsonl"), &run, "application-controls")?;
+  let scenario = if auv.is_some() {
+    "application-editor"
+  } else {
+    "application-controls"
+  };
+  let mut records = Records::create(&options.output.join(format!("{scenario}.jsonl")), &run, scenario)?;
   let mut complete = true;
+  let mut editors_passed = true;
   let mut attempts = 0;
   for (name, program) in [
     ("edge", &options.edge),
@@ -200,6 +232,13 @@ pub fn run_controls(options: &Options) -> Result<bool> {
       match name {
         "edge" => {
           let url = url::Url::from_file_path(&fixture).map_err(|_| anyhow::anyhow!("invalid fixture URL"))?;
+          let profile = directory.join("profile/Default");
+          let downloads = directory.join("downloads");
+          std::fs::create_dir_all(&profile)?;
+          std::fs::create_dir(&downloads)?;
+          // The app writes downloaded text into this owned directory. The pref is
+          // Chromium's `kDownloadDefaultDirectory` in `chrome/common/pref_names.h`.
+          std::fs::write(profile.join("Preferences"), serde_json::to_vec_pretty(&json!({"download": {"default_directory": downloads}}))?)?;
           host
             .arg(format!("--user-data-dir={}", directory.join("profile").display()))
             .args([
@@ -255,13 +294,19 @@ pub fn run_controls(options: &Options) -> Result<bool> {
         }
         std::thread::sleep(Duration::from_millis(100));
       };
-      let pid = window.process_id.context("owned window omitted PID")?;
-      let mut inspect = helper_command("app-snapshot", &directory)?;
-      inspect.arg("--window-id").arg(&window.reference.id).arg("--process-id").arg(pid.to_string()).arg("--output").arg(&directory);
-      let inspector = processes.start(inspect)?;
-      ensure!(processes.wait(inspector, Duration::from_secs(25))? == 0, "application inspector failed");
-      let snapshot: Value = serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?;
-      Ok(json!({"window": window, "snapshot": snapshot, "fixture": fixture, "launched_program": program}))
+      let snapshot = inspect_controls(&mut processes, &window, &directory)?;
+      let mut editor_result = Value::Null;
+      if let Some(auv) = auv {
+        editor_result = editor::run(name, auv, &directory, &fixture, &window, &mut processes, &watch)?;
+        let after = directory.join("after");
+        std::fs::create_dir(&after)?;
+        let readback = inspect_controls(&mut processes, &window, &after);
+        records.write(
+          "after_editor",
+          json!({"app": name, "snapshot": readback.as_ref().ok(), "error": readback.as_ref().err().map(ToString::to_string)}),
+        )?;
+      }
+      Ok(json!({"window": window, "snapshot": snapshot, "fixture": fixture, "launched_program": program, "editor": editor_result}))
     })();
     let cleanup = processes.finish();
     let after = watch.snapshot();
@@ -275,11 +320,20 @@ pub fn run_controls(options: &Options) -> Result<bool> {
       Err("physical input: foreground restoration skipped".to_string())
     };
     complete &= attempt.is_ok() && cleanup.is_ok();
+    if auv.is_some() {
+      editors_passed &= attempt.as_ref().is_ok_and(|result| result["editor"]["passed"] == true);
+    }
     records.write("app", json!({"app": name, "inventory": attempt.as_ref().ok(), "error": attempt.as_ref().err().map(ToString::to_string),
       "cleanup": cleanup.as_ref().ok(), "cleanup_error": cleanup.as_ref().err().map(ToString::to_string), "restore_error": restored.err(),
       "physical_keys": after.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": after.physical_mouse.saturating_sub(original.physical_mouse),
       "injected_keys": after.injected_keys.saturating_sub(original.injected_keys), "injected_mouse": after.injected_mouse.saturating_sub(original.injected_mouse),
       "foreground_before": before.foreground, "foreground_after": after.foreground}))?;
+    if auv.is_some() && !editors_passed {
+      // A failed/uncertain action ends this input run. Preserve evidence and
+      // cleanup rather than driving the remaining applications blindly.
+      records.write("abort", json!({"reason": "editor case failed; input run stopped", "app": name}))?;
+      break;
+    }
   }
   let final_state = watch.snapshot();
   let restored = final_state.foreground == original.foreground && final_state.cursor == original.cursor;
@@ -287,12 +341,13 @@ pub fn run_controls(options: &Options) -> Result<bool> {
     && restored
     && final_state.physical_keys == original.physical_keys
     && final_state.physical_mouse == original.physical_mouse;
-  // TODO(windows-application-workflow): focus/edit/save acceptance follows the
-  // recorded real control selectors; a completed inventory is never that acceptance.
-  records.write("summary", json!({"apps": attempts, "inventory_complete": complete, "workflow_accepted": false,
+  // TODO(windows-application-workflow): scrolling/dialogs, target-loss cases,
+  // DPI, and cross-frontend acceptance remain separate owner-named goal gates;
+  // see 2026-10-31-windows-application-workflow.md before expanding these cases.
+  records.write("summary", json!({"apps": attempts, "inventory_complete": complete, "edit_save_accepted": auv.is_some() && editors_passed && complete, "workflow_accepted": false,
     "foreground_restored": final_state.foreground == original.foreground, "pointer_restored": final_state.cursor == original.cursor,
     "physical_keys": final_state.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": final_state.physical_mouse.saturating_sub(original.physical_mouse)}))?;
-  Ok(complete)
+  Ok(complete && (auv.is_none() || editors_passed))
 }
 
 #[cfg(test)]

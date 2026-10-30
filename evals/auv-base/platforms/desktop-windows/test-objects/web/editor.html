@@ -9,15 +9,35 @@ textarea { display: block; width: 90%; height: 260px; font: 22px monospace; }
 <h1>AUV controlled editor</h1>
 <label for="editor">AUV editor</label>
 <textarea id="editor" aria-label="AUV editor" spellcheck="false"></textarea>
+<button id="save">AUV save file</button>
 <p id="state">No input received</p>
 <script>
 const editor = document.getElementById("editor");
+const state = document.getElementById("state");
 editor.addEventListener("input", event => {
-  document.getElementById("state").textContent = JSON.stringify({
+  state.textContent = JSON.stringify({
     text: editor.value, trusted: event.isTrusted, focused: document.activeElement === editor
   });
 });
-// TODO(windows-application-workflow): app-owned save/readback is added after the
-// controls inventory identifies the real focus target; this page does not accept a workflow yet.
+function saveFile(trusted) {
+  if (!trusted) {
+    state.textContent = "Refused untrusted save event";
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([editor.value], {type: "text/plain;charset=utf-8"}));
+  link.download = "AUV_EDITOR_MARKER.txt";
+  link.click();
+  state.textContent = JSON.stringify({save_requested: true, text: editor.value, trusted});
+}
+document.getElementById("save").addEventListener("click", event => saveFile(event.isTrusted));
+document.addEventListener("keydown", event => {
+  if (event.ctrlKey && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    saveFile(event.isTrusted);
+  }
+});
+// NOTICE: save_requested describes the page event. Only the downloaded file's
+// contents can accept persistence; the controller never treats this label as success.
 </script>
 </html>
