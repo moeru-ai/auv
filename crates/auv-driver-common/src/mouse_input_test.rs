@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 struct Receiver {
   events: Mutex<Vec<String>>,
   fail_up: AtomicBool,
+  up_gate: Option<(std::sync::mpsc::Sender<()>, Mutex<std::sync::mpsc::Receiver<()>>)>,
 }
 impl MouseBackend for Receiver {
   fn move_to(&self, _: Point, held: Option<MouseButton>) -> DriverResult<InputActionResult> {
@@ -13,6 +14,12 @@ impl MouseBackend for Receiver {
   }
   fn button(&self, _: Point, _: MouseButton, down: bool) -> DriverResult<InputActionResult> {
     self.events.lock().unwrap().push(if down { "down" } else { "up" }.into());
+    if !down {
+      if let Some((entered, release)) = &self.up_gate {
+        entered.send(()).map_err(|_| invalid("release fixture observer exited"))?;
+        release.lock().unwrap().recv_timeout(Duration::from_secs(2)).map_err(|_| invalid("release fixture was not resumed"))?;
+      }
+    }
     if !down && self.fail_up.load(Ordering::SeqCst) {
       return Err(invalid("injected release failure"));
     }
@@ -67,6 +74,25 @@ fn abandoned_hold_releases_without_another_request() {
   coordinator.down(0, Point::new(1., 2.), MouseButton::Left, Duration::from_millis(20), receiver.clone()).unwrap();
   wait_for(|| receiver.events.lock().unwrap().last().is_some_and(|event| event == "up"));
   assert_eq!(coordinator.state.lock().unwrap().holder, None);
+}
+
+// https://github.com/moeru-ai/auv/actions/runs/41103991540/job/124228286676
+#[test]
+fn ci_124228286676_up_receipt_precedes_reservation_release() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let (entered, entered_rx) = std::sync::mpsc::channel();
+  let (release, release_rx) = std::sync::mpsc::channel();
+  let receiver = Arc::new(Receiver { up_gate: Some((entered, Mutex::new(release_rx))), ..Default::default() });
+  coordinator.down(0, Point::new(1., 2.), MouseButton::Left, Duration::from_millis(20), receiver.clone()).unwrap();
+  entered_rx.recv_timeout(Duration::from_secs(2)).expect("watchdog entered native release");
+  let up_was_recorded = receiver.events.lock().unwrap().last().is_some_and(|event| event == "up");
+  let holder_while_native_release_runs = coordinator.state.lock().unwrap().holder;
+  release.send(()).unwrap();
+  // Finish the worker before testing the old assumption, so a failing assertion
+  // cannot strand the fixture or poison a mutex during coordinator destruction.
+  wait_for(|| coordinator.state.lock().unwrap().holder.is_none());
+  assert!(up_was_recorded);
+  assert_eq!(holder_while_native_release_runs, None, "old test assumed that recording up completed release");
 }
 
 #[test]
