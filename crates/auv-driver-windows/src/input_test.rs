@@ -9,15 +9,30 @@ fn window_keyboard_dry_run_does_not_query_or_activate_the_os() {
   // These are request data, not a live native window. Dry run must finish before OS admission.
   let target = InputTarget::Window(Window {
     reference: WindowRef { id: "1".into() },
-    title: None, app_name: None, application_id: None, process_id: Some(42),
-    frame: Rect { origin: Point::new(0.0, 0.0), size: Size::new(100.0, 100.0) },
-    coordinate_space: CoordinateSpace::Screen, is_main: true, is_visible: true,
+    title: None,
+    app_name: None,
+    application_id: None,
+    process_id: Some(42),
+    frame: Rect {
+      origin: Point::new(0.0, 0.0),
+      size: Size::new(100.0, 100.0),
+    },
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
   });
   let session = crate::WindowsDriver::new().open_local().unwrap();
-  let result = session.input().input_keyboard(&target, vec![KeyboardInput::TypeText {
-    text: "planned only".into(),
-    options: TypeTextOptions { policy: InputPolicy::ForegroundPreferred, ..Default::default() },
-  }], true);
+  let result = session.input().input_keyboard(
+    &target,
+    vec![KeyboardInput::TypeText {
+      text: "planned only".into(),
+      options: TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    }],
+    true,
+  );
   assert!(matches!(result, Ok(None)), "window dry run failed: {result:?}");
 }
 

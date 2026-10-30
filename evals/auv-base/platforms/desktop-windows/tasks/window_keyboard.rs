@@ -112,8 +112,24 @@ pub fn run(output: &Path) -> Result<bool> {
     let passed = match case {
       "legacy_stay" => result.is_ok() && fired && text_a == Some("a") && text_b == "bc",
       "bound_success" => result.is_ok() && text_a == Some("abc") && text_b.is_empty() && b_keys == 0,
-      "bound_close" => result.is_err() && closed && text_b.is_empty() && b_keys == 0 && native_progress.is_some(),
-      _ => result.is_err() && fired && text_a == Some("a") && text_b.is_empty() && b_keys == 0 && native_progress.is_some(),
+      "bound_close" => {
+        result.is_err()
+          && closed
+          && after.injected_keys > before.injected_keys
+          && text_b.is_empty()
+          && b_keys == 0
+          && native_progress.is_some()
+      }
+      _ => {
+        let fault_completed = match case {
+          "bound_aba" => {
+            fault_receipt.as_ref().is_some_and(|value| value["receipt"]["returned_owner"] == true) && after.foreground == a.hwnd()
+          }
+          "bound_minimize" => a_after.as_ref().is_some_and(|value| value["minimized"] == true),
+          _ => true,
+        };
+        result.is_err() && fired && fault_completed && text_a == Some("a") && text_b.is_empty() && b_keys == 0 && native_progress.is_some()
+      }
     };
     let events: Vec<Value> = watch
       .timeline(before.taken_ms, after.taken_ms)

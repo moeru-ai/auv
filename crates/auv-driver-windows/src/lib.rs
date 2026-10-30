@@ -40,8 +40,8 @@ pub use auv_driver_common::{
   ApplicationActivationMethod, ApplicationActivationResult, ApplicationActivationVerification, ApplicationIdKind,
 };
 pub use background_session::{
-  AttachError, BackgroundSession, ClickRequest, Delivery, FrameChange, FrameRead, LostReason, MAX_TARGETS, Outcome, SessionStats, TargetId,
-  TargetInfo, TargetState,
+  AttachError, BackgroundSession, ClickRequest, Delivery, FrameChange, FrameRead, MAX_TARGETS, Outcome, SessionStats, TargetId, TargetInfo,
+  TargetState,
 };
 pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
@@ -69,3 +69,4 @@ pub use wgc::{
   FastWindowVerification, WindowHealth, capture_window_health, capture_window_health_cached, capture_window_health_strict,
   capture_window_wgc, check_window_liveness, clear_health_cache, prewarm_wgc, prewarm_wgc_window, reset_d3d_context,
 };
+pub use window::LostReason;

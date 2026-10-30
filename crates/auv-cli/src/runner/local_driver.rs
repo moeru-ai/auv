@@ -2690,6 +2690,9 @@ fn driver_status(error: auv_driver::DriverError) -> Status {
     }
     auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(message),
     auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
+    // TODO(window-keyboard-recipient): retain the target_lost category in a typed rich-error
+    // detail before publishing this slice; FailedPrecondition alone conflates UI-reference drift.
+    auv_driver::DriverError::TargetLost { .. } => Status::failed_precondition(message),
     auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
     auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
     auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),

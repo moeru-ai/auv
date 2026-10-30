@@ -214,6 +214,7 @@ pub enum FailureCode {
   CommandFailed,
   InvalidTarget,
   NotFound,
+  TargetLost,
   Unsupported,
   PermissionDenied,
   InvalidInput,
@@ -256,6 +257,7 @@ impl From<auv_driver::DriverError> for InvokeFailure {
       }
       DriverError::Unsupported { .. } => FailureCode::Unsupported,
       DriverError::NotFound { .. } => FailureCode::NotFound,
+      DriverError::TargetLost { .. } => FailureCode::TargetLost,
       DriverError::PermissionDenied { .. } => FailureCode::PermissionDenied,
       DriverError::InvalidInput { .. } => FailureCode::InvalidInput,
       DriverError::StaleUiReference { .. } => FailureCode::StaleUiReference,

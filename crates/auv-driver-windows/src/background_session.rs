@@ -34,7 +34,7 @@ use serde::Serialize;
 
 use crate::background_input;
 use crate::wgc::{FrameUpdate, StreamError};
-use crate::window::WindowProbe;
+use crate::window::{Identity, LostReason, WindowProbe};
 
 /// How many windows one session targets at a time.
 pub const MAX_TARGETS: usize = 5;
@@ -53,18 +53,6 @@ impl std::fmt::Display for TargetId {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "target-{}", self.0)
   }
-}
-
-/// Why a target cannot be operated on any more.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LostReason {
-  /// The window no longer exists.
-  WindowDestroyed,
-  /// The handle now belongs to another process.
-  ProcessChanged,
-  /// The handle was reused by a different window of the same process.
-  HandleReused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -301,14 +289,6 @@ pub(crate) trait FrameSource: Send {
   fn frames_delivered(&self) -> u64;
 }
 
-/// What identifies a window beyond its handle, which Windows reuses once a window is gone.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Identity {
-  process_id: u32,
-  thread_id: u32,
-  class_name: String,
-}
-
 struct Target {
   id: TargetId,
   hwnd: isize,
@@ -380,11 +360,7 @@ impl BackgroundSession {
     self.targets.push(Target {
       id,
       hwnd,
-      identity: Identity {
-        process_id: probe.process_id,
-        thread_id: probe.thread_id,
-        class_name: probe.class_name,
-      },
+      identity: Identity::from_probe(&probe),
       window,
       state: if probe.minimized {
         TargetState::Minimized
@@ -428,15 +404,7 @@ impl BackgroundSession {
     let hwnd = self.targets[index].hwnd;
     let probe = self.backend.probe(hwnd);
     let target = &mut self.targets[index];
-    let lost = if !probe.exists {
-      Some(LostReason::WindowDestroyed)
-    } else if probe.process_id != target.identity.process_id {
-      Some(LostReason::ProcessChanged)
-    } else if probe.thread_id != target.identity.thread_id || probe.class_name != target.identity.class_name {
-      Some(LostReason::HandleReused)
-    } else {
-      None
-    };
+    let lost = target.identity.lost_reason(&probe);
     if let Some(reason) = lost {
       target.state = TargetState::Lost { reason };
       // Closing the stream of a window that is gone releases its capture session.
