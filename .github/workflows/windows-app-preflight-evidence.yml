@@ -11,11 +11,11 @@ permissions:
 jobs:
   inventory:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 4c24a1847d7815dcd0b32564d3c3a6390f74ce65
+          ref: bea0c29474b6c8c44aa0401636ee83efe8b23312
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '4c24a1847d7815dcd0b32564d3c3a6390f74ce65') { throw "Unexpected source $source" }
+          if ($source -ne 'bea0c29474b6c8c44aa0401636ee83efe8b23312') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -187,11 +187,53 @@ jobs:
           [ordered]@{ workflow_sha='${{ github.sha }}'; preflight_only=$true; packages=$packageFacts } |
             ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'auv-app-preflight/portable-apps.json')
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the application controls evaluator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustc --version
+          cargo build --locked -p auv-base-evals --bin background-session-eval
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binary = Get-Item -LiteralPath 'target/debug/background-session-eval.exe'
+          @{ path=$binary.FullName; sha256=(Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } |
+            ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/auv-app-preflight/evaluator-binary.json"
+
+      - name: Launch and inspect owned real applications
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-app-preflight"
+          $environmentFacts = Get-Content -LiteralPath "$directory/environment.json" -Raw | ConvertFrom-Json
+          $portable = Get-Content -LiteralPath "$directory/portable-apps.json" -Raw | ConvertFrom-Json
+          $code = @($portable.packages | Where-Object id -eq 'vscode')[0].executable
+          $notepadnext = @($portable.packages | Where-Object id -eq 'notepadnext')[0].executable
+          & 'target/debug/background-session-eval.exe' app-controls --output "$directory/controls" `
+            --edge $environmentFacts.applications.edge.path --vscode $code --notepadnext $notepadnext `
+            --powershell-ise $environmentFacts.applications.powershell_ise.path `
+            > "$directory/controls.stdout.log" 2> "$directory/controls.stderr.log"
+          $evaluationExit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/controls/application-controls.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 70 })
+          $apps = @($rows | Where-Object kind -eq 'app')
+          if ($apps.Count -ne 4 -or @($apps | Where-Object { $_.cleanup.active_processes -ne 0 -or -not $_.cleanup.roots_exited }).Count -ne 0) {
+            throw 'Owned application cleanup records are incomplete'
+          }
+          $summary = @($rows | Where-Object kind -eq 'summary')[0]
+          if ($summary.workflow_accepted -ne $false) { throw 'Inventory must not accept a functional workflow' }
+          $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$directory/controls-result.json"
+          if ($evaluationExit -ne 0 -or -not $summary.inventory_complete) { throw 'Application controls inventory incomplete; inspect retained errors' }
+
       - name: Preserve the environment inventory
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-environment-preflight
-          path: ${{ runner.temp }}/auv-app-preflight/
+          name: windows-app-controls-bea0c294
+          path: |
+            ${{ runner.temp }}/auv-app-preflight/
+            !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
+            !${{ runner.temp }}/auv-app-preflight/controls/**/extensions/**
           if-no-files-found: warn
           retention-days: 14
