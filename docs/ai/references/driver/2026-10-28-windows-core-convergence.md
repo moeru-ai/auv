@@ -397,9 +397,19 @@ Artifact `12999121492` matched SHA-256
 `0857064873c27e7e163ff6d87d6cf59c13ac051a0fd514b05068381931412a31`.
 All 30 receiver cleanups and desktop restoration passed, with no physical input.
 B received no keys in protected cases; clipboard-text and modifier readbacks passed.
-The [draft contract](https://github.com/moeru-ai/auv/blob/264143c4f0e6f8afe76269ffa4cb1d6445c65357/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
+The [draft contract](https://github.com/moeru-ai/auv/blob/06a8bb9fe6a2443f36f2be3144accf9a608f2d26/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
 records the API migration, tests, artifact provenance, and limits.
-Live Runner/MCP keyboard parity and cleanup fault injection remain open.
+The first actual MCP task found late repeated input after local-MCP cancellation.
+At source `925e29f5`, Windows local Invoke now uses the existing cancellable input boundary.
+Its [replay](https://github.com/moeru-ai/auv/actions/runs/41111375084) passed all 12
+keyboard cases across direct Driver, local Invoke, selected Runner, local MCP, and Runner MCP.
+Both MCP cancellation cases stopped after the acknowledged first character.
+Artifact `13004865694` matched SHA-256
+`e89d081a0c40c0b1a4e470a0d9aaee96f3696efa9511b59ca7191ce2ad3da7e7`.
+All 24 PNGs, application states, durable failure records, and artifact-body hashes were checked.
+The replay also passed the 15 direct cases: 54 receiver cleanups and both desktop restorations passed.
+The canceled requests retained cancellation events; their final native delivery receipts remain unknown.
+Native hook startup and cleanup fault injection remain open.
 The guard does not provide atomic `SendInput` recipient binding or replace #429.
 
 A 2026-10-31 refresh found `origin/main` at
@@ -426,11 +436,12 @@ matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.
-The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
+The typed Invoke path is available to MCP, with scoped keyboard evidence above.
+Complete semantic-focus/edit/verification workflows through MCP remain unverified.
 Phase 2 remains incomplete after retirement of the screenshot guard.
 The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
-The current draft slice is #446: finish live frontend parity for guarded Window keyboard batches after the accepted 15-case direct matrix.
+Draft #446 passed the stated Win32 keyboard route matrix; native hook fault injection and complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
