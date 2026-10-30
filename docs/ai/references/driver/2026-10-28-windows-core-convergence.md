@@ -433,6 +433,19 @@ Recheck application versions and DPI in each later functional run.
 The [environment artifact](https://github.com/moeru-ai/auv/actions/runs/40733696621/artifacts/12835068803)
 matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5e` after download; retention ends 2026-11-11.
 
+The [2026-10-31 package preflight](https://github.com/moeru-ai/auv/actions/runs/41117632304)
+checked source `4c24a184` with workflow `80ff95c4`, still on one 96-DPI display.
+Edge `155.0.4283.62` and Windows PowerShell ISE `10.0.26100.33158` were present.
+The workflow downloaded pinned VS Code `1.144.0` and NotepadNext `0.15` portable archives.
+Both archive hashes matched their published values; NotepadNext contains Qt `6.5.3.0`.
+It read executable metadata without launching these applications.
+Artifact `13005653981` matched SHA-256
+`eadb4dcd40dc1a06916de4d3a43883e8dd3d25948542e0d0481bc1a5ff8ff72c` after download.
+The raw [environment inventory](evidence/2026-10-31-windows-app-preflight/environment.json)
+and [portable package records](evidence/2026-10-31-windows-app-preflight/portable-apps.json)
+are retained here. These are preparation facts; application launch, control focus,
+edit/save verification, and compatibility failure cases remain unverified.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.

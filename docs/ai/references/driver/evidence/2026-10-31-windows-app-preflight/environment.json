@@ -1,0 +1,113 @@
+{
+  "evidence_level": "environment_preflight_only",
+  "source_sha": "4c24a1847d7815dcd0b32564d3c3a6390f74ce65",
+  "workflow_sha": "80ff95c40490de7101e1ab61e8f5cd30d93cefc7",
+  "image_os": "win25-vs2026",
+  "image_version": "20261021.278.1",
+  "os": "Microsoft Windows NT 10.0.26100.0",
+  "session_id": 2,
+  "user_interactive": true,
+  "input_desktop_accessible": true,
+  "screens_reported_to_powershell": [
+    "{X=0,Y=0,Width=1024,Height=768}"
+  ],
+  "primary_window_dpi": 96,
+  "primary_effective_scale_percent": 100.0,
+  "dpi_method": "GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored",
+  "applications": {
+    "edge": {
+      "file_version": "155.0.4283.62",
+      "present": true,
+      "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "product_version": "155.0.4283.62",
+      "sha256": "c2451a012ff88e82449834de5b526ebb42b5a3fc25958d795910d2b172c975b6"
+    },
+    "vscode": {
+      "present": false
+    },
+    "vlc": {
+      "present": false
+    },
+    "qbittorrent": {
+      "present": false
+    },
+    "ilspy": {
+      "present": false
+    },
+    "powershell_ise": {
+      "file_version": "10.0.26100.33158 (WinBuild.160101.0800)",
+      "present": true,
+      "path": "C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe",
+      "product_version": "10.0.26100.33158",
+      "sha256": "b77f34d426eb778b32c4408f565d3e74ad0e29d276462661ccf652d06e959648"
+    }
+  },
+  "commands": {
+    "dotnet": {
+      "source": "C:\\Program Files\\dotnet\\dotnet.exe",
+      "present": true
+    },
+    "node": {
+      "source": "C:\\Program Files\\nodejs\\node.exe",
+      "present": true
+    },
+    "code": {
+      "present": false
+    },
+    "choco": {
+      "source": "C:\\ProgramData\\Chocolatey\\bin\\choco.exe",
+      "present": true
+    },
+    "winget": {
+      "source": "C:\\Users\\runneradmin\\AppData\\Local\\Microsoft\\WindowsApps\\winget.exe",
+      "present": true
+    },
+    "rustc": {
+      "source": "C:\\Users\\runneradmin\\.cargo\\bin\\rustc.exe",
+      "present": true
+    },
+    "cargo": {
+      "source": "C:\\Users\\runneradmin\\.cargo\\bin\\cargo.exe",
+      "present": true
+    }
+  },
+  "dotnet_runtimes": [
+    "Microsoft.AspNetCore.App 8.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 8.0.22 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 8.0.32 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 9.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 9.0.21 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 10.0.8 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 10.0.11 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.AspNetCore.App 10.0.13 [C:\\Program Files\\dotnet\\shared\\Microsoft.AspNetCore.App]",
+    "Microsoft.NETCore.App 8.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 8.0.22 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 8.0.32 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 9.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 9.0.21 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 10.0.8 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 10.0.11 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.NETCore.App 10.0.13 [C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App]",
+    "Microsoft.WindowsDesktop.App 8.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 8.0.22 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 8.0.32 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 9.0.6 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 9.0.21 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 10.0.8 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 10.0.11 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]",
+    "Microsoft.WindowsDesktop.App 10.0.13 [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]"
+  ],
+  "dotnet_sdks": [
+    "8.0.132 [C:\\Program Files\\dotnet\\sdk]",
+    "8.0.206 [C:\\Program Files\\dotnet\\sdk]",
+    "8.0.319 [C:\\Program Files\\dotnet\\sdk]",
+    "8.0.426 [C:\\Program Files\\dotnet\\sdk]",
+    "9.0.122 [C:\\Program Files\\dotnet\\sdk]",
+    "9.0.205 [C:\\Program Files\\dotnet\\sdk]",
+    "9.0.319 [C:\\Program Files\\dotnet\\sdk]",
+    "10.0.113 [C:\\Program Files\\dotnet\\sdk]",
+    "10.0.204 [C:\\Program Files\\dotnet\\sdk]",
+    "10.0.303 [C:\\Program Files\\dotnet\\sdk]",
+    "10.0.402 [C:\\Program Files\\dotnet\\sdk]"
+  ]
+}
