@@ -131,7 +131,16 @@ failed partial cleanup, failed normal cleanup, and successful shutdown.
 They assert both removal attempts, registration-thread ownership, retained errors, and worker completion.
 The private `Hooks` boundary changes no public API or WinEvent policy.
 The tests use fake registrations and never install native callbacks.
-Their Windows test target compiles; execution and the full native replay are pending.
+The [task at source `4c24a184`](https://github.com/moeru-ai/auv/actions/runs/41118695972)
+executed all five models and passed both native matrices again: 15 direct cases and 12 frontend cases.
+Its workflow is `8c3fa118c39ca7ecfd26c54d1e649c863dd3967c`.
+Artifact `13006444643` matched SHA-256
+`c4b10d3b7ec861be19a0b391bcd57a769fe60ea6dd42a7209e4d502a343031f5` after download.
+Independent review again checked all 24 PNGs, durable failures, success-artifact hashes,
+54 receiver cleanups, both normal MCP exits, and desktop restoration.
+The first hook task used the wrong Rust module filter and ran zero tests.
+Its count gate failed; the corrected task used the listed `input::recipient::native::tests` path.
+No production change was needed for that harness correction.
 These are fault models, not proof that a real Win32 API failure was forced.
 
 ## Limits and follow-up gates
@@ -142,4 +151,4 @@ Serialization covers native submissions within this process. It does not provide
 
 Microsoft documents that [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) inserts an input array into the global stream. Its signature has no window recipient. [Out-of-context WinEvent delivery](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) is asynchronous. A guard check and submission therefore cannot prove atomic recipient binding. This is an inference from those API boundaries, not a stronger Windows guarantee.
 
-TODO(windows-keyboard-recipient): complete native hook startup and cleanup fault injection before claiming those evidence levels. Real applications, complete focus/edit/save workflows, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.
+TODO(windows-keyboard-recipient): forced real Win32 failures and late-installer timeout injection remain unverified; add those cases when a concrete backend failure requires them. Structured cleanup reporting needs an owner-approved run-record consumer, as marked at the shutdown call site. Real applications, complete focus/edit/save workflows, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.

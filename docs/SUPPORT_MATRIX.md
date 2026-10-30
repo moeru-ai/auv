@@ -57,7 +57,7 @@ proven level, not a target. `not claimed` means no public level is asserted.
 Evidence level: `live-validated` for the 15 direct Win32 cases and 12 keyboard
 frontend cases in the
 [keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md#frontend-acceptance).
-Source `925e29f5` ran both matrices on one hosted Windows desktop at 96 DPI.
+Source `4c24a184` ran both matrices on one hosted Windows desktop at 96 DPI.
 Text, repeated presses, combinations, paste, cancellation, initial activation,
 and wrong-owner rejection passed exact input-count and application-state checks.
 The alternate receiver received no keys in protected cases.
@@ -67,7 +67,8 @@ Direct Driver, local Invoke, selected Runner, local MCP, and Runner MCP passed
 success and takeover cases. Both MCP routes stopped repeated input after cancellation.
 Independent application state, 24 reviewed PNGs, input counts, and durable records agree.
 Cancellation records preserve an unknown final delivery receipt when the request is aborted.
-Native hook startup and cleanup fault injection remain unverified.
+Five hook lifecycle fault models passed with fake registrations on the same host.
+Forced real Win32 API failures remain unverified.
 The guard may activate its chosen Window once before admission.
 The caller establishes control focus, and loss does not trigger reactivation.
 Application targets, background delivery, and targeted holds remain unsupported.
