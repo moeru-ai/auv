@@ -66,7 +66,7 @@ B received no keys or text in all 14 protected cases. The global control alone p
 The first expanded run at `bd219a46`, [41098663509](https://github.com/moeru-ai/auv/actions/runs/41098663509), passed 14 cases and failed one evaluator assertion. That assertion incorrectly required an initially foreign foreground to be refused. The existing contract and producer allow one initial activation before admission. Its records showed A=`abc`, B empty, and six injected keys. The corrected case tests that preparation separately and requires later takeover cases to leave B foreground. The native producer is unchanged by this correction.
 Its artifact `12998200328` matched SHA-256 `bf3debf6af222baf96c137b86b0be958493af4959db175404c55b3018e7c7a2b`.
 
-## Frontend acceptance in progress
+## Frontend acceptance
 
 The evaluation command `window-keyboard-routes --auv <AUV_EXE> --output <FRESH_DIR>`
 compares direct Driver, local Invoke, selected Runner, local MCP, and selected-Runner MCP.
@@ -97,8 +97,27 @@ Windows local keyboard execution now uses the existing cancellable blocking-inpu
 It retains the inner keyboard error so native progress and batch progress survive ordinary failures.
 macOS/Linux keep their existing delivery-thread contracts.
 A canceled request can lose its final wire reply; absent progress remains unknown.
-The repair passed compilation and 288 unit tests. Live verification is pending.
-No live frontend parity is claimed yet.
+The repair passed compilation and 288 unit tests.
+The [replay at source `925e29f5`](https://github.com/moeru-ai/auv/actions/runs/41111375084)
+passed all 12 frontend cases and the original 15 direct-driver cases.
+Workflow `eeec28657ce901d43a171775b1af891549c676bf` checked out the exact source
+and retained hashes for the CLI, evaluator, and receiver binaries.
+Artifact `13004865694` matched SHA-256
+`e89d081a0c40c0b1a4e470a0d9aaee96f3696efa9511b59ca7191ce2ad3da7e7` after download.
+
+All five routes produced `aaa` on success and stopped at `a` after takeover.
+Both MCP cancellation cases stopped at `a`, with two injected key events.
+Independent review checked all 24 PNGs against application state and desktop events.
+Four frontend stores preserved matching `target_lost`, `submitted`, and one completed press.
+Each success artifact's body length and SHA-256 matched its durable metadata.
+The two canceled requests retained `auv.frontend.cancelled`, without a final command result.
+Those final delivery receipts remain unknown; their prior dry-run results are separate spans.
+
+All 54 receiver cleanups, both normal MCP exits, and owned Runner cleanup passed.
+Both matrices restored foreground and pointer state, with zero physical input and no input retries.
+The host remained build 26100, image `20261021.278.1`, session 2,
+one 1024 by 768 display, and 96 DPI.
+This proves the stated Win32 keyboard cases, not a complete application workflow or another DPI level.
 
 The previous Windows CI run failed in
 [`abandoned_hold_releases_without_another_request`](https://github.com/moeru-ai/auv/actions/runs/41103991540/job/124228286676).
@@ -115,4 +134,4 @@ Serialization covers native submissions within this process. It does not provide
 
 Microsoft documents that [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) inserts an input array into the global stream. Its signature has no window recipient. [Out-of-context WinEvent delivery](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) is asynchronous. A guard check and submission therefore cannot prove atomic recipient binding. This is an inference from those API boundaries, not a stronger Windows guarantee.
 
-TODO(windows-keyboard-recipient): complete selected-Runner cancellation, Invoke/MCP failure records, and cleanup fault injection before claiming those evidence levels. Real applications, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.
+TODO(windows-keyboard-recipient): complete native hook startup and cleanup fault injection before claiming those evidence levels. Real applications, complete focus/edit/save workflows, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.

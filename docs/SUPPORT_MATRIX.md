@@ -54,16 +54,20 @@ proven level, not a target. `not claimed` means no public level is asserted.
 
 ## Windows Window Keyboard Batches
 
-Evidence level: `live-validated` for the 15 direct Win32 cases in the
-[keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md#native-evidence).
-Source `264143c4` ran on one hosted Windows desktop at 96 DPI.
+Evidence level: `live-validated` for the 15 direct Win32 cases and 12 keyboard
+frontend cases in the
+[keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md#frontend-acceptance).
+Source `925e29f5` ran both matrices on one hosted Windows desktop at 96 DPI.
 Text, repeated presses, combinations, paste, cancellation, initial activation,
 and wrong-owner rejection passed exact input-count and application-state checks.
 The alternate receiver received no keys in protected cases.
-All 30 receiver cleanups and desktop restoration passed.
+All 54 receiver cleanups and desktop restoration passed.
 Paste restored clipboard text, and modifier-state readbacks were clear.
-Runner/Invoke failure projections have automated tests; this does not establish
-live keyboard parity through Runner or MCP.
+Direct Driver, local Invoke, selected Runner, local MCP, and Runner MCP passed
+success and takeover cases. Both MCP routes stopped repeated input after cancellation.
+Independent application state, 24 reviewed PNGs, input counts, and durable records agree.
+Cancellation records preserve an unknown final delivery receipt when the request is aborted.
+Native hook startup and cleanup fault injection remain unverified.
 The guard may activate its chosen Window once before admission.
 The caller establishes control focus, and loss does not trigger reactivation.
 Application targets, background delivery, and targeted holds remain unsupported.
