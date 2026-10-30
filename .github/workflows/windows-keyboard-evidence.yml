@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: bd219a46d5b1767d67dd13e7138237476653c61a
+          ref: 264143c4f0e6f8afe76269ffa4cb1d6445c65357
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'bd219a46d5b1767d67dd13e7138237476653c61a') { throw "Unexpected source $actual" }
+          if ($actual -ne '264143c4f0e6f8afe76269ffa4cb1d6445c65357') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -117,7 +117,7 @@ jobs:
           $summary = @($rows | Where-Object kind -eq 'summary')
           $expectedCases = @('legacy_stay', 'bound_success', 'bound_stay', 'bound_aba', 'bound_minimize', 'bound_close',
             'bound_press_success', 'bound_press_stay', 'bound_combo_stay', 'bound_paste_success', 'bound_paste_stay',
-            'bound_cancel_after_char', 'bound_pre_cancel', 'bound_foreign_admission', 'bound_owner_admission')
+            'bound_cancel_after_char', 'bound_pre_cancel', 'bound_activate_once', 'bound_owner_admission')
           if ($cases.Count -ne 15 -or @(Compare-Object $expectedCases @($cases.case)).Count -ne 0 -or
               @($cases | Where-Object { -not $_.passed -or -not $_.modifiers_released -or -not $_.clipboard_text_restored }).Count -ne 0) {
             throw 'Missing complete fifteen-case keyboard application receipts'
@@ -138,7 +138,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-guard-bd219a46
+          name: windows-keyboard-guard-264143c4
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
