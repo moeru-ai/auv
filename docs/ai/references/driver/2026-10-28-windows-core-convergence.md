@@ -397,7 +397,7 @@ Artifact `12999121492` matched SHA-256
 `0857064873c27e7e163ff6d87d6cf59c13ac051a0fd514b05068381931412a31`.
 All 30 receiver cleanups and desktop restoration passed, with no physical input.
 B received no keys in protected cases; clipboard-text and modifier readbacks passed.
-The [draft contract](https://github.com/moeru-ai/auv/blob/06a8bb9fe6a2443f36f2be3144accf9a608f2d26/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
+The [draft contract](https://github.com/moeru-ai/auv/blob/90bb9c435ca1f6a0521d13d0fbfea94e41319839/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
 records the API migration, tests, artifact provenance, and limits.
 The first actual MCP task found late repeated input after local-MCP cancellation.
 At source `925e29f5`, Windows local Invoke now uses the existing cancellable input boundary.
@@ -409,7 +409,11 @@ Artifact `13004865694` matched SHA-256
 All 24 PNGs, application states, durable failure records, and artifact-body hashes were checked.
 The replay also passed the 15 direct cases: 54 receiver cleanups and both desktop restorations passed.
 The canceled requests retained cancellation events; their final native delivery receipts remain unknown.
-Native hook startup and cleanup fault injection remain open.
+At source `4c24a184`, the [hook lifecycle replay](https://github.com/moeru-ai/auv/actions/runs/41118695972)
+passed five fault models and all 27 native cases again.
+Artifact `13006444643` matched SHA-256
+`c4b10d3b7ec861be19a0b391bcd57a769fe60ea6dd42a7209e4d502a343031f5`.
+The fault models use fake hook registrations; forced real Win32 failures remain unverified.
 The guard does not provide atomic `SendInput` recipient binding or replace #429.
 
 A 2026-10-31 refresh found `origin/main` at
@@ -454,10 +458,13 @@ Complete semantic-focus/edit/verification workflows through MCP remain unverifie
 Phase 2 remains incomplete after retirement of the screenshot guard.
 The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
-Draft #446 passed the stated Win32 keyboard route matrix; native hook fault injection and complete application workflows remain open.
+Draft #446 passed the stated Win32 keyboard route matrix and five hook lifecycle fault models.
+Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
+The next test slice launches the prepared cohort with owned files and profiles,
+then reads accessibility trees before selecting focus/edit/save checks.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
 
