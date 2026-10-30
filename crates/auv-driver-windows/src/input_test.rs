@@ -7,11 +7,30 @@ fn keyboard_dry_run_rejects_unrepresentable_wait_before_the_batch() {
   // An overflowing recipient deadline must be rejected before even a valid
   // earlier action can submit input. This dry run never enters native input.
   let session = crate::WindowsDriver::new().open_local().unwrap();
-  let options = TypeTextOptions { policy: InputPolicy::ForegroundPreferred, ..Default::default() };
-  let error = session.input().input_keyboard(&InputTarget::Foreground, vec![
-    KeyboardInput::TypeText { text: "prefix".into(), options: options.clone() },
-    KeyboardInput::TypeText { text: "overflow".into(), options: TypeTextOptions { inter_char_delay: Duration::MAX, ..options } },
-  ], true).expect_err("unrepresentable wait must fail preflight");
+  let options = TypeTextOptions {
+    policy: InputPolicy::ForegroundPreferred,
+    ..Default::default()
+  };
+  let error = session
+    .input()
+    .input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::TypeText {
+          text: "prefix".into(),
+          options: options.clone(),
+        },
+        KeyboardInput::TypeText {
+          text: "overflow".into(),
+          options: TypeTextOptions {
+            inter_char_delay: Duration::MAX,
+            ..options
+          },
+        },
+      ],
+      true,
+    )
+    .expect_err("unrepresentable wait must fail preflight");
   assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
   assert_eq!(error.progress.action_index, 1);
   assert!(error.progress.completed.is_empty());

@@ -16,6 +16,7 @@ use super::*;
 fn client_failure_codes_pin_the_transport_category_classification() {
   use auv::error::ClientErrorKind;
   let cases = [
+    (ClientErrorKind::TargetLost, FailureCode::TargetLost),
     (ClientErrorKind::NotFound, FailureCode::NotFound),
     (ClientErrorKind::Unsupported, FailureCode::Unsupported),
     (ClientErrorKind::Unauthorized, FailureCode::PermissionDenied),

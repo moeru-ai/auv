@@ -295,6 +295,7 @@ impl AccessibilityService for LocalAccessibilityService {
         &status,
         proto::InputActionFailure {
           progress: Some(proto::input_action_failure::Progress::NotDelivered(())),
+          reason: proto::InputFailureReason::Unspecified as i32,
         },
       )
     })?;
@@ -662,9 +663,29 @@ impl InputService for LocalInputService {
         })
       })
       .collect::<Result<Vec<_>, _>>()?;
-    let target = input_target_from_proto(&self.session, request.target)?;
+    let target = input_target_from_proto(&self.session, request.target).map_err(|status| {
+      keyboard_status_with_progress(
+        status,
+        auv_driver::KeyboardInputProgress {
+          action_index: 0,
+          completed: vec![],
+          completed_presses: 0,
+        },
+      )
+    })?;
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
+      #[cfg(target_os = "windows")]
+      let actions = {
+        let session = self.session.clone();
+        // Retain the guard on its native worker and signal cancellation when
+        // this RPC is dropped. The inner error owns both progress receipts.
+        run_input_blocking(move || Ok(session.input().input_keyboard(&target, inputs, request.dry_run)))
+          .await?
+          .map_err(keyboard_input_status)?
+      };
+      // NOTICE: Keep the existing macOS/Linux delivery-thread contract.
+      #[cfg(any(target_os = "macos", target_os = "linux"))]
       let actions = self.session.input().input_keyboard(&target, inputs, request.dry_run).map_err(keyboard_input_status)?;
       Ok(Response::new(proto::InputKeyboardResponse {
         actions: actions.unwrap_or_default().into_iter().map(input_action_to_proto).collect::<Result<_, _>>()?,
@@ -1062,7 +1083,13 @@ fn input_target_from_proto(
       let expected = observed.process_id.filter(|pid| *pid > 0).ok_or_else(|| Status::invalid_argument("window.process_id is required"))?;
       let window = resolve_window_ref(session, reference)?;
       if window.process_id != Some(expected) {
-        return Err(Status::failed_precondition("target window owner changed; resolve the target again"));
+        return Err(driver_status(auv_driver::DriverError::InputAction {
+          cause: Box::new(auv_driver::DriverError::TargetLost {
+            target: format!("window:{}", window.reference.id),
+            message: "target window owner changed; resolve the target again".into(),
+          }),
+          progress: auv_driver::InputActionProgress::NotDelivered,
+        }));
       }
       Ok(auv_driver::InputTarget::Window(window))
     }
@@ -1100,11 +1127,16 @@ fn keyboard_input_from_proto(input: proto::KeyboardInput) -> Result<auv_driver::
 fn keyboard_input_status(error: auv_driver::KeyboardInputError) -> Status {
   let message = error.to_string();
   let status = driver_status(error.cause);
-  keyboard_status_with_progress(Status::new(status.code(), message), error.progress)
+  let native_failure = auv_api_proto::input_action_failure::failure(&status);
+  let status = Status::new(status.code(), message);
+  let status = match native_failure {
+    Some(failure) => auv_api_proto::input_action_failure::status(&status, failure),
+    None => status,
+  };
+  keyboard_status_with_progress(status, error.progress)
 }
 
 fn keyboard_status_with_progress(status: Status, progress: auv_driver::KeyboardInputProgress) -> Status {
-  use prost::Message;
   let completed = match progress.completed.into_iter().map(input_action_to_proto).collect::<Result<Vec<_>, _>>() {
     Ok(completed) => completed,
     Err(error) => return error,
@@ -1118,7 +1150,7 @@ fn keyboard_status_with_progress(status: Status, progress: auv_driver::KeyboardI
     action_index: Some(action_index),
     completed_presses: progress.completed_presses,
   };
-  Status::with_details(status.code(), status.message(), details.encode_to_vec().into())
+  auv_api_proto::input_action_failure::keyboard_status(&status, details)
 }
 
 pub(super) fn resolve_window_ref(
@@ -2682,17 +2714,25 @@ fn driver_status(error: auv_driver::DriverError) -> Status {
   match error {
     auv_driver::DriverError::InputAction { cause, progress } => {
       let cause = driver_status(*cause);
+      let reason = auv_api_proto::input_action_failure::failure(&cause).map_or(0, |failure| failure.reason);
       let cause = Status::new(cause.code(), message);
       match auv::client::runner::input_action_progress_to_proto(progress) {
-        Ok(failure) => auv_api_proto::input_action_failure::status(&cause, failure),
+        Ok(mut failure) => {
+          failure.reason = reason;
+          auv_api_proto::input_action_failure::status(&cause, failure)
+        }
         Err(error) => Status::internal(format!("driver returned invalid input progress: {error}")),
       }
     }
     auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(message),
     auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
-    // TODO(window-keyboard-recipient): retain the target_lost category in a typed rich-error
-    // detail before publishing this slice; FailedPrecondition alone conflates UI-reference drift.
-    auv_driver::DriverError::TargetLost { .. } => Status::failed_precondition(message),
+    auv_driver::DriverError::TargetLost { .. } => auv_api_proto::input_action_failure::status(
+      &Status::failed_precondition(message),
+      proto::InputActionFailure {
+        progress: None,
+        reason: proto::InputFailureReason::TargetLost as i32,
+      },
+    ),
     auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
     auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
     auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),

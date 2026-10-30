@@ -1176,8 +1176,25 @@ The SDK's `inputActionProgress(error)` reads known details while retaining the o
 Its generated oneof uses `case` values `notDelivered`, `deliveryUncertain`, and `submitted`.
 Unknown or malformed metadata leaves progress unknown.
 
-The first native producer is Windows query focus.
+Native producers include Windows query focus and guarded window keyboard batches.
 `KeyboardInputProgress` remains the separate completed-action and repetition receipt for keyboard batches.
+Runner packs both receipts as distinct `Any` details inside one `google.rpc.Status`.
+Legacy raw keyboard details remain unknown; upgrade the Runner and SDK together.
+The JS SDK exposes batch counts through `keyboardInputProgress(error)`.
+
+`target_lost` means an input recipient failed its identity, availability, or foreground check.
+Runner carries this reason as `InputFailureReason.TARGET_LOST` with `FailedPrecondition`.
+The Rust client and Invoke retain the `TargetLost` and `target_lost` categories.
+The JS SDK reads the reason through `inputFailureReason(error)`.
+The reason can be known while native delivery remains unknown.
+
+A guarded Windows keyboard batch requires its window to be foreground at admission.
+It retains owner identity during the batch and stops after foreign or ambiguous foreground events.
+Returning to the original window does not revive a lost batch.
+Already submitted input and required releases remain possible after loss.
+The foreground check cannot bind `SendInput` atomically to a recipient.
+The [keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
+records the evidence and remaining limits.
 See the [Windows contract and evidence](ai/references/driver/2026-10-28-windows-core-convergence.md).
 
 ## Screen

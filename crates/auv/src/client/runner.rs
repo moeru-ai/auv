@@ -35,6 +35,8 @@ pub enum CapabilityError {
   KeyboardInput {
     source: ClientError,
     progress: auv_driver::KeyboardInputProgress,
+    /// Native delivery of the failed action, when the producer supplied it.
+    input_progress: Option<auv_driver::InputActionProgress>,
   },
   /// A failed native action retained its delivery boundary and original cause.
   #[error("{source}")]
@@ -1348,6 +1350,7 @@ pub fn input_action_progress_to_proto(progress: auv_driver::InputActionProgress)
   };
   Ok(proto::InputActionFailure {
     progress: Some(progress),
+    reason: proto::InputFailureReason::Unspecified as i32,
   })
 }
 
@@ -2171,13 +2174,8 @@ fn keyboard_input_to_proto(input: auv_driver::KeyboardInput) -> Result<proto::Ke
 }
 
 fn keyboard_capability_status(status: tonic::Status) -> CapabilityError {
-  use prost::Message;
-  if status.details().is_empty() {
+  let Some(progress) = auv_api_proto::input_action_failure::keyboard_progress(&status) else {
     return capability_status(status);
-  }
-  let progress = match proto::KeyboardInputProgress::decode(status.details()) {
-    Ok(progress) => progress,
-    Err(error) => return CapabilityError::InvalidResponse(format!("invalid KeyboardInputProgress: {error}")),
   };
   let Some(index) = progress.action_index else {
     return CapabilityError::InvalidResponse("KeyboardInputProgress omitted action_index".into());
@@ -2186,6 +2184,8 @@ fn keyboard_capability_status(status: tonic::Status) -> CapabilityError {
     Ok(completed) => completed,
     Err(error) => return error,
   };
+  let input_progress =
+    auv_api_proto::input_action_failure::failure(&status).and_then(|failure| input_action_progress_from_proto(failure).ok());
   CapabilityError::KeyboardInput {
     source: ClientError::from_status("InputKeyboard", status),
     progress: auv_driver::KeyboardInputProgress {
@@ -2193,6 +2193,7 @@ fn keyboard_capability_status(status: tonic::Status) -> CapabilityError {
       completed,
       completed_presses: progress.completed_presses,
     },
+    input_progress,
   }
 }
 

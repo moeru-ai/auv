@@ -6,6 +6,7 @@ export { CaptureResolution } from '../../gen/auv/api/driver/v1/capture_pb'
 export {
   DisturbanceLevel,
   InputDeliveryPath,
+  InputFailureReason,
   InputPolicy,
   MouseButton,
   ScrollDeliveryCandidate,
@@ -58,7 +59,7 @@ export type {
 } from './driver'
 export { above, at, below, center, contains, inset, intersect, leftOf, offset, Position, region, rightOf } from './geometry'
 export type { Edges, Insets, Length, PointLike, RectLike } from './geometry'
-export { inputActionProgress } from './input-failure'
+export { inputActionProgress, inputFailureReason, keyboardInputProgress } from './input-failure'
 export type { InputActionProgress } from './input-failure'
 export { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 export type { InvokeDuplexOptions, InvokeServerStreamOptions, InvokeUnaryOptions } from './invoke'

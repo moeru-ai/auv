@@ -285,6 +285,7 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
   use auv::error::ClientErrorKind;
   match kind {
     Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
+    Some(ClientErrorKind::TargetLost) => FailureCode::TargetLost,
     Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
     Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
     Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
@@ -297,7 +298,14 @@ impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     match error {
-      auv::client::runner::CapabilityError::KeyboardInput { progress, .. } => failure.keyboard_progress = Some(progress),
+      auv::client::runner::CapabilityError::KeyboardInput {
+        progress,
+        input_progress,
+        ..
+      } => {
+        failure.keyboard_progress = Some(progress);
+        failure.input_progress = input_progress.filter(|progress| progress.validate().is_ok());
+      }
       auv::client::runner::CapabilityError::InputAction { progress, .. } => {
         if progress.validate().is_ok() {
           failure.input_progress = Some(progress);

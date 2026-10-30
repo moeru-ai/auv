@@ -31,6 +31,16 @@ use crate::session::InputApi;
 #[path = "input_recipient.rs"]
 mod recipient;
 
+// Validate all waits before a batch can submit its first action. The native
+// waiter checks again because the clock can advance after this preflight.
+fn validate_keyboard_waits(waits: &[Duration]) -> DriverResult<()> {
+  let now = std::time::Instant::now();
+  if waits.iter().any(|duration| now.checked_add(*duration).is_none()) {
+    return Err(invalid_input("keyboard wait exceeds the native clock range"));
+  }
+  Ok(())
+}
+
 /// Virtual-key code for a modifier, kept as a bare `u16` so shortcut parsing
 /// stays independent of the `windows` crate types.
 mod vk {
@@ -167,6 +177,7 @@ pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult
 }
 
 pub fn type_text(text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
+  validate_keyboard_waits(&[options.inter_char_delay, options.settle])?;
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
     return Err(invalid_input("windows type_text cannot use background_only input policy"));
   }
@@ -281,6 +292,13 @@ impl InputApi<'_> {
           return Err(keyboard_failure(invalid_input("Windows keyboard input requires foreground-preferred policy"), index, vec![], 0));
         }
 
+        let (interval, settle) = match input {
+          KeyboardInput::PressKeys { options, .. } => (options.interval, options.settle),
+          KeyboardInput::TypeText { options, .. } => (options.inter_char_delay, options.settle),
+          KeyboardInput::PasteText { options, .. } => (Duration::ZERO, options.settle),
+        };
+        validate_keyboard_waits(&[interval, settle]).map_err(|cause| keyboard_failure(cause, index, vec![], 0))?;
+
         let plan = match input {
           KeyboardInput::PressKeys { options, .. } => combination(options).map(Some),
           KeyboardInput::TypeText { options, .. } => text_submit_virtual_key(options.submit).map(|_| None),
@@ -296,7 +314,18 @@ impl InputApi<'_> {
     }
 
     let guard = match target {
-      InputTarget::Window(window) => Some(recipient::Guard::open(window).map_err(|cause| keyboard_failure(cause, 0, vec![], 0))?),
+      InputTarget::Window(window) => Some(recipient::Guard::open(window).map_err(|cause| {
+        // Admission queries identity and installs hooks; it never submits input.
+        keyboard_failure(
+          DriverError::InputAction {
+            cause: Box::new(cause),
+            progress: auv_driver_common::InputActionProgress::NotDelivered,
+          },
+          0,
+          vec![],
+          0,
+        )
+      })?),
       _ => None,
     };
 
@@ -460,6 +489,7 @@ fn paste_read(read: Option<ClipboardRead>, sent: Instant, foreground: Option<u32
 /// request for it is observed. That request is consumption of the clipboard, not proof that the
 /// text landed, so the result stays unverified.
 pub fn paste_text(options: PasteTextOptions) -> DriverResult<InputActionResult> {
+  validate_keyboard_waits(&[options.settle])?;
   let submit_key = text_submit_virtual_key(options.submit)?;
   let _paste = PASTE.lock().unwrap_or_else(PoisonError::into_inner);
   let snapshot = crate::clipboard::snapshot_rich()?;

@@ -18,7 +18,7 @@ mod native {
   };
   use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
   use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RWIN, VK_SHIFT, VK_XBUTTON1, VK_XBUTTON2,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EVENT_OBJECT_DESTROY, EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW, IsWindowVisible, MSG, PM_NOREMOVE,
@@ -182,7 +182,9 @@ mod native {
             };
             if destroy.0.is_null() {
               // SAFETY: release the first hook on its registering thread before reporting failure.
-              let _ = unsafe { UnhookWinEvent(foreground) };
+              if !unsafe { UnhookWinEvent(foreground) }.as_bool() {
+                return Err("SetWinEventHook destruction failed; foreground cleanup failure".into());
+              }
               return Err("SetWinEventHook destruction failed".into());
             }
             let mut message = MSG::default();
@@ -282,7 +284,16 @@ mod native {
       // A foreign held modifier must not silently affect a new protected batch. Explicit
       // cross-call keyboard holds remain outside this recipient contract.
       if [
-        VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
+        VK_SHIFT,
+        VK_CONTROL,
+        VK_MENU,
+        VK_LWIN,
+        VK_RWIN,
+        VK_LBUTTON,
+        VK_RBUTTON,
+        VK_MBUTTON,
+        VK_XBUTTON1,
+        VK_XBUTTON2,
       ]
       .iter()
       .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 })
@@ -397,13 +408,14 @@ mod native {
     }
   }
   pub(in super::super) fn wait(duration: Duration) -> DriverResult<()> {
+    let deadline =
+      Instant::now().checked_add(duration).ok_or_else(|| super::super::invalid_input("keyboard wait exceeds the native clock range"))?;
     let Some(state) = current() else {
       if !duration.is_zero() {
         thread::sleep(duration);
       }
       return Ok(());
     };
-    let deadline = Instant::now() + duration;
     loop {
       state.check()?;
       let remaining = deadline.saturating_duration_since(Instant::now());
