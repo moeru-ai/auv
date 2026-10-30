@@ -126,6 +126,14 @@ can precede completion of native release and reservation cleanup.
 The repair changes test synchronization, not the mouse controller.
 All 106 common-driver unit tests passed after that repair.
 
+Five hook lifecycle models now cover first-registration failure, second-registration failure,
+failed partial cleanup, failed normal cleanup, and successful shutdown.
+They assert both removal attempts, registration-thread ownership, retained errors, and worker completion.
+The private `Hooks` boundary changes no public API or WinEvent policy.
+The tests use fake registrations and never install native callbacks.
+Their Windows test target compiles; execution and the full native replay are pending.
+These are fault models, not proof that a real Win32 API failure was forced.
+
 ## Limits and follow-up gates
 
 The admission tuple retains a live process handle, HWND, owner thread, and class during one batch. It does not identify same-owner HWND reuse before admission. A versioned identity producer/consumer contract remains deferred at the code site.

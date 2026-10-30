@@ -153,6 +153,32 @@ mod native {
     }
   }
 
+  /// OS registration boundary; handles stay on their registering worker.
+  trait Hooks: Send + 'static {
+    fn prepare(&self) -> Result<(), String>;
+    fn register(&self, event_id: u32) -> HWINEVENTHOOK;
+    fn remove(&self, hook: HWINEVENTHOOK) -> bool;
+  }
+
+  struct NativeHooks;
+
+  impl Hooks for NativeHooks {
+    fn prepare(&self) -> Result<(), String> {
+      crate::desktop::try_ensure_input_desktop().map_err(|error| error.to_string())
+    }
+
+    fn register(&self, event_id: u32) -> HWINEVENTHOOK {
+      // SAFETY: callback has the required ABI. WATCHED retains state on this
+      // registering thread until the registrations are removed and it exits.
+      unsafe { SetWinEventHook(event_id, event_id, HMODULE::default(), Some(event), 0, 0, WINEVENT_OUTOFCONTEXT) }
+    }
+
+    fn remove(&self, hook: HWINEVENTHOOK) -> bool {
+      // SAFETY: both live registrations are removed on their registering thread.
+      unsafe { UnhookWinEvent(hook).as_bool() }
+    }
+  }
+
   /// Registration and unhooking stay on this worker; its owner always joins it.
   struct Watcher {
     state: Arc<State>,
@@ -160,29 +186,24 @@ mod native {
   }
 
   impl Watcher {
-    fn start(state: Arc<State>) -> DriverResult<Self> {
+    fn start(state: Arc<State>, hooks: impl Hooks) -> DriverResult<Self> {
       let (ready, receiver) = mpsc::channel();
       let worker_state = state.clone();
       let thread = thread::Builder::new()
         .name("auv-keyboard-recipient".into())
         .spawn(move || {
           let result = (|| -> Result<(), String> {
-            crate::desktop::try_ensure_input_desktop().map_err(|error| error.to_string())?;
+            hooks.prepare()?;
             WATCHED.with(|value| *value.borrow_mut() = Some(worker_state.clone()));
-            // SAFETY: callbacks have the required ABI and retain state on this registering thread.
-            let foreground = unsafe {
-              SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, HMODULE::default(), Some(event), 0, 0, WINEVENT_OUTOFCONTEXT)
-            };
+            let foreground = hooks.register(EVENT_SYSTEM_FOREGROUND);
             if foreground.0.is_null() {
               return Err("SetWinEventHook foreground failed".into());
             }
-            // SAFETY: same ownership and ABI; only root-window destruction is accepted by callback.
-            let destroy = unsafe {
-              SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, HMODULE::default(), Some(event), 0, 0, WINEVENT_OUTOFCONTEXT)
-            };
+            // Only root-window destruction is accepted by the callback.
+            let destroy = hooks.register(EVENT_OBJECT_DESTROY);
             if destroy.0.is_null() {
-              // SAFETY: release the first hook on its registering thread before reporting failure.
-              if !unsafe { UnhookWinEvent(foreground) }.as_bool() {
+              // Release the first hook on its registering thread before reporting failure.
+              if !hooks.remove(foreground) {
                 return Err("SetWinEventHook destruction failed; foreground cleanup failure".into());
               }
               return Err("SetWinEventHook destruction failed".into());
@@ -210,8 +231,8 @@ mod native {
                 DispatchMessageW(&message);
               }
             }
-            // SAFETY: both live registrations belong to this exact thread.
-            let unhooked = unsafe { UnhookWinEvent(destroy).as_bool() & UnhookWinEvent(foreground).as_bool() };
+            // Both calls must run even when the first reports a cleanup failure.
+            let unhooked = hooks.remove(destroy) & hooks.remove(foreground);
             if !unhooked {
               return Err("recipient hook cleanup failed".into());
             }
@@ -256,6 +277,11 @@ mod native {
       if let Some(thread) = self.thread.take() {
         match thread.join() {
           Ok(Ok(())) => {}
+          // NOTICE: the joined worker has exited. Windows also removes its hooks
+          // on thread exit; see the remarks for `UnhookWinEvent`:
+          // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-unhookwinevent
+          // TODO(windows-keyboard-recipient): structured cleanup reporting needs
+          // an owner-approved run-record consumer; InputActionResult covers submissions.
           result => eprintln!("recipient watcher ended with a cleanup failure: {result:?}"),
         }
       }
@@ -340,7 +366,7 @@ mod native {
       if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
         crate::window::activate_window(window)?;
       }
-      let watcher = Watcher::start(state.clone())?;
+      let watcher = Watcher::start(state.clone(), NativeHooks)?;
       let guard = Self {
         state,
         _watcher: watcher,
@@ -426,6 +452,169 @@ mod native {
       // The condition variable wakes immediately on recipient loss. Poll only transport
       // cancellation, whose existing wake registrations are private to auv-driver-common.
       let _ = state.changed.wait_timeout(lost, remaining.min(Duration::from_millis(25))).unwrap_or_else(PoisonError::into_inner);
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Calls {
+      entries: Mutex<Vec<(&'static str, u32, thread::ThreadId)>>,
+      dropped: AtomicBool,
+    }
+
+    struct FakeHooks {
+      calls: Arc<Calls>,
+      fail_register: u32,
+      fail_remove: u32,
+    }
+
+    impl Hooks for FakeHooks {
+      fn prepare(&self) -> Result<(), String> {
+        // No desktop switch or real event registration is needed by this model.
+        Ok(())
+      }
+
+      fn register(&self, event_id: u32) -> HWINEVENTHOOK {
+        self.calls.entries.lock().unwrap().push(("register", event_id, thread::current().id()));
+        if event_id == self.fail_register {
+          HWINEVENTHOOK::default()
+        } else {
+          // Opaque fixture IDs are consumed only by FakeHooks::remove.
+          HWINEVENTHOOK(event_id as usize as *mut _)
+        }
+      }
+
+      fn remove(&self, hook: HWINEVENTHOOK) -> bool {
+        let event_id = hook.0 as usize as u32;
+        self.calls.entries.lock().unwrap().push(("remove", event_id, thread::current().id()));
+        event_id != self.fail_remove
+      }
+    }
+
+    impl Drop for FakeHooks {
+      fn drop(&mut self) {
+        self.calls.dropped.store(true, Ordering::Release);
+      }
+    }
+
+    fn fixture(fail_register: u32, fail_remove: u32) -> (Arc<State>, FakeHooks, Arc<Calls>) {
+      // State owns a real handle to this process, without an application window.
+      // The hook model never calls State::check or installs a native callback.
+      let process_id = std::process::id();
+      // SAFETY: one owned process handle is transferred exactly once to OwnedHandle.
+      let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, false, process_id) }.unwrap();
+      let process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+      let state = Arc::new(State {
+        hwnd: 0,
+        identity: Identity {
+          process_id,
+          thread_id: 0,
+          class_name: String::new(),
+        },
+        process,
+        lost: Mutex::new(None),
+        changed: Condvar::new(),
+        stop: AtomicBool::new(false),
+        watcher_id: Mutex::new(0),
+        receipt: Mutex::new((
+          crate::input::foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None),
+          InputActionProgress::NotDelivered,
+        )),
+      });
+      let calls = Arc::new(Calls::default());
+      let hooks = FakeHooks {
+        calls: calls.clone(),
+        fail_register,
+        fail_remove,
+      };
+      (state, hooks, calls)
+    }
+
+    fn joined_calls(state: &State, calls: &Calls) -> Vec<(&'static str, u32)> {
+      assert!(state.stop.load(Ordering::Acquire));
+      assert_eq!(*state.watcher_id.lock().unwrap(), 0);
+      assert!(calls.dropped.load(Ordering::Acquire));
+      let entries = calls.entries.lock().unwrap();
+      let owner = entries[0].2;
+      assert_ne!(owner, thread::current().id());
+      assert!(entries.iter().all(|entry| entry.2 == owner));
+      entries.iter().map(|entry| (entry.0, entry.1)).collect()
+    }
+
+    #[test]
+    fn foreground_registration_failure_joins_worker() {
+      let (state, hooks, calls) = fixture(EVENT_SYSTEM_FOREGROUND, 0);
+      let error = Watcher::start(state.clone(), hooks).err().expect("registration must fail");
+      assert!(error.to_string().contains("SetWinEventHook foreground failed"));
+      assert_eq!(joined_calls(&state, &calls), [("register", EVENT_SYSTEM_FOREGROUND)]);
+    }
+
+    #[test]
+    fn destroy_registration_failure_releases_first_hook_and_joins() {
+      let (state, hooks, calls) = fixture(EVENT_OBJECT_DESTROY, 0);
+      let error = Watcher::start(state.clone(), hooks).err().expect("registration must fail");
+      assert!(error.to_string().contains("SetWinEventHook destruction failed"));
+      assert_eq!(
+        joined_calls(&state, &calls),
+        [
+          ("register", EVENT_SYSTEM_FOREGROUND),
+          ("register", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_SYSTEM_FOREGROUND),
+        ]
+      );
+    }
+
+    #[test]
+    fn partial_start_cleanup_failure_is_retained_and_joins() {
+      let (state, hooks, calls) = fixture(EVENT_OBJECT_DESTROY, EVENT_SYSTEM_FOREGROUND);
+      let error = Watcher::start(state.clone(), hooks).err().expect("registration must fail");
+      assert!(error.to_string().contains("foreground cleanup failure"));
+      assert!(state.lost.lock().unwrap().as_ref().unwrap().contains("foreground cleanup failure"));
+      assert_eq!(
+        joined_calls(&state, &calls),
+        [
+          ("register", EVENT_SYSTEM_FOREGROUND),
+          ("register", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_SYSTEM_FOREGROUND),
+        ]
+      );
+    }
+
+    #[test]
+    fn cleanup_failure_attempts_both_hooks_on_owner_and_joins() {
+      let (state, hooks, calls) = fixture(0, EVENT_OBJECT_DESTROY);
+      let watcher = Watcher::start(state.clone(), hooks).expect("registration succeeds");
+      drop(watcher);
+      assert!(state.lost.lock().unwrap().as_ref().unwrap().contains("recipient hook cleanup failed"));
+      assert_eq!(
+        joined_calls(&state, &calls),
+        [
+          ("register", EVENT_SYSTEM_FOREGROUND),
+          ("register", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_SYSTEM_FOREGROUND),
+        ]
+      );
+    }
+
+    #[test]
+    fn normal_shutdown_removes_both_hooks_on_owner_and_joins() {
+      let (state, hooks, calls) = fixture(0, 0);
+      let watcher = Watcher::start(state.clone(), hooks).expect("registration succeeds");
+      drop(watcher);
+      assert!(state.lost.lock().unwrap().is_none());
+      assert_eq!(
+        joined_calls(&state, &calls),
+        [
+          ("register", EVENT_SYSTEM_FOREGROUND),
+          ("register", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_OBJECT_DESTROY),
+          ("remove", EVENT_SYSTEM_FOREGROUND),
+        ]
+      );
     }
   }
 }
