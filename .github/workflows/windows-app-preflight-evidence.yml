@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: bea0c29474b6c8c44aa0401636ee83efe8b23312
+          ref: cbd34975cd3899a025e12f95d2cf0ddc5ba82e99
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne 'bea0c29474b6c8c44aa0401636ee83efe8b23312') { throw "Unexpected source $source" }
+          if ($source -ne 'cbd34975cd3899a025e12f95d2cf0ddc5ba82e99') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -200,6 +200,15 @@ jobs:
           @{ path=$binary.FullName; sha256=(Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } |
             ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/auv-app-preflight/evaluator-binary.json"
 
+      - name: Verify ISE discovery policy regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testLog = "$env:RUNNER_TEMP/auv-app-preflight/window-selection-tests.log"
+          cargo test --locked -p auv-base-evals --lib workflow::applications::tests 2>&1 | Tee-Object -FilePath $testLog
+          if ($LASTEXITCODE -ne 0) { throw 'Application discovery regression failed' }
+          if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 3 passed; 0 failed;') { throw 'Missing application discovery regressions' }
+
       - name: Launch and inspect owned real applications
         shell: pwsh
         env:
@@ -230,7 +239,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-controls-bea0c294
+          name: windows-app-controls-cbd34975
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
