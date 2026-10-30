@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: beef622247b71b419ab7fdf5608b09d2282870e0
+          ref: af374c5bce7a45112a56a8999387ec64fade7356
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
@@ -26,7 +26,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'beef622247b71b419ab7fdf5608b09d2282870e0') { throw "Unexpected source $actual" }
+          if ($actual -ne 'af374c5bce7a45112a56a8999387ec64fade7356') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-keyboard-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -92,7 +92,7 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [KeyboardDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $true
+            expected_baseline_failure = $false
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
@@ -103,35 +103,38 @@ jobs:
           cargo build --locked -p auv-base-evals --bin win32-receiver --bin background-session-eval
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify unsupported baseline and actual foreground drift control
+      - name: Verify guarded recipient and actual application effects
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
           $directory = "$env:RUNNER_TEMP/auv-keyboard-evidence"
           & target/debug/background-session-eval.exe window-keyboard --output "$directory/records" 2>&1 | Tee-Object -FilePath "$directory/probe.log"
-          $nativeExit = $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $rows = @(Get-Content -LiteralPath "$directory/records/window-keyboard.jsonl" | ForEach-Object { $_ | ConvertFrom-Json })
           $cases = @($rows | Where-Object kind -eq 'case')
-          $legacy = @($cases | Where-Object case -eq 'legacy_stay')
-          $bound = @($cases | Where-Object case -ne 'legacy_stay')
           $cleanup = @($rows | Where-Object kind -eq 'cleanup')
-          if ($nativeExit -ne 1 -or $cases.Count -ne 6 -or $legacy.Count -ne 1 -or -not $legacy[0].passed -or $bound.Count -ne 5) {
-            throw 'Baseline needs the real a/bc foreground drift control and five refused window cases'
-          }
-          if (@($bound | Where-Object { $_.operation.status -ne 'error' -or -not $_.operation.cause.Contains('Unsupported') -or $_.injected_keys -ne 0 }).Count -ne 0) {
-            throw 'Baseline failure was not the documented unsupported window keyboard path'
+          $summary = @($rows | Where-Object kind -eq 'summary')
+          if ($cases.Count -ne 6 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) {
+            throw 'Missing complete six-case keyboard application receipts'
           }
           if ($cleanup.Count -ne 12 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) {
             throw 'Owned receiver cleanup did not complete'
           }
-          @{ source_sha = (git rev-parse HEAD); expected_baseline_failure = $true; legacy_control_passed = $true; window_cases_unsupported = 5 } | ConvertTo-Json | Tee-Object -FilePath "$directory/result.json"
+          if ($summary.Count -ne 1 -or -not $summary[0].passed -or -not $summary[0].pointer_restored -or -not $summary[0].foreground_restored) {
+            throw 'Missing complete desktop restoration receipts'
+          }
+          if (Test-Path "$directory/probe.log") {
+            $log = Get-Content "$directory/probe.log" -Raw
+            if ($log.Contains('cleanup failure')) { throw 'Recipient watcher cleanup failed' }
+          }
+          $summary[0] | ConvertTo-Json -Depth 5 | Tee-Object -FilePath "$directory/result.json"
 
       - name: Preserve preflight and exact regression output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-keyboard-baseline-beef6222
+          name: windows-keyboard-guard-af374c5b
           path: ${{ runner.temp }}/auv-keyboard-evidence/
           if-no-files-found: error
           retention-days: 14
