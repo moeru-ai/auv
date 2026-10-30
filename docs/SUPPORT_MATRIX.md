@@ -65,7 +65,8 @@ The current typed producer also guards repeated presses, combinations, and paste
 Their expanded 15-case native gate is pending at source `bd219a46`.
 Runner/Invoke failure projections have automated tests; this does not establish
 live keyboard parity through Runner or MCP.
-The Window must already be foreground, and the caller establishes control focus.
+The guard may activate its chosen Window once before admission.
+The caller establishes control focus, and loss does not trigger reactivation.
 Application targets, background delivery, and targeted holds remain unsupported.
 The guard cannot atomically bind `SendInput` to its recipient.
 This evidence does not cover real applications or 125/150% desktop DPI.

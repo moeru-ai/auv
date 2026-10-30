@@ -43,7 +43,7 @@ pub fn run(output: &Path) -> Result<bool> {
     "bound_paste_stay",
     "bound_cancel_after_char",
     "bound_pre_cancel",
-    "bound_foreign_admission",
+    "bound_activate_once",
     "bound_owner_admission",
   ];
   for case in cases {
@@ -65,9 +65,6 @@ pub fn run(output: &Path) -> Result<bool> {
     let (window, _) = discover_by_hwnd(&session, a.hwnd())?;
     session.window().activate(&window)?;
     ensure!(a.request(json!({"cmd": "prepare_keyboard"}))?["focused"] == true, "recipient typing control not ready");
-    let a_before = a.request(json!({"cmd": "state"}))?;
-    let b_before = b.request(json!({"cmd": "state"}))?;
-    ensure!(a_before["typing"]["text"] == "" && b_before["typing"]["text"] == "", "fixture text must start empty");
     let fault = match case {
       "legacy_stay" | "bound_stay" | "bound_press_stay" | "bound_combo_stay" | "bound_paste_stay" => Some("stay"),
       "bound_aba" => Some("aba"),
@@ -81,15 +78,18 @@ pub fn run(output: &Path) -> Result<bool> {
         "keyboard fault was not armed"
       );
     }
-    if case == "bound_foreign_admission" {
+    if case == "bound_activate_once" {
       let (other, _) = discover_by_hwnd(&session, b.hwnd())?;
       session.window().activate(&other)?;
       ensure!(b.request(json!({"cmd": "prepare_keyboard"}))?["focused"] == true, "alternate lost its first responder");
     }
+    let a_before = a.request(json!({"cmd": "state"}))?;
+    let b_before = b.request(json!({"cmd": "state"}))?;
+    ensure!(a_before["typing"]["text"] == "" && b_before["typing"]["text"] == "", "fixture text must start empty");
     let before = watch.snapshot();
     ensure!(
       before.foreground
-        == if case == "bound_foreign_admission" {
+        == if case == "bound_activate_once" {
           b.hwnd()
         } else {
           a.hwnd()
@@ -233,6 +233,18 @@ pub fn run(output: &Path) -> Result<bool> {
     let passed = (match case {
       "legacy_stay" => result.is_ok() && fired && text_a == Some("a") && text_b == "bc",
       "bound_success" => result.is_ok() && text_a == Some("abc") && text_b.is_empty() && b_keys == 0,
+      "bound_activate_once" => {
+        result.is_ok()
+          && text_a == Some("abc")
+          && text_b.is_empty()
+          && b_keys == 0
+          && after.foreground == a.hwnd()
+          && a_after
+            .as_ref()
+            .and_then(|state| state["activated"].as_u64())
+            .zip(a_before["activated"].as_u64())
+            .is_some_and(|(after, before)| after == before + 1)
+      }
       "bound_press_success" => result.is_ok() && text_a == Some("aaa") && text_b.is_empty() && b_keys == 0,
       "bound_press_stay" | "bound_combo_stay" => {
         result.as_ref().err().is_some_and(|error| error.progress.completed_presses == 1)
@@ -259,7 +271,7 @@ pub fn run(output: &Path) -> Result<bool> {
           && b_keys == 0
           && matches!(native_progress, Some(InputActionProgress::Submitted { .. }))
       }
-      "bound_pre_cancel" | "bound_foreign_admission" | "bound_owner_admission" => {
+      "bound_pre_cancel" | "bound_owner_admission" => {
         result.is_err()
           && text_a == Some("")
           && a_keys == Some(0)
@@ -289,21 +301,29 @@ pub fn run(output: &Path) -> Result<bool> {
     }) && clipboard_text_restored
       && modifiers_released;
     let expected_injected_keys = match case {
-      "legacy_stay" | "bound_success" | "bound_press_success" => 6,
+      "legacy_stay" | "bound_success" | "bound_activate_once" | "bound_press_success" => 6,
       "bound_combo_stay" | "bound_paste_stay" => 4,
       "bound_paste_success" => 12,
-      "bound_pre_cancel" | "bound_foreign_admission" | "bound_owner_admission" => 0,
+      "bound_pre_cancel" | "bound_owner_admission" => 0,
       _ => 2,
     };
     let expected_target_loss = !matches!(
       case,
-      "legacy_stay" | "bound_success" | "bound_press_success" | "bound_paste_success" | "bound_pre_cancel" | "bound_cancel_after_char"
+      "legacy_stay"
+        | "bound_success"
+        | "bound_activate_once"
+        | "bound_press_success"
+        | "bound_paste_success"
+        | "bound_pre_cancel"
+        | "bound_cancel_after_char"
     );
     let expected_cancellation = matches!(case, "bound_pre_cancel" | "bound_cancel_after_char");
     let passed = passed
       && target_lost == expected_target_loss
       && cancelled == expected_cancellation
       && after.injected_keys.saturating_sub(before.injected_keys) == expected_injected_keys;
+    let passed = passed
+      && (!matches!(case, "bound_stay" | "bound_press_stay" | "bound_combo_stay" | "bound_paste_stay") || after.foreground == b.hwnd());
     let events: Vec<Value> = watch
       .timeline(before.taken_ms, after.taken_ms)
       .foreground_events

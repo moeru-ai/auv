@@ -1188,7 +1188,8 @@ The Rust client and Invoke retain the `TargetLost` and `target_lost` categories.
 The JS SDK reads the reason through `inputFailureReason(error)`.
 The reason can be known while native delivery remains unknown.
 
-A guarded Windows keyboard batch requires its window to be foreground at admission.
+A guarded Windows keyboard batch may activate its chosen window once before admission.
+It requires that window to remain foreground after admission.
 It retains owner identity during the batch and stops after foreign or ambiguous foreground events.
 Returning to the original window does not revive a lost batch.
 Already submitted input and required releases remain possible after loss.

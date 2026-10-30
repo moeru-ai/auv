@@ -8,7 +8,7 @@ Use the existing `InputTarget::Window` and `InputPolicy::ForegroundPreferred` ba
 
 Validate the complete request before IO. A dry run validates request shape without activating a window or installing hooks. Actual delivery requires the window's observed PID, a live matching owner/thread/class, visibility, and a non-minimized, non-cloaked window.
 
-Require the caller's window to be foreground at admission, then retain a guard for the complete batch. Revalidate before every native `SendInput` submission, including replacement shortcuts, Unicode fragments, paste shortcuts, and submit keys. Detected foreign or ambiguous foreground events and root-window destruction invalidate the guard permanently. Returning to the original foreground cannot revive a lost guard. No action is retried and no loss causes automatic reactivation.
+Prepare the explicit Window's foreground once before admission, then retain a guard for the complete batch. Revalidate before every native `SendInput` submission, including replacement shortcuts, Unicode fragments, paste shortcuts, and submit keys. Detected foreign or ambiguous foreground events and root-window destruction invalidate the guard permanently. Returning to the original foreground cannot revive a lost guard. No action is retried and no loss causes automatic reactivation.
 
 The guard observes a window recipient, not a text control. The caller establishes the first responder. Application state remains the semantic verifier. A foreground check and `SendInput` are separate OS operations; this feature cannot claim atomic recipient binding or replace the closed #429 capture predicate.
 
@@ -37,7 +37,8 @@ The owned receiver acknowledges fault arming before input and changes foreground
 - Text delivery stops after foreground loss, A-to-B-to-A, minimization, or window destruction. The alternate receiver must receive no text key messages.
 - Repeated presses stop with an exact completed-press count. Combination cleanup releases only owned keys; releases may reach the new foreground.
 - Paste restores clipboard text and stops the following action after takeover. Required modifier releases are separate from another key-down.
-- Cancellation after application acknowledgement stops later characters. Pre-cancelled, foreign-foreground, and wrong-owner admission submit no input.
+- Cancellation after application acknowledgement stops later characters. Pre-cancelled and wrong-owner admission submit no input.
+- Initial foreground preparation activates the explicitly chosen Window once. Later takeover stops delivery without reactivation.
 - Failure records preserve partial submission; all owned processes/windows exit and desktop restoration has separate receipts.
 
 Native tests run only on the isolated hosted Windows desktop. Local validation compiles native fixtures and runs pure tests.
@@ -57,6 +58,8 @@ Producer artifact SHA-256: `5e5de560323caee6fe03fbeae29ecae7644d5a6b6904a9474332
 Both accepted runs recorded 12 successful receiver cleanups, no physical input, and restored foreground and pointer state. An earlier `02d1425a` rehearsal lacked B's typing first responder. It is not an accepted baseline. The fixture repaired that setup before the baseline above.
 
 The expanded evaluator contains 15 cases for text, repeated presses, combinations, paste, cancellation, and admission rejection. Its current source has compilation and pure projection checks; native acceptance is pending. The earlier six-case result does not validate these added cases.
+
+The first expanded run at `bd219a46`, [41098663509](https://github.com/moeru-ai/auv/actions/runs/41098663509), passed 14 cases and failed one evaluator assertion. That assertion incorrectly required an initially foreign foreground to be refused. The existing contract and producer allow one initial activation before admission. Its records showed A=`abc`, B empty, and six injected keys. The corrected case tests that preparation separately and requires later takeover cases to leave B foreground. The native producer is unchanged by this correction.
 
 ## Limits and follow-up gates
 
