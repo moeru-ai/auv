@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: c7d6b53f5d348bd57391514c61f0cdfe67e4d69c
+          ref: 06a8bb9fe6a2443f36f2be3144accf9a608f2d26
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne 'c7d6b53f5d348bd57391514c61f0cdfe67e4d69c') { throw "Unexpected source $source" }
+          if ($source -ne '06a8bb9fe6a2443f36f2be3144accf9a608f2d26') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -95,6 +95,7 @@ jobs:
             vlc = @((Join-Path $programFiles 'VideoLAN/VLC/vlc.exe'))
             qbittorrent = @((Join-Path $programFiles 'qBittorrent/qbittorrent.exe'))
             ilspy = @((Join-Path $programFiles 'ILSpy/ILSpy.exe'))
+            powershell_ise = @((Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell/v1.0/PowerShell_ISE.exe'))
           }
           $applications = [ordered]@{}
           foreach ($name in $candidates.Keys) {
