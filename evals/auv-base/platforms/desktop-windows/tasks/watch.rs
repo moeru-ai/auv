@@ -12,11 +12,10 @@
 //!   makes an operation inconclusive instead of failed.
 //! - **Foreground changes.** A WinEvent hook records every `EVENT_SYSTEM_FOREGROUND` with the
 //!   window the event names, the window that really is foreground when the hook runs, and when.
-//!   The two differ: the event also fires when a window merely activates inside its own input
-//!   queue without becoming the system foreground (observed for a detached application that
-//!   handles a posted click). So the event alone is not proof of a change; the real foreground
-//!   window is. A change that happens and reverts between two polls, or that lands between
-//!   operations, is still seen.
+//!   The two can differ after background queue activation or when a callback runs after another
+//!   foreground transition. The named window alone does not prove a takeover, and callback-time
+//!   foreground cannot rule one out. Such receipts leave the history inconclusive. A callback
+//!   that directly reads another foreground window still provides evidence of a real change.
 //!
 //! The hooks only ever count and timestamp. They keep no key codes, no characters and no
 //! coordinates, and pass every event on untouched. For injected events they also keep the
@@ -124,7 +123,7 @@ fn now_ms() -> u64 {
 }
 
 /// What the desktop looked like at one instant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Snapshot {
   pub taken_ms: u64,
   pub foreground: isize,
@@ -138,7 +137,7 @@ pub struct Snapshot {
 }
 
 /// One `EVENT_SYSTEM_FOREGROUND`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ForegroundEvent {
   pub at: u64,
   /// The window the event names.
@@ -176,13 +175,12 @@ pub struct Timeline {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum Verdict {
-  /// Nothing the driver could have caused changed: no injected input, no foreground change,
-  /// same cursor.
+  /// No disturbance or ambiguous foreground receipt was recorded in the compared span.
   Held,
   /// Something changed that the user's own input does not explain.
   Violated { reasons: Vec<&'static str> },
-  /// A foreground or cursor change happened, but the user's own input explains it. Injected
-  /// input is still checked.
+  /// Physical input explains a change, or an asynchronous receipt leaves foreground history
+  /// unresolved. Observed injected input is still a violation.
   Inconclusive { reasons: Vec<&'static str> },
 }
 
@@ -197,7 +195,7 @@ impl Snapshot {
   /// `before` to `after`.
   pub fn judge(before: &Snapshot, after: &Snapshot, timeline: &Timeline) -> Verdict {
     let mut violations = Vec::new();
-    let mut excused = Vec::new();
+    let mut uncertain = Vec::new();
     if after.injected_mouse != before.injected_mouse {
       violations.push("injected_mouse_input");
     }
@@ -208,8 +206,12 @@ impl Snapshot {
     let user_caused =
       |at: u64| timeline.discrete_input.iter().any(|&input| input + USER_CAUSE_BEFORE_MS >= at && input <= at + USER_CAUSE_AFTER_MS);
 
-    // A real change is a different window being foreground, at the end or at any event. An
-    // event whose window never became foreground is only noted (see the module docs).
+    // A callback-time query cannot distinguish background activation from a foreground
+    // takeover that already reverted. Preserve that ambiguity instead of proving Held.
+    if timeline.foreground_events.iter().any(|event| event.window != event.actual) {
+      uncertain.push("foreground_event_ambiguous");
+    }
+    // A different foreground at either a callback or the final query is direct change evidence.
     let real: Vec<_> = timeline.foreground_events.iter().filter(|event| event.actual != before.foreground).collect();
     if after.foreground != before.foreground || !real.is_empty() {
       let mut moments: Vec<u64> = real.iter().map(|event| event.at).collect();
@@ -217,7 +219,7 @@ impl Snapshot {
         moments.push(after.taken_ms);
       }
       if moments.iter().all(|&at| user_caused(at)) {
-        excused.push("foreground_window_changed");
+        uncertain.push("foreground_window_changed");
       } else {
         violations.push("foreground_window_changed");
       }
@@ -226,7 +228,7 @@ impl Snapshot {
     if after.cursor != before.cursor {
       let user_active = after.last_physical_ms + CURSOR_GUARD_MS >= before.taken_ms;
       if user_active {
-        excused.push("cursor_moved")
+        uncertain.push("cursor_moved")
       } else {
         violations.push("cursor_moved")
       }
@@ -236,8 +238,8 @@ impl Snapshot {
       Verdict::Violated {
         reasons: violations,
       }
-    } else if !excused.is_empty() {
-      Verdict::Inconclusive { reasons: excused }
+    } else if !uncertain.is_empty() {
+      Verdict::Inconclusive { reasons: uncertain }
     } else {
       Verdict::Held
     }
@@ -566,15 +568,20 @@ mod tests {
   }
 
   #[test]
-  fn an_event_whose_window_never_became_foreground_is_not_a_change() {
-    // Observed: a detached application that handles a posted click fires the event for itself
-    // while the system foreground stays with the user's window.
+  fn a_foreground_receipt_whose_named_window_differs_is_inconclusive() {
+    // The native #445 probe has this shape after C's posted click: C reports another activation,
+    // the callback reads A, and C reports no additional takeover. It does not prove no transition.
     let timeline = Timeline {
       foreground_events: vec![event(1005, 200, 100)],
       discrete_input: vec![],
       injected_input: vec![],
     };
-    assert_eq!(Snapshot::judge(&at(1000), &at(1010), &timeline), Verdict::Held);
+    assert_eq!(
+      Snapshot::judge(&at(1000), &at(1010), &timeline),
+      Verdict::Inconclusive {
+        reasons: vec!["foreground_event_ambiguous"]
+      }
+    );
   }
 
   #[test]
@@ -607,6 +614,27 @@ mod tests {
       Snapshot::judge(&at(1000), &at(1010), &timeline),
       Verdict::Violated {
         reasons: vec!["foreground_window_changed"]
+      }
+    );
+  }
+
+  // https://github.com/moeru-ai/auv/pull/445
+  // ROOT CAUSE:
+  //
+  // If B becomes foreground and returns to A before its asynchronous callback, both callback
+  // queries can read A. Filtering only by callback-time foreground incorrectly proved Held.
+  // The event's named window cannot distinguish this history from background queue activation.
+  #[test]
+  fn pr445_delayed_aba_receipts_cannot_prove_held() {
+    let timeline = Timeline {
+      foreground_events: vec![event(1004, 200, 100), event(1006, 100, 100)],
+      discrete_input: vec![],
+      injected_input: vec![],
+    };
+    assert_eq!(
+      Snapshot::judge(&at(1000), &at(1010), &timeline),
+      Verdict::Inconclusive {
+        reasons: vec!["foreground_event_ambiguous"]
       }
     );
   }

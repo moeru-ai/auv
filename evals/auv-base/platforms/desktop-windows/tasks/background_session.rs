@@ -35,6 +35,13 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       output: PathBuf,
     },
+    /// Diagnostic: compare owned foreground transitions, WinEvent receipts, and background activation.
+    ForegroundEvents {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long, default_value_t = 10)]
+      rounds: u32,
+    },
     /// Diagnostic: does WGC keep delivering fresh frames for a window nobody is looking at?
     Freshness {
       #[arg(long)]
@@ -167,6 +174,7 @@ fn main() -> std::process::ExitCode {
   }
 
   let result = match Cli::parse().scenario {
+    Scenario::ForegroundEvents { output, rounds } => auv_base_evals::desktop_windows::foreground_events::run(&output, rounds),
     Scenario::Probe { output } => auv_base_evals::desktop_windows::probe::foreground_rights(&Options {
       output,
       repetitions: 1,
