@@ -258,6 +258,12 @@ pub fn run(output: &Path, auv: &Path) -> Result<bool> {
                 && after.foreground == b.hwnd()
             }
             "cancel" => {
+              // https://github.com/moeru-ai/auv/actions/runs/41109370775/job/124247499139
+              // ROOT CAUSE:
+              // Local MCP checked cancellation before synchronous keyboard work,
+              // outside the native cancellation scope. After acknowledging "a",
+              // cancellation still allowed the remaining two repeats ("aaa").
+              // This regression requires the native repeat wait to stop as well.
               operation["cancellation_sent"] == true
                 && operation["acknowledged_text"] == "a"
                 && after_a["typing"]["text"] == "a"

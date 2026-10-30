@@ -82,9 +82,23 @@ This finite check does not prove an unlimited quiet period or fabricate a native
 Application state, injected-key counts, desktop events, owned-window PNGs, and frontend stores remain separate channels.
 The PNGs require independent visual review; capture success alone is not a text oracle.
 
-At `8cab8a76`, compilation passed and the
-[isolated frontend task](https://github.com/moeru-ai/auv/actions/runs/41109370775)
-is pending. No live frontend parity is claimed yet.
+The first [isolated frontend task](https://github.com/moeru-ai/auv/actions/runs/41109370775),
+source `8cab8a76`, passed 11 of 12 cases.
+Artifact `13003487852` matched SHA-256
+`6e5d58a19a7d9cd1982cfd92dc3907af55fbc4017b513f865fc60a4fb32cae0b` after download.
+The failed local-MCP cancellation case acknowledged `a`, then received `aaa`
+and six injected key events. Its durable command record reported success.
+Independent PNG review confirmed `aaa` in A and no text in B.
+Selected-Runner MCP stopped at `a` and two key events.
+All 24 receiver cleanups, both MCP exits, owned Runner cleanup,
+and pointer/foreground restoration passed, with no physical input.
+
+Windows local keyboard execution now uses the existing cancellable blocking-input boundary.
+It retains the inner keyboard error so native progress and batch progress survive ordinary failures.
+macOS/Linux keep their existing delivery-thread contracts.
+A canceled request can lose its final wire reply; absent progress remains unknown.
+The repair passed compilation and 288 unit tests. Live verification is pending.
+No live frontend parity is claimed yet.
 
 The previous Windows CI run failed in
 [`abandoned_hold_releases_without_another_request`](https://github.com/moeru-ai/auv/actions/runs/41103991540/job/124228286676).

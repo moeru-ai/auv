@@ -371,7 +371,7 @@ struct TypeTextArgs {
   input = TypeTextArgs,
 )]
 async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -412,7 +412,7 @@ struct PasteTextArgs {
   input = PasteTextArgs,
 )]
 async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -486,7 +486,7 @@ struct PressKeysArgs {
   runner = Direct,
 )]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 // NOTICE: input.keys is the existing complete-press spelling. Keep both
@@ -634,7 +634,7 @@ enum KeyboardActionArg {
 )]
 async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-  execute_keyboard(&input, actions)
+  execute_keyboard(&input, actions).await
 }
 
 #[invoke_command(
@@ -647,7 +647,7 @@ async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> c
   input = PressKeyArgs,
 )]
 async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
@@ -2163,12 +2163,24 @@ pub(crate) fn validate_keyboard_policy(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+async fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
   let session = auv::local::open()?;
   let target = local_keyboard_target(input, &session)?;
 
   input.cancellation.check().map_err(|error| error.to_string())?;
+  // Windows keyboard waits must see the Invoke/MCP cancellation signal. Preserve
+  // the inner keyboard error so batch and native delivery facts survive failures.
+  #[cfg(target_os = "windows")]
+  let result = {
+    let dry_run = input.dry_run;
+    run_cancellable_input(&input.cancellation, move || Ok(session.input().input_keyboard(&target, keyboard, dry_run)))
+      .await?
+      .map_err(Into::into)
+  };
+  // NOTICE: macOS/Linux retain their existing delivery-thread contracts. Revisit
+  // those platforms only with an owner-approved cancellation slice and evidence.
+  #[cfg(not(target_os = "windows"))]
   let result = session.input().input_keyboard(&target, keyboard, input.dry_run).map_err(Into::into);
   keyboard_output(input, result)
 }
@@ -2196,7 +2208,7 @@ fn local_keyboard_target(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+async fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is unavailable on this platform"))
 }
 
