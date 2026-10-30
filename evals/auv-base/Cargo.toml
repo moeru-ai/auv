@@ -64,6 +64,10 @@ auv-driver-macos = { path = "../../crates/auv-driver-macos" }
 [target.'cfg(target_os = "windows")'.dependencies]
 auv-driver-common = { path = "../../crates/auv-driver-common" }
 auv-driver-windows = { path = "../../crates/auv-driver-windows" }
+# NOTICE(rmcp-client-build): `rmcp-0.6.4/src/model/tool.rs` uses server schema
+# helpers even in client-only builds. Keep the CLI's feature set until a locked
+# version passes a standalone client build.
+rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 image = { version = "0.25", default-features = false, features = [
   "png",
   "webp",

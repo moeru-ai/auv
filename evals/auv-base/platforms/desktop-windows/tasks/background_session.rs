@@ -40,6 +40,13 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       output: PathBuf,
     },
+    /// Isolated keyboard delivery through Driver, Invoke, selected Runner, and MCP.
+    WindowKeyboardRoutes {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long)]
+      auv: PathBuf,
+    },
     /// Diagnostic: does WGC keep delivering fresh frames for a window nobody is looking at?
     Freshness {
       #[arg(long)]
@@ -184,6 +191,9 @@ fn main() -> std::process::ExitCode {
 
   let result = match Cli::parse().scenario {
     Scenario::WindowKeyboard { output } => auv_base_evals::desktop_windows::window_keyboard::run(&output),
+    Scenario::WindowKeyboardRoutes { output, auv } => {
+      auv_base_evals::desktop_windows::foreground_commands::workflow::run_keyboard_routes(&output, &auv)
+    }
     Scenario::Probe { output } => auv_base_evals::desktop_windows::probe::foreground_rights(&Options {
       output,
       repetitions: 1,

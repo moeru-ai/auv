@@ -500,6 +500,7 @@ dependencies = [
  "axum",
  "clap",
  "image",
+ "rmcp",
  "serde",
  "serde_json",
  "tempfile",
