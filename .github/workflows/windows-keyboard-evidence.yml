@@ -115,7 +115,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $directory = "$env:RUNNER_TEMP/auv-keyboard-evidence"
-          cargo test --locked -p auv-driver-windows --lib input_recipient::native::tests -- --nocapture 2>&1 | Tee-Object -FilePath "$directory/hooks-models.log"
+          cargo test --locked -p auv-driver-windows --lib input::recipient::native::tests -- --nocapture 2>&1 | Tee-Object -FilePath "$directory/hooks-models.log"
           if ($LASTEXITCODE -ne 0) { throw 'Hook lifecycle model failed' }
           $modelLog = Get-Content -LiteralPath "$directory/hooks-models.log" -Raw
           if ($modelLog -notmatch 'test result: ok\. 5 passed; 0 failed;') { throw 'Missing five hook lifecycle models' }
