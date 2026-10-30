@@ -1,6 +1,6 @@
 # Windows keyboard recipient protection
 
-Status: approved feature under implementation. Win32 text delivery has native evidence. Expanded acceptance remains pending.
+Status: approved feature under review. Fifteen direct Win32 cases have native evidence. Live frontend parity remains pending.
 
 ## Existing contract and scope
 
@@ -51,15 +51,20 @@ All accepted runs used one isolated interactive display at 1024 by 768 and 96 DP
 | --- | --- | --- |
 | Baseline `beef622247b71b419ab7fdf5608b09d2282870e0` | [40941402936](https://github.com/moeru-ai/auv/actions/runs/40941402936), artifact `12925984296` | Global control produced A=`a`, B=`bc`; all five Window cases were Unsupported. This is an accepted feature baseline. |
 | Producer `af374c5bce7a45112a56a8999387ec64fade7356` | [41087448481](https://github.com/moeru-ai/auv/actions/runs/41087448481), artifact `12992935468` | All six cases passed. A valid Window batch produced `abc`; four fault cases stopped after one submitted character. B received no keys in protected cases. |
+| Expanded source `264143c4f0e6f8afe76269ffa4cb1d6445c65357` | [41101183228](https://github.com/moeru-ai/auv/actions/runs/41101183228), artifact `12999121492` | All 15 cases passed. Text, repeated presses, combinations, paste, cancellation, wrong-owner rejection, and one initial activation have direct Win32 receipts. |
 
 Baseline artifact SHA-256: `6fb975001a8362e909e34ff301641212d75810f59a2f84d7e99d703e44a88231`.
 Producer artifact SHA-256: `5e5de560323caee6fe03fbeae29ecae7644d5a6b6904a94743323c9eb86ee8ab`.
+Expanded artifact SHA-256: `0857064873c27e7e163ff6d87d6cf59c13ac051a0fd514b05068381931412a31`.
 
-Both accepted runs recorded 12 successful receiver cleanups, no physical input, and restored foreground and pointer state. An earlier `02d1425a` rehearsal lacked B's typing first responder. It is not an accepted baseline. The fixture repaired that setup before the baseline above.
+The first two accepted runs recorded 12 successful receiver cleanups each. The expanded run recorded 30. All recorded no physical input and restored foreground and pointer state. An earlier `02d1425a` rehearsal lacked B's typing first responder. It is not an accepted baseline. The fixture repaired that setup before the baseline above.
 
-The expanded evaluator contains 15 cases for text, repeated presses, combinations, paste, cancellation, and admission rejection. Its current source has compilation and pure projection checks; native acceptance is pending. The earlier six-case result does not validate these added cases.
+The expanded run checked exact injected-key counts. Repeated-press and combination takeover each retained one completed press and submitted native progress. Paste takeover restored clipboard text and stopped the following text action. Cancellation after A acknowledged `a` stopped later characters. Pre-cancelled and wrong-owner cases injected zero keys with explicit `not_delivered` progress. Initial preparation activated A once; later takeover cases left B foreground without reactivation.
+
+B received no keys or text in all 14 protected cases. The global control alone produced B=`bc`. Clipboard text and modifier-state readbacks passed for every case. These checks do not establish restoration of every possible clipboard format or native short-insertion behavior.
 
 The first expanded run at `bd219a46`, [41098663509](https://github.com/moeru-ai/auv/actions/runs/41098663509), passed 14 cases and failed one evaluator assertion. That assertion incorrectly required an initially foreign foreground to be refused. The existing contract and producer allow one initial activation before admission. Its records showed A=`abc`, B empty, and six injected keys. The corrected case tests that preparation separately and requires later takeover cases to leave B foreground. The native producer is unchanged by this correction.
+Its artifact `12998200328` matched SHA-256 `bf3debf6af222baf96c137b86b0be958493af4959db175404c55b3018e7c7a2b`.
 
 ## Limits and follow-up gates
 
@@ -69,4 +74,4 @@ Serialization covers native submissions within this process. It does not provide
 
 Microsoft documents that [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) inserts an input array into the global stream. Its signature has no window recipient. [Out-of-context WinEvent delivery](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) is asynchronous. A guard check and submission therefore cannot prove atomic recipient binding. This is an inference from those API boundaries, not a stronger Windows guarantee.
 
-TODO(windows-keyboard-recipient): complete expanded native acceptance, selected-Runner cancellation, Invoke/MCP failure records, and cleanup fault injection before claiming those evidence levels. Real applications, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.
+TODO(windows-keyboard-recipient): complete selected-Runner cancellation, Invoke/MCP failure records, and cleanup fault injection before claiming those evidence levels. Real applications, 125/150% desktop DPI, window-targeted holds, and Application targets remain outside this Win32 slice. This work does not replace the retired #429 screenshot predicate.

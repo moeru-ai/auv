@@ -54,15 +54,14 @@ proven level, not a target. `not claimed` means no public level is asserted.
 
 ## Windows Window Keyboard Batches
 
-Evidence level: `live-validated` for direct Win32 text delivery in the
+Evidence level: `live-validated` for the 15 direct Win32 cases in the
 [keyboard contract](ai/references/driver/2026-10-30-windows-keyboard-recipient.md#native-evidence).
-The six-case source `af374c5b` ran on one hosted Windows desktop at 96 DPI.
-A valid batch typed `abc`. Foreground loss, A-to-B-to-A, minimization, and closure
-stopped later characters. The alternate receiver received no keys in protected cases.
-All receivers exited, with separate pointer and foreground restoration receipts.
-
-The current typed producer also guards repeated presses, combinations, and paste.
-Their expanded 15-case native gate is pending at source `bd219a46`.
+Source `264143c4` ran on one hosted Windows desktop at 96 DPI.
+Text, repeated presses, combinations, paste, cancellation, initial activation,
+and wrong-owner rejection passed exact input-count and application-state checks.
+The alternate receiver received no keys in protected cases.
+All 30 receiver cleanups and desktop restoration passed.
+Paste restored clipboard text, and modifier-state readbacks were clear.
 Runner/Invoke failure projections have automated tests; this does not establish
 live keyboard parity through Runner or MCP.
 The guard may activate its chosen Window once before admission.
