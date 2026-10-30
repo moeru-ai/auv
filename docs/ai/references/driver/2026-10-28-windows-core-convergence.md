@@ -370,6 +370,38 @@ These accepted native runs recorded build 26100, image `20261021.278.1`, interac
 Their dated notes retain complete baseline/fix source identities and raw evidence links.
 This does not complete the full Phase 2 acceptance or promote general platform support.
 
+## Window keyboard batches under review
+
+Draft [#446](https://github.com/moeru-ai/auv/pull/446) adds foreground-preferred
+`InputTarget::Window` keyboard batches on top of this focus stack.
+It permits one initial foreground preparation, then latches detected recipient loss.
+Loss stops later submissions without automatic reactivation or replay.
+Native submission facts remain separate from completed actions and repetitions.
+The draft preserves `target_lost` through shared Rust, Invoke, Runner, and JS error projections.
+It also migrates experimental keyboard error details to standard `google.rpc.Status`.
+
+The [six-case run](https://github.com/moeru-ai/auv/actions/runs/41087448481)
+at `af374c5b` passed direct Win32 text delivery and four recipient-loss scenarios.
+Its artifact `12992935468` matched SHA-256
+`5e5de560323caee6fe03fbeae29ecae7644d5a6b6904a94743323c9eb86ee8ab`.
+The global control produced A=`a`, B=`bc`; protected fault cases left B without keys.
+All 12 receiver cleanups and desktop restoration passed, with no physical input.
+
+The first expanded run at `bd219a46` passed 14 of 15 cases.
+One evaluator assertion wrongly rejected the existing initial-activation behavior.
+The corrected fixture separates initial preparation from takeover after admission.
+Its [15-case task](https://github.com/moeru-ai/auv/actions/runs/41101183228)
+at `264143c4` remains pending; no complete expanded acceptance is claimed.
+The [draft contract](https://github.com/moeru-ai/auv/blob/264143c4f0e6f8afe76269ffa4cb1d6445c65357/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
+records the API migration, tests, artifact provenance, and limits.
+Live Runner/MCP keyboard parity and cleanup fault injection remain open.
+The guard does not provide atomic `SendInput` recipient binding or replace #429.
+
+A 2026-10-31 refresh found `origin/main` at
+`a6ea946181b60736cf6c2c1b04a592a14d2a4fe8`.
+Only the Scoop recipe changed after the previously recorded `d9d2bdcc` baseline.
+PRs #437–#440 and #443–#446 remain open; none was merged by this work.
+
 ## Application and DPI environment preflight
 
 The independent [environment run](https://github.com/moeru-ai/auv/actions/runs/40733696621)
@@ -393,8 +425,8 @@ The typed Invoke path is available to MCP; no live MCP workflow evidence is clai
 Phase 2 remains incomplete after retirement of the screenshot guard.
 The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
-The next candidate is foreground-preferred `input.keyboard` batches for `InputTarget::Window`, with identity checks before each native submission and preserved partial-delivery facts.
-Foreign or ambiguous foreground events must stop the batch without automatic reactivation.
+The current draft slice is #446: finish expanded native acceptance and live frontend parity for guarded Window keyboard batches.
+Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
