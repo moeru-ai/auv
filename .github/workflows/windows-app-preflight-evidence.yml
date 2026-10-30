@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: cbd34975cd3899a025e12f95d2cf0ddc5ba82e99
+          ref: 7e7dd2a7168afa9c57a6a36fc96bb253ebf29f64
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne 'cbd34975cd3899a025e12f95d2cf0ddc5ba82e99') { throw "Unexpected source $source" }
+          if ($source -ne '7e7dd2a7168afa9c57a6a36fc96bb253ebf29f64') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -189,16 +189,21 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build the application controls evaluator
+      - name: Build the application evaluator and AUV command frontend
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           rustc --version
           cargo build --locked -p auv-base-evals --bin background-session-eval
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked -p auv-cli --bin auv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $binary = Get-Item -LiteralPath 'target/debug/background-session-eval.exe'
           @{ path=$binary.FullName; sha256=(Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } |
             ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/auv-app-preflight/evaluator-binary.json"
+          $auv = Get-Item -LiteralPath 'target/debug/auv.exe'
+          @{ path=$auv.FullName; sha256=(Get-FileHash -LiteralPath $auv.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } |
+            ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/auv-app-preflight/auv-binary.json"
 
       - name: Verify ISE discovery policy regressions
         shell: pwsh
@@ -209,7 +214,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Application discovery regression failed' }
           if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 3 passed; 0 failed;') { throw 'Missing application discovery regressions' }
 
-      - name: Launch and inspect owned real applications
+      - name: Focus edit and save owned real application documents
         shell: pwsh
         env:
           AUV_ISOLATED_DESKTOP_EVAL: '1'
@@ -220,26 +225,27 @@ jobs:
           $portable = Get-Content -LiteralPath "$directory/portable-apps.json" -Raw | ConvertFrom-Json
           $code = @($portable.packages | Where-Object id -eq 'vscode')[0].executable
           $notepadnext = @($portable.packages | Where-Object id -eq 'notepadnext')[0].executable
-          & 'target/debug/background-session-eval.exe' app-controls --output "$directory/controls" `
+          $auv = (Get-Item -LiteralPath 'target/debug/auv.exe').FullName
+          & 'target/debug/background-session-eval.exe' app-editor --auv $auv --output "$directory/controls" `
             --edge $environmentFacts.applications.edge.path --vscode $code --notepadnext $notepadnext `
             --powershell-ise $environmentFacts.applications.powershell_ise.path `
             > "$directory/controls.stdout.log" 2> "$directory/controls.stderr.log"
           $evaluationExit = $LASTEXITCODE
-          $rows = @(Get-Content -LiteralPath "$directory/controls/application-controls.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 70 })
+          $rows = @(Get-Content -LiteralPath "$directory/controls/application-editor.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 70 })
+          $summary = @($rows | Where-Object kind -eq 'summary')[0]
+          $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$directory/controls-result.json"
           $apps = @($rows | Where-Object kind -eq 'app')
           if ($apps.Count -ne 4 -or @($apps | Where-Object { $_.cleanup.active_processes -ne 0 -or -not $_.cleanup.roots_exited }).Count -ne 0) {
             throw 'Owned application cleanup records are incomplete'
           }
-          $summary = @($rows | Where-Object kind -eq 'summary')[0]
-          if ($summary.workflow_accepted -ne $false) { throw 'Inventory must not accept a functional workflow' }
-          $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$directory/controls-result.json"
-          if ($evaluationExit -ne 0 -or -not $summary.inventory_complete) { throw 'Application controls inventory incomplete; inspect retained errors' }
+          if ($summary.workflow_accepted -ne $false) { throw 'Edit/save cases must not accept the full workflow' }
+          if ($evaluationExit -ne 0 -or -not $summary.inventory_complete -or -not $summary.edit_save_accepted) { throw 'Application edit/save acceptance failed; inspect retained step results' }
 
       - name: Preserve the environment inventory
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-controls-cbd34975
+          name: windows-app-editors-7e7dd2a7
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
