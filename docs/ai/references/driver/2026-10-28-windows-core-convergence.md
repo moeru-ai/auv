@@ -391,7 +391,12 @@ The first expanded run at `bd219a46` passed 14 of 15 cases.
 One evaluator assertion wrongly rejected the existing initial-activation behavior.
 The corrected fixture separates initial preparation from takeover after admission.
 Its [15-case task](https://github.com/moeru-ai/auv/actions/runs/41101183228)
-at `264143c4` remains pending; no complete expanded acceptance is claimed.
+at `264143c4` passed text, repeated presses, combinations, paste, cancellation,
+initial activation, and wrong-owner rejection.
+Artifact `12999121492` matched SHA-256
+`0857064873c27e7e163ff6d87d6cf59c13ac051a0fd514b05068381931412a31`.
+All 30 receiver cleanups and desktop restoration passed, with no physical input.
+B received no keys in protected cases; clipboard-text and modifier readbacks passed.
 The [draft contract](https://github.com/moeru-ai/auv/blob/264143c4f0e6f8afe76269ffa4cb1d6445c65357/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
 records the API migration, tests, artifact provenance, and limits.
 Live Runner/MCP keyboard parity and cleanup fault injection remain open.
@@ -425,7 +430,7 @@ The typed Invoke path is available to MCP; no live MCP workflow evidence is clai
 Phase 2 remains incomplete after retirement of the screenshot guard.
 The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
-The current draft slice is #446: finish expanded native acceptance and live frontend parity for guarded Window keyboard batches.
+The current draft slice is #446: finish live frontend parity for guarded Window keyboard batches after the accepted 15-case direct matrix.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
