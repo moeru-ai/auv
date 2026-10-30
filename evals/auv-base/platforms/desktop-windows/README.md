@@ -84,6 +84,18 @@ that text again. Its records hold only whether the clipboard came back, never wh
 
 ## Complete workflows
 
+`workflow --semantic-focus` replaces the first OCR click with UIA query focus.
+It first requires a missing query to return `not_found` with zero input.
+Then the receiver's own UI thread must confirm focus on its text field.
+The driver must also report focus readback, with no pointer movement or injected mouse or keyboard input during that step.
+The rest of the record-entry workflow and its independent checks remain the same.
+This option conflicts with `--observe-only` and needs an isolated interactive desktop for functional acceptance.
+
+`--routes rust,invoke,runner` is the default.
+An explicit subset, such as `--routes rust,invoke`, runs only those routes.
+One route's result never establishes another route's behavior.
+The [semantic-focus record](../../../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md) states the current evidence level.
+
 `workflow` runs the same owned Win32 record-entry workflow through direct Rust APIs, local
 Invoke, and a real daemon-owned Runner selected by `--run`: resolve and capture the window,
 OCR the input caption, click, verify foreground and control focus, select the existing

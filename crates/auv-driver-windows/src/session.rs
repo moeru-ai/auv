@@ -665,6 +665,11 @@ impl PermissionApi<'_> {
 }
 
 impl AccessibilityApi<'_> {
+  /// Focuses one unambiguous UIA query and confirms keyboard focus readback.
+  pub fn focus_text(&self, options: auv_driver_common::FocusTextOptions) -> DriverResult<auv_driver_common::AxFocusResult> {
+    crate::accessibility::focus_text(options)
+  }
+
   /// Captures the window's accessibility tree as a flattened, depth-first node
   /// list via UI Automation.
   pub fn snapshot_window(&self, window: &Window) -> DriverResult<AxTreeSnapshot> {

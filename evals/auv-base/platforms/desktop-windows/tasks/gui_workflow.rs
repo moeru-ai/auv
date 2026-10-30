@@ -21,6 +21,28 @@ pub struct Options {
   pub rounds: u32,
   /// Resolution, capture, OCR and Runner lifecycle only; not full workflow acceptance.
   pub observe_only: bool,
+  /// Use UIA query focus for the text field instead of an OCR pointer click.
+  pub semantic_focus: bool,
+  pub routes: Vec<Route>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Route {
+  // TODO(windows-mcp-workflow): the fourth, MCP route belongs to Phase 5.
+  // First accept the three existing workflow routes; see the convergence record.
+  Rust,
+  Invoke,
+  Runner,
+}
+
+impl Route {
+  fn as_str(self) -> &'static str {
+    match self {
+      Self::Rust => "rust",
+      Self::Invoke => "invoke",
+      Self::Runner => "runner",
+    }
+  }
 }
 
 fn physical_input_changed(start: &Snapshot, current: &Snapshot) -> bool {
@@ -364,6 +386,18 @@ impl Entry<'_> {
 
   fn native(&self, command: &str, args: &[String]) -> Result<Value> {
     match command {
+      "input.focusText" => {
+        let result = self
+          .driver
+          .accessibility()
+          .focus_text(auv_driver_common::FocusTextOptions {
+            app: self.window.app_name.clone().context("receiver window omitted its executable name")?,
+            selector: auv_driver_common::AxTextSelector::Query(args[0].clone()),
+            expected_role: None,
+          })
+          .map_err(anyhow::Error::msg)?;
+        Ok(serde_json::to_value(result)?)
+      }
       "window.capture" => {
         let capture = self.driver.window().capture(self.window).map_err(anyhow::Error::msg)?;
         Ok(json!({"decoded_strip": decode_strip(&capture, &self.layout.strip), "window": self.window,
@@ -556,6 +590,88 @@ fn keys_may_go(scenario: &Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver
   reject_user_input(entry.start, &scenario.watch.snapshot())?;
   scenario.keys_may_go(target)?;
   reject_user_input(entry.start, &scenario.watch.snapshot())
+}
+
+/// The receiver reports GetFocus on its own UI thread. Neither an AUV result
+/// nor UIA's focus property alone establishes this application-side outcome.
+fn focus_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, query: &str) -> Result<()> {
+  let before_state = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  let app = entry.window.app_name.as_deref().context("receiver window omitted its executable name")?;
+  let result = call(scenario, entry, "input.focusText", &[query.into(), "--target".into(), format!("app:{app}")], false)?;
+  let after = scenario.watch.snapshot();
+  let state = target.request(json!({"cmd": "state"}))?;
+  let resolved = result.json.as_ref().map(|value| &value["result"]);
+  let verified = resolved.is_some_and(|value| {
+    value["pid"].as_u64() == Some(u64::from(entry.layout.pid))
+      && value["role"] == "Edit"
+      && value["input_action_result"]["verified"] == true
+      && value["input_action_result"]["selected_path"] == "ax_focus"
+  }) && state["typing"]["focused"] == true
+    && state["typing"]["text"] == before_state["typing"]["text"]
+    && before.cursor == after.cursor
+    && before.injected_mouse == after.injected_mouse
+    && before.injected_keys == after.injected_keys;
+  scenario.records.write(
+    "semantic_focus_verification",
+    json!({
+      "query": query, "result": resolved, "receiver_focused": state["typing"]["focused"],
+      "text_unchanged": state["typing"]["text"] == before_state["typing"]["text"],
+      "pointer_unchanged": before.cursor == after.cursor,
+      "no_injected_mouse": before.injected_mouse == after.injected_mouse,
+      "no_injected_keys": before.injected_keys == after.injected_keys,
+      "verified": verified,
+    }),
+  )?;
+  if !verified {
+    bail!("UIA focus did not satisfy the independent receiver and input-witness checks; no fallback or retry");
+  }
+  keys_may_go(scenario, entry, target)
+}
+
+/// Exercises a real missing-query refusal and judges zero input independently.
+fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
+  let query = "AUV absent semantic control 2b9dbd58";
+  let app = entry.window.app_name.as_deref().context("receiver window omitted its executable name")?;
+  let state_before = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  reject_user_input(entry.start, &before)?;
+  let refused = if entry.route == "rust" {
+    matches!(
+      entry.driver.accessibility().focus_text(auv_driver_common::FocusTextOptions {
+        app: app.into(),
+        selector: auv_driver_common::AxTextSelector::Query(query.into()),
+        expected_role: None,
+      }),
+      Err(auv_driver_common::DriverError::NotFound { .. })
+    )
+  } else {
+    let result = entry.call("input.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
+    result.exit != Some(0) && result.json.as_ref().is_some_and(|value| value["failure_details"]["code"] == "not_found")
+  };
+  let after = scenario.watch.snapshot();
+  reject_user_input(entry.start, &after)?;
+  let state_after = target.request(json!({"cmd": "state"}))?;
+  let verified = refused
+    && state_before["typing"] == state_after["typing"]
+    && before.foreground == after.foreground
+    && before.cursor == after.cursor
+    && before.injected_mouse == after.injected_mouse
+    && before.injected_keys == after.injected_keys;
+  scenario.records.write(
+    "missing_focus_query",
+    json!({
+      "failure_code": if refused { Some("not_found") } else { None },
+      "receiver_unchanged": state_before["typing"] == state_after["typing"],
+      "foreground_unchanged": before.foreground == after.foreground, "pointer_unchanged": before.cursor == after.cursor,
+      "no_injected_mouse": before.injected_mouse == after.injected_mouse,
+      "no_injected_keys": before.injected_keys == after.injected_keys, "verified": verified,
+    }),
+  )?;
+  if !verified {
+    bail!("missing UIA query did not refuse with zero input; no retry");
+  }
+  Ok(())
 }
 
 fn retry_initial_blank_capture(initial: bool, attempt: u32, decoded: Option<(u8, u8)>, expected: (u8, u8), identified: bool) -> bool {
@@ -925,7 +1041,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     json!({"route": route, "round": round, "system": system_facts(), "hwnd": hwnd.to_string(),
     "pid": layout.pid, "window_rect": layout.window_rect, "typing_rect": layout.typing_rect, "button_rect": layout.button_rect,
     "runner_run": runner.as_ref().map(|runner| &runner.run), "foreground_guard_atomic": false, "observe_only": options.observe_only,
-    "calibration_click_count": calibration, "calibration_is_input_delivery": false}),
+    "calibration_click_count": calibration, "calibration_is_input_delivery": false, "semantic_focus": options.semantic_focus}),
   )?;
   let mut scenario = Scenario {
     auv: &auv,
@@ -955,7 +1071,12 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       find_text(&mut scenario, &entry, &button_caption, layout.button_rect)?;
       return Ok(());
     }
-    click_text(&mut scenario, &entry, &input_caption, layout.typing_rect)?;
+    if options.semantic_focus {
+      missing_focus_query(&mut scenario, &entry, &mut target)?;
+      focus_text(&mut scenario, &entry, &mut target, &input_caption)?;
+    } else {
+      click_text(&mut scenario, &entry, &input_caption, layout.typing_rect)?;
+    }
     // This native single-line EDIT does not select all on Ctrl+A. Select the line through
     // keyboard input, then verify the actual control selection before replacing its text.
     keys_may_go(&scenario, &entry, &mut target)?;
@@ -1184,7 +1305,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     "foreground_restored": (!options.observe_only).then_some(finish.foreground == start.foreground),
     "cursor_unchanged": finish.cursor == start.cursor, "foreground_unchanged": finish.foreground == start.foreground,
     "physical_mouse": finish.physical_mouse - start.physical_mouse, "physical_keys": finish.physical_keys - start.physical_keys,
-    "input_action_retries": 0, "foreground_input_expected": !options.observe_only}),
+    "input_action_retries": 0, "foreground_input_expected": !options.observe_only, "semantic_focus": options.semantic_focus}),
   )?;
   println!(
     "{} {route} round {round}: {}",
@@ -1209,14 +1330,20 @@ pub fn run(options: &Options) -> Result<bool> {
   if options.rounds == 0 {
     bail!("rounds must be positive");
   }
+  if options.semantic_focus && options.observe_only {
+    bail!("semantic focus sends input and cannot be combined with observe-only");
+  }
+  if options.routes.is_empty() || options.routes.iter().enumerate().any(|(index, route)| options.routes[..index].contains(route)) {
+    bail!("workflow routes must be nonempty and unique");
+  }
   if options.output.exists() {
     bail!("workflow output already exists; choose a fresh directory to preserve evidence");
   }
   std::fs::create_dir_all(&options.output)?;
   let mut passed = true;
-  for route in ["rust", "invoke", "runner"] {
+  for route in &options.routes {
     for round in 1..=options.rounds {
-      passed &= case(options, route, round).with_context(|| format!("workflow {route} round {round}"))?;
+      passed &= case(options, route.as_str(), round).with_context(|| format!("workflow {} round {round}", route.as_str()))?;
     }
   }
   Ok(passed)
@@ -1464,6 +1591,8 @@ mod tests {
       auv,
       rounds: 1,
       observe_only: true,
+      semantic_focus: false,
+      routes: vec![Route::Runner],
     };
     let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");
     assert!(!passed);
@@ -1503,6 +1632,8 @@ mod tests {
       auv,
       rounds: 1,
       observe_only: true,
+      semantic_focus: false,
+      routes: vec![Route::Runner],
     };
     let passed = case(&options, "runner", 1).expect("a setup failure is a recorded outcome, not a process error");
     assert!(!passed);

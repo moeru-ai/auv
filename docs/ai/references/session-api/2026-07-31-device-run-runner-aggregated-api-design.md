@@ -1,5 +1,7 @@
 # Device, Run, Runner, and Aggregated API Design
 
+> NOTICE (2026-10-28): The experimental accessibility focus schema moved from `driver/macos/v1` to `driver/v1`. See the [current focus contract](../driver/2026-10-28-windows-core-convergence.md). Paths below remain historical.
+
 > **Migration (2026-10-09):** `RatioRect` (Rust), `NormalizedRect` (Protobuf)
 > and `NormalizedRegion` (`auv-core`) are now one type, `RelativeRect`, with the
 > same fields. See Part B.4 of

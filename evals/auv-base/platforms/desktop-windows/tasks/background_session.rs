@@ -147,6 +147,17 @@ fn main() -> std::process::ExitCode {
       /// Resolve, capture and OCR only. No input; does not accept the full workflow.
       #[arg(long)]
       observe_only: bool,
+      /// Focus the text field through UIA instead of clicking its OCR result.
+      #[arg(long, conflicts_with = "observe_only")]
+      semantic_focus: bool,
+      /// Execute only these routes; every selected route writes its own evidence.
+      #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        default_value = "rust,invoke,runner"
+      )]
+      routes: Vec<auv_base_evals::desktop_windows::foreground_commands::workflow::Route>,
     },
     /// Phase 1: one background window.
     Single {
@@ -249,12 +260,16 @@ fn main() -> std::process::ExitCode {
       auv,
       rounds,
       observe_only,
+      semantic_focus,
+      routes,
     } => auv_base_evals::desktop_windows::foreground_commands::workflow::run(
       &auv_base_evals::desktop_windows::foreground_commands::workflow::Options {
         output,
         auv,
         rounds,
         observe_only,
+        semantic_focus,
+        routes,
       },
     ),
     Scenario::Single {

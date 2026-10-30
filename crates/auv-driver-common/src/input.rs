@@ -620,7 +620,7 @@ pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,
   pub attempts: Vec<InputAttempt>,
-  /// Whether a post-action observation proved the requested semantic effect.
+  /// Whether a post-action readback proved the requested semantic effect.
   ///
   /// NOTICE(input-delivery-verification): A successful OS/driver dispatch is
   /// not consumption evidence. Raw CGEvent, SendInput, XTest, and AX action

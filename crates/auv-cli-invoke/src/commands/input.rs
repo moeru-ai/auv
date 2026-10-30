@@ -253,8 +253,7 @@ struct FocusTextArgs {
   /// Text identifying the input to focus.
   #[arg(value_name = "TEXT")]
   query: String,
-  /// Accessibility path of the input, from an earlier focus result; when set it
-  /// selects the input instead of TEXT.
+  /// Exact accessibility path on macOS. Windows accepts query selection only.
   #[arg(long, value_name = "PATH")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate: Option<String>,
@@ -262,17 +261,16 @@ struct FocusTextArgs {
 
 #[invoke_command(
   id = "input.focusText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an accessibility tree and focus_node that this command does not use") },
-  // The Runner-side AccessibilityService handler is macOS-only; the refusal reason differs
-  // from the direct Windows note, so the route declares its own cells.
+  support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
+  // Runner support describes its native backend, independently of this host.
   runner = {
     macos: Supported,
-    linux: Unsupported("the Runner's accessibility service is macOS-only"),
-    windows: Unsupported("the Runner's accessibility service is macOS-only"),
+    linux: Unsupported("the Runner has no Linux accessibility focus backend"),
+    windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
   },
   target = RequiredApplication,
   group = "input",
-  description = "Focus a text input in a target app through accessibility, located by its visible text.",
+  description = "Focus a control in a target app through accessibility, located by its text.",
   input = FocusTextArgs,
 )]
 async fn focus_text_input(input: InvokeCommandInput, args: FocusTextArgs) -> crate::InvokeExecutionResult {
@@ -282,33 +280,29 @@ async fn focus_text_input(input: InvokeCommandInput, args: FocusTextArgs) -> cra
   let app = input.application_target()?.ok_or_else(|| "input.focusText requires --target app:".to_string())?.to_string();
   let candidate = args.candidate.unwrap_or_default();
   let result = focus_text(app, args.query, candidate.clone()).await?;
+  emit_input_action_result(&result.input_action_result);
   Ok(focus_text_output(&result, &candidate)?)
 }
 
 pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, crate::InvokeFailure> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
-    let session = auv::local::open().map_err(|error| error.to_string())?;
+    let session = auv::local::open()?;
     let selector = if candidate.trim().is_empty() {
       auv_driver::AxTextSelector::Query(query)
     } else {
       auv_driver::AxTextSelector::Path(candidate)
     };
-    Ok(
-      session
-        .accessibility()
-        .focus_text(auv_driver::FocusTextOptions {
-          app,
-          selector,
-          expected_role: None,
-        })
-        .map_err(|error| error.to_string())?,
-    )
+    Ok(session.accessibility().focus_text(auv_driver::FocusTextOptions {
+      app,
+      selector,
+      expected_role: None,
+    })?)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (app, query, candidate);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.focusText is only available on macOS"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.focusText is only available on macOS and Windows"))
   }
 }
 
@@ -318,24 +312,24 @@ struct AxFocusTextArgs {
   /// Text identifying the input to focus.
   #[arg(value_name = "TEXT")]
   query: String,
-  /// Accessibility path of the input, from an earlier focus result; when set it
-  /// selects the input instead of TEXT.
+  /// Exact accessibility path on macOS. Windows accepts query selection only.
   #[arg(long, value_name = "PATH")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate: Option<String>,
 }
 
 // NOTICE(input-ax-focus-text-alias): this command is a compatibility alias for
-// input.focusText. Both use the same typed macOS AX focus operation; it does
-// not provide an overlay, pointer fallback, or post-delivery focus readback.
+// input.focusText. Both use the same typed platform focus operation. Neither
+// provides an overlay or pointer fallback. Windows confirms focus by UIA
+// readback; macOS continues to report delivery only.
 // Remove the alias only after an owner-approved CLI compatibility boundary.
 #[invoke_command(
   id = "input.axFocusText",
-  support = { macos: Supported, linux: Unsupported, windows: Unsupported("the Windows driver has an accessibility tree and focus_node that this command does not use") },
+  support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
   runner = {
     macos: Supported,
-    linux: Unsupported("the Runner's accessibility service is macOS-only"),
-    windows: Unsupported("the Runner's accessibility service is macOS-only"),
+    linux: Unsupported("the Runner has no Linux accessibility focus backend"),
+    windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
   },
   role = Alias("input.focusText"),
   target = RequiredApplication,
@@ -350,6 +344,7 @@ async fn ax_focus_text_input(input: InvokeCommandInput, args: AxFocusTextArgs) -
   let app = input.application_target()?.ok_or_else(|| "input.axFocusText requires --target app:".to_string())?.to_string();
   let candidate = args.candidate.unwrap_or_default();
   let result = focus_text(app, args.query, candidate.clone()).await?;
+  emit_input_action_result(&result.input_action_result);
   Ok(focus_text_output(&result, &candidate)?)
 }
 
@@ -2282,7 +2277,14 @@ pub fn focus_text_output(result: &auv_driver::AxFocusResult, candidate: &str) ->
     InvokeReportField::new("Resolved AX path", result.path.clone()),
     InvokeReportField::new("Role", result.role.clone()),
     InvokeReportField::new("Focus method", result.input_action_result.selected_path.as_str()),
-    InvokeReportField::new("Verification", "delivery_only; focused element was not read back after AX delivery"),
+    InvokeReportField::new(
+      "Verification",
+      if result.input_action_result.verified {
+        "verified; focused element readback confirmed the selected control"
+      } else {
+        "delivery_only; focused element was not read back after AX delivery"
+      },
+    ),
   ]);
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }

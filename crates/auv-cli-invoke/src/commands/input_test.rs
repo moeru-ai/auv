@@ -397,6 +397,40 @@ fn focus_text_human_output_exposes_target_selection_delivery_and_verification_bo
 }
 
 #[test]
+fn focus_text_output_preserves_confirmed_focus_readback() {
+  let mut result = test_focus_result("Search documents");
+  result.input_action_result.verified = true;
+  let output = focus_text_output(&result, "").expect("confirmed focus result");
+  let report = output.report.as_ref().expect("focus report");
+  assert_eq!(field_value(report, "Verification"), "verified; focused element readback confirmed the selected control");
+  assert_eq!(output.result().unwrap()["input_action_result"]["verified"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_focus_text_preserves_missing_application_without_input() {
+  for command in [
+    focus_text_input_invoke_command(),
+    ax_focus_text_input_invoke_command(),
+  ] {
+    let error = command
+      .invoke(crate::InvokeCommandInput {
+        command_id: command.id.into(),
+        target: Some(crate::ExecutionTarget::Application {
+          id: "auv-nonexistent-focus-fixture-a7b74d5a.exe".into(),
+        }),
+        inputs: [("query".into(), "Search".into())].into(),
+        typed_args: None,
+        dry_run: false,
+        cancellation: Default::default(),
+      })
+      .await
+      .expect_err("no application can receive focus");
+    assert_eq!(error.code, crate::FailureCode::NotFound, "{}: {}", command.id, error.message);
+  }
+}
+
+#[test]
 fn click_point_result_keeps_resolved_target_and_delivery_together() {
   let output = click_point_output(ClickPointResult {
     relative_to: "window".to_string(),
@@ -618,16 +652,16 @@ async fn focus_text_requires_application_even_in_dry_run() {
 
 // ROOT CAUSE:
 //
-// If `input.focusText` or `input.axFocusText` ran where its cell is `Unsupported` (Linux and
-// Windows), the refusal reached the caller as `command_failed`, because `focus_text` returned a
+// If `input.focusText` or `input.axFocusText` ran without a local path, the
+// refusal reached the caller as `command_failed`, because `focus_text` returned a
 // plain `String` and `InvokeFailure::from(String)` assigns that code.
 //
 // Before the fix, a caller could not tell a platform without a path from a focus attempt that
 // failed. The fix keeps the refusal typed as `unsupported`. It refuses before any platform access,
 // so the commands run for real here.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[tokio::test]
-async fn focus_text_refuses_as_unsupported_off_macos() {
+async fn focus_text_refuses_as_unsupported_without_a_platform_path() {
   for command in [
     focus_text_input_invoke_command(),
     ax_focus_text_input_invoke_command(),

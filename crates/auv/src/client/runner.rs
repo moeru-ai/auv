@@ -495,6 +495,13 @@ impl RunnerClient {
     }
   }
 
+  /// Returns platform accessibility focus operations.
+  pub fn accessibility(&self) -> AccessibilityClient {
+    AccessibilityClient {
+      runner: self.clone(),
+    }
+  }
+
   /// Returns explicit pixel access for captures this Runner holds.
   pub fn captures(&self) -> CapturesClient {
     CapturesClient {
@@ -1234,13 +1241,6 @@ impl MacosClient {
       runner: self.runner.clone(),
     }
   }
-
-  /// Returns accessibility operations.
-  pub fn accessibility(&self) -> AccessibilityClient {
-    AccessibilityClient {
-      runner: self.runner.clone(),
-    }
-  }
 }
 
 /// macOS permission inspection operations.
@@ -1262,7 +1262,7 @@ pub struct ApplicationClient {
   runner: RunnerClient,
 }
 
-/// macOS accessibility operations.
+/// Platform accessibility focus operations.
 #[derive(Clone, Debug)]
 pub struct AccessibilityClient {
   runner: RunnerClient,
@@ -1272,11 +1272,11 @@ impl AccessibilityClient {
   /// Focuses a text element using typed accessibility selection.
   pub async fn focus_text(&self, options: auv_driver::FocusTextOptions) -> Result<auv_driver::AxFocusResult, CapabilityError> {
     let selector = match options.selector {
-      auv_driver::AxTextSelector::Query(query) => macos_proto::focus_text_request::Selector::Query(query),
-      auv_driver::AxTextSelector::Path(path) => macos_proto::focus_text_request::Selector::Path(path),
+      auv_driver::AxTextSelector::Query(query) => proto::focus_text_request::Selector::Query(query),
+      auv_driver::AxTextSelector::Path(path) => proto::focus_text_request::Selector::Path(path),
     };
-    let response = macos_proto::accessibility_service_client::AccessibilityServiceClient::new(self.runner.transport()?)
-      .focus_text(macos_proto::FocusTextRequest {
+    let response = proto::accessibility_service_client::AccessibilityServiceClient::new(self.runner.transport()?)
+      .focus_text(proto::FocusTextRequest {
         application: options.app,
         selector: Some(selector),
         expected_role: options.expected_role,
@@ -1288,7 +1288,7 @@ impl AccessibilityClient {
   }
 }
 
-fn ax_focus_result_from_proto(response: macos_proto::FocusTextResponse) -> Result<auv_driver::AxFocusResult, CapabilityError> {
+fn ax_focus_result_from_proto(response: proto::FocusTextResponse) -> Result<auv_driver::AxFocusResult, CapabilityError> {
   let result = required(response.result, "FocusText response omitted AxFocusResult")?;
   if result.app.trim().is_empty() || result.path.trim().is_empty() || result.role.trim().is_empty() {
     return Err(CapabilityError::InvalidResponse("FocusText response omitted resolved AX identity".to_string()));
@@ -1350,10 +1350,7 @@ pub fn input_action_result_from_proto(action: proto::InputActionResult) -> Resul
         })
       })
       .collect::<Result<Vec<_>, CapabilityError>>()?,
-    // TODO(input-action-result-wire-verification): the current protobuf shape
-    // cannot carry semantic verification. Keep remote projections false until
-    // an owner-approved producer/reader schema slice adds that evidence.
-    verified: false,
+    verified: action.verified,
     mouse_disturbance: disturbance(action.mouse_disturbance)?,
     focus_disturbance: disturbance(action.focus_disturbance)?,
     clipboard_disturbance: disturbance(action.clipboard_disturbance)?,
@@ -1405,6 +1402,7 @@ pub fn input_action_result_to_proto(action: auv_driver::InputActionResult) -> Re
     mouse_disturbance: disturbance(action.mouse_disturbance) as i32,
     focus_disturbance: disturbance(action.focus_disturbance) as i32,
     clipboard_disturbance: disturbance(action.clipboard_disturbance) as i32,
+    verified: action.verified,
   })
 }
 
