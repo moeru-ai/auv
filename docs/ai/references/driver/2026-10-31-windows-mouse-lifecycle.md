@@ -1,6 +1,6 @@
 # Windows mouse recipient lifetime
 
-Status: native baseline reproduced; fix implemented, corrected replay pending.
+Status: scoped native acceptance passed; PR #449 is under review and unmerged.
 Classification: bug fix with application-owned regression coverage.
 Base: PR #448, `9810bd254f752619291977c73c7d586ffea99f42`.
 
@@ -84,3 +84,38 @@ Reviewed ABA and alternate-receiver captures agree with the application scroll s
 
 A local public-boundary unit also reproduced the missing pre-cancel `NotDelivered` receipt
 before the production fix. Local compilation is not corrected native acceptance.
+
+## Corrected acceptance
+
+The [corrected replay](https://github.com/moeru-ai/auv/actions/runs/41192270017)
+passed at source `4715bd57ea1104f9ee09ef97aeb1ff880c3fdb7b`,
+workflow `b735d9a099c63e4edbb58873ac30bda63b493d4b`, job `124511284877`.
+Artifact `13039586491` matched SHA-256
+`d81dbdb72a60ca9c329d92f47c496e4dafb51079093dce753a433088b9051b78` after download.
+The [permanent manifest](evidence/2026-10-31-windows-mouse-lifecycle/acceptance.json)
+retains source, environment, binary hashes, typed receipts, close state, and capture hashes.
+
+All eleven click and eleven scroll cases passed. The four scroll-loss cases now
+retain `TargetLost` with a submitted prefix. Cancellation after an acknowledged wheel
+retains submitted progress. Invalid point, delta, settle, pre-cancel and owner mismatch
+all retain zero-delivery receipts and unchanged pointer/foreground state.
+Click-close and scroll-close preserve final application counters before destruction.
+No retry or automatic revival occurred, and B received no click or wheel effect.
+
+The same job passed fifteen existing keyboard cases and eight pure regressions.
+All 74 owned receivers exited with destroyed HWNDs. Physical input stayed zero,
+modifiers were released, and desktop restoration passed. Four capture refusals
+cover the minimized and closed recipients; the task did not restore them.
+
+Visual review covers all forty mouse images. Twenty-seven exactly match hashes of
+previously reviewed captures. The other thirteen share five new image contents,
+each inspected against the application counters. The manifest records these groups
+and the prior run/path/hash matches. Offline audit first rejected the baseline
+target-loss failure, then accepted the corrected source.
+
+Local input units/models passed 34 tests with one ignored; the new public-boundary
+unit passed after first failing. Invoke passed 167 tests with one ignored.
+All-target and all-feature Driver checks, Clippy with existing warnings, formatting,
+both command helps, and diff checks passed. No local desktop input was used.
+Native evidence used build 26100, image `20261021.278.1`, interactive session 2,
+one 1024 by 768 display, and measured 96 DPI. Remaining requirements above stay open.

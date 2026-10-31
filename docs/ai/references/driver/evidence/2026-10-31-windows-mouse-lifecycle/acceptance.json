@@ -1,0 +1,1412 @@
+{
+  "accepted": true,
+  "scope": "single-call foreground scroll and mouse close receipts",
+  "full_goal_accepted": false,
+  "run_id": 41192270017,
+  "job_id": 124511284877,
+  "artifact_id": 13039586491,
+  "archive_sha256": "d81dbdb72a60ca9c329d92f47c496e4dafb51079093dce753a433088b9051b78",
+  "preflight": {
+    "source_sha": "4715bd57ea1104f9ee09ef97aeb1ff880c3fdb7b",
+    "base_sha": "9810bd254f752619291977c73c7d586ffea99f42",
+    "workflow_sha": "b735d9a099c63e4edbb58873ac30bda63b493d4b",
+    "os": "Microsoft Windows NT 10.0.26100.0",
+    "image_version": "20261021.278.1",
+    "session_id": 2,
+    "user_interactive": true,
+    "input_desktop_accessible": true,
+    "screens": [
+      "{X=0,Y=0,Width=1024,Height=768}"
+    ],
+    "primary_window_dpi": 96,
+    "expected_baseline_failure": false
+  },
+  "binaries": [
+    {
+      "path": "D:\\a\\auv\\auv\\target\\debug\\background-session-eval.exe",
+      "sha256": "8a50238362129866a7d285c38149ebe007adbc1099c0e1c9f9634716130c0f03"
+    },
+    {
+      "path": "D:\\a\\auv\\auv\\target\\debug\\win32-receiver.exe",
+      "sha256": "e07cfdc7541245ded676e4caa7e3ad17c51d03c5e90feb7182e184fe8b796877"
+    }
+  ],
+  "mouse_cases": [
+    {
+      "case": "success",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 3,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": null,
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 7,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stay",
+      "operation": "click",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "aba",
+      "operation": "click",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "minimize",
+      "operation": "click",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_count",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        512,
+        384
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_point",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        512,
+        384
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_interval",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        512,
+        384
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "pre_cancel",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        512,
+        384
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "owner_mismatch",
+      "operation": "click",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        512,
+        384
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "cancel_after_click",
+      "operation": "click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": {
+        "after_clicks": 1,
+        "requested": true
+      },
+      "terminal_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "close",
+      "operation": "click",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": {
+        "event": "closing",
+        "fault": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        },
+        "state": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 1,
+          "cmd": "state",
+          "first_line": 0,
+          "focus_set": 1,
+          "foreground": false,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 1,
+            "button_move": 2,
+            "button_up": 1,
+            "button_wheel": 0,
+            "edit_down": 0,
+            "edit_hwheel": 0,
+            "edit_move": 0,
+            "edit_wheel": 0,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        }
+      },
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        512,
+        384
+      ],
+      "cursor_after": [
+        154,
+        163
+      ],
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_success",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": null,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_stay",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_aba",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_minimize",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_close",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": {
+        "event": "closing",
+        "fault": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        },
+        "state": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": false,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 2,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        }
+      },
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_invalid_point",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_invalid_delta",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_invalid_settle",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_pre_cancel",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_owner_mismatch",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 0,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "scroll_cancel_after_effect",
+      "operation": "scroll",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": {
+        "after_wheels": 1,
+        "requested": true
+      },
+      "terminal_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "recipient_line_before": 0,
+      "recipient_line_after": 3,
+      "alternate_line_after": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    }
+  ],
+  "keyboard_cases": 15,
+  "pure_models": 8,
+  "verified_owned_cleanup": 74,
+  "desktop_summary": {
+    "cases": 22,
+    "foreground_restored": true,
+    "input_retries": 0,
+    "kind": "summary",
+    "modifiers_released": true,
+    "passed": true,
+    "pointer_restored": true,
+    "run": "1793442200-2024",
+    "scenario": "window-mouse",
+    "seq": 81,
+    "t_ms": 20355.2256,
+    "wall_ms": 1793442221150
+  },
+  "capture_errors": [
+    {
+      "case": "minimize",
+      "error": "window is minimized and cannot be captured; AUV does not restore windows",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793442200-2024",
+      "scenario": "window-mouse",
+      "seq": 9,
+      "t_ms": 4207.9278,
+      "wall_ms": 1793442205002
+    },
+    {
+      "case": "close",
+      "error": "window:1835470 was not found",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793442200-2024",
+      "scenario": "window-mouse",
+      "seq": 31,
+      "t_ms": 9846.463699999998,
+      "wall_ms": 1793442210641
+    },
+    {
+      "case": "scroll_minimize",
+      "error": "window is minimized and cannot be captured; AUV does not restore windows",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793442200-2024",
+      "scenario": "window-mouse",
+      "seq": 48,
+      "t_ms": 14351.3764,
+      "wall_ms": 1793442215146
+    },
+    {
+      "case": "scroll_close",
+      "error": "window:2097280 was not found",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793442200-2024",
+      "scenario": "window-mouse",
+      "seq": 53,
+      "t_ms": 15079.0138,
+      "wall_ms": 1793442215873
+    }
+  ],
+  "captures": [
+    {
+      "path": "mouse/aba/alternate.png",
+      "bytes": 16923,
+      "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a"
+    },
+    {
+      "path": "mouse/aba/recipient.png",
+      "bytes": 17172,
+      "sha256": "488dc1750b129e7fb55a05031248e6faf639bec96a026709fccbc73fa8a9ab07"
+    },
+    {
+      "path": "mouse/cancel_after_click/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/cancel_after_click/recipient.png",
+      "bytes": 18138,
+      "sha256": "b4a2fbf9563f193ff2639e994b7927d32b8f5e3d0f5b642676ffcbfa01d8085d"
+    },
+    {
+      "path": "mouse/close/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_count/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_count/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/invalid_interval/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_interval/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/invalid_point/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_point/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/minimize/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/owner_mismatch/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/owner_mismatch/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/pre_cancel/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/pre_cancel/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/scroll_aba/alternate.png",
+      "bytes": 16923,
+      "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a"
+    },
+    {
+      "path": "mouse/scroll_aba/recipient.png",
+      "bytes": 17584,
+      "sha256": "5e34712adf30f54e23c181dcc59fa86b1ee03f3c8cc0be01fb3757ac8bf19032"
+    },
+    {
+      "path": "mouse/scroll_cancel_after_effect/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/scroll_cancel_after_effect/recipient.png",
+      "bytes": 17471,
+      "sha256": "0f97d248a332f6b6d0d36cd175fe58819c07f020122477ab31889de6ec2f1f62"
+    },
+    {
+      "path": "mouse/scroll_close/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/scroll_invalid_delta/alternate.png",
+      "bytes": 17267,
+      "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+    },
+    {
+      "path": "mouse/scroll_invalid_delta/recipient.png",
+      "bytes": 16921,
+      "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+    },
+    {
+      "path": "mouse/scroll_invalid_point/alternate.png",
+      "bytes": 17267,
+      "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+    },
+    {
+      "path": "mouse/scroll_invalid_point/recipient.png",
+      "bytes": 16921,
+      "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+    },
+    {
+      "path": "mouse/scroll_invalid_settle/alternate.png",
+      "bytes": 17267,
+      "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+    },
+    {
+      "path": "mouse/scroll_invalid_settle/recipient.png",
+      "bytes": 16921,
+      "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+    },
+    {
+      "path": "mouse/scroll_minimize/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/scroll_owner_mismatch/alternate.png",
+      "bytes": 17267,
+      "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+    },
+    {
+      "path": "mouse/scroll_owner_mismatch/recipient.png",
+      "bytes": 16921,
+      "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+    },
+    {
+      "path": "mouse/scroll_pre_cancel/alternate.png",
+      "bytes": 17267,
+      "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+    },
+    {
+      "path": "mouse/scroll_pre_cancel/recipient.png",
+      "bytes": 16921,
+      "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+    },
+    {
+      "path": "mouse/scroll_stay/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/scroll_stay/recipient.png",
+      "bytes": 17196,
+      "sha256": "fab66b32bcfb9a1edaeb3d9b7425b0fc12af6bec61660870a3836c1626b82b5d"
+    },
+    {
+      "path": "mouse/scroll_success/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/scroll_success/recipient.png",
+      "bytes": 17459,
+      "sha256": "f2926d73582e4476c5b2f5f8e8197c68f3de4300212a5587a960f2abc3c2fc9a"
+    },
+    {
+      "path": "mouse/stay/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/stay/recipient.png",
+      "bytes": 16798,
+      "sha256": "3f05d2d0fb3730a4a09379c231b5768dd907b0dcd4193bf34a7c592ff8bf371a"
+    },
+    {
+      "path": "mouse/success/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/success/recipient.png",
+      "bytes": 18328,
+      "sha256": "407df9632ab1a014ff63074794d817b8923411aa1a8c74d12e6d16f0a9da15ad"
+    }
+  ],
+  "visual_review": {
+    "captures_covered": 40,
+    "prior_exact_sha256_matches": 27,
+    "new_captures_covered": 13,
+    "new_unique_contents_reviewed": 5,
+    "prior_matches": [
+      {
+        "path": "mouse/aba/alternate.png",
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a",
+        "source_run": 41189403167,
+        "source_path": "mouse/aba/alternate.png"
+      },
+      {
+        "path": "mouse/aba/recipient.png",
+        "sha256": "488dc1750b129e7fb55a05031248e6faf639bec96a026709fccbc73fa8a9ab07",
+        "source_run": 41189403167,
+        "source_path": "mouse/aba/recipient.png"
+      },
+      {
+        "path": "mouse/cancel_after_click/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41189403167,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/cancel_after_click/recipient.png",
+        "sha256": "b4a2fbf9563f193ff2639e994b7927d32b8f5e3d0f5b642676ffcbfa01d8085d",
+        "source_run": 41189403167,
+        "source_path": "mouse/cancel_after_click/recipient.png"
+      },
+      {
+        "path": "mouse/close/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_count/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_count/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41189403167,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/invalid_interval/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_interval/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41189403167,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/invalid_point/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_point/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41189403167,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/minimize/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/owner_mismatch/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/owner_mismatch/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41189403167,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/pre_cancel/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/pre_cancel/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41189403167,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_aba/alternate.png",
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a",
+        "source_run": 41189403167,
+        "source_path": "mouse/aba/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_aba/recipient.png",
+        "sha256": "5e34712adf30f54e23c181dcc59fa86b1ee03f3c8cc0be01fb3757ac8bf19032",
+        "source_run": 41190986120,
+        "source_path": "mouse/scroll_aba/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_cancel_after_effect/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41189403167,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_close/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_minimize/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_stay/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_success/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41189403167,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/stay/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41190986120,
+        "source_path": "mouse/close/alternate.png"
+      },
+      {
+        "path": "mouse/stay/recipient.png",
+        "sha256": "3f05d2d0fb3730a4a09379c231b5768dd907b0dcd4193bf34a7c592ff8bf371a",
+        "source_run": 41189403167,
+        "source_path": "mouse/stay/recipient.png"
+      },
+      {
+        "path": "mouse/success/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41189403167,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/success/recipient.png",
+        "sha256": "407df9632ab1a014ff63074794d817b8923411aa1a8c74d12e6d16f0a9da15ad",
+        "source_run": 41189403167,
+        "source_path": "mouse/success/recipient.png"
+      }
+    ],
+    "new_groups": [
+      {
+        "representative": "mouse/scroll_cancel_after_effect/recipient.png",
+        "sha256": "0f97d248a332f6b6d0d36cd175fe58819c07f020122477ab31889de6ec2f1f62",
+        "paths": [
+          "mouse/scroll_cancel_after_effect/recipient.png"
+        ]
+      },
+      {
+        "representative": "mouse/scroll_invalid_delta/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "paths": [
+          "mouse/scroll_invalid_delta/alternate.png",
+          "mouse/scroll_invalid_point/alternate.png",
+          "mouse/scroll_invalid_settle/alternate.png",
+          "mouse/scroll_owner_mismatch/alternate.png",
+          "mouse/scroll_pre_cancel/alternate.png"
+        ]
+      },
+      {
+        "representative": "mouse/scroll_invalid_delta/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "paths": [
+          "mouse/scroll_invalid_delta/recipient.png",
+          "mouse/scroll_invalid_point/recipient.png",
+          "mouse/scroll_invalid_settle/recipient.png",
+          "mouse/scroll_owner_mismatch/recipient.png",
+          "mouse/scroll_pre_cancel/recipient.png"
+        ]
+      },
+      {
+        "representative": "mouse/scroll_stay/recipient.png",
+        "sha256": "fab66b32bcfb9a1edaeb3d9b7425b0fc12af6bec61660870a3836c1626b82b5d",
+        "paths": [
+          "mouse/scroll_stay/recipient.png"
+        ]
+      },
+      {
+        "representative": "mouse/scroll_success/recipient.png",
+        "sha256": "f2926d73582e4476c5b2f5f8e8197c68f3de4300212a5587a960f2abc3c2fc9a",
+        "paths": [
+          "mouse/scroll_success/recipient.png"
+        ]
+      }
+    ]
+  }
+}
