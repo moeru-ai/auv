@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 1f79de21db85cb82c3cf00f64068b016b577635a
+          ref: ca02962baf3dde5066954db57cb1813733963df0
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '1f79de21db85cb82c3cf00f64068b016b577635a') { throw "Unexpected source $actual" }
+          if ($actual -ne 'ca02962baf3dde5066954db57cb1813733963df0') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -93,18 +93,16 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $true
+            expected_baseline_failure = $false
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build unchanged Driver and posted-wheel queue reproduction
+      - name: Build fixed Driver and posted-wheel queue regression
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
-          git diff --exit-code 2a6640ce02cb32151a12932b99906ca3c709fb65 HEAD -- crates
-          if ($LASTEXITCODE -ne 0) { throw 'Posted-wheel baseline must have no production crate changes' }
           rustc --version | Tee-Object -FilePath "$directory/rustc.txt"
           cargo build --locked -p auv-base-evals --bin background-session-eval --bin win32-receiver
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -154,6 +152,21 @@ jobs:
           cargo test --locked -p auv-base-evals --lib desktop_windows::watch::tests::injected_mouse_messages_preserve_native_kind_without_keyboard_data > "$directory/mouse-kind.stdout.log" 2> "$directory/mouse-kind.stderr.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -LiteralPath "$directory/mouse-kind.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected native mouse-kind witness model' }
+
+      - name: Verify posted-wheel progress and fallback policy models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          cargo test --locked -p auv-driver-windows --lib background_input::native::scroll_tests > "$directory/posted-native.stdout.log" 2> "$directory/posted-native.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/posted-native.stdout.log" -SimpleMatch 'test result: ok. 4 passed; 0 failed')) { throw 'Expected four posted native-boundary models' }
+          cargo test --locked -p auv-driver-windows --lib session::tests::posted_scroll_ > "$directory/posted-policy.stdout.log" 2> "$directory/posted-policy.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/posted-policy.stdout.log" -SimpleMatch 'test result: ok. 8 passed; 0 failed')) { throw 'Expected eight posted fallback-policy models' }
+          cargo test --locked -p auv-driver-windows --lib pre_cancelled_background_window_scroll_reports_not_delivered > "$directory/posted-pre-cancel.stdout.log" 2> "$directory/posted-pre-cancel.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/posted-pre-cancel.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected background pre-cancel receipt' }
 
       - name: Recheck the existing keyboard fault receiver after shared fixture extraction
         shell: pwsh
@@ -218,7 +231,7 @@ jobs:
           if ($cleanup.Count -ne 26 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned drag receiver cleanup incomplete' }
           if ($exit -ne 0 -or $cases.Count -ne 13 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Complete drag recipient invariant failed; inspect retained application and release receipts' }
 
-      - name: Reproduce posted-wheel partial failure and fallback
+      - name: Verify real posted-wheel partial failure and fallback refusal
         shell: pwsh
         env:
           AUV_ISOLATED_DESKTOP_EVAL: '1'
@@ -238,7 +251,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-posted-scroll-1f79de21-baseline
+          name: windows-posted-scroll-ca02962b-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
