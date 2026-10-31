@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: e39b9cdf27b9615577ac2d41f3da49f44bfbae31
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Record exact source and isolated desktop
