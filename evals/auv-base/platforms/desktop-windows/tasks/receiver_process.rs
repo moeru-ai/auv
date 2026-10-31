@@ -99,6 +99,8 @@ pub struct Raw {
   pub edit_hwheel: u64,
   pub edit_move: u64,
   pub frame_down: u64,
+  pub frame_move: u64,
+  pub frame_up: u64,
 }
 
 /// The strip of cells that paints the receiver's click count and scroll line.

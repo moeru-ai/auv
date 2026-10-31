@@ -15,6 +15,7 @@ Count: **88**
 - [`2026-10-31-windows-mouse-recipient.md`](2026-10-31-windows-mouse-recipient.md): Foreground click recipient guard, reproduced takeover/ABA faults, typed cancellation receipts, and scoped native acceptance.
 - [`2026-10-31-windows-mouse-lifecycle.md`](2026-10-31-windows-mouse-lifecycle.md): Application-owned close receipts and foreground wheel recipient lifetime regression.
 - [`2026-10-31-windows-scroll-batch.md`](2026-10-31-windows-scroll-batch.md): Complete timed/live scroll recipient lifetime and structured partial failure.
+- [`2026-10-31-windows-drag-recipient.md`](2026-10-31-windows-drag-recipient.md): Complete drag interruption and owned button-release evidence in progress.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)

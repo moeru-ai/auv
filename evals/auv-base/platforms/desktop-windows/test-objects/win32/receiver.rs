@@ -76,14 +76,14 @@ mod native {
   use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
   use windows::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
-    ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP,
-    WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetParent,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
   };
   use windows::core::{HSTRING, PCWSTR, w};
 
@@ -185,6 +185,8 @@ mod native {
     edit_hwheel: AtomicU64,
     edit_move: AtomicU64,
     frame_down: AtomicU64,
+    frame_move: AtomicU64,
+    frame_up: AtomicU64,
     activated: AtomicU64,
     mouse_activate: AtomicU64,
     focus_set: AtomicU64,
@@ -207,6 +209,8 @@ mod native {
     edit_hwheel: AtomicU64::new(0),
     edit_move: AtomicU64::new(0),
     frame_down: AtomicU64::new(0),
+    frame_move: AtomicU64::new(0),
+    frame_up: AtomicU64::new(0),
     activated: AtomicU64::new(0),
     mouse_activate: AtomicU64::new(0),
     focus_set: AtomicU64::new(0),
@@ -711,7 +715,15 @@ mod native {
       }
     });
     if let Some((kind, target, _)) = fault {
-      let outcome = apply_recipient_fault(child, &kind, target);
+      // Retain the last application-processed position before foreground loss.
+      // Release PAD before the potentially reentrant native fault calls.
+      let pad = PAD.lock().ok().and_then(|pad| pad.clone());
+      let mut cursor = POINT::default();
+      // SAFETY: a read-only desktop query with a writable local POINT.
+      let cursor = unsafe { GetCursorPos(&mut cursor) }.ok().map(|_| [cursor.x, cursor.y]);
+      let mut outcome = apply_recipient_fault(child, &kind, target);
+      outcome["pad_at_fault"] = json!(pad);
+      outcome["cursor_at_fault"] = json!(cursor);
       if let Ok(mut receipt) = MOUSE_FAULT_RECEIPT.lock() {
         *receipt = Some(outcome);
       }
@@ -882,7 +894,20 @@ mod native {
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
       WM_MOUSEMOVE | WM_LBUTTONUP if FOREGROUND_INPUT.load(Relaxed) => {
+        if message == WM_LBUTTONUP {
+          count(&COUNTERS.frame_up);
+        } else if wparam.0 & MK_LBUTTON != 0 {
+          count(&COUNTERS.frame_move);
+        }
         pad_message(hwnd, message, wparam, lparam);
+        if message == WM_MOUSEMOVE && wparam.0 & MK_LBUTTON != 0 {
+          // Fault only after a real held move reached the pad. Hover and
+          // controller requests cannot trigger the drag interruption.
+          let dragging = PAD.lock().ok().is_some_and(|pad| pad.as_ref().is_some_and(|pad| pad["moves"].as_u64().unwrap_or(0) > 0));
+          if dragging {
+            apply_armed_mouse_fault(handle(&BUTTON), message);
+          }
+        }
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
       WM_REQUEST => {
@@ -1033,6 +1058,8 @@ mod native {
         "edit_hwheel": c.edit_hwheel.load(Relaxed),
         "edit_move": c.edit_move.load(Relaxed),
         "frame_down": c.frame_down.load(Relaxed),
+        "frame_move": c.frame_move.load(Relaxed),
+        "frame_up": c.frame_up.load(Relaxed),
       },
       "activated": c.activated.load(Relaxed),
       "mouse_activate": c.mouse_activate.load(Relaxed),
@@ -1154,7 +1181,8 @@ mod native {
             let trigger = match request["trigger"].as_str() {
               None | Some("click") => WM_LBUTTONUP,
               Some("wheel") => WM_MOUSEWHEEL,
-              _ => return json!({"ok": false, "error": "mouse fault trigger must be click or wheel"}),
+              Some("drag") => WM_MOUSEMOVE,
+              _ => return json!({"ok": false, "error": "mouse fault trigger must be click, wheel or drag"}),
             };
             *MOUSE_FAULT.lock().unwrap() = Some((kind.into(), target, trigger));
             *MOUSE_FAULT_RECEIPT.lock().unwrap() = None;
