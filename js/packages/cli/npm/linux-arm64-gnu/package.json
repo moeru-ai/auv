@@ -21,7 +21,7 @@
   "main": "auv-binding.linux-arm64-gnu.node",
   "files": [
     "auv-binding.linux-arm64-gnu.node",
-    "bin"
+    "bin/auv"
   ],
   "engines": {
     "node": ">=20.19.0"
