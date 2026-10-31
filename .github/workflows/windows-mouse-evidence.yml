@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 93696abc44666568720539a77ae0795beaae3665
+          ref: e647d25b6409dfbbea3b43ea18b1f48fead2fb85
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '93696abc44666568720539a77ae0795beaae3665') { throw "Unexpected source $actual" }
+          if ($actual -ne 'e647d25b6409dfbbea3b43ea18b1f48fead2fb85') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -217,7 +217,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-drag-93696abc-fixed
+          name: windows-drag-e647d25b-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
