@@ -65,12 +65,14 @@ mod native {
 
   use clap::Parser;
   use serde_json::{Value, json};
+  use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
   use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
   use windows::Win32::Graphics::Gdi::{
     BLACK_BRUSH, BeginPaint, ClientToScreen, CreateSolidBrush, EndPaint, FillRect, GetStockObject, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT,
     UpdateWindow, WHITE_BRUSH,
   };
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+  use windows::Win32::System::Threading::{EVENT_ALL_ACCESS, OpenEventW, SetEvent, WaitForSingleObject};
   use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
   use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
   use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
@@ -92,6 +94,8 @@ mod native {
   /// Posted to itself when the window became the foreground window: hand it back to the window in
   /// `wparam`, once the activation that caused it has finished.
   const WM_YIELD_FOREGROUND: u32 = WM_APP + 2;
+  const WM_PAUSE_POSTED_QUEUE: u32 = WM_APP + 5;
+  const WM_QUEUE_FILLER: u32 = WM_APP + 6;
   const ID_BUTTON: usize = 1001;
   const ID_LABEL: usize = 1002;
   const ID_EDIT: usize = 1003;
@@ -255,6 +259,11 @@ mod native {
   static KEY_LOG: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
   /// What the pad saw of the last drag over it, in screen coordinates.
   static PAD: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+  // Owned event handles control this fixture's GUI queue only. The controller
+  // can always release it without posting another message into the full queue.
+  static QUEUE_GATES: std::sync::Mutex<Option<([OwnedHandle; 3], bool)>> = std::sync::Mutex::new(None);
+  static QUEUE_REPORT: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+  static QUEUE_FILLERS: AtomicU64 = AtomicU64::new(0);
   /// Armed only by the keyboard-recipient harness. Consumed after the first key release.
   static KEYBOARD_FAULT: std::sync::Mutex<Option<(String, isize)>> = std::sync::Mutex::new(None);
   static KEYBOARD_FAULT_RECEIPT: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
@@ -930,6 +939,61 @@ mod native {
         }
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
+      WM_QUEUE_FILLER => {
+        count(&QUEUE_FILLERS);
+        LRESULT(0)
+      }
+      WM_PAUSE_POSTED_QUEUE => {
+        let gates = QUEUE_GATES.lock().unwrap().take();
+        if let Some((gates, drain_one)) = gates {
+          let [ready, step, release] = gates;
+          // SAFETY: all handles are retained by OwnedHandle. No fixture mutex
+          // spans the waits. These bounded waits block only this owned GUI.
+          let (stepped, drained, resumed) = unsafe {
+            let _ = SetEvent(windows::Win32::Foundation::HANDLE(ready.as_raw_handle()));
+            let stepped = WaitForSingleObject(windows::Win32::Foundation::HANDLE(step.as_raw_handle()), 10_000)
+              == windows::Win32::Foundation::WAIT_OBJECT_0;
+            let mut message = MSG::default();
+            let drained = stepped
+              && drain_one
+              && windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
+                &mut message,
+                hwnd,
+                WM_QUEUE_FILLER,
+                WM_QUEUE_FILLER,
+                windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+              )
+              .as_bool();
+            let _ = SetEvent(windows::Win32::Foundation::HANDLE(ready.as_raw_handle()));
+            let resumed = WaitForSingleObject(windows::Win32::Foundation::HANDLE(release.as_raw_handle()), 10_000)
+              == windows::Win32::Foundation::WAIT_OBJECT_0;
+            (stepped, drained, resumed)
+          };
+          *QUEUE_REPORT.lock().unwrap() = Some(json!({"stepped": stepped, "drained": drained, "resumed": resumed,
+            "auto_released": !stepped || !resumed}));
+          // Remove only controller fillers before acknowledging release. A
+          // state request must not race the still-full posted queue. Actor
+          // wheel messages remain queued ahead of that later state request.
+          let mut filler = MSG::default();
+          // SAFETY: this GUI thread removes its own pointer-free filler
+          // messages, and ready remains owned through the acknowledgement.
+          unsafe {
+            while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
+              &mut filler,
+              hwnd,
+              WM_QUEUE_FILLER,
+              WM_QUEUE_FILLER,
+              windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+            )
+            .as_bool()
+            {
+              count(&QUEUE_FILLERS);
+            }
+            let _ = SetEvent(windows::Win32::Foundation::HANDLE(ready.as_raw_handle()));
+          }
+        }
+        LRESULT(0)
+      }
       WM_REQUEST => {
         // SAFETY: the reader thread leaked this box into the message; take it back once.
         let line = *unsafe { Box::from_raw(lparam.0 as *mut String) };
@@ -1090,6 +1154,8 @@ mod native {
       "minimized": minimized,
       "foreground": foreground,
       "button_focused": unsafe { GetFocus() } == handle(&BUTTON),
+      "queue_pause": QUEUE_REPORT.lock().ok().and_then(|report| report.clone()),
+      "queue_fillers_processed": QUEUE_FILLERS.load(Relaxed),
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
@@ -1130,6 +1196,33 @@ mod native {
     let mut reply = match request["cmd"].as_str() {
       Some("state") => state(hwnd),
       Some("layout") => layout(hwnd),
+      Some("pause_posted_queue") if FOREGROUND_INPUT.load(Relaxed) => {
+        let mut events = Vec::new();
+        for key in ["ready", "step", "release"] {
+          let Some(name) = request[key].as_str() else {
+            return json!({"ok": false, "error": "queue pause requires three owned event names"});
+          };
+          // SAFETY: named events belong to this isolated controller. Each
+          // returned handle is transferred exactly once into OwnedHandle.
+          let handle = match unsafe { OpenEventW(EVENT_ALL_ACCESS, false, &HSTRING::from(name)) } {
+            Ok(handle) => unsafe { OwnedHandle::from_raw_handle(handle.0) },
+            Err(error) => return json!({"ok": false, "error": format!("open queue gate: {error}")}),
+          };
+          events.push(handle);
+        }
+        let events: [OwnedHandle; 3] = events.try_into().expect("three event names");
+        let mut slot = QUEUE_GATES.lock().unwrap();
+        if slot.is_some() {
+          return json!({"ok": false, "error": "queue pause already armed"});
+        }
+        *slot = Some((events, request["drain_one"] == true));
+        // SAFETY: post a pointer-free command to this live owning window.
+        if let Err(error) = unsafe { PostMessageW(hwnd, WM_PAUSE_POSTED_QUEUE, WPARAM(0), LPARAM(0)) } {
+          *slot = None;
+          return json!({"ok": false, "error": format!("post queue pause: {error}")});
+        }
+        json!({"armed": true})
+      }
       // The receiver moves, resizes and minimizes itself, so the evaluation can inject
       // those faults without the driver or the runner touching the window.
       Some("minimize") => {

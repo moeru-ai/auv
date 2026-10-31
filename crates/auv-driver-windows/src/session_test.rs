@@ -297,7 +297,7 @@ fn window_scroll_background_only_fails_for_invalid_window_handle() {
     )
     .expect_err("background scroll posts window messages, so a fake test window handle fails at the Win32 call");
 
-  assert!(error.to_string().contains("background_scroll is not supported"));
+  assert_background_wheel_refusal(error);
 }
 
 #[test]
@@ -320,7 +320,233 @@ fn window_scroll_attempts_window_targeted_wheel_without_requiring_foreground_can
 
   // Fails from the actual background wheel attempt (Win32 call against a fake
   // handle), not from an upfront "needs ForegroundHid" validation error.
-  assert!(error.to_string().contains("background_scroll is not supported"));
+  assert_background_wheel_refusal(error);
+}
+
+fn assert_background_wheel_refusal(error: auv_driver_common::DriverError) {
+  // The candidate loop retains the real failure instead of replacing it with
+  // generic Unsupported. These fake-handle tests never submit native input.
+  #[cfg(target_os = "windows")]
+  assert!(matches!(error,auv_driver_common::DriverError::Backend {message} if message.contains("ScreenToClient")));
+  #[cfg(not(target_os = "windows"))]
+  assert!(matches!(error,auv_driver_common::DriverError::InputAction {cause,progress:auv_driver_common::InputActionProgress::NotDelivered}
+    if matches!(*cause,auv_driver_common::DriverError::Unsupported {..})));
+}
+
+fn posted_scroll_options() -> ScrollOptions {
+  ScrollOptions {
+    policy: InputPolicy::BackgroundPreferred,
+    delivery_strategy: auv_driver_common::ScrollDeliveryStrategy {
+      candidates: vec![
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ],
+    },
+    ..Default::default()
+  }
+}
+
+#[test]
+fn posted_scroll_not_delivered_refusal_allows_foreground_candidate() {
+  use auv_driver_common::{DriverError, InputActionResult, InputDeliveryPath};
+  let calls = std::cell::Cell::new(0);
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(crate::input::not_delivered(DriverError::Backend {
+        message: "queue full".into(),
+      }))
+    },
+    || {
+      calls.set(calls.get() + 1);
+      Ok(InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents))
+    },
+  )
+  .unwrap();
+  assert_eq!(calls.get(), 1);
+  assert_eq!(result.selected_path, InputDeliveryPath::ForegroundSystemEvents);
+  assert!(!result.attempts[0].succeeded);
+  assert_eq!(result.attempts[0].path, InputDeliveryPath::WindowTargetedWheel);
+  assert!(result.validate().is_ok());
+}
+
+#[test]
+fn posted_scroll_unknown_failure_stops_without_fallback() {
+  use auv_driver_common::DriverError;
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(DriverError::Backend {
+        message: "missing receipt".into(),
+      })
+    },
+    || panic!("unknown delivery must stop"),
+  );
+  assert!(matches!(result,Err(DriverError::Backend {message}) if message=="missing receipt"));
+}
+
+#[test]
+fn posted_scroll_uncertain_failure_retains_original_progress() {
+  use auv_driver_common::{DriverError, InputActionProgress, InputActionResult, InputDeliveryPath};
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(DriverError::InputAction {
+        cause: Box::new(DriverError::Backend {
+          message: "lost native reply".into(),
+        }),
+        progress: InputActionProgress::DeliveryUncertain {
+          action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedWheel),
+        },
+      })
+    },
+    || panic!("uncertain delivery must stop"),
+  );
+  assert!(matches!(result,Err(DriverError::InputAction {cause,progress:InputActionProgress::DeliveryUncertain {action}})
+    if matches!(*cause,DriverError::Backend {ref message} if message=="lost native reply") && action.selected_path==InputDeliveryPath::WindowTargetedWheel));
+}
+
+#[test]
+fn posted_scroll_invalidated_not_delivered_target_is_not_reactivated() {
+  use auv_driver_common::{DriverError, InputActionProgress};
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(crate::input::not_delivered(DriverError::TargetLost {
+        target: "original window".into(),
+        message: "owner changed".into(),
+      }))
+    },
+    || panic!("target loss requires new target selection"),
+  );
+  assert!(
+    matches!(result,Err(DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered}) if matches!(*cause,DriverError::TargetLost {..}))
+  );
+}
+
+#[test]
+fn posted_scroll_cancelled_not_delivered_action_stops() {
+  use auv_driver_common::{DriverError, InputActionProgress};
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(crate::input::not_delivered(DriverError::InvalidInput {
+        message: "input cancelled".into(),
+      }))
+    },
+    || panic!("cancelled action must stop"),
+  );
+  assert!(matches!(result,Err(DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered})
+    if matches!(*cause,DriverError::InvalidInput {ref message} if message.contains("cancelled"))));
+}
+
+#[test]
+fn pre_cancelled_background_window_scroll_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress};
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().scroll(
+      &sample_window(),
+      WindowPoint::new(1.0, 1.0),
+      Scroll::new(100.0, 100.0),
+      ScrollOptions {
+        policy: InputPolicy::BackgroundOnly,
+        ..Default::default()
+      },
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error,DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered}
+    if matches!(*cause,DriverError::InvalidInput {ref message} if message.contains("cancelled"))));
+}
+
+#[test]
+fn posted_scroll_refusal_without_fallback_keeps_native_error() {
+  use auv_driver_common::{DriverError, InputActionProgress};
+  let mut options = posted_scroll_options();
+  options.delivery_strategy.candidates = vec![ScrollDeliveryCandidate::WindowTargetedWheel];
+  let result = super::run_scroll_candidates(
+    &options,
+    || {
+      Err(crate::input::not_delivered(DriverError::Backend {
+        message: "queue quota 1816".into(),
+      }))
+    },
+    || panic!("no foreground candidate"),
+  );
+  assert!(matches!(result,Err(DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered})
+    if matches!(*cause,DriverError::Backend {ref message} if message=="queue quota 1816")));
+}
+
+#[test]
+fn posted_scroll_foreground_failure_retains_background_attempt() {
+  use auv_driver_common::{DriverError, InputActionProgress, InputActionResult, InputDeliveryPath};
+  let result = super::run_scroll_candidates(
+    &posted_scroll_options(),
+    || {
+      Err(crate::input::not_delivered(DriverError::Backend {
+        message: "queue full".into(),
+      }))
+    },
+    || {
+      Err(DriverError::InputAction {
+        cause: Box::new(DriverError::Backend {
+          message: "native foreground short count".into(),
+        }),
+        progress: InputActionProgress::DeliveryUncertain {
+          action: InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents),
+        },
+      })
+    },
+  );
+  assert!(matches!(result,Err(DriverError::InputAction {cause,progress:InputActionProgress::DeliveryUncertain {action}})
+    if matches!(*cause,DriverError::Backend {ref message} if message=="native foreground short count")
+      && action.attempts[0].path==InputDeliveryPath::WindowTargetedWheel && !action.attempts[0].succeeded
+      && action.selected_path==InputDeliveryPath::ForegroundSystemEvents));
+}
+
+#[test]
+fn posted_scroll_partial_receipt_stops_before_foreground_fallback() {
+  use super::run_scroll_candidates;
+  use auv_driver_common::{DriverError, InputActionResult, InputDeliveryPath, ScrollDeliveryStrategy};
+  let calls = std::cell::Cell::new(0);
+  let options = ScrollOptions {
+    policy: InputPolicy::BackgroundPreferred,
+    delivery_strategy: ScrollDeliveryStrategy {
+      candidates: vec![
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ],
+    },
+    ..Default::default()
+  };
+  let result = run_scroll_candidates(
+    &options,
+    || {
+      Err(DriverError::InputAction {
+        cause: Box::new(DriverError::Backend {
+          message: "horizontal queue refused after vertical acceptance".into(),
+        }),
+        progress: auv_driver_common::InputActionProgress::Submitted {
+          action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedWheel),
+        },
+      })
+    },
+    || {
+      calls.set(calls.get() + 1);
+      Ok(InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents))
+    },
+  );
+  assert_eq!(calls.get(), 0, "a submitted axis must never be resent through foreground fallback");
+  assert!(matches!(
+    result,
+    Err(DriverError::InputAction {
+      progress: auv_driver_common::InputActionProgress::Submitted { .. },
+      ..
+    })
+  ));
 }
 
 // Live smoke tests: poll a real enumerated top-level window for text that can

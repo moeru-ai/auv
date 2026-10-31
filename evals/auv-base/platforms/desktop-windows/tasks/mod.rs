@@ -19,4 +19,5 @@ pub mod window_commands;
 pub mod window_drag;
 pub mod window_keyboard;
 pub mod window_mouse;
+pub mod window_posted_scroll;
 pub mod window_scroll_batch;

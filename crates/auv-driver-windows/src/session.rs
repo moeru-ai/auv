@@ -316,56 +316,93 @@ impl WindowApi<'_> {
   /// `WM_MOUSEHWHEEL` to the control under `point`
   /// (`background_input::scroll_at_window`); `AxScroll` and
   /// `WindowTargetedKeyboardScroll` are not implemented on Windows and are
-  /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
-  /// falls back to `SendInput`.
+  /// recorded as failed attempts. `ForegroundHid` uses a retained foreground
+  /// recipient, and fallback requires an explicit not-delivered queue refusal.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
-    // TODO(windows-scroll-fallback-progress): posted-wheel failure needs typed
-    // partial receipts before changing its foreground fallback; see the mouse lifecycle note.
-    let mut attempts = Vec::new();
-    for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
-      match candidate {
-        ScrollDeliveryCandidate::AxScroll => {
-          attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, "AX scroll is not supported by the windows desktop driver"));
+    run_scroll_candidates(
+      &options,
+      || {
+        let screen_point = self.to_screen_point(window, point)?.point();
+        background_input::scroll_at_window(window, screen_point, scroll)
+      },
+      || {
+        let screen_point = self.to_screen_point(window, point)?.point();
+        crate::input::deliver_window_scroll(window, screen_point, scroll, options.settle)
+      },
+    )
+  }
+}
+
+/// Chooses wheel delivery across the posted and foreground IO boundaries.
+fn run_scroll_candidates(
+  options: &ScrollOptions,
+  mut posted: impl FnMut() -> DriverResult<()>,
+  mut foreground: impl FnMut() -> DriverResult<InputActionResult>,
+) -> DriverResult<InputActionResult> {
+  let mut attempts = Vec::new();
+  let mut last_refusal = None;
+  for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
+    match candidate {
+      ScrollDeliveryCandidate::AxScroll => {
+        attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, "AX scroll is not supported by the windows desktop driver"));
+      }
+      ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
+        attempts.push(InputAttempt::failure(
+          InputDeliveryPath::WindowTargetedKeyboardScroll,
+          "window-targeted keyboard scroll is not supported by the windows desktop driver",
+        ));
+      }
+      ScrollDeliveryCandidate::WindowTargetedWheel => match posted() {
+        Ok(()) => {
+          attempts.push(InputAttempt::success(InputDeliveryPath::WindowTargetedWheel));
+          return Ok(InputActionResult {
+            selected_path: InputDeliveryPath::WindowTargetedWheel,
+            attempts,
+            verified: false,
+            mouse_disturbance: DisturbanceLevel::None,
+            focus_disturbance: DisturbanceLevel::None,
+            clipboard_disturbance: DisturbanceLevel::None,
+          });
         }
-        ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
-          attempts.push(InputAttempt::failure(
-            InputDeliveryPath::WindowTargetedKeyboardScroll,
-            "window-targeted keyboard scroll is not supported by the windows desktop driver",
-          ));
-        }
-        ScrollDeliveryCandidate::WindowTargetedWheel => {
-          let screen_point = self.to_screen_point(window, point)?.point();
-          match background_input::scroll_at_window(window, screen_point, scroll) {
-            Ok(()) => {
-              attempts.push(InputAttempt::success(InputDeliveryPath::WindowTargetedWheel));
-              return Ok(InputActionResult {
-                selected_path: InputDeliveryPath::WindowTargetedWheel,
-                attempts,
-                verified: false,
-                mouse_disturbance: DisturbanceLevel::None,
-                focus_disturbance: DisturbanceLevel::None,
-                clipboard_disturbance: DisturbanceLevel::None,
-              });
-            }
-            Err(error) => attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, error.to_string())),
+        Err(error) => {
+          let can_fallback = matches!(&error,DriverError::InputAction {
+            cause,progress:auv_driver_common::InputActionProgress::NotDelivered
+          } if matches!(cause.as_ref(),DriverError::Backend {..}|DriverError::Unsupported {..}));
+          if !can_fallback {
+            // Missing progress is unknown. Retain partial/uncertain receipts
+            // and invalidated/cancelled targets instead of retrying them.
+            return Err(prepend_scroll_attempts(error, attempts));
           }
+          attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, error.to_string()));
+          last_refusal = Some(error);
         }
-        ScrollDeliveryCandidate::ForegroundHid => {
-          if options.policy == InputPolicy::BackgroundOnly {
-            continue;
-          }
-          let activation_attempt = foreground_window_attempt(window, "wheel delivery");
-          let screen_point = self.to_screen_point(window, point)?.point();
-          let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
-          attempts.push(activation_attempt);
-          attempts.append(&mut result.attempts);
-          result.attempts = attempts;
-          return Ok(result);
+      },
+      ScrollDeliveryCandidate::ForegroundHid => {
+        if options.policy == InputPolicy::BackgroundOnly {
+          continue;
         }
+        let mut result = foreground().map_err(|error| prepend_scroll_attempts(error, attempts.clone()))?;
+        attempts.append(&mut result.attempts);
+        result.attempts = attempts;
+        return Ok(result);
       }
     }
-    Err(DriverError::unsupported("background_scroll"))
   }
+  Err(last_refusal.unwrap_or_else(|| crate::input::not_delivered(DriverError::unsupported("background_scroll"))))
+}
+
+/// Keeps candidate diagnostics on the same typed native action receipt.
+fn prepend_scroll_attempts(mut error: DriverError, mut attempts: Vec<InputAttempt>) -> DriverError {
+  if let DriverError::InputAction {
+    progress:
+      auv_driver_common::InputActionProgress::Submitted { action } | auv_driver_common::InputActionProgress::DeliveryUncertain { action },
+    ..
+  } = &mut error
+  {
+    attempts.append(&mut action.attempts);
+    action.attempts = attempts;
+  }
+  error
 }
 
 impl WindowInput for WindowApi<'_> {
@@ -384,7 +421,7 @@ impl WindowInput for WindowApi<'_> {
       let point = self.to_screen_point(window, point)?.point();
       return crate::input::deliver_window_scroll(window, point, scroll, options.settle);
     }
-    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input().map_err(crate::input::not_delivered)?;
     self.scroll_impl(window, point, scroll, options)
   }
 
@@ -408,8 +445,9 @@ impl WindowInput for WindowApi<'_> {
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       return crate::input::deliver_window_scroll_motion(self, window, point, motion, options, notify);
     }
-    // TODO(windows-scroll-fallback-progress): background path selection needs
-    // posted-partial receipts before sharing this batch lease; see the scroll batch note.
+    // TODO(windows-posted-scroll-lease): posted receipts now stop partial retry,
+    // but a BackgroundPreferred schedule (including foreground fallback) still
+    // needs a retained chosen-route lease; see the posted-scroll note.
     auv_driver_common::scroll_motion::run_window_scroll_motion(self, window, point, motion, options, notify)
   }
 
@@ -425,7 +463,7 @@ impl WindowInput for WindowApi<'_> {
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       return crate::input::deliver_window_scroll_stream(self, window, point, control, stream, options, notify);
     }
-    // TODO(windows-scroll-fallback-progress): see scroll_motion above.
+    // TODO(windows-posted-scroll-lease): see scroll_motion above.
     auv_driver_common::scroll_stream::run_window_scroll_stream(self, window, point, control, stream, options, notify)
   }
 
@@ -449,23 +487,11 @@ impl WindowInput for WindowApi<'_> {
   }
 }
 
-/// Foregrounds `window` before a foreground-only input delivery, reporting the
-/// outcome as an attempt instead of failing the whole delivery on activation
-/// trouble (the subsequent `SendInput` call still targets the window's frame).
-fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
-  match activate_window(window) {
-    Ok(()) => InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
-    Err(error) => InputAttempt::failure(
-      InputDeliveryPath::ForegroundSystemEvents,
-      format!("failed to foreground target window before {purpose}: {error}"),
-    ),
-  }
-}
-
 /// Orders scroll delivery candidates for a policy, mirroring the macOS
 /// driver's candidate selection: `ForegroundPreferred` uses only `SendInput`;
 /// `BackgroundOnly` drops `ForegroundHid` from the caller's strategy;
-/// `BackgroundPreferred` tries the caller's strategy as given.
+/// `BackgroundPreferred` orders the caller's strategy as given; execution can
+/// continue after an IO failure only with an eligible not-delivered receipt.
 fn scroll_attempt_candidates(policy: InputPolicy, delivery_strategy: &ScrollDeliveryStrategy) -> Vec<ScrollDeliveryCandidate> {
   match policy {
     InputPolicy::ForegroundPreferred => vec![ScrollDeliveryCandidate::ForegroundHid],
