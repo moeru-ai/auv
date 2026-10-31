@@ -8,6 +8,7 @@ UIA, and `Windows.Media.Ocr`.
 
 - Display list / capture / region capture
 - Window list, resolve, capture (`GDI PrintWindow`)
+- Explicit WGC window/display images (`WindowApi::capture_wgc` / `DisplayApi::capture_wgc`): continuously drained latest-received frames, with [isolated native image-path evidence](../../docs/ai/references/driver/2026-10-30-wgc-on-demand-freshness.md).
 - Window mutation: move, resize, set-frame, minimize, restore, zoom
 - Window-targeted click/scroll: `ForegroundPreferred` uses `SendInput`; `BackgroundOnly`/`BackgroundPreferred` post `WM_LBUTTONDOWN`/`WM_LBUTTONUP`/`WM_LBUTTONDBLCLK`/`WM_MOUSEWHEEL` directly to the hit-tested control (`src/background_input.rs`), without raising or focusing the window — best-effort for classic Win32/MFC/WinForms controls, not for Chromium/Electron/WinUI surfaces
 - Global click, scroll, type text, press key, copy, paste (`SendInput`)
@@ -19,7 +20,7 @@ UIA, and `Windows.Media.Ocr`.
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
 - App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke app.activate`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
-- Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window capture stream that never serves a stale frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
+- Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window stream that retains the latest received frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
 - Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
 ## Open TODOs
@@ -42,7 +43,8 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-background-cloaked)` | `src/background_session.rs` | A window DWM cloaks (another virtual desktop) is treated as live; it needs its own typed state and live evidence |
 | `TODO(background-session-wait-for-frame)` | `src/background_session.rs` | A blocking wait for the next frame; callers poll `capture`, which answers `Unchanged` without copying |
 | `TODO(background-session-foreground-grant)` | `src/background_session.rs` | A delivery reports no focus disturbance without observing it; a just-launched process can still take the foreground on its first activation |
-| `TODO(wgc-capture-latest-frame)` | `src/wgc.rs` | `capture_window_wgc` reads the frame pool in order and can return an older state; sessions use `FrameStream` instead |
+| `TODO(wgc-health-latest-frame)` | `src/wgc.rs` | The separate frozen health sampler still polls a FIFO and wake tokens; it needs its own health-baseline slice |
+| `TODO(wgc-capture-identity)` | `src/wgc.rs` | Extend the existing handle/size image-cache key with PID and typed window/display identity receipts in a capture-identity slice |
 | `TODO(driver-overlay-windows-window-owner-thread)` | `crates/auv-driver-overlay-windows/src/animator.rs` | A running animator must be the only presenter in its process |
 
 ## Architecture notes
@@ -73,10 +75,10 @@ and Windows.Graphics.Capture: nothing in it activates, restores, raises or resiz
 cursor, or sends global input, and a request that has no such route (keyboard input, Alt/Meta clicks)
 is answered `unsupported` instead of being sent to whatever has the foreground. All OS access goes
 through one small `Backend` trait, so routing, follow-on-move, minimized skipping, lost-target isolation
-and the no-fallback behavior are unit tested without a desktop. Observation is a `FrameStream`
-(`src/wgc_stream.rs`): the capture pool is drained the moment a frame arrives and only the newest is
-kept, because `capture_window_wgc` reads a two-buffer pool oldest first and can hand back an older
-state, or miss the newest one entirely, after a burst of changes. Whether a posted click makes the
+and the no-fallback behavior are unit tested without a desktop. Captured frames use `FrameStream`
+(`src/wgc_stream.rs`). Both per-window background streams and the one-target on-demand WGC image cache
+drain their pool when frames arrive and retain the latest received GPU texture. Reads do not prove
+that a pending application action has painted. Whether a posted click makes the
 target take the *foreground* is decided by the operating system from the target process, not by this
 driver: an independently launched application that handles a posted click activates itself inside its
 own input queue and the foreground stays with the user, but a process that holds the right to take the
