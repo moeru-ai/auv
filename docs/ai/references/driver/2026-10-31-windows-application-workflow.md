@@ -1,6 +1,6 @@
 # Windows application workflow acceptance
 
-Status: test-only controls inventory accepted; edit/save cases await isolated execution.
+Status: test-only controls inventory accepted; ISE edit/save accepted; the other app cases remain incomplete.
 
 The owner goal names Edge, Electron, Qt, and WPF application validation.
 The prepared cohort is Edge, VS Code 1.144.0, NotepadNext 0.15 with Qt 6.5.3,
@@ -102,8 +102,11 @@ For ISE, the payload is comment-only and no execution shortcut is sent.
 
 The saved file must equal the complete expected text, allowing only BOM decoding and CRLF normalization.
 A new controls tree, window capture, desktop witness, and process cleanup remain separate evidence.
-The first failed or uncertain step stops the input run and preserves its partial records.
-Input is never retried. These cases can accept `edit_save_accepted` while keeping
+An uncertain or submitted failure stops the input run and preserves its partial records.
+VS Code may reacquire one stale focus only after `not_delivered`, independent zero-input evidence,
+and a fresh complete tree with one matching editor. This makes a new query decision; it never reuses a native element.
+Two pure regressions reject missing, uncertain, submitted, and unrelated failure receipts.
+These cases can accept `edit_save_accepted` while keeping
 `workflow_accepted=false`; scrolling, dialogs, loss cases, DPI, and all frontend routes remain separate gates.
 
 The [first edit/save run](https://github.com/moeru-ai/auv/actions/runs/41128561574)
@@ -114,4 +117,12 @@ reproduced that failure on the same source in a fresh isolated desktop.
 Its browser database recorded the expected target path, 43 total bytes, zero received bytes,
 and interrupt reason 1 (`FILE_FAILED`). The page's state and CLI receipts did not override this failure.
 Both runs restored the foreground and pointer, observed no physical input, and verified owned job cleanup.
-Native browser file logging now records the next diagnostic boundary; edit/save remains unaccepted.
+Native browser file logging now records the next diagnostic boundary; Edge edit/save remains unaccepted.
+
+The [independent app runs](https://github.com/moeru-ai/auv/actions/runs/41181010921) at `86d36a1e`
+accepted ISE's comment-only edit/save case. Independent readback verified its 53-byte file,
+five actual command completions, and four input-result artifact bodies against their stored hashes and lengths.
+VS Code stopped before input at an unavailable provider property (`stale_ui_reference/not_delivered`).
+Qt stopped at CLI validation because the case supplied an unsupported `window:` target to `window.clickText`.
+Its corrected call selects `app:` plus the owned document's title marker, following the current command contract.
+These failures remain separate from ISE acceptance; complete cohort workflows remain open.

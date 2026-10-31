@@ -1,5 +1,6 @@
 //! Editor acceptance uses AUV commands for every action and the application's
-//! saved file as its semantic oracle. Failed or uncertain actions are never retried.
+//! saved file as its semantic oracle. Uncertain input is never retried. A stale,
+//! undelivered semantic focus may be reacquired once after an independent read.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -12,6 +13,16 @@ use serde_json::{Value, json};
 use super::super::super::super::records::Records;
 use super::super::super::super::watch::DesktopWatch;
 use super::{helper_command, inspect_controls, native};
+
+/// Reacquisition requires both the producer's pre-delivery receipt and the
+/// independent desktop witness. Provider errors alone cannot authorize input.
+fn focus_reacquisition_allowed(app: &str, reply: &Value, zero_input_witness: bool) -> bool {
+  app == "vscode"
+    && zero_input_witness
+    && reply["status"] == "failed"
+    && reply["failure_details"]["code"] == "stale_ui_reference"
+    && reply["failure_details"]["input_progress"]["state"] == "not_delivered"
+}
 
 fn invoke(
   processes: &mut native::Processes,
@@ -101,7 +112,15 @@ pub(super) fn run(
     } else {
       "semantic_focus"
     };
-    let focus = if app == "notepadnext" {
+    let query = match app {
+      "edge" => "AUV editor".to_string(),
+      "powershell-ise" => "Text Editor".to_string(),
+      "vscode" => fixture.file_name().unwrap().to_string_lossy().into_owned(),
+      "notepadnext" => "AUV controlled editor".to_string(),
+      _ => unreachable!(),
+    };
+    let before_focus = watch.snapshot();
+    let mut focus = if app == "notepadnext" {
       // Explicit strategy from the recorded Qt inventory: the editor has no
       // usable UIA name/value. This is not a fallback after an uncertain action.
       invoke(
@@ -110,23 +129,52 @@ pub(super) fn run(
         &directory.join("02-focus"),
         "window.clickText",
         &[
-          "AUV controlled editor",
+          &query,
+          "--title",
+          &marker,
           "--input-policy",
           "foreground-preferred",
         ],
-        &window_target,
+        // NOTICE: unlike keyboard commands, window.clickText accepts app:
+        // targets. The title retains the owned document constraint (CI 124478233297).
+        &app_target,
         watch,
       )?
     } else {
-      let query = match app {
-        "edge" => "AUV editor".to_string(),
-        "powershell-ise" => "Text Editor".to_string(),
-        "vscode" => fixture.file_name().unwrap().to_string_lossy().into_owned(),
-        _ => unreachable!(),
-      };
       invoke(processes, auv, &directory.join("02-focus"), "input.focusText", &[&query], &app_target, watch)?
     };
     records.write("focus", json!({"strategy": strategy, "operation": focus}))?;
+    let mut reacquired = false;
+    let after_focus = watch.snapshot();
+    let zero_input_witness = after_focus.injected_keys == before_focus.injected_keys
+      && after_focus.injected_mouse == before_focus.injected_mouse
+      && after_focus.physical_keys == 0
+      && after_focus.physical_mouse == 0;
+    if focus_reacquisition_allowed(app, &focus["reply"], zero_input_witness) {
+      // CI 124478233117: a startup provider element vanished during a read.
+      // No SetFocus ran. Require independent zero-input evidence and a new,
+      // complete tree before one new query; submitted/uncertain input never enters here.
+      let refreshed = directory.join("reacquired");
+      std::fs::create_dir(&refreshed)?;
+      let snapshot = inspect_controls(processes, window, &refreshed)?;
+      let candidates = snapshot["tree"]["nodes"]
+        .as_array()
+        .context("fresh tree omitted nodes")?
+        .iter()
+        .filter(|node| {
+          node["role"] == "Edit"
+            && node["name"] == query
+            && node["enabled"] == true
+            && node["keyboard_focusable"] == true
+            && node["offscreen"] == false
+        })
+        .count();
+      records.write("focus_reacquire", json!({"snapshot": snapshot, "matching_editors": candidates, "prior_delivery": "not_delivered"}))?;
+      ensure!(snapshot["tree"]["truncated"] == false && candidates == 1, "fresh tree did not identify one complete editor candidate");
+      focus = invoke(processes, auv, &directory.join("02-focus-refreshed"), "input.focusText", &[&query], &app_target, watch)?;
+      records.write("focus", json!({"strategy": strategy, "reacquired": true, "operation": focus}))?;
+      reacquired = true;
+    }
     ensure!(focus["reply"]["status"] == "completed", "planned editor focus failed; do not retry");
     if app != "notepadnext" {
       let result = &focus["reply"]["result"];
@@ -177,12 +225,40 @@ pub(super) fn run(
       std::thread::sleep(Duration::from_millis(25));
     };
     Ok(json!({"passed": true, "strategy": strategy, "expected": expected, "saved_text": actual,
-      "saved_path": saved, "encoding": encoding, "byte_length": bytes, "refusal_verified": true}))
+      "saved_path": saved, "encoding": encoding, "byte_length": bytes, "refusal_verified": true, "focus_reacquired": reacquired}))
   })();
   let receipt = match result {
     Ok(value) => value,
-    Err(error) => json!({"passed": false, "error": format!("{error:#}"), "delivery_retry": false}),
+    Err(error) => json!({"passed": false, "error": format!("{error:#}"), "uncertain_delivery_retry": false}),
   };
   std::fs::write(directory.join("editor-case.json"), serde_json::to_vec_pretty(&receipt)?)?;
   Ok(receipt)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // https://github.com/moeru-ai/auv/actions/runs/41181010921/job/124478233117
+  // ROOT CAUSE:
+  // A VS Code startup element disappeared before SetFocus. Reacquisition must
+  // require not_delivered and independent zero input; a stale code alone cannot
+  // distinguish that safe boundary from a failed readback after native delivery.
+  #[test]
+  fn vscode_focus_reacquisition_ci_124478233117_requires_independent_zero_delivery() {
+    let reply = json!({"status": "failed", "failure_details": {"code": "stale_ui_reference", "input_progress": {"state": "not_delivered"}}});
+    assert!(focus_reacquisition_allowed("vscode", &reply, true));
+    assert!(!focus_reacquisition_allowed("vscode", &reply, false));
+    assert!(!focus_reacquisition_allowed("powershell-ise", &reply, true));
+  }
+
+  #[test]
+  fn focus_reacquisition_refuses_uncertain_submitted_and_missing_receipts() {
+    for state in [json!("submitted"), json!("delivery_uncertain"), Value::Null] {
+      let reply = json!({"status": "failed", "failure_details": {"code": "stale_ui_reference", "input_progress": {"state": state}}});
+      assert!(!focus_reacquisition_allowed("vscode", &reply, true));
+    }
+    let other = json!({"status": "failed", "failure_details": {"code": "backend", "input_progress": {"state": "not_delivered"}}});
+    assert!(!focus_reacquisition_allowed("vscode", &other, true));
+  }
 }
