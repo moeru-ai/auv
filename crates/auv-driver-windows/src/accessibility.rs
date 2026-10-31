@@ -318,7 +318,11 @@ fn mark_focus_delivery_uncertain(error: auv_driver_common::DriverError) -> auv_d
       message: format!("{MESSAGE} {message}"),
       recovery: Some(RECOVERY.into()),
     },
-    DriverError::PermissionDenied { permission, message, .. } => DriverError::PermissionDenied {
+    DriverError::PermissionDenied {
+      permission,
+      message,
+      ..
+    } => DriverError::PermissionDenied {
       permission,
       message: Some(format!("{MESSAGE} {}", message.unwrap_or_default())),
       recovery: Some(RECOVERY.into()),
