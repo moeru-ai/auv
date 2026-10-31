@@ -1,12 +1,12 @@
 # Windows posted-wheel progress and fallback
 
-Status: reproduced and implemented; corrected native acceptance pending. Base: PR #452 revision
+Status: scoped native acceptance passed. Base: PR #452 revision
 `2a6640ce02cb32151a12932b99906ca3c709fb65`.
 
 This bug-fix slice covers posted wheel progress and candidate fallback. Windows
-posts the vertical axis before the horizontal axis. The current candidate loop
-discards an error and can resend both axes through foreground input, even when
-the vertical message was already accepted. A partial or unknown delivery must
+posts the vertical axis before the horizontal axis. At the base revision, the
+candidate loop discarded an error and could resend both axes through foreground
+input, even when the vertical message was already accepted. A partial or unknown delivery must
 stop; only a confirmed not-delivered refusal can permit another route.
 
 The isolated `window-posted-scroll --output DIR` evaluator pauses its owned
@@ -76,7 +76,59 @@ a submitted or uncertain operation. The evaluator adds
 `background-session-eval window-posted-scroll --output DIR` and the Windows eval
 library exports `desktop_windows::window_posted_scroll::run(&Path) -> anyhow::Result<bool>`.
 
+`BackgroundSession::scroll` keeps its existing `Outcome::Failed` shape. It carries
+native progress in the failure message and never retries automatically. Structured
+progress fields require a separate approved public Outcome and consumer migration.
+The existing Invoke Driver-error conversion retains typed progress for normal
+failures. Its cancellation branch still returns unknown progress. Native Invoke,
+Runner, and MCP parity for this queue-limit case remains untested.
+
 BackgroundPreferred timed/live schedules still need a retained chosen-route
 lease, including when their first sample selects foreground fallback. This
 slice prevents per-call partial replay; it does not claim those whole-gesture
 leases or background root/child identity and minimized-window admission.
+
+## Accepted native evidence
+
+[Run 41223224740](https://github.com/moeru-ai/auv/actions/runs/41223224740),
+job `124601918758`, checked out `ca02962baf3dde5066954db57cb1813733963df0`.
+Workflow revision: `dfaaa18cd722b18f541da8c6c21370c7bfc55932`.
+Artifact `13050862646` was verified before extraction:
+SHA-256 `1b4f975768d4d8461e3c70e195e9437deb1fd2a5379b836f650fd86423e0a065`.
+
+Independent audit accepted all six posted cases, 77 prior GUI cases, and 69
+selected pure regressions. Partial cases delivered one vertical and zero
+horizontal messages, retained Submitted, and used no global input or foreground
+change. Zero-post refusals retained NotDelivered. The permitted foreground
+fallback delivered each axis once, used exactly three injected mouse events,
+and retained its failed background attempt. Every queue gate was released by the
+controller after the actor returned. No queue gate used automatic release.
+
+All 166 owned receivers exited and destroyed their windows. Physical input was
+zero; modifiers were released and the original pointer/foreground were restored.
+Ten inherited minimized/closed captures were explicitly refused. All 126 capture
+contents were reviewed: 115 exact hashes match reviewed contents; eleven captures
+have four new contents, all inspected. The main application oracle proves actual
+vertical scrolling and axis-message receipt. Horizontal viewport support for
+arbitrary applications is not inferred from its message counter.
+
+This replay also exercised the inherited drag-close witness classifier: B
+received one same-position frame message, while the independent hook recorded
+only the expected five injected events and the cursor stayed at the fault point.
+The prior unexercised marker now points to this measured case.
+
+The [permanent manifest](evidence/2026-11-01-windows-posted-scroll-progress/acceptance.json)
+retains application/gate state, typed progress, source/workflow/binary hashes,
+capture hashes, visual-review groups, and prior regression acceptance. The raw
+hosted archive has fourteen-day retention; the ignored local archive is retained.
+
+Local checks passed: thirteen new pure tests, existing invalid-window/public
+scroll regressions, 167 Invoke tests with one ignored, and 29 eval library tests
+with one ignored. Affected all-target checks, Windows all-features check, clippy,
+format/diff checks, evaluator help, and production input.scroll help passed.
+Clippy retains existing warnings. Final changes after the native revision move
+the test module, remove a redundant struct update, update evidence comments, and
+record docs/manifest; delivery behavior is unchanged.
+
+The full owner goal remains incomplete. This is a directly measured Win32 Driver
+slice at 96 DPI, with no new broad toolkit or frontend support claim.

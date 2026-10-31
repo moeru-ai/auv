@@ -541,6 +541,9 @@ impl BackgroundSession {
       Err(answer) => return answer,
     };
     let screen = self.screen_point(index, point);
+    // TODO(posted-scroll-outcome): typed progress stays message-only here until an
+    // approved public Outcome/consumer migration; this slice adds no result fields.
+    // See `docs/ai/references/driver/2026-11-01-windows-posted-scroll-progress.md`.
     match self.backend.post_scroll(&self.targets[index].window, screen, scroll) {
       Ok(()) => {
         self.stats.scrolls += 1;

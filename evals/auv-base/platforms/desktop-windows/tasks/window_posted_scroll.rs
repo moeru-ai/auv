@@ -182,7 +182,6 @@ pub fn run(output: &Path) -> Result<bool> {
         policy,
         delivery_strategy: ScrollDeliveryStrategy { candidates },
         settle: Duration::ZERO,
-        ..Default::default()
       },
     );
     let elapsed_ms = started.elapsed().as_millis();

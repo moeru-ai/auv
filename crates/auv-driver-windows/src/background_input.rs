@@ -295,6 +295,57 @@ mod native {
     Ok(())
   }
 
+  /// Descends from the window's top-level `HWND` to the innermost child under
+  /// `screen_point`, so posted messages reach the actual control (e.g. a
+  /// button or edit box) instead of only the top-level frame.
+  fn resolve_target_hwnd(window: &Window, screen_point: Point) -> DriverResult<HWND> {
+    let mut current = window_handle(window)?;
+    for _ in 0..MAX_HIT_TEST_DEPTH {
+      let client_point = screen_to_client(current, screen_point)?;
+      let child = unsafe { ChildWindowFromPointEx(current, client_point, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT) };
+      if child.is_invalid() || child == current {
+        break;
+      }
+      current = child;
+    }
+    Ok(current)
+  }
+
+  fn screen_to_client(hwnd: HWND, screen_point: Point) -> DriverResult<POINT> {
+    let mut point = POINT {
+      x: round_to_i32(screen_point.x),
+      y: round_to_i32(screen_point.y),
+    };
+    let converted = unsafe { ScreenToClient(hwnd, &mut point) };
+    if !converted.as_bool() {
+      return Err(backend("ScreenToClient failed to map the target point into window-local coordinates"));
+    }
+    Ok(point)
+  }
+
+  fn post(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> DriverResult<()> {
+    unsafe { PostMessageW(hwnd, message, wparam, lparam) }.map_err(|error| backend(format!("PostMessageW failed: {error}")))
+  }
+
+  fn round_to_i32(value: f64) -> i32 {
+    value.round() as i32
+  }
+
+  /// Packs coordinates into an `LPARAM` the way `MAKELPARAM` does: zero-extended
+  /// low/high 16-bit words, not sign-extended.
+  pub(super) fn make_lparam(x: i32, y: i32) -> LPARAM {
+    let low = (x as u32) & 0xFFFF;
+    let high = (y as u32) & 0xFFFF;
+    LPARAM(((high << 16) | low) as isize)
+  }
+
+  /// Packs a signed wheel delta into `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`'s
+  /// `wParam` high word, matching `MAKEWPARAM(0, delta)`.
+  pub(super) fn make_wheel_wparam(delta: i32) -> WPARAM {
+    let high = (delta as i16 as u16) as u32;
+    WPARAM((high << 16) as usize)
+  }
+
   #[cfg(test)]
   mod scroll_tests {
     use super::*;
@@ -393,57 +444,6 @@ mod native {
       assert!(matches!(error,DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered}
         if matches!(*cause,DriverError::InvalidInput {ref message} if message.contains("cancelled"))));
     }
-  }
-
-  /// Descends from the window's top-level `HWND` to the innermost child under
-  /// `screen_point`, so posted messages reach the actual control (e.g. a
-  /// button or edit box) instead of only the top-level frame.
-  fn resolve_target_hwnd(window: &Window, screen_point: Point) -> DriverResult<HWND> {
-    let mut current = window_handle(window)?;
-    for _ in 0..MAX_HIT_TEST_DEPTH {
-      let client_point = screen_to_client(current, screen_point)?;
-      let child = unsafe { ChildWindowFromPointEx(current, client_point, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT) };
-      if child.is_invalid() || child == current {
-        break;
-      }
-      current = child;
-    }
-    Ok(current)
-  }
-
-  fn screen_to_client(hwnd: HWND, screen_point: Point) -> DriverResult<POINT> {
-    let mut point = POINT {
-      x: round_to_i32(screen_point.x),
-      y: round_to_i32(screen_point.y),
-    };
-    let converted = unsafe { ScreenToClient(hwnd, &mut point) };
-    if !converted.as_bool() {
-      return Err(backend("ScreenToClient failed to map the target point into window-local coordinates"));
-    }
-    Ok(point)
-  }
-
-  fn post(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> DriverResult<()> {
-    unsafe { PostMessageW(hwnd, message, wparam, lparam) }.map_err(|error| backend(format!("PostMessageW failed: {error}")))
-  }
-
-  fn round_to_i32(value: f64) -> i32 {
-    value.round() as i32
-  }
-
-  /// Packs coordinates into an `LPARAM` the way `MAKELPARAM` does: zero-extended
-  /// low/high 16-bit words, not sign-extended.
-  pub(super) fn make_lparam(x: i32, y: i32) -> LPARAM {
-    let low = (x as u32) & 0xFFFF;
-    let high = (y as u32) & 0xFFFF;
-    LPARAM(((high << 16) | low) as isize)
-  }
-
-  /// Packs a signed wheel delta into `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`'s
-  /// `wParam` high word, matching `MAKEWPARAM(0, delta)`.
-  pub(super) fn make_wheel_wparam(delta: i32) -> WPARAM {
-    let high = (delta as i16 as u16) as u32;
-    WPARAM((high << 16) as usize)
   }
 }
 

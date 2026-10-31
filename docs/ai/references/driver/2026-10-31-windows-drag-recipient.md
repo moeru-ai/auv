@@ -160,6 +160,12 @@ confirmed A foreground and one handoff from B. The accepted replay had zero
 alternate held moves in every case, so the one-message OS classification was
 not exercised in this replay. It remains an explicit witness-validation gap.
 
+Subsequent evidence: the
+[posted-scroll replay](2026-11-01-windows-posted-scroll-progress.md#accepted-native-evidence)
+at source `ca02962b` exercised this inherited close branch with one same-position
+application message, five injected events, and a frozen cursor. This adds native
+evidence for that classifier without changing the original replay's record.
+
 All 154 owned receivers exited and destroyed their windows. Physical input
 counts were zero. Buttons/modifiers were released before controller recovery;
 every controller release was a Noop. Pointer and foreground were restored.
