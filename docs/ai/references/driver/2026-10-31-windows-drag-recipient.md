@@ -131,3 +131,13 @@ encode native ordering. B must still receive no down and start no drag. For
 close only, one same-position frame message is allowed if its coordinate equals
 the fault point and that exact injection-count evidence also passes. This does
 not promise suppression of system-generated messages or atomic native input.
+
+[Run 41214950459](https://github.com/moeru-ai/auv/actions/runs/41214950459)
+stopped before GUI execution. The pure motion fixture mistook a brief watchdog
+mutex owner for a lock retained by its caller. A forced foreign-owner local
+reproduction produced the same `WouldBlock` failure before the test changed.
+The fixture now reacquires normally; a completion channel detects a caller-owned
+deadlock within two seconds. No production code changed. All 113 common tests
+passed afterward. Artifact `13047504606`, SHA-256
+`e66948ee7f09dd9c30c46f55c7dfc5a0b363ec8bc337ad90a99d3e8fff23d631`,
+retains the exact failed pure-test log and is not GUI evidence.

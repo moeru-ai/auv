@@ -216,7 +216,7 @@ impl MouseBackend for MotionRecipient {
     motion: Box<dyn FnOnce() -> DriverResult<(Point, InputActionResult)> + '_>,
   ) -> DriverResult<(Point, InputActionResult)> {
     let coordinator = self.coordinator.upgrade().unwrap();
-    assert!(coordinator.state.try_lock().expect("native admission must not hold state lock").active);
+    assert!(coordinator.state.lock().unwrap().active);
     assert!(!self.active.swap(true, Ordering::SeqCst));
     self.receiver.events.lock().unwrap().push("enter".into());
     let result = motion();
@@ -226,7 +226,7 @@ impl MouseBackend for MotionRecipient {
   }
   fn check_motion(&self) -> DriverResult<()> {
     let coordinator = self.coordinator.upgrade().unwrap();
-    assert!(coordinator.state.try_lock().expect("native check must not hold state lock").active);
+    assert!(coordinator.state.lock().unwrap().active);
     if self.lost.load(Ordering::SeqCst) {
       return Err(DriverError::InputAction {
         cause: Box::new(DriverError::TargetLost {
@@ -242,6 +242,12 @@ impl MouseBackend for MotionRecipient {
   }
 }
 
+// https://github.com/moeru-ai/auv/actions/runs/41214950459/job/124577442154
+// ROOT CAUSE:
+//
+// The watchdog can legitimately own the state mutex on another thread, so
+// try_lock cannot prove that this callback's caller retained it. Reacquire
+// normally and use bounded completion to detect a caller-owned lock instead.
 #[test]
 fn complete_drag_keeps_native_recipient_through_release_after_sparse_sample_loss() {
   let coordinator = Arc::new(MouseCoordinator::default());
@@ -260,12 +266,20 @@ fn complete_drag_keeps_native_recipient_through_release_after_sparse_sample_loss
   movement.options.duration = Duration::from_secs(1);
   movement.options.sample_rate_hz = 1;
   movement.options.curve_tolerance = 0.5;
-  let result = coordinator.motion(movement, Some(MouseButton::Left), recipient.clone(), |event| {
-    if matches!(event, MotionEvent::Progress { .. }) {
-      recipient.lost.store(true, Ordering::SeqCst);
-    }
-    true
+  let owner = coordinator.clone();
+  let backend = recipient.clone();
+  let (complete, completed) = std::sync::mpsc::channel();
+  let worker = std::thread::spawn(move || {
+    let result = owner.motion(movement, Some(MouseButton::Left), backend.clone(), |event| {
+      if matches!(event, MotionEvent::Progress { .. }) {
+        backend.lost.store(true, Ordering::SeqCst);
+      }
+      true
+    });
+    let _ = complete.send(result);
   });
+  let result = completed.recv_timeout(Duration::from_secs(2)).expect("native callback retained its caller's state mutex");
+  worker.join().unwrap();
   assert!(matches!(result, Err(DriverError::InputAction { cause, progress: crate::InputActionProgress::Submitted { .. } })
     if matches!(*cause, DriverError::TargetLost { .. })));
   assert_eq!(*recipient.receiver.events.lock().unwrap(), ["enter", "move", "down", "drag", "up", "exit"]);
