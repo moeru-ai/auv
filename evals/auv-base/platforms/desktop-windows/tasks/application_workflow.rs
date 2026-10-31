@@ -249,7 +249,9 @@ fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Resu
         "edge" => {
           let url = url::Url::from_file_path(&fixture).map_err(|_| anyhow::anyhow!("invalid fixture URL"))?;
           let profile = directory.join("profile/Default");
-          let downloads = directory.join("downloads");
+          // Browser preferences cross a native file-IO boundary. Normalize the
+          // absolute path instead of retaining mixed separators from CLI input.
+          let downloads = std::path::absolute(directory.join("downloads"))?;
           std::fs::create_dir_all(&profile)?;
           std::fs::create_dir(&downloads)?;
           // The app writes downloaded text into this owned directory. The pref is
