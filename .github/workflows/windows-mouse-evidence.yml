@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 88769ca70961cd1d5850d049bf919cdbd6f7ca2b
+          ref: 5f666614fc8a70f9b12f3405b59d136d03c67f3e
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '88769ca70961cd1d5850d049bf919cdbd6f7ca2b') { throw "Unexpected source $actual" }
+          if ($actual -ne '5f666614fc8a70f9b12f3405b59d136d03c67f3e') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -122,6 +122,9 @@ jobs:
           cargo test --locked -p auv-driver-windows --lib input::native::click_tests > "$directory/partial-click.stdout.log" 2> "$directory/partial-click.stderr.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -LiteralPath "$directory/partial-click.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected owned partial-click cleanup model' }
+          cargo test --locked -p auv-driver-windows --lib session::tests::pre_cancelled_foreground_window_click_reports_not_delivered > "$directory/pre-cancel.stdout.log" 2> "$directory/pre-cancel.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/pre-cancel.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected pre-cancel receipt regression' }
 
       - name: Recheck the existing keyboard fault receiver after shared fixture extraction
         shell: pwsh
@@ -158,7 +161,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-mouse-recipient-88769ca7-fixed
+          name: windows-mouse-recipient-5f666614-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
