@@ -102,3 +102,13 @@ A new controls tree, window capture, desktop witness, and process cleanup remain
 The first failed or uncertain step stops the input run and preserves its partial records.
 Input is never retried. These cases can accept `edit_save_accepted` while keeping
 `workflow_accepted=false`; scrolling, dialogs, loss cases, DPI, and all frontend routes remain separate gates.
+
+The [first edit/save run](https://github.com/moeru-ai/auv/actions/runs/41128561574)
+at `7e7dd2a7` passed Edge's absent-query refusal, verified semantic focus, and native text entry.
+The page received a trusted save event, but no saved file appeared. The input run stopped before the other apps.
+The [download diagnostic](https://github.com/moeru-ai/auv/actions/runs/41174216160)
+reproduced that failure on the same source in a fresh isolated desktop.
+Its browser database recorded the expected target path, 43 total bytes, zero received bytes,
+and interrupt reason 1 (`FILE_FAILED`). The page's state and CLI receipts did not override this failure.
+Both runs restored the foreground and pointer, observed no physical input, and verified owned job cleanup.
+Native browser file logging now records the next diagnostic boundary; edit/save remains unaccepted.

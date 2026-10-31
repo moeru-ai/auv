@@ -254,7 +254,11 @@ fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
               "--no-default-browser-check",
               "--force-renderer-accessibility",
               "--window-size=800,620",
+              "--enable-logging",
+              "--v=1",
             ])
+            // Preserve native download failures separately from AUV delivery.
+            .arg(format!("--log-file={}", directory.join("browser.log").display()))
             .arg(format!("--app={url}"));
         }
         "vscode" => {
