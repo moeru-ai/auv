@@ -1249,7 +1249,9 @@ fn windows_doctor_smoke_reports_live_process_diagnostics() {
   let body: serde_json::Value = serde_json::from_str(&stdout(&json)).expect("doctor --json prints one JSON object");
   assert_eq!(body["platform"], "windows");
   assert!(body["process_id"].is_u64(), "{body}");
-  assert!(body["executable"].is_string(), "{body}");
+  // The report contract keeps `executable` optional (`current_exe().ok()`),
+  // so the smoke test must accept both shapes instead of promising a string.
+  assert!(body["executable"].is_string() || body["executable"].is_null(), "{body}");
   for key in ["elevated", "ui_access", "nonzero_session"] {
     let status = body[key].as_str().unwrap_or_else(|| panic!("{key} must be a status string: {body}"));
     assert!(matches!(status, "granted" | "missing" | "unknown"), "{key} = {status}");

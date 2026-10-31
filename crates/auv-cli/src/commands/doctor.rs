@@ -1,12 +1,12 @@
 use clap::Args;
 
-/// Inspect the permissions needed by local desktop automation.
+/// Inspect local desktop automation diagnostics.
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Examples:\n  # Print a human-readable permission report\n  auv doctor\n\n  # Print a machine-readable permission report\n  auv doctor --json"
+  after_long_help = "Examples:\n  # Print a human-readable diagnostics report\n  auv doctor\n\n  # Print a machine-readable diagnostics report\n  auv doctor --json"
 )]
 pub struct DoctorArgs {
-  /// Render the permission report as JSON.
+  /// Render the doctor report as JSON.
   #[arg(long)]
   pub json: bool,
   /// Install AUV's user desktop identity (Linux only; grants no permissions).
@@ -192,14 +192,6 @@ fn windows_notes(nonzero_session: auv_driver::PermissionStatus) -> Vec<&'static 
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn windows_status_line(status: auv_driver::PermissionStatus) -> String {
-  // Missing is a plain fact on Windows, not a failure: elevation and UIAccess
-  // are diagnostic signals, so the line names the state without an ok/fail
-  // verdict and the notes carry the interpretation.
-  status.as_str().to_string()
-}
-
-#[cfg(any(target_os = "windows", test))]
 fn write_windows_report(report: &WindowsDiagnosticReport, out: &mut impl std::io::Write) -> std::io::Result<()> {
   writeln!(out, "AUV Windows process diagnostics")?;
   writeln!(out, "platform: {}", report.platform)?;
@@ -207,9 +199,13 @@ fn write_windows_report(report: &WindowsDiagnosticReport, out: &mut impl std::io
   if let Some(executable) = &report.executable {
     writeln!(out, "executable: {executable}")?;
   }
-  writeln!(out, "elevated: {}", windows_status_line(report.elevated))?;
-  writeln!(out, "ui access: {}", windows_status_line(report.ui_access))?;
-  writeln!(out, "nonzero session: {}", windows_status_line(report.nonzero_session))?;
+  // Each status is printed as the plain state word. Missing is a plain fact
+  // on Windows, not a failure: elevation and UIAccess are diagnostic signals,
+  // so the line names the state without an ok/fail verdict and the notes
+  // carry the interpretation.
+  writeln!(out, "elevated: {}", report.elevated.as_str())?;
+  writeln!(out, "ui access: {}", report.ui_access.as_str())?;
+  writeln!(out, "nonzero session: {}", report.nonzero_session.as_str())?;
   for note in &report.notes {
     writeln!(out, "note: {note}")?;
   }
