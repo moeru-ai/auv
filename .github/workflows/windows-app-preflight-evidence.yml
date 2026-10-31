@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 7e7dd2a7168afa9c57a6a36fc96bb253ebf29f64
+          ref: 84675a8ba5e0a9b8898d013c6e2ee73ecc091afe
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +78,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '7e7dd2a7168afa9c57a6a36fc96bb253ebf29f64') { throw "Unexpected source $source" }
+          if ($source -ne '84675a8ba5e0a9b8898d013c6e2ee73ecc091afe') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -286,7 +286,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editors-7e7dd2a7-downloads
+          name: windows-app-editors-84675a8b-browser-log
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
