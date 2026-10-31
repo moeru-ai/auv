@@ -269,7 +269,8 @@ impl WindowApi<'_> {
   /// Delivers a window-targeted click.
   ///
   /// `ForegroundPreferred` foregrounds the window and uses the same
-  /// `SendInput` route as global clicks. `BackgroundOnly`/`BackgroundPreferred`
+  /// `SendInput` route as global clicks. Activation failure stops delivery.
+  /// `BackgroundOnly`/`BackgroundPreferred`
   /// instead post `WM_LBUTTONDOWN`/`WM_LBUTTONUP` directly to the control
   /// hit-tested under `point` (`background_input::click_at_window`), which
   /// does not raise or focus the window. `window_strategy` is a macOS
@@ -281,7 +282,9 @@ impl WindowApi<'_> {
     }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
-      let activation_attempt = foreground_window_attempt(window, "pointer delivery");
+      // Global input has no window recipient after an activation failure.
+      activate_window(window)?;
+      let activation_attempt = InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents);
       #[cfg(feature = "overlay")]
       let click = options.click.clone();
       // Delivered like a global click, but reported below as aimed at `window`, so the
@@ -316,7 +319,7 @@ impl WindowApi<'_> {
   /// (`background_input::scroll_at_window`); `AxScroll` and
   /// `WindowTargetedKeyboardScroll` are not implemented on Windows and are
   /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
-  /// falls back to `SendInput`.
+  /// uses `SendInput` only after successful activation.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
@@ -351,7 +354,8 @@ impl WindowApi<'_> {
           if options.policy == InputPolicy::BackgroundOnly {
             continue;
           }
-          let activation_attempt = foreground_window_attempt(window, "wheel delivery");
+          activate_window(window)?;
+          let activation_attempt = InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents);
           let screen_point = self.to_screen_point(window, point)?.point();
           let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
           attempts.push(activation_attempt);
@@ -366,6 +370,9 @@ impl WindowApi<'_> {
 }
 
 impl WindowInput for WindowApi<'_> {
+  // TODO(windows-input-target-lease): successful activation can still race with later focus
+  // changes. An exact recipient guard needs its own lease contract; this slice only stops on
+  // activation errors. See 2026-10-30-windows-foreground-activation-admission.md.
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
@@ -383,7 +390,8 @@ impl WindowInput for WindowApi<'_> {
 
   /// `ForegroundPreferred` foregrounds the window like a foreground click and
   /// uses the `SendInput` desktop drag. Background policies post the held
-  /// gesture to the window's child receiver without raising it.
+  /// gesture to the window's child receiver without raising it. Activation failure stops
+  /// foreground drag delivery.
   fn drag(
     &self,
     window: &Window,
@@ -395,24 +403,12 @@ impl WindowInput for WindowApi<'_> {
       movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
       return self.session.input().drag_mouse(movement, button);
     }
-    let activation_attempt = foreground_window_attempt(window, "pointer drag");
+    activate_window(window)?;
+    let activation_attempt = InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents);
     movement.target = Some(auv_driver_common::InputTarget::Foreground);
     let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
     result.attempts.insert(0, activation_attempt);
     Ok((point, result))
-  }
-}
-
-/// Foregrounds `window` before a foreground-only input delivery, reporting the
-/// outcome as an attempt instead of failing the whole delivery on activation
-/// trouble (the subsequent `SendInput` call still targets the window's frame).
-fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
-  match activate_window(window) {
-    Ok(()) => InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
-    Err(error) => InputAttempt::failure(
-      InputDeliveryPath::ForegroundSystemEvents,
-      format!("failed to foreground target window before {purpose}: {error}"),
-    ),
   }
 }
 

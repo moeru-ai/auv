@@ -52,6 +52,12 @@ foreground `WindowInput` path foregrounds the target window first
 (`SetForegroundWindow`/`ShowWindow`), mirroring how `auv-driver-linux` handles the
 RemoteDesktop portal.
 
+An activation error stops foreground window click, wheel, and drag before global input.
+For scrolling, this also applies to a `ForegroundHid` candidate selected under `BackgroundPreferred`.
+The [isolated activation-refusal evidence](../../docs/ai/references/driver/2026-10-30-windows-foreground-activation-admission.md)
+records three closed-target refusals and separate successful input controls.
+Successful activation remains a point-in-time check; an exact recipient lease is still deferred.
+
 Window-targeted `BackgroundOnly`/`BackgroundPreferred` clicks and scrolls instead go
 through `src/background_input.rs`, which posts window messages
 (`WM_LBUTTONDOWN`/`WM_LBUTTONUP`/`WM_LBUTTONDBLCLK`/`WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`) directly to the
