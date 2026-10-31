@@ -499,6 +499,22 @@ This is scoped Win32 foreground-click evidence at measured 96 DPI. #448 is ready
 Scrolling/held motion, root-close mouse receipts, frame/coordinate freshness, and complete frontend cancellation parity remain open.
 The closed #429 screenshot predicate remains retired.
 
+## Single-call foreground scroll and close under review
+
+PR [#449](https://github.com/moeru-ai/auv/pull/449) retains the recipient through single-call foreground scroll and its requested settle.
+Its baseline reproduced success after takeover, ABA, minimize, and close.
+It also adds an application-owned terminal GUI receipt before mouse-close destruction.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41192270017), source `4715bd57`,
+passed 22 mouse cases, fifteen keyboard cases, and eight pure regressions.
+Independent audit verified the artifact digest, 74 receiver exits/destructions,
+zero physical input, released modifiers, desktop restoration, and forty capture contents.
+Four minimized/closed recipients were refused by capture without restoration.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/05b583359fd79ab9ab526598db7f64ad917392ff/docs/ai/references/driver/evidence/2026-10-31-windows-mouse-lifecycle/acceptance.json)
+retains close state, typed receipts, binary/capture hashes, and visual-review groups.
+#449 is ready for review and unmerged. Background fallback needs typed posted-partial receipts;
+sampled/live scroll and drag still need complete motion/worker leases.
+This is measured 96-DPI Win32 evidence, not complete Phase 2 or toolkit support.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.
@@ -509,6 +525,7 @@ The independent repairs above cover queued image frames, failed activation, and 
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
 Draft #446 passed the stated Win32 keyboard route matrix and five hook lifecycle fault models.
 PR #448 passed the scoped foreground-click matrix; it does not complete other mouse capabilities or frame/coordinate admission.
+PR #449 passed single-call foreground scroll and mouse-close lifetime; whole-motion leases and background partial progress remain open.
 Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
