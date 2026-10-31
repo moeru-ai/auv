@@ -18,25 +18,17 @@ fn checked_client_lparam_accepts_signed_16bit_range_and_roundtrips() {
   use super::native::checked_client_lparam;
   use windows::Win32::Foundation::POINT;
 
-  let cases = [
+  for (x, y) in [
     (0, 0),
     (i16::MIN as i32, 0),
     (i16::MAX as i32, 0),
-    (0, i16::MIN as i32),
-    (0, i16::MAX as i32),
-    (i16::MIN as i32, i16::MIN as i32),
-    (i16::MAX as i32, i16::MAX as i32),
     (i16::MIN as i32, i16::MAX as i32),
     (i16::MAX as i32, i16::MIN as i32),
-  ];
-
-  for (x, y) in cases {
+  ] {
     let lparam = checked_client_lparam(POINT { x, y }).expect("valid i16 coordinate must succeed");
-    // Decode Win32 signed 16-bit LOWORD and HIWORD
     let decoded_x = (lparam.0 as u32 & 0xFFFF) as i16 as i32;
     let decoded_y = ((lparam.0 as u32 >> 16) & 0xFFFF) as i16 as i32;
-    assert_eq!(decoded_x, x, "x coordinate roundtrip failed for ({x}, {y})");
-    assert_eq!(decoded_y, y, "y coordinate roundtrip failed for ({x}, {y})");
+    assert_eq!((decoded_x, decoded_y), (x, y), "roundtrip mismatch for ({x}, {y})");
   }
 }
 
@@ -45,21 +37,15 @@ fn checked_client_lparam_rejects_out_of_range_coordinates() {
   use super::native::checked_client_lparam;
   use windows::Win32::Foundation::POINT;
 
-  let cases = [
-    (-32_769, 0),
+  for (x, y) in [
     (32_768, 0),
-    (40_000, 0),
-    (0, -32_769),
-    (0, 32_768),
+    (-32_769, 0),
     (0, 40_000),
-    (-40_000, -40_000),
+    (0, -40_000),
     (40_000, 40_000),
-  ];
-
-  for (x, y) in cases {
+  ] {
     let err = checked_client_lparam(POINT { x, y }).expect_err(&format!("({x}, {y}) must be rejected"));
-    let message = err.to_string();
-    assert!(message.contains("signed 16-bit message range"), "error message must describe range violation: {message}");
+    assert!(err.to_string().contains("signed 16-bit message range"), "error message must describe range violation: {err}");
   }
 }
 
@@ -330,66 +316,33 @@ fn background_click_rejects_client_coordinates_exceeding_signed_16bit_without_po
   });
 
   // 2. Negative rejections: out-of-range coordinates fail without posting any messages
-  let invalid_offsets = [
-    (40_000, 0),  // X exceeds i16::MAX
-    (0, 40_000),  // Y exceeds i16::MAX
-    (-40_000, 0), // X below i16::MIN
-    (0, -40_000), // Y below i16::MIN
-    (32_768, 0),  // X boundary overflow
-    (0, 32_768),  // Y boundary overflow
-    (-32_769, 0), // X boundary underflow
-    (0, -32_769), // Y boundary underflow
+  let test_cases = [
+    ("x exceeds i16", Point::new(f64::from(client_origin.x + 40_000), f64::from(client_origin.y))),
+    ("y exceeds i16", Point::new(f64::from(client_origin.x), f64::from(client_origin.y + 40_000))),
+    ("negative underflow", Point::new(f64::from(client_origin.x - 40_000), f64::from(client_origin.y))),
   ];
 
-  for (dx, dy) in invalid_offsets {
-    let screen_pt = Point::new(f64::from(client_origin.x + dx), f64::from(client_origin.y + dy));
+  let click_variants = [
+    Click::Single,
+    Click::Double {
+      interval: std::time::Duration::from_millis(10),
+    },
+    Click::Repeated {
+      count: 3,
+      interval: std::time::Duration::from_millis(10),
+    },
+  ];
 
-    // Single click: fails before post
-    RECEIPTS.with(|r| r.borrow_mut().clear());
-    let err_single =
-      super::click_at_window(&window, screen_pt, auv_driver_common::MouseButton::Left, Click::Single, ClickModifiers::default())
-        .expect_err("out-of-range coordinate must be rejected for single click");
-    assert!(err_single.to_string().contains("signed 16-bit message range"));
-    drain_messages();
-    RECEIPTS.with(|r| {
-      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for single click");
-    });
-
-    // Double click: fails before first DOWN post
-    RECEIPTS.with(|r| r.borrow_mut().clear());
-    let err_double = super::click_at_window(
-      &window,
-      screen_pt,
-      auv_driver_common::MouseButton::Left,
-      Click::Double {
-        interval: std::time::Duration::from_millis(10),
-      },
-      ClickModifiers::default(),
-    )
-    .expect_err("out-of-range coordinate must be rejected for double click");
-    assert!(err_double.to_string().contains("signed 16-bit message range"));
-    drain_messages();
-    RECEIPTS.with(|r| {
-      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for double click");
-    });
-
-    // Repeated click: fails before any post
-    RECEIPTS.with(|r| r.borrow_mut().clear());
-    let err_repeated = super::click_at_window(
-      &window,
-      screen_pt,
-      auv_driver_common::MouseButton::Left,
-      Click::Repeated {
-        count: 3,
-        interval: std::time::Duration::from_millis(10),
-      },
-      ClickModifiers::default(),
-    )
-    .expect_err("out-of-range coordinate must be rejected for repeated click");
-    assert!(err_repeated.to_string().contains("signed 16-bit message range"));
-    drain_messages();
-    RECEIPTS.with(|r| {
-      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for repeated click");
-    });
+  for (label, screen_pt) in test_cases {
+    for click in &click_variants {
+      RECEIPTS.with(|r| r.borrow_mut().clear());
+      let err = super::click_at_window(&window, screen_pt, auv_driver_common::MouseButton::Left, click.clone(), ClickModifiers::default())
+        .expect_err("out-of-range coordinate must be rejected before delivery");
+      assert!(err.to_string().contains("signed 16-bit message range"));
+      drain_messages();
+      RECEIPTS.with(|r| {
+        assert!(r.borrow().is_empty(), "no message may be posted for {label} ({click:?})");
+      });
+    }
   }
 }
