@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ca02962baf3dde5066954db57cb1813733963df0
+          ref: f6545efbfe0cf8474e24a52a9e88c40d9ccc06fc
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'ca02962baf3dde5066954db57cb1813733963df0') { throw "Unexpected source $actual" }
+          if ($actual -ne 'f6545efbfe0cf8474e24a52a9e88c40d9ccc06fc') { throw "Unexpected source $actual" }
+          git diff --exit-code 0a92ed6e6789927ce1f9e0b4dc1d32a6b3cd8727 HEAD -- crates
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline changed production crates' }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -84,7 +86,7 @@ jobs:
           }
           [ordered]@{
             source_sha = $actual
-            base_sha = '2a6640ce02cb32151a12932b99906ca3c709fb65'
+            base_sha = '0a92ed6e6789927ce1f9e0b4dc1d32a6b3cd8727'
             workflow_sha = '${{ github.sha }}'
             os = [Environment]::OSVersion.VersionString
             image_version = $env:ImageVersion
@@ -93,12 +95,12 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $false
+            expected_baseline_failure = $true
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build fixed Driver and posted-wheel queue regression
+      - name: Build unchanged Driver and background-policy regression
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -247,11 +249,28 @@ jobs:
           if ($cleanup.Count -ne 12 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned posted-scroll cleanup incomplete' }
           if ($exit -ne 0 -or $cases.Count -ne 6 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Posted-wheel progress/fallback invariant failed; inspect actual queue/app/desktop receipts' }
 
+      - name: Reproduce background-policy lifetime failures
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          & 'target/debug/background-session-eval.exe' window-background-scroll --output "$directory/background-scroll" > "$directory/background-scroll.stdout.log" 2> "$directory/background-scroll.stderr.log"
+          $exit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/background-scroll/window-background-scroll.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 60 })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $cases | Select-Object case,policy,selection,passed,native_ok,target_lost,@{n='a_wheels';e={$_.after_a.raw.edit_wheel}},injected_mouse,input_progress,error | ConvertTo-Json -Depth 15 | Tee-Object -FilePath "$directory/background-scroll-result.json"
+          $cleanup = @($rows | Where-Object kind -eq 'cleanup')
+          if ($cleanup.Count -ne 58 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned background-scroll cleanup incomplete' }
+          if ($exit -ne 0 -or $cases.Count -ne 29 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Background-policy lifetime regression reproduced; inspect source-bound app/witness records' }
+          throw 'Unchanged-production baseline unexpectedly passed all background-policy cases'
+
       - name: Preserve source-bound native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-posted-scroll-ca02962b-fixed
+          name: windows-background-scroll-f6545efb-baseline
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
