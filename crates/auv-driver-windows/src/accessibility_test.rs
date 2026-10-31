@@ -374,7 +374,11 @@ fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
     &selected,
     || {
       let previous = reads.replace(reads.get() + 1);
-      Ok(if previous == 0 { selected.clone() } else { after.clone() })
+      Ok(if previous == 0 {
+        selected.clone()
+      } else {
+        after.clone()
+      })
     },
     || {
       delivered.set(delivered.get() + 1);
