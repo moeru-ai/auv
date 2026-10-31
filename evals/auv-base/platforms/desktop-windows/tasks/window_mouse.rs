@@ -167,6 +167,8 @@ pub fn run(output: &Path) -> Result<bool> {
     let passed = if no_input {
       operation.is_err()
         && matches!(progress, Some(auv_driver_common::InputActionProgress::NotDelivered))
+        && (case != "owner_mismatch" || target_lost)
+        && (case != "pre_cancel" || cancelled)
         && after_a["clicks"] == 0
         && after_b["clicks"] == 0
         && after.foreground == before.foreground

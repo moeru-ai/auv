@@ -370,6 +370,11 @@ impl WindowApi<'_> {
 
 impl WindowInput for WindowApi<'_> {
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      // Foreground delivery owns desktop admission and stamps its refusal.
+      // An outer reservation would lose not-delivered progress on pre-cancel.
+      return self.click_impl(window, point, options);
+    }
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
   }

@@ -84,4 +84,15 @@ Independent review confirmed the alternate receiver's two-click images and the A
 All 15 existing keyboard cases passed after fixture extraction, with 30 verified receiver exits/destructions.
 All eight mouse receivers exited and their HWNDs were destroyed.
 The corrected replay adds five zero-delivery admission cases and cancellation after an acknowledged click to the original four.
-No native correctness claim follows from compilation; corrected counts, progress, cancellation, and cleanup remain unverified.
+The first corrected replays ([source `62c18086`](https://github.com/moeru-ai/auv/actions/runs/41188726649)
+and [source `88769ca7`](https://github.com/moeru-ai/auv/actions/runs/41188916764)) passed nine mouse cases,
+all 15 keyboard cases, and the five watcher models. The later replay also passed the owned cleanup model.
+Only pre-cancel failed: receiver counts and desktop witness confirmed zero delivery, but the outer
+desktop reservation returned a plain cancellation error without `NotDelivered` progress.
+Artifact `13037539594` matched SHA-256
+`ded0f3df7093d1791322c3535a105891dd7b8880ba769e0213e1ff3bc2e71498` on download.
+All 20 mouse receivers exited with destroyed HWNDs, and pointer/foreground were restored.
+
+A public-boundary unit reproduced the missing pre-cancel receipt before production changes.
+Foreground click now leaves desktop admission to its existing delivery boundary, which stamps refusal.
+Posted background click keeps its outer reservation. Corrected native acceptance remains pending.
