@@ -14,6 +14,56 @@ fn make_lparam_zero_extends_instead_of_sign_extends() {
 }
 
 #[test]
+fn checked_client_lparam_accepts_signed_16bit_range_and_roundtrips() {
+  use super::native::checked_client_lparam;
+  use windows::Win32::Foundation::POINT;
+
+  let cases = [
+    (0, 0),
+    (i16::MIN as i32, 0),
+    (i16::MAX as i32, 0),
+    (0, i16::MIN as i32),
+    (0, i16::MAX as i32),
+    (i16::MIN as i32, i16::MIN as i32),
+    (i16::MAX as i32, i16::MAX as i32),
+    (i16::MIN as i32, i16::MAX as i32),
+    (i16::MAX as i32, i16::MIN as i32),
+  ];
+
+  for (x, y) in cases {
+    let lparam = checked_client_lparam(POINT { x, y }).expect("valid i16 coordinate must succeed");
+    // Decode Win32 signed 16-bit LOWORD and HIWORD
+    let decoded_x = (lparam.0 as u32 & 0xFFFF) as i16 as i32;
+    let decoded_y = ((lparam.0 as u32 >> 16) & 0xFFFF) as i16 as i32;
+    assert_eq!(decoded_x, x, "x coordinate roundtrip failed for ({x}, {y})");
+    assert_eq!(decoded_y, y, "y coordinate roundtrip failed for ({x}, {y})");
+  }
+}
+
+#[test]
+fn checked_client_lparam_rejects_out_of_range_coordinates() {
+  use super::native::checked_client_lparam;
+  use windows::Win32::Foundation::POINT;
+
+  let cases = [
+    (-32_769, 0),
+    (32_768, 0),
+    (40_000, 0),
+    (0, -32_769),
+    (0, 32_768),
+    (0, 40_000),
+    (-40_000, -40_000),
+    (40_000, 40_000),
+  ];
+
+  for (x, y) in cases {
+    let err = checked_client_lparam(POINT { x, y }).expect_err(&format!("({x}, {y}) must be rejected"));
+    let message = err.to_string();
+    assert!(message.contains("signed 16-bit message range"), "error message must describe range violation: {message}");
+  }
+}
+
+#[test]
 fn make_wheel_wparam_places_delta_in_high_word() {
   assert_eq!(make_wheel_wparam(120).0, 120 << 16);
 }
@@ -174,5 +224,172 @@ fn window_receives_modified_click_messages_without_modifier_carryover() {
         .collect();
       RECEIPTS.with(|receipts| assert_eq!(*receipts.borrow(), expected, "{button:?} {click:?}"));
     }
+  }
+}
+
+/// Verifies that native click rejects client coordinates exceeding the signed 16-bit
+/// Win32 message contract before any WM_*BUTTONDOWN/UP/DBLCLK messages are dispatched.
+#[test]
+#[ignore = "creates a dedicated Win32 window and dispatches posted mouse messages"]
+fn background_click_rejects_client_coordinates_exceeding_signed_16bit_without_posting() {
+  use auv_driver_common::{Click, ClickModifiers, CoordinateSpace, Point, Rect, Window, WindowRef};
+  use std::cell::RefCell;
+  use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+  use windows::Win32::Graphics::Gdi::ClientToScreen;
+  use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, UnregisterClassW,
+    WINDOW_EX_STYLE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+  };
+  use windows::core::w;
+
+  thread_local! {
+    static RECEIPTS: RefCell<Vec<(u32, usize)>> = const { RefCell::new(Vec::new()) };
+  }
+  unsafe extern "system" fn receive(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if matches!(message, WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK) {
+      RECEIPTS.with(|r| r.borrow_mut().push((message, wp.0)));
+      return LRESULT(0);
+    }
+    // SAFETY: Forward the unchanged arguments supplied by the OS window procedure.
+    unsafe { DefWindowProcW(hwnd, message, wp, lp) }
+  }
+  struct Receiver(HWND);
+  impl Drop for Receiver {
+    fn drop(&mut self) {
+      // SAFETY: This test owns the window and registered class on this thread.
+      unsafe {
+        let _ = DestroyWindow(self.0);
+        let _ = UnregisterClassW(w!("AuvI16CoordRangeReceiver"), None);
+      }
+    }
+  }
+  let class = WNDCLASSW {
+    lpfnWndProc: Some(receive),
+    lpszClassName: w!("AuvI16CoordRangeReceiver"),
+    ..Default::default()
+  };
+  let receiver = unsafe {
+    assert_ne!(RegisterClassW(&class), 0);
+    Receiver(
+      CreateWindowExW(
+        WINDOW_EX_STYLE::default(),
+        class.lpszClassName,
+        w!("AUV coordinate range test"),
+        WS_OVERLAPPEDWINDOW,
+        100,
+        100,
+        320,
+        200,
+        None,
+        None,
+        None,
+        None,
+      )
+      .unwrap(),
+    )
+  };
+  let window = Window {
+    reference: WindowRef {
+      id: (receiver.0.0 as usize).to_string(),
+    },
+    title: None,
+    app_name: None,
+    application_id: None,
+    process_id: None,
+    frame: Rect::new(100.0, 100.0, 320.0, 200.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: false,
+    is_visible: false,
+  };
+
+  let mut client_origin = POINT { x: 0, y: 0 };
+  assert!(unsafe { ClientToScreen(receiver.0, &mut client_origin) }.as_bool());
+
+  let drain_messages = || {
+    let mut message = MSG::default();
+    unsafe {
+      while PeekMessageW(&mut message, receiver.0, 0, 0, PM_REMOVE).as_bool() {
+        DispatchMessageW(&message);
+      }
+    }
+  };
+
+  // 1. Positive baseline: valid coordinate successfully delivers messages
+  RECEIPTS.with(|r| r.borrow_mut().clear());
+  super::click_at_window(
+    &window,
+    Point::new(f64::from(client_origin.x + 20), f64::from(client_origin.y + 20)),
+    auv_driver_common::MouseButton::Left,
+    Click::Single,
+    ClickModifiers::default(),
+  )
+  .expect("valid coordinate must succeed");
+  drain_messages();
+  RECEIPTS.with(|r| {
+    assert_eq!(r.borrow().len(), 2, "single click delivers DOWN and UP");
+  });
+
+  // 2. Negative rejections: out-of-range coordinates fail without posting any messages
+  let invalid_offsets = [
+    (40_000, 0),  // X exceeds i16::MAX
+    (0, 40_000),  // Y exceeds i16::MAX
+    (-40_000, 0), // X below i16::MIN
+    (0, -40_000), // Y below i16::MIN
+    (32_768, 0),  // X boundary overflow
+    (0, 32_768),  // Y boundary overflow
+    (-32_769, 0), // X boundary underflow
+    (0, -32_769), // Y boundary underflow
+  ];
+
+  for (dx, dy) in invalid_offsets {
+    let screen_pt = Point::new(f64::from(client_origin.x + dx), f64::from(client_origin.y + dy));
+
+    // Single click: fails before post
+    RECEIPTS.with(|r| r.borrow_mut().clear());
+    let err_single =
+      super::click_at_window(&window, screen_pt, auv_driver_common::MouseButton::Left, Click::Single, ClickModifiers::default())
+        .expect_err("out-of-range coordinate must be rejected for single click");
+    assert!(err_single.to_string().contains("signed 16-bit message range"));
+    drain_messages();
+    RECEIPTS.with(|r| {
+      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for single click");
+    });
+
+    // Double click: fails before first DOWN post
+    RECEIPTS.with(|r| r.borrow_mut().clear());
+    let err_double = super::click_at_window(
+      &window,
+      screen_pt,
+      auv_driver_common::MouseButton::Left,
+      Click::Double {
+        interval: std::time::Duration::from_millis(10),
+      },
+      ClickModifiers::default(),
+    )
+    .expect_err("out-of-range coordinate must be rejected for double click");
+    assert!(err_double.to_string().contains("signed 16-bit message range"));
+    drain_messages();
+    RECEIPTS.with(|r| {
+      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for double click");
+    });
+
+    // Repeated click: fails before any post
+    RECEIPTS.with(|r| r.borrow_mut().clear());
+    let err_repeated = super::click_at_window(
+      &window,
+      screen_pt,
+      auv_driver_common::MouseButton::Left,
+      Click::Repeated {
+        count: 3,
+        interval: std::time::Duration::from_millis(10),
+      },
+      ClickModifiers::default(),
+    )
+    .expect_err("out-of-range coordinate must be rejected for repeated click");
+    assert!(err_repeated.to_string().contains("signed 16-bit message range"));
+    drain_messages();
+    RECEIPTS.with(|r| {
+      assert!(r.borrow().is_empty(), "no message may be posted when coordinates exceed i16 for repeated click");
+    });
   }
 }
