@@ -323,6 +323,13 @@ mod tests {
       }
     }
 
+    #[test]
+    fn nonzero_session_fact_maps_permission_status_to_boolean_observation() {
+      assert_eq!(nonzero_session_fact(auv_driver::PermissionStatus::Granted), Some(true));
+      assert_eq!(nonzero_session_fact(auv_driver::PermissionStatus::Missing), Some(false));
+      assert_eq!(nonzero_session_fact(auv_driver::PermissionStatus::Unknown), None);
+    }
+
     fn human(report: &WindowsDiagnosticReport) -> String {
       let mut buffer = Vec::new();
       write_windows_report(report, &mut buffer).expect("write report");
