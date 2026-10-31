@@ -213,7 +213,7 @@ pub fn run(output: &Path) -> Result<bool> {
         && fault["reached_target"] == true
         && json!([after.cursor.0, after.cursor.1]) == fault["cursor_at_fault"]
         && after_a["pad"]["last"] == fault["pad_at_fault"]["last"]
-        && (case != "aba" || fault["returned_owner"] == true)
+        && (case != "aba" || (fault["returned_owner"] == true && after_a["foreground"] == true && after_b["foreground_yielded"] == 1))
         && (case != "minimize" || after_a["minimized"] == true)
         && (case != "close" || terminal["event"] == "closing")
     } && no_wrong_move

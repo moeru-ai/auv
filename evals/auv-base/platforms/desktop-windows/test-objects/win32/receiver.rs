@@ -581,7 +581,12 @@ mod native {
       };
       (reached, returned)
     };
-    json!({"kind": kind, "reached_target": reached_target, "returned_owner": returned_owner})
+    // NOTICE: cross-queue foreground activation finishes asynchronously. The
+    // owned recipient is still inside this callback, so finalize the handback
+    // only from its later readback after the GUI queue resumes. See
+    // `https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745`.
+    json!({"kind": kind, "reached_target": reached_target, "returned_owner": returned_owner,
+      "return_pending": return_from_target && kind == "aba" && reached_target && !returned_owner})
   }
 
   extern "system" fn typing_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1207,7 +1212,21 @@ mod native {
         }
       }
       Some("keyboard_fault_receipt") => json!({"receipt": KEYBOARD_FAULT_RECEIPT.lock().ok().and_then(|value| value.clone())}),
-      Some("mouse_fault_receipt") => json!({"receipt": MOUSE_FAULT_RECEIPT.lock().ok().and_then(|value| value.clone())}),
+      Some("mouse_fault_receipt") => {
+        // The query runs on the owning GUI thread after its fault callback.
+        // SAFETY: read-only foreground query; no synthetic input or retry.
+        let returned = unsafe { GetForegroundWindow() } == hwnd;
+        let mut receipt = MOUSE_FAULT_RECEIPT.lock().unwrap();
+        if let Some(value) = receipt.as_mut()
+          && value["return_pending"] == true
+          && returned
+        {
+          value["returned_owner"] = json!(true);
+          value["return_pending"] = json!(false);
+          value["return_confirmed_by_gui_readback"] = json!(true);
+        }
+        json!({"receipt": *receipt})
+      }
       Some("reject_typing_focus") if FOREGROUND_INPUT.load(Relaxed) => {
         if let Some(enabled) = request["enabled"].as_bool() {
           REJECT_TYPING_FOCUS.store(enabled, Relaxed);

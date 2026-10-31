@@ -94,3 +94,15 @@ keyboard, click, and scroll faults retain their existing behavior. Artifact
 `0dbfb20ed231101e2a395fbab63b5ca90d0712089fb73c9ffcf6332bb7cae54d`,
 retains the failed fault receipt. Production code is unchanged from
 `93696abc44666568720539a77ae0795beaae3665`.
+
+The first handoff run
+[41212882633](https://github.com/moeru-ai/auv/actions/runs/41212882633)
+also retained 12/13 passes. Its final application state proved A was foreground
+and B had yielded once, while the callback's immediate return flag was false.
+[Microsoft explains cross-queue activation is asynchronous](https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745).
+The fixture now finalizes a pending return only from a later, read-only
+foreground query on A's GUI thread. Acceptance also requires A foreground and
+B's handoff count; no activation or input is retried by this readback. Artifact
+`13047695164`, SHA-256
+`a47bcb4371e011a6a7f0a19763d7b0e3cfda9f345bdf49c272b3416b688687f7`,
+retains the unaccepted instantaneous receipt.
