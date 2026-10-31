@@ -40,6 +40,8 @@ The pre-restoration point, cleanup action, and independent position readback rem
 The internal `app-host` and `app-snapshot` subprocess commands are hidden evaluation helpers.
 Their Rust entries, `run_controls`, and `run_editor` belong to the unpublished evaluation crate.
 This slice adds no root AUV command, Driver capability, Protobuf field, or SDK API.
+It fixes existing local `window.clickText` recording: the result builder now publishes the same typed delivery artifact as the recorded caller.
+Arguments and result JSON remain the same; the active run gains the missing `auv.driver.input_action_result` artifact.
 
 ## Acceptance gates
 
@@ -154,3 +156,6 @@ That is not accepted as a complete visible editor workflow. The case now dismiss
 AUV's Escape key and requires a new complete tree without that blocker before typing.
 Three Edge and three ISE captures from earlier acceptance, plus the new VS Code/Qt images, were reviewed independently.
 The last replay did not exercise the optional VS Code stale-focus reacquisition branch; its eligibility has pure coverage only.
+The local-output regression failed before the fix (zero artifacts instead of one) and passed after it.
+The complete Invoke unit suite passed 167 tests with one ignored test; six evaluation discovery/readiness/reacquisition tests passed.
+Native replay of the recording, pointer teardown, modifier readback, and visible-readiness changes is pending.

@@ -25,6 +25,8 @@ fn focus_reacquisition_allowed(app: &str, reply: &Value, zero_input_witness: boo
 }
 
 fn vscode_onboarding_visible(snapshot: &Value) -> bool {
+  // TODO(windows-app-readiness): other modal/occlusion checks need their own
+  // recorded cohort/version case; see 2026-10-31-windows-application-workflow.md.
   snapshot["tree"]["nodes"].as_array().is_some_and(|nodes| {
     nodes.iter().any(|node| node["role"] == "Button" && node["name"] == "Continue without Signing In" && node["offscreen"] == false)
   })
