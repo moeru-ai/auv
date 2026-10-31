@@ -25,8 +25,11 @@ export interface CompiledCell {
 }
 
 export interface CompileOptions {
+  allowReturn?: boolean
   /** Stable cell identifier used in `sourceURL` and stack traces. */
   cellId?: number | string
+  /** Codemode records source positions without the editor's pausable hooks. */
+  recordOnly?: boolean
   /**
    * Editor line where `source` starts. Running a selection or a single line
    * keeps editor line numbers by padding the source with blank lines.
@@ -93,6 +96,7 @@ export function compileCell(source: string, options: CompileOptions = {}): Compi
   try {
     ast = parse(js, {
       allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: options.allowReturn,
       ecmaVersion: 'latest',
       locations: true,
       sourceType: 'script',
@@ -114,10 +118,11 @@ export function compileCell(source: string, options: CompileOptions = {}): Compi
 
   const stepCall = (node: AnyNode, ctx: VisitContext): string => {
     const id = steps.length
-    steps.push({ async: ctx.async, endLine: node.loc.end.line, id, line: node.loc.start.line, top: ctx.top })
+    const pausable = ctx.async && !options.recordOnly
+    steps.push({ async: pausable, endLine: node.loc.end.line, id, line: node.loc.start.line, top: ctx.top })
     // NOTICE: sync functions and sync generators cannot `await`; they get a
     // record-only hook, so the host can highlight but not pause there.
-    return ctx.async ? `await __step(${id});` : `__stepSync(${id});`
+    return pausable ? `await __step(${id});` : `__stepSync(${id});`
   }
 
   const bindCall = (names: string[], line: number): string => {

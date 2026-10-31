@@ -22,6 +22,16 @@ async function mock() {
 }
 
 describe('mock Runner', () => {
+  it('rejects negative capture dimensions before rendering a mock image', async () => {
+    const { connection, runner } = await mock()
+    try {
+      // ROOT CAUSE: render() clamped invalid dimensions to a 1-pixel canvas,
+      // while capture metadata still reported the negative dimensions.
+      await expect(runner.displays.captureRegion({ height: -10, width: -10, x: 0, y: 0 })).rejects.toMatchObject({ rpcCode: 3 })
+    }
+    finally { await connection.close() }
+  })
+
   it('clicks a window at a window-local point, and the scene reacts', async () => {
     const { connection, desktop, runner } = await mock()
     const counter = await runner.windows.resolve({ application: { case: 'applicationId', value: 'dev.auv.mock.counter' } })
@@ -76,5 +86,37 @@ describe('mock Runner', () => {
     const discovered = await discoverRunner(connection, { runnerClass: 'auv.core.local' })
     expect(discovered.apis.find(api => api.method === 'ClickPoint')?.presentation?.name).toBe('input.click')
     await connection.close()
+  })
+
+  // ROOT CAUSE: the scene only handled Return, but the Runner reported every
+  // key and even an empty keyboard sequence as successfully delivered.
+  it('rejects unsupported keys and empty keyboard sequences', async () => {
+    const { connection, runner } = await mock()
+    try {
+      const counter = await runner.windows.get('w-counter')
+      await expect(counter.pressKeys('not-a-real-key-xyz')).rejects.toMatchObject({ rpcCode: 12 })
+      await expect(counter.pressKeys(['cmd', 'a'])).rejects.toMatchObject({ rpcCode: 12 })
+      await expect(runner.input.pressKey('escape')).rejects.toMatchObject({ rpcCode: 12 })
+      await expect(runner.input.keyboard({ inputs: [] })).rejects.toMatchObject({ rpcCode: 3 })
+    }
+    finally {
+      await connection.close()
+    }
+  })
+
+  it('checks every keyboard action before delivering any of them', async () => {
+    const { connection, desktop, runner } = await mock()
+    try {
+      const todos = await runner.windows.get('w-todos')
+      await todos.click({ x: 100, y: 74 })
+      await expect(runner.input.keyboard({ inputs: [
+        { action: { case: 'typeText', value: { text: 'Must not be typed' } } },
+        { action: { case: 'press', value: { options: { keys: ['escape'] } } } },
+      ] })).rejects.toMatchObject({ rpcCode: 12 })
+      expect(desktop.accessibilityTree().children[0]!.children[0]!.value).toBe('')
+    }
+    finally {
+      await connection.close()
+    }
   })
 })

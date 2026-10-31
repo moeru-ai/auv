@@ -10,7 +10,7 @@ import type { DurationSchema } from '@bufbuild/protobuf/wkt'
 
 import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
 import type { ActivateApplicationRequestSchema } from '../../gen/auv/api/driver/v1/application_pb'
-import type { CaptureRefSchema, CaptureResolution, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
+import type { CaptureRefSchema, CaptureResolution, CaptureWindowResponse, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import type { PositionSchema, ScreenRectSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
@@ -40,6 +40,7 @@ import type { ShowOverlayRequestSchema } from '../../gen/auv/api/driver/v1/overl
 import type {
   FindDisplayTextRequestSchema,
   FindWindowTextRequestSchema,
+  FindWindowTextResponse,
   RecognizeTextRequestSchema,
 } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import type { Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
@@ -123,6 +124,9 @@ export interface RunnerClient {
      * a process image name on Windows. The response names the ID kind, the
      * activation method and whether the application was then observed in
      * front. Linux Runners reject the call as UNIMPLEMENTED.
+     * @example
+     * const win = await runner.windows.resolve({ appName: 'Counter' })
+     * const activated = await runner.applications.activate({ applicationId: win.window.applicationId! })
      */
     activate: (request: Init<typeof ActivateApplicationRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof ApplicationService.method.activateApplication.output>>
   }
@@ -135,9 +139,30 @@ export interface RunnerClient {
     image: (capture: CaptureTarget, options?: CaptureImageOptions) => Promise<CaptureImage>
   }
   readonly displays: {
+    /**
+     * Capture one display as a Runner-held capture reference.
+     * @example
+     * const display = (await runner.displays.list())[0]!
+     * const shot = await runner.displays.capture({ selector: { case: 'display', value: { displayId: display.displayId } } })
+     */
     capture: (selector?: Init<typeof DisplaySelectorSchema>, options?: CaptureOptions) => Promise<Shape<typeof CaptureService.method.captureDisplay.output>>
+    /**
+     * Capture a logical screen rectangle on a display. Pixels remain on the Runner.
+     * @example
+     * // The region is in screen space, such as the top strip of a window's frame.
+     * const win = await runner.windows.resolve({ appName: 'Counter' })
+     * const { x, y, width } = win.window.frame!
+     * const shot = await runner.displays.captureRegion({ x, y, width, height: 80 })
+     */
     captureRegion: (region: Init<typeof ScreenRectSchema>, selector?: Init<typeof DisplaySelectorSchema>, options?: CaptureOptions) => Promise<Shape<typeof CaptureService.method.captureRegion.output>>
+    /**
+     * Find text with OCR on a display. Matches have logical screen-space bounds.
+     * @example
+     * const display = (await runner.displays.list())[0]!
+     * const { matches } = await runner.displays.findText({ selector: { case: 'display', value: { displayId: display.displayId } } }, 'Counter')
+     */
     findText: (selector: Init<typeof DisplaySelectorSchema> | undefined, query: string, options?: FindDisplayTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findDisplayText.output>>
+    /** List display IDs, bounds, and scale metadata. */
     list: (options?: OperationOptions) => Promise<readonly Display[]>
   }
   readonly input: {
@@ -145,9 +170,30 @@ export interface RunnerClient {
      * Clicks at a point. A window position is delivered to that window under
      * `clickOptions.policy` and `windowStrategy`; a screen or display position
      * is a global click, which takes neither (the Runner rejects them).
+     * @example
+     * // A plain { x, y } is screen space here, unlike WindowClient.click.
+     * await runner.input.click({ x: 100, y: 200 })
+     * // A window position is window-local and delivered to that window.
+     * const win = await runner.windows.resolve({ appName: 'Counter' })
+     * await runner.input.click({ x: 20, y: 40, coordinateSpace: { case: 'windowId', value: win.id } })
      */
     click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
+    /**
+     * Presses a button (left when unset), moves along a path and releases, as
+     * one complete drag. Cancelling it still releases the button.
+     * @example
+     * // Drag 300 points right from (100, 200) in screen space over 300 ms.
+     * // Curve points are offsets from `start`, scaled by `mapping`.
+     * await runner.input.dragMouse({
+     *   movement: {
+     *     curve: { segments: [{ control1: { x: 100, y: 0 }, control2: { x: 200, y: 0 }, end: { x: 300, y: 0 } }], start: { x: 0, y: 0 } },
+     *     mapping: { height: 1, width: 1 },
+     *     options: { curveTolerance: 1, duration: { nanos: 300_000_000 }, sampleRateHz: 60 },
+     *     start: { source: { case: 'point', value: { x: 100, y: 200 } } },
+     *   },
+     * })
+     */
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
     holdKeys: (request: Init<typeof InputService.method.holdKeys.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdKeys.output>>
     /**
@@ -155,6 +201,9 @@ export interface RunnerClient {
      * explicit recipient: a window, an application, or the foreground. The
      * Runner validates every action before delivering any; an error carries
      * how far delivery got. Older Runners reject the call as UNIMPLEMENTED.
+     * @example
+     * const win = await runner.windows.resolve({ appName: 'Todos' })
+     * await runner.input.keyboard({ target: { recipient: { case: 'window', value: { ref: { windowId: win.id } } } }, inputs: [{ action: { case: 'typeText', value: { text: 'Buy milk' } } }, { action: { case: 'press', value: { options: { keys: ['Return'] } } } }] })
      */
     keyboard: (request: Init<typeof InputKeyboardRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.inputKeyboard.output>>
     keyDown: (request: Init<typeof InputService.method.keyDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.keyDown.output>>
@@ -195,7 +244,13 @@ export interface RunnerClient {
     remove: (options?: OperationOptions) => Promise<void>
     show: (request: Init<typeof ShowOverlayRequestSchema>, options?: OperationOptions) => Promise<void>
   }
-  /** Runs OCR on a Runner-held capture (no pixels travel) or on `{ frame }`, a caller-owned image. */
+  /**
+   * Runs OCR on a Runner-held capture (no pixels travel) or on `{ frame }`, a caller-owned image.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Counter' })
+   * const shot = await win.capture()
+   * const recognized = await runner.recognizeText(shot.capture!)
+   */
   recognizeText: (source: RecognitionSource, options?: RecognizeTextOptions) => Promise<Shape<typeof TextRecognitionService.method.recognizeText.output>>
   readonly windows: {
     /**
@@ -203,19 +258,34 @@ export interface RunnerClient {
      * (for example an earlier Run), a listed or resolved `Window`, a
      * `WindowRef`, or a window ID. Window references are Device resources,
      * not Run resources, so this is how a window outlives a Run.
+     * @example
+     * const first = (await runner.windows.list())[0]!
+     * const win = runner.windows.from(first.id)
+     * await win.findText('Count')
      */
     from: (target: WindowTarget) => WindowClient
     /**
      * The window `target` names, from a fresh listing and bound to this route.
      * Rejects with an `AuvRpcError` (`rpcCode` 5, NOT_FOUND) once it is gone.
+     * @example
+     * const { id } = await runner.windows.resolve({ appName: 'Counter' })
+     * // Later, for example in another Run: confirm the window still exists.
+     * const win = await runner.windows.get(id)
      */
     get: (target: WindowTarget, options?: OperationOptions) => Promise<WindowClient>
-    /** Lists windows as ready-to-use clients carrying their metadata. */
+    /**
+     * Lists windows as ready-to-use clients carrying their metadata.
+     * @example
+     * const windows = await runner.windows.list()
+     * const ids = windows.map(win => win.id)
+     */
     list: (options?: OperationOptions) => Promise<readonly WindowClient[]>
     /**
      * The window a selector names, such as `{ applicationId: 'com.apple.TextEdit' }`
      * for that app's main visible window. Takes a `WindowQuery` or the full
      * `WindowSelector`.
+     * @example
+     * const win = await runner.windows.resolve({ applicationId: 'com.apple.TextEdit' })
      */
     resolve: (selector: Init<typeof WindowSelectorSchema> | WindowQuery, options?: OperationOptions) => Promise<WindowClient>
   }
@@ -267,27 +337,55 @@ export interface ScrollWithStep {
 }
 
 export interface WindowClient {
-  capture: (options?: CaptureOptions) => Promise<Shape<typeof CaptureService.method.captureWindow.output>>
-  /** Clicks in this window; see `PointTarget` for what `target` accepts. */
+  /**
+   * Capture this window as a Runner-held reference. Fetch pixels explicitly with captures.image.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Counter' })
+   * const shot = await win.capture()
+   */
+  capture: (options?: CaptureOptions) => Promise<CaptureWindowResponse>
+  /**
+   * Clicks in this window; see `PointTarget` for what `target` accepts.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Counter' })
+   * const found = await win.findText('Increment')
+   * if (found.matches.length !== 1) throw new Error('Expected one match')
+   * await win.click(found.matches[0]!)
+   */
   click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
-  findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
+  /**
+   * Find text with OCR inside this window. Returns matches with screen-space bounds and a capture reference.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Counter' })
+   * const { matches } = await win.findText('Increment')
+   */
+  findText: (query: string, options?: FindWindowTextOptions) => Promise<FindWindowTextResponse>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
   /**
    * Pastes text into this window through the clipboard. Same policy default
    * and focus rules as `typeText`.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Todos' })
+   * await win.pasteText('Buy milk')
    */
   pasteText: (text: string, pasteOptions?: WindowPasteTextOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
    * Presses one key combination in this window, e.g. `'cmd+a'`, `['cmd', 'a']`
    * or `'return'`, optionally repeated. Strings split as `splitKeyCombination`
    * does. Same policy default and focus rules as `typeText`.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Todos' })
+   * await win.pressKeys('return')
    */
   pressKeys: (keys: readonly string[] | string, pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
   /**
    * Wheel-scrolls at a point in this window. Deltas are logical pixels: positive
    * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
    * right, like DOM `WheelEvent`. The result is delivery evidence only.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Music' })
+   * await win.scroll({ x: 100, y: 200 }, { deltaY: 400 })
    */
   scroll: (point: PointTarget, scroll: Init<typeof ScrollSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.scrollWindowPoint.output>>
   /**
@@ -310,6 +408,9 @@ export interface WindowClient {
    * 'textVisible'`), `options.until` returns `true`, or `maxSteps` runs out.
    * Resolves with the completion. An end stop means no visual progress was
    * observed, not proof that no more content exists.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Music' })
+   * const done = await win.scrollUntil({ x: 100, y: 200 }, { step: { case: 'instant', value: { deltaY: 400 } }, maxSteps: 5 })
    */
   scrollUntil: (point: PointTarget, request: ScrollUntilOptions, options?: ScrollUntilCallOptions) => Promise<ScrollUntilCompleted>
   /**
@@ -327,6 +428,9 @@ export interface WindowClient {
    * already have keyboard focus; a background click does not give it focus in
    * every app (it did not in NetEase Cloud Music). The result is delivery
    * evidence, not proof the text arrived.
+   * @example
+   * const win = await runner.windows.resolve({ appName: 'Todos' })
+   * await win.typeText('Buy milk')
    */
   typeText: (text: string, typeOptions?: Init<typeof TypeTextOptionsSchema>, options?: OperationOptions) => Promise<InputActionResult>
   /**
@@ -672,7 +776,7 @@ function captureRefOf(target: CaptureTarget): Init<typeof CaptureRefSchema> {
   if ('captureId' in target)
     return { captureId: target.captureId }
   if (!target.ref)
-    throw new TypeError('CapturedFrame has no capture reference; pass a frame returned by the Runner')
+    throw new TypeError('Expected a capture ID, CaptureRef, or CapturedFrame. For capture() responses, pass response.capture.')
   return { captureId: target.ref.captureId }
 }
 

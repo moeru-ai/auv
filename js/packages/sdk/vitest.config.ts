@@ -7,6 +7,13 @@ export default defineConfig({
       {
         test: {
           environment: 'node',
+          include: ['scripts/**/*.test.ts'],
+          name: 'documentation',
+        },
+      },
+      {
+        test: {
+          environment: 'node',
           exclude: [
             'src/**/*.browser.test.ts',
             'src/**/*.jsdom.test.ts',

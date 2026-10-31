@@ -1,0 +1,99 @@
+/* Markdown descendants come from the renderer; component layout uses UnoCSS. */
+.agent-md > :first-child {
+  margin-top: 0;
+}
+
+.agent-md > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-md h1,
+.agent-md h2,
+.agent-md h3 {
+  margin: 8px 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-fg);
+}
+
+.agent-md p,
+.agent-md ul,
+.agent-md ol {
+  margin: 4px 0;
+}
+
+.agent-md ul,
+.agent-md ol {
+  padding-left: 18px;
+}
+
+.agent-md ul {
+  list-style: disc;
+}
+
+.agent-md ol {
+  list-style: decimal;
+}
+
+.agent-md .task-list-item {
+  list-style: none;
+}
+
+.agent-md a {
+  color: var(--c-accent);
+  text-decoration: underline;
+}
+
+.agent-md blockquote {
+  margin: 8px 0;
+  border-left: 2px solid var(--c-line);
+  padding-left: 12px;
+  color: var(--c-fg-muted);
+}
+
+.agent-md code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--c-fg);
+}
+
+.agent-md :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--c-surface-2);
+}
+
+.agent-md pre {
+  padding: 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 6px;
+  max-height: 256px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.agent-md [data-code-header] + pre {
+  margin-top: 0;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  white-space: pre;
+}
+
+.agent-md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.agent-md th,
+.agent-md td {
+  min-width: 100px;
+  border: 1px solid var(--c-line);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+
+.agent-md th {
+  background: var(--c-surface-2);
+  font-weight: 600;
+}

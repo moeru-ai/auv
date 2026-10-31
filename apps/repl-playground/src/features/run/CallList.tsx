@@ -9,7 +9,7 @@ import { actions, usePlayground } from '../../store'
 import { cursorSeq } from '../../timeline'
 import { RefChip } from '../inspect/ValueView'
 
-/** Every binding call of the current run. Click a row to move the time cursor to it. */
+/** Every SDK call in the timeline. Click a row to move the time cursor to it. */
 export function CallList() {
   const calls = usePlayground(state => state.calls)
   const hoveredCallId = usePlayground(state => state.hoveredCallId)
@@ -95,6 +95,7 @@ function CallRow({ call, future, hovered, index, selected, share }: { call: Call
     >
       <td className="text-fg-subtle leading-5 font-mono py-1.5 pl-3 text-right w-8">{index}</td>
       <td className="leading-5 px-2 py-1.5 w-20 whitespace-nowrap">
+        <span className="text-[11px] text-fg-subtle mr-1" title={`Script ${call.script.id}`}>{`S${call.script.id}`}</span>
         {call.line !== null && <span className="text-[11px] text-fg-muted font-mono px-1.5 py-0.5 rounded bg-surface-2">{`L${call.line}`}</span>}
         {call.hit > 1 && <span className="text-[11px] text-fg-subtle font-mono ml-1">{`#${call.hit}`}</span>}
       </td>

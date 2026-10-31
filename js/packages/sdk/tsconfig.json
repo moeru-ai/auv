@@ -28,6 +28,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "scripts/generate.ts"
+    "scripts/**/*.ts"
   ]
 }

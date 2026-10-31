@@ -189,7 +189,10 @@ export async function resetMockDesktop(): Promise<void> {
 export async function restoreDevices(): Promise<void> {
   // NOTICE(strict-mode-effects): React StrictMode runs mount effects twice in
   // development; a second restore would open duplicate daemon connections.
-  restoring ??= restore()
+  restoring ??= restore().catch((error) => {
+    restoring = undefined
+    throw error
+  })
   await restoring
 }
 

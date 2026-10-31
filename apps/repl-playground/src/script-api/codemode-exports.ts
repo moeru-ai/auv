@@ -1,0 +1,20 @@
+/** SDK exports admitted into the agent VM and its help. */
+export const codeModeExports = [
+  'above',
+  'at',
+  'below',
+  'CaptureResolution',
+  'center',
+  'contains',
+  'ImageEncoding',
+  'InputPolicy',
+  'inset',
+  'intersect',
+  'leftOf',
+  'MouseButton',
+  'offset',
+  'Position',
+  'region',
+  'rightOf',
+  'ScrollUntilStopReason',
+] as const satisfies readonly (keyof typeof import('@auv-js/sdk'))[]

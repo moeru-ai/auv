@@ -2,9 +2,21 @@
 
 AUV tracing, run storage, artifact delivery, and inspect viewer contracts
 
-Count: **15**
+Count: **18**
 
 ## Current
+
+- [`2026-10-25-playground-agent-ui.md`](2026-10-25-playground-agent-ui.md)
+  (OpenCode desktop reference, compact Agent activity, returned errors,
+  visible screenshots, preserved execution details, and UnoCSS styling)
+
+- [`2026-10-25-playground-http-mcp-design.md`](2026-10-25-playground-http-mcp-design.md)
+  (current `execute` interface, parameter validation, busy rejection, store commit rules,
+  Exterior HTTP MCP, connection and worker ownership, and revision-scoped validation evidence)
+
+- [`2026-10-20-codemode-agent-interface-research.md`](2026-10-20-codemode-agent-interface-research.md)
+  (source comparison of Pi, OpenCode V2, and Playground codemode execution,
+  SDK discovery, signatures, and results)
 
 - [`2026-07-26-tracing-write-pipeline.md`](2026-07-26-tracing-write-pipeline.md)
   (current producer-side `auv-tracing` contract and implementation handoff)
