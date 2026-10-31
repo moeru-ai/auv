@@ -555,9 +555,8 @@ mod native {
     child_indices: &[usize],
   ) -> DriverResult<IUIAutomationElement> {
     for index in child_indices {
-      let mut child = tree_step(walker, &element, true)
-        .map_err(|error| focus_error("resolve UIA child 0", error))?
-        .ok_or_else(stale_focus_path)?;
+      let mut child =
+        tree_step(walker, &element, true).map_err(|error| focus_error("resolve UIA child 0", error))?.ok_or_else(stale_focus_path)?;
       for sibling_index in 0..*index {
         child = tree_step(walker, &child, false)
           .map_err(|error| focus_error(&format!("resolve UIA child {}", sibling_index + 1), error))?
@@ -634,10 +633,7 @@ mod native {
     tree_step_result(status, raw)
   }
 
-  fn tree_step_result(
-    status: windows::core::HRESULT,
-    raw: *mut std::ffi::c_void,
-  ) -> WindowsResult<Option<IUIAutomationElement>> {
+  fn tree_step_result(status: windows::core::HRESULT, raw: *mut std::ffi::c_void) -> WindowsResult<Option<IUIAutomationElement>> {
     if status.is_err() {
       return Err(windows::core::Error::from_hresult(status));
     }
