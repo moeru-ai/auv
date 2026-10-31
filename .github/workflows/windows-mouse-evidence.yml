@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 50d04308a8fd476e56e1038570de363fcef928ff
+          ref: 1f79de21db85cb82c3cf00f64068b016b577635a
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '50d04308a8fd476e56e1038570de363fcef928ff') { throw "Unexpected source $actual" }
+          if ($actual -ne '1f79de21db85cb82c3cf00f64068b016b577635a') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -84,7 +84,7 @@ jobs:
           }
           [ordered]@{
             source_sha = $actual
-            base_sha = '1f112bf145ddb23583b7aac83d0fa8e8cf1d29af'
+            base_sha = '2a6640ce02cb32151a12932b99906ca3c709fb65'
             workflow_sha = '${{ github.sha }}'
             os = [Environment]::OSVersion.VersionString
             image_version = $env:ImageVersion
@@ -93,16 +93,18 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $false
+            expected_baseline_failure = $true
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build fixed Driver and complete drag regression
+      - name: Build unchanged Driver and posted-wheel queue reproduction
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          git diff --exit-code 2a6640ce02cb32151a12932b99906ca3c709fb65 HEAD -- crates
+          if ($LASTEXITCODE -ne 0) { throw 'Posted-wheel baseline must have no production crate changes' }
           rustc --version | Tee-Object -FilePath "$directory/rustc.txt"
           cargo build --locked -p auv-base-evals --bin background-session-eval --bin win32-receiver
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -216,11 +218,27 @@ jobs:
           if ($cleanup.Count -ne 26 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned drag receiver cleanup incomplete' }
           if ($exit -ne 0 -or $cases.Count -ne 13 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Complete drag recipient invariant failed; inspect retained application and release receipts' }
 
+      - name: Reproduce posted-wheel partial failure and fallback
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          & 'target/debug/background-session-eval.exe' window-posted-scroll --output "$directory/posted" > "$directory/posted.stdout.log" 2> "$directory/posted.stderr.log"
+          $exit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/posted/window-posted-scroll.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 60 })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $cases | Select-Object case,passed,native_ok,queue_verified,acknowledged,@{n='a_wheel';e={$_.after_a.raw.edit_wheel}},@{n='a_hwheel';e={$_.after_a.raw.edit_hwheel}},injected_mouse,input_progress,error | ConvertTo-Json -Depth 15 | Tee-Object -FilePath "$directory/posted-result.json"
+          $cleanup = @($rows | Where-Object kind -eq 'cleanup')
+          if ($cleanup.Count -ne 12 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned posted-scroll cleanup incomplete' }
+          if ($exit -ne 0 -or $cases.Count -ne 6 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Posted-wheel progress/fallback invariant failed; inspect actual queue/app/desktop receipts' }
+
       - name: Preserve source-bound native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-drag-50d04308-fixed
+          name: windows-posted-scroll-1f79de21-baseline
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
