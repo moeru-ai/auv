@@ -319,6 +319,8 @@ impl WindowApi<'_> {
   /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
   /// falls back to `SendInput`.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    // TODO(windows-mouse-recipient): scroll effects need an app-owned interruption
+    // oracle before sharing click admission; see the mouse recipient note.
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
       match candidate {
