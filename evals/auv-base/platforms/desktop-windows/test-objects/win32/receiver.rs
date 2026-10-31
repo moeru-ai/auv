@@ -253,7 +253,7 @@ mod native {
   static KEYBOARD_FAULT: std::sync::Mutex<Option<(String, isize)>> = std::sync::Mutex::new(None);
   static KEYBOARD_FAULT_RECEIPT: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
   /// Pointer harness only: consumed after the button has processed its first release.
-  static MOUSE_FAULT: std::sync::Mutex<Option<(String, isize)>> = std::sync::Mutex::new(None);
+  static MOUSE_FAULT: std::sync::Mutex<Option<(String, isize, u32)>> = std::sync::Mutex::new(None);
   static MOUSE_FAULT_RECEIPT: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
   static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -671,13 +671,7 @@ mod native {
     }
     let result = call_original(&BUTTON_PROC, hwnd, message, wparam, lparam);
     if message == WM_LBUTTONUP {
-      let fault = MOUSE_FAULT.lock().ok().and_then(|mut fault| fault.take());
-      if let Some((kind, target)) = fault {
-        let outcome = apply_recipient_fault(hwnd, &kind, target);
-        if let Ok(mut receipt) = MOUSE_FAULT_RECEIPT.lock() {
-          *receipt = Some(outcome);
-        }
-      }
+      apply_armed_mouse_fault(hwnd, message);
     }
     result
   }
@@ -700,7 +694,28 @@ mod native {
       // SAFETY: the edit's parent is the live frame window on this thread.
       refresh_strip(unsafe { GetParent(hwnd) }.unwrap_or_default());
     }
+    if message == WM_MOUSEWHEEL {
+      apply_armed_mouse_fault(hwnd, message);
+    }
     result
+  }
+
+  /// Runs a fault only after the original control has processed its matching
+  /// message. Release the slot lock before potentially reentrant window calls.
+  fn apply_armed_mouse_fault(child: HWND, message: u32) {
+    let fault = MOUSE_FAULT.lock().ok().and_then(|mut fault| {
+      if fault.as_ref().is_some_and(|(_, _, trigger)| *trigger == message) {
+        fault.take()
+      } else {
+        None
+      }
+    });
+    if let Some((kind, target, _)) = fault {
+      let outcome = apply_recipient_fault(child, &kind, target);
+      if let Ok(mut receipt) = MOUSE_FAULT_RECEIPT.lock() {
+        *receipt = Some(outcome);
+      }
+    }
   }
 
   fn first_visible_line() -> i64 {
@@ -878,6 +893,14 @@ mod native {
         LRESULT(0)
       }
       WM_CLOSE => {
+        let mouse_fault = MOUSE_FAULT_RECEIPT.lock().ok().and_then(|receipt| receipt.clone());
+        if let Some(fault) = mouse_fault.filter(|receipt| receipt["kind"] == "close") {
+          // This receipt is written on the GUI thread while the controls still
+          // exist. The parent can read it after process exit without sending a
+          // request to a dead window. Keyboard and ordinary close are unchanged.
+          let state = handle_request(hwnd, r#"{"cmd":"state"}"#);
+          emit(&json!({"event": "closing", "state": state, "fault": fault}));
+        }
         // SAFETY: closing this thread's own window.
         unsafe {
           let _ = DestroyWindow(hwnd);
@@ -1119,13 +1142,18 @@ mod native {
         let kind = request["kind"].as_str().unwrap_or("");
         let target = request["target"].as_str().and_then(|value| value.parse::<isize>().ok()).unwrap_or(0);
         if ["stay", "aba", "minimize", "close"].contains(&kind) && target != 0 {
-          let (fault, receipt) = if command == "arm_mouse_fault" {
-            (&MOUSE_FAULT, &MOUSE_FAULT_RECEIPT)
+          if command == "arm_mouse_fault" {
+            let trigger = match request["trigger"].as_str() {
+              None | Some("click") => WM_LBUTTONUP,
+              Some("wheel") => WM_MOUSEWHEEL,
+              _ => return json!({"ok": false, "error": "mouse fault trigger must be click or wheel"}),
+            };
+            *MOUSE_FAULT.lock().unwrap() = Some((kind.into(), target, trigger));
+            *MOUSE_FAULT_RECEIPT.lock().unwrap() = None;
           } else {
-            (&KEYBOARD_FAULT, &KEYBOARD_FAULT_RECEIPT)
-          };
-          *fault.lock().unwrap() = Some((kind.into(), target));
-          *receipt.lock().unwrap() = None;
+            *KEYBOARD_FAULT.lock().unwrap() = Some((kind.into(), target));
+            *KEYBOARD_FAULT_RECEIPT.lock().unwrap() = None;
+          }
           json!({"armed": true})
         } else {
           json!({"ok": false, "error": "recipient fault needs a known kind and target HWND"})
