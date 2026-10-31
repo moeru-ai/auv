@@ -359,6 +359,64 @@ fn native_identity_failure_refuses_focus_without_delivery() {
 }
 
 #[test]
+fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
+  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let mut after = selected.clone();
+  after.focused = true;
+  after.name = "Search results".into();
+  after.value = Some("updated on focus".into());
+  after.bounds = Rect::new(0.0, 40.0, 100.0, 20.0);
+  let reads = std::cell::Cell::new(0);
+  let delivered = std::cell::Cell::new(0);
+  // Both reads model a native callback that has already confirmed the same
+  // UIA element identity. Only presentation attributes change after SetFocus.
+  let result = focus_selected(
+    &selected,
+    || {
+      let previous = reads.replace(reads.get() + 1);
+      Ok(if previous == 0 { selected.clone() } else { after.clone() })
+    },
+    || {
+      delivered.set(delivered.get() + 1);
+      Ok(())
+    },
+  )
+  .expect("focus readback must not require frozen presentation attributes");
+  assert!(result.verified);
+  assert_eq!(reads.get(), 2);
+  assert_eq!(delivered.get(), 1);
+}
+
+#[test]
+fn post_focus_native_identity_failure_is_not_accepted_or_retried() {
+  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let reads = std::cell::Cell::new(0);
+  let delivered = std::cell::Cell::new(0);
+  let result = focus_selected(
+    &selected,
+    || {
+      let previous = reads.replace(reads.get() + 1);
+      if previous == 0 {
+        Ok(selected.clone())
+      } else {
+        // Native CompareElements rejected a replacement at the same path.
+        Err(DriverError::StaleUiReference {
+          message: "UIA focus path now identifies a different control".into(),
+          recovery: None,
+        })
+      }
+    },
+    || {
+      delivered.set(delivered.get() + 1);
+      Ok(())
+    },
+  );
+  assert!(matches!(result, Err(DriverError::StaleUiReference { .. })));
+  assert_eq!(reads.get(), 2);
+  assert_eq!(delivered.get(), 1);
+}
+
+#[test]
 fn setfocus_success_without_focus_readback_is_not_verified_or_retried() {
   let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
   let delivered = std::cell::Cell::new(0);
