@@ -78,12 +78,12 @@ mod native {
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
     ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetParent,
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    RegisterClassExW, SMTO_ABORTIFHUNG, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+    WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
   };
   use windows::core::{HSTRING, PCWSTR, w};
 
@@ -542,7 +542,7 @@ mod native {
     }
   }
 
-  fn apply_recipient_fault(child: HWND, kind: &str, target: isize) -> Value {
+  fn apply_recipient_fault(child: HWND, kind: &str, target: isize, return_from_target: bool) -> Value {
     // The caller supplied another owned fixture. No input is synthesized here: this models
     // an application changing foreground after it has processed the first key or button release.
     // SAFETY: child is the control handling this callback on its owning GUI thread.
@@ -556,7 +556,18 @@ mod native {
       let returned = match kind {
         "aba" => {
           std::thread::sleep(std::time::Duration::from_millis(50));
-          SetForegroundWindow(owner).as_bool() && GetForegroundWindow() == owner
+          if return_from_target {
+            // NOTICE: owned drag cleanup can deliver up to B while A is in
+            // this callback, so A no longer owns the last input. Have current
+            // foreground B hand back A, rather than relying on A's privilege.
+            // No fixture mutex spans this reentrant, bounded native request.
+            // Validated at `actions/runs/41212119240/job/124569099799`;
+            // retain until the drag fault uses an equivalent owned handoff.
+            SendMessageTimeoutW(target, WM_YIELD_FOREGROUND, WPARAM(owner.0 as usize), LPARAM(0), SMTO_ABORTIFHUNG, 1000, None).0 != 0
+              && GetForegroundWindow() == owner
+          } else {
+            SetForegroundWindow(owner).as_bool() && GetForegroundWindow() == owner
+          }
         }
         "minimize" => {
           let _ = ShowWindow(owner, SW_SHOWMINNOACTIVE);
@@ -590,7 +601,7 @@ mod native {
     if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
       let fault = KEYBOARD_FAULT.lock().ok().and_then(|mut fault| fault.take());
       if let Some((kind, target)) = fault {
-        let outcome = apply_recipient_fault(hwnd, &kind, target);
+        let outcome = apply_recipient_fault(hwnd, &kind, target, false);
         if let Ok(mut receipt) = KEYBOARD_FAULT_RECEIPT.lock() {
           *receipt = Some(outcome);
         }
@@ -714,14 +725,14 @@ mod native {
         None
       }
     });
-    if let Some((kind, target, _)) = fault {
+    if let Some((kind, target, trigger)) = fault {
       // Retain the last application-processed position before foreground loss.
       // Release PAD before the potentially reentrant native fault calls.
       let pad = PAD.lock().ok().and_then(|pad| pad.clone());
       let mut cursor = POINT::default();
       // SAFETY: a read-only desktop query with a writable local POINT.
       let cursor = unsafe { GetCursorPos(&mut cursor) }.ok().map(|_| [cursor.x, cursor.y]);
-      let mut outcome = apply_recipient_fault(child, &kind, target);
+      let mut outcome = apply_recipient_fault(child, &kind, target, trigger == WM_MOUSEMOVE);
       outcome["pad_at_fault"] = json!(pad);
       outcome["cursor_at_fault"] = json!(cursor);
       if let Ok(mut receipt) = MOUSE_FAULT_RECEIPT.lock() {
@@ -1173,7 +1184,7 @@ mod native {
             // A batch task calls this only after the application acknowledges
             // a completed sample. It can expose loss between sample admissions.
             *MOUSE_FAULT.lock().unwrap() = None;
-            let receipt = apply_recipient_fault(handle(&BUTTON), kind, target);
+            let receipt = apply_recipient_fault(handle(&BUTTON), kind, target, false);
             *MOUSE_FAULT_RECEIPT.lock().unwrap() = Some(receipt.clone());
             return json!({"ok": true, "cmd": command, "applied": true, "receipt": receipt});
           }

@@ -80,3 +80,17 @@ uncertain prefix must not be retried without checking application state.
 The evaluator adds only `window-drag --output DIR`. It tests success, four
 post-move target-loss modes, post-move cancellation, and seven pre-delivery
 refusals. The production `auv` CLI grammar is unchanged.
+
+The first corrected run
+[41212119240](https://github.com/moeru-ai/auv/actions/runs/41212119240)
+passed 12/13 drag cases and all prior regressions. Its A-B-A fault reached B,
+and the Driver stopped and released correctly, but A could not reclaim
+foreground after the owned up reached B. The receipt said
+`returned_owner=false`, so this run is not accepted as A-B-A evidence.
+The fixture now asks the current foreground B to hand back A with its existing
+owned-window handoff message. That bounded call runs without fixture mutexes;
+keyboard, click, and scroll faults retain their existing behavior. Artifact
+`13047145958`, SHA-256
+`0dbfb20ed231101e2a395fbab63b5ca90d0712089fb73c9ffcf6332bb7cae54d`,
+retains the failed fault receipt. Production code is unchanged from
+`93696abc44666568720539a77ae0795beaae3665`.
