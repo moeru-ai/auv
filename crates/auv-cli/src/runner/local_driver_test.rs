@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn keyboard_target_loss_preserves_native_and_batch_progress() {
+  use prost::Message;
+  // ROOT CAUSE:
+  //
+  // KeyboardInput previously replaced the native failure envelope with raw
+  // batch progress, losing the submitted prefix and target_lost reason.
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ForegroundSystemEvents);
+  let status = keyboard_input_status(auv_driver::KeyboardInputError {
+    cause: auv_driver::DriverError::InputAction {
+      cause: Box::new(auv_driver::DriverError::TargetLost {
+        target: "test-window".into(),
+        message: "foreground changed after the first press".into(),
+      }),
+      progress: auv_driver::InputActionProgress::Submitted {
+        action: action.clone(),
+      },
+    },
+    progress: auv_driver::KeyboardInputProgress {
+      action_index: 1,
+      completed: vec![action],
+      completed_presses: 1,
+    },
+  });
+  assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+  let failure = auv_api_proto::input_action_failure::failure(&status).expect("native failure must survive keyboard wrapping");
+  assert_eq!(failure.reason, proto::InputFailureReason::TargetLost as i32);
+  assert!(matches!(failure.progress, Some(proto::input_action_failure::Progress::Submitted(_))));
+  let envelope = auv_api_proto::google::rpc::Status::decode(status.details()).expect("standard rich-error envelope");
+  let detail = envelope
+    .details
+    .iter()
+    .find(|detail| detail.type_url == "type.googleapis.com/auv.api.driver.v1.KeyboardInputProgress")
+    .expect("batch progress must coexist with the native receipt");
+  let batch = proto::KeyboardInputProgress::decode(detail.value.as_slice()).unwrap();
+  assert_eq!(batch.action_index, Some(1));
+  assert_eq!(batch.completed.len(), 1);
+  assert_eq!(batch.completed_presses, 1);
+}
+
+#[test]
 fn input_action_status_preserves_original_category_and_native_progress() {
   let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
   let status = driver_status(auv_driver::DriverError::InputAction {
@@ -1130,7 +1170,6 @@ async fn targeted_keyboard_rpc_rejects_changed_window_owner() {
 #[tokio::test]
 #[cfg(target_os = "macos")]
 async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
-  use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
     captures: test_capture_store(),
@@ -1149,7 +1188,7 @@ async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
     .await
     .unwrap_err();
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
-  let progress = proto::KeyboardInputProgress::decode(error.details()).unwrap();
+  let progress = auv_api_proto::input_action_failure::keyboard_progress(&error).unwrap();
   assert_eq!(progress.action_index, Some(1));
   assert_eq!(progress.completed_presses, 0);
   assert!(progress.completed.is_empty());
@@ -1158,7 +1197,6 @@ async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
 #[tokio::test]
 #[cfg(target_os = "macos")]
 async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
-  use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
     captures: test_capture_store(),
@@ -1180,7 +1218,7 @@ async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
     .unwrap_err();
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
   assert!(error.message().contains("interval"));
-  assert_eq!(proto::KeyboardInputProgress::decode(error.details()).unwrap().action_index, Some(0));
+  assert_eq!(auv_api_proto::input_action_failure::keyboard_progress(&error).unwrap().action_index, Some(0));
 }
 
 #[tokio::test]
@@ -1219,7 +1257,6 @@ async fn keyboard_hold_rpc_rejects_missing_deadline_before_delivery() {
 
 #[tokio::test]
 async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix() {
-  use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
     captures: test_capture_store(),
@@ -1238,7 +1275,7 @@ async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix
     .await
     .unwrap_err();
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
-  let progress = proto::KeyboardInputProgress::decode(error.details()).unwrap();
+  let progress = auv_api_proto::input_action_failure::keyboard_progress(&error).unwrap();
   assert_eq!(progress.action_index, Some(1));
   assert!(progress.completed.is_empty());
 }
@@ -1285,8 +1322,7 @@ mod linux_keyboard_tests {
       .await
       .unwrap_err();
     assert_eq!(error.code(), tonic::Code::InvalidArgument);
-    use prost::Message;
-    let progress = proto::KeyboardInputProgress::decode(error.details()).unwrap();
+    let progress = auv_api_proto::input_action_failure::keyboard_progress(&error).unwrap();
     assert_eq!(progress.action_index, Some(1));
     assert_eq!(progress.completed_presses, 0);
     assert!(progress.completed.is_empty());

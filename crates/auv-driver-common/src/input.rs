@@ -671,6 +671,7 @@ pub enum InputActionProgress {
   /// A native call failed and may already have changed application state.
   DeliveryUncertain { action: InputActionResult },
   /// The native call accepted input, but the requested effect is unverified.
+  /// This can be a prefix of a composite keyboard action; use its enclosing batch progress.
   Submitted { action: InputActionResult },
 }
 

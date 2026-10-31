@@ -1,5 +1,78 @@
 use super::*;
 
+#[test]
+fn keyboard_dry_run_rejects_unrepresentable_wait_before_the_batch() {
+  use auv_driver_common::Driver;
+
+  // An overflowing recipient deadline must be rejected before even a valid
+  // earlier action can submit input. This dry run never enters native input.
+  let session = crate::WindowsDriver::new().open_local().unwrap();
+  let options = TypeTextOptions {
+    policy: InputPolicy::ForegroundPreferred,
+    ..Default::default()
+  };
+  let error = session
+    .input()
+    .input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::TypeText {
+          text: "prefix".into(),
+          options: options.clone(),
+        },
+        KeyboardInput::TypeText {
+          text: "overflow".into(),
+          options: TypeTextOptions {
+            inter_char_delay: Duration::MAX,
+            ..options
+          },
+        },
+      ],
+      true,
+    )
+    .expect_err("unrepresentable wait must fail preflight");
+  assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
+  assert_eq!(error.progress.action_index, 1);
+  assert!(error.progress.completed.is_empty());
+  assert_eq!(error.progress.completed_presses, 0);
+}
+
+#[test]
+fn window_keyboard_dry_run_does_not_query_or_activate_the_os() {
+  use auv_driver_common::Driver;
+  use auv_driver_common::geometry::{CoordinateSpace, Rect, Size};
+  use auv_driver_common::window::{Window, WindowRef};
+
+  // These are request data, not a live native window. Dry run must finish before OS admission.
+  let target = InputTarget::Window(Window {
+    reference: WindowRef { id: "1".into() },
+    title: None,
+    app_name: None,
+    application_id: None,
+    process_id: Some(42),
+    frame: Rect {
+      origin: Point::new(0.0, 0.0),
+      size: Size::new(100.0, 100.0),
+    },
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  });
+  let session = crate::WindowsDriver::new().open_local().unwrap();
+  let result = session.input().input_keyboard(
+    &target,
+    vec![KeyboardInput::TypeText {
+      text: "planned only".into(),
+      options: TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    }],
+    true,
+  );
+  assert!(matches!(result, Ok(None)), "window dry run failed: {result:?}");
+}
+
 // https://github.com/moeru-ai/auv/actions/runs/30574130256/job/90978006366
 #[test]
 fn ci_90978006366_click_parts_support_repeated_clicks() {

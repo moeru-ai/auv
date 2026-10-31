@@ -16,6 +16,10 @@ use super::super::background::error_kind;
 use super::super::watch::{Snapshot, Verdict};
 use super::*;
 
+#[path = "keyboard_routes.rs"]
+mod keyboard_routes;
+pub use keyboard_routes::run as run_keyboard_routes;
+
 pub struct Options {
   pub output: PathBuf,
   pub auv: PathBuf,

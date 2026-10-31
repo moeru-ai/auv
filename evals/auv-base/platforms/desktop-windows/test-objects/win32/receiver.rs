@@ -240,6 +240,8 @@ mod native {
   static KEEP_IME: AtomicBool = AtomicBool::new(false);
   /// Explicit fault injection only: reject text focus by focusing our own button.
   static REJECT_TYPING_FOCUS: AtomicBool = AtomicBool::new(false);
+  /// Keyboard harness only: restore this receiver's typing child when its frame gains focus.
+  static KEYBOARD_READY: AtomicBool = AtomicBool::new(false);
   static TYPING: AtomicIsize = AtomicIsize::new(0);
   static TYPING_PROC: AtomicIsize = AtomicIsize::new(0);
   /// Key messages the text box received, oldest first, at most `KEY_LOG_LIMIT`. They can only be
@@ -247,6 +249,9 @@ mod native {
   static KEY_LOG: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
   /// What the pad saw of the last drag over it, in screen coordinates.
   static PAD: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+  /// Armed only by the keyboard-recipient harness. Consumed after the first key release.
+  static KEYBOARD_FAULT: std::sync::Mutex<Option<(String, isize)>> = std::sync::Mutex::new(None);
+  static KEYBOARD_FAULT_RECEIPT: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
   static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   static BUTTON_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -544,6 +549,40 @@ mod native {
       _ => {}
     }
     let result = call_original(&TYPING_PROC, hwnd, message, wparam, lparam);
+    if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
+      let fault = KEYBOARD_FAULT.lock().ok().and_then(|mut fault| fault.take());
+      if let Some((kind, target)) = fault {
+        // The caller supplied another owned fixture. No input is synthesized here: this models
+        // an application changing foreground after it has processed the first key release.
+        let owner = unsafe { GetParent(hwnd) }.unwrap_or_default();
+        let target = HWND(target as *mut core::ffi::c_void);
+        // SAFETY: native foreground/window requests on the harness's owned receiver pair.
+        // The fault mutex was released before these potentially reentrant OS calls.
+        let (reached_target, returned_owner) = unsafe {
+          let requested = SetForegroundWindow(target).as_bool();
+          let reached = requested && GetForegroundWindow() == target;
+          let returned = match kind.as_str() {
+            "aba" => {
+              std::thread::sleep(std::time::Duration::from_millis(50));
+              SetForegroundWindow(owner).as_bool() && GetForegroundWindow() == owner
+            }
+            "minimize" => {
+              let _ = ShowWindow(owner, SW_SHOWMINNOACTIVE);
+              false
+            }
+            "close" => {
+              let _ = PostMessageW(owner, WM_CLOSE, WPARAM(0), LPARAM(0));
+              false
+            }
+            _ => false,
+          };
+          (reached, returned)
+        };
+        if let Ok(mut receipt) = KEYBOARD_FAULT_RECEIPT.lock() {
+          *receipt = Some(json!({"kind": kind, "reached_target": reached_target, "returned_owner": returned_owner}));
+        }
+      }
+    }
     if message == WM_SETFOCUS && REJECT_TYPING_FOCUS.load(Relaxed) {
       let button = handle(&BUTTON);
       // SAFETY: this request is armed after both controls are created. Both
@@ -705,6 +744,18 @@ mod native {
           return LRESULT(0);
         }
         arrange_children(hwnd);
+        LRESULT(0)
+      }
+      WM_SETFOCUS if KEYBOARD_READY.load(Relaxed) => {
+        // ROOT CAUSE:
+        //
+        // DefWindowProc focuses the top-level frame when it activates. Preparing B's child
+        // before activation therefore lost the keyboard control. Only the keyboard harness
+        // opts into restoring this owned first responder; the legacy receiver mode is unchanged.
+        // SAFETY: this frame and its typing child belong to the current GUI thread.
+        unsafe {
+          let _ = SetFocus(handle(&TYPING));
+        }
         LRESULT(0)
       }
       WM_PAINT => {
@@ -1033,6 +1084,30 @@ mod native {
         KEEP_FOREGROUND.store(true, Relaxed);
         json!({})
       }
+      Some("prepare_keyboard") if FOREGROUND_INPUT.load(Relaxed) => {
+        // Fixture initialization only: start with a blank first responder on its own GUI thread.
+        let typing = handle(&TYPING);
+        KEYBOARD_READY.store(true, Relaxed);
+        // SAFETY: both operations affect only this receiver's own live child control.
+        unsafe {
+          let _ = SetWindowTextW(typing, w!(""));
+          let _ = SetFocus(typing);
+        }
+        // SAFETY: GetFocus queries only this thread's input queue.
+        json!({"focused": unsafe { GetFocus() } == typing})
+      }
+      Some("arm_keyboard_fault") if FOREGROUND_INPUT.load(Relaxed) => {
+        let kind = request["kind"].as_str().unwrap_or("");
+        let target = request["target"].as_str().and_then(|value| value.parse::<isize>().ok()).unwrap_or(0);
+        if ["stay", "aba", "minimize", "close"].contains(&kind) && target != 0 {
+          *KEYBOARD_FAULT.lock().unwrap() = Some((kind.into(), target));
+          *KEYBOARD_FAULT_RECEIPT.lock().unwrap() = None;
+          json!({"armed": true})
+        } else {
+          json!({"ok": false, "error": "keyboard fault needs a known kind and target HWND"})
+        }
+      }
+      Some("keyboard_fault_receipt") => json!({"receipt": KEYBOARD_FAULT_RECEIPT.lock().ok().and_then(|value| value.clone())}),
       Some("reject_typing_focus") if FOREGROUND_INPUT.load(Relaxed) => {
         if let Some(enabled) = request["enabled"].as_bool() {
           REJECT_TYPING_FOCUS.store(enabled, Relaxed);

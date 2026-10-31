@@ -15,6 +15,8 @@ pub enum ClientErrorKind {
   NotFound,
   /// Current remote state conflicts with the request.
   Conflict,
+  /// A typed native-input detail says its previously resolved recipient was lost.
+  TargetLost,
   /// The remote service does not implement the operation.
   Unsupported,
   /// The response or transport failed without a more specific category.
@@ -38,15 +40,21 @@ impl ClientError {
   }
 
   pub(crate) fn from_status(operation: &'static str, status: tonic::Status) -> Self {
-    let kind = match status.code() {
-      tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => ClientErrorKind::Unauthorized,
-      tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => ClientErrorKind::Unavailable,
-      tonic::Code::InvalidArgument => ClientErrorKind::InvalidRequest,
-      tonic::Code::FailedPrecondition => ClientErrorKind::Ambiguous,
-      tonic::Code::NotFound => ClientErrorKind::NotFound,
-      tonic::Code::AlreadyExists | tonic::Code::Aborted => ClientErrorKind::Conflict,
-      tonic::Code::Unimplemented => ClientErrorKind::Unsupported,
-      _ => ClientErrorKind::Protocol,
+    let kind = if auv_api_proto::input_action_failure::failure(&status)
+      .is_some_and(|failure| failure.reason == auv_api_proto::auv::api::driver::v1::InputFailureReason::TargetLost as i32)
+    {
+      ClientErrorKind::TargetLost
+    } else {
+      match status.code() {
+        tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => ClientErrorKind::Unauthorized,
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => ClientErrorKind::Unavailable,
+        tonic::Code::InvalidArgument => ClientErrorKind::InvalidRequest,
+        tonic::Code::FailedPrecondition => ClientErrorKind::Ambiguous,
+        tonic::Code::NotFound => ClientErrorKind::NotFound,
+        tonic::Code::AlreadyExists | tonic::Code::Aborted => ClientErrorKind::Conflict,
+        tonic::Code::Unimplemented => ClientErrorKind::Unsupported,
+        _ => ClientErrorKind::Protocol,
+      }
     };
     Self {
       kind,

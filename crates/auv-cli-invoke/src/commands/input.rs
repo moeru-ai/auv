@@ -351,7 +351,8 @@ async fn ax_focus_text_input(input: InvokeCommandInput, args: AxFocusTextArgs) -
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.typeText \"hello from AUV\"")]
 struct TypeTextArgs {
-  /// Target delivery policy. Foreground prepares focus; background modes do not activate or automatically fall back.
+  /// Target delivery policy. Foreground uses target focus; platforms may prepare it.
+  /// Background modes do not activate or automatically fall back.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -362,7 +363,7 @@ struct TypeTextArgs {
 
 #[invoke_command(
   id = "input.typeText",
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
   target = OptionalKeyboard,
   group = "input",
@@ -370,7 +371,7 @@ struct TypeTextArgs {
   input = TypeTextArgs,
 )]
 async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -391,7 +392,8 @@ pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::I
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.pasteText \"hello from AUV\"")]
 struct PasteTextArgs {
-  /// Target delivery policy. Foreground prepares focus; background modes do not activate or automatically fall back.
+  /// Target delivery policy. Foreground uses target focus; platforms may prepare it.
+  /// Background modes do not activate or automatically fall back.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -402,7 +404,7 @@ struct PasteTextArgs {
 
 #[invoke_command(
   id = "input.pasteText",
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
   target = OptionalKeyboard,
   group = "input",
@@ -410,7 +412,7 @@ struct PasteTextArgs {
   input = PasteTextArgs,
 )]
 async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -440,7 +442,8 @@ struct PressKeyArgs {
   /// Physical key or legacy shortcut (for example cmd+a). Use input.typeText for literal Unicode text.
   #[arg(value_name = "KEY")]
   key: String,
-  /// Foreground prepares focus; background modes do not activate or automatically fall back.
+  /// Foreground uses target focus; platforms may prepare it.
+  /// Background modes do not activate or automatically fall back.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -459,7 +462,8 @@ struct PressKeysArgs {
   /// One key combination: key names or ANSI characters. Modifiers precede ordinary keys. MCP inputs encode this list as a JSON array string.
   #[arg(value_name = "KEY", num_args = 1..)]
   keys: Vec<String>,
-  /// Foreground prepares focus; background modes do not activate or automatically fall back.
+  /// Foreground uses target focus; platforms may prepare it.
+  /// Background modes do not activate or automatically fall back.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -478,11 +482,11 @@ struct PressKeysArgs {
   group = "input",
   description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Keys are released in reverse order; effects remain unverified.",
   input = PressKeysArgs,
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
 )]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 // NOTICE: input.keys is the existing complete-press spelling. Keep both
@@ -493,7 +497,7 @@ async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::In
   group = "input",
   description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Equivalent to input.keys.",
   input = PressKeysArgs,
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
   role = Alias("input.keys"),
 )]
@@ -513,7 +517,8 @@ struct HoldKeysArgs {
   #[serde(rename = "duration-ms")]
   duration_ms: u64,
 
-  /// Foreground prepares focus; background modes require an application or window target.
+  /// Foreground uses target focus; platforms may prepare it.
+  /// Background modes require an application or window target.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -624,17 +629,17 @@ enum KeyboardActionArg {
   group = "input",
   description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.",
   input = InputKeyboardArgs,
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
 )]
 async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-  execute_keyboard(&input, actions)
+  execute_keyboard(&input, actions).await
 }
 
 #[invoke_command(
   id = "input.key",
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
+  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground and guarded Window batches; Win32 evidence only; no Application targets or background delivery") },
   runner = Direct,
   target = OptionalKeyboard,
   group = "input",
@@ -642,7 +647,7 @@ async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> c
   input = PressKeyArgs,
 )]
 async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
+  execute_keyboard(&input, vec![args.into()]).await
 }
 
 pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
@@ -2158,12 +2163,24 @@ pub(crate) fn validate_keyboard_policy(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+async fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
   let session = auv::local::open()?;
   let target = local_keyboard_target(input, &session)?;
 
   input.cancellation.check().map_err(|error| error.to_string())?;
+  // Windows keyboard waits must see the Invoke/MCP cancellation signal. Preserve
+  // the inner keyboard error so batch and native delivery facts survive failures.
+  #[cfg(target_os = "windows")]
+  let result = {
+    let dry_run = input.dry_run;
+    run_cancellable_input(&input.cancellation, move || Ok(session.input().input_keyboard(&target, keyboard, dry_run)))
+      .await?
+      .map_err(Into::into)
+  };
+  // NOTICE: macOS/Linux retain their existing delivery-thread contracts. Revisit
+  // those platforms only with an owner-approved cancellation slice and evidence.
+  #[cfg(not(target_os = "windows"))]
   let result = session.input().input_keyboard(&target, keyboard, input.dry_run).map_err(Into::into);
   keyboard_output(input, result)
 }
@@ -2191,7 +2208,7 @@ fn local_keyboard_target(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+async fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is unavailable on this platform"))
 }
 

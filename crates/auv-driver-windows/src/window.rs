@@ -11,10 +11,53 @@ use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Rect;
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver_common::window::Window;
+use serde::Serialize;
 
 use crate::error::{invalid_input, not_found};
 
 static ENUMERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Why a previously resolved window identity is no longer valid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LostReason {
+  /// The window no longer exists.
+  WindowDestroyed,
+  /// The handle now belongs to another process.
+  ProcessChanged,
+  /// The handle was reused by a different window of the same process.
+  HandleReused,
+}
+
+/// Live owner, GUI thread, and class captured when a window is admitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Identity {
+  pub(crate) process_id: u32,
+  pub(crate) thread_id: u32,
+  pub(crate) class_name: String,
+}
+
+impl Identity {
+  pub(crate) fn from_probe(probe: &WindowProbe) -> Self {
+    Self {
+      process_id: probe.process_id,
+      thread_id: probe.thread_id,
+      class_name: probe.class_name.clone(),
+    }
+  }
+
+  pub(crate) fn lost_reason(&self, probe: &WindowProbe) -> Option<LostReason> {
+    if !probe.exists {
+      Some(LostReason::WindowDestroyed)
+    } else if probe.process_id != self.process_id {
+      Some(LostReason::ProcessChanged)
+    } else if probe.thread_id != self.thread_id || probe.class_name != self.class_name {
+      Some(LostReason::HandleReused)
+    } else {
+      None
+    }
+  }
+}
 
 /// How many times this process has enumerated every top-level window. A diagnostic: a session
 /// that caches its targets leaves it unchanged after it has attached them.

@@ -214,6 +214,7 @@ pub enum FailureCode {
   CommandFailed,
   InvalidTarget,
   NotFound,
+  TargetLost,
   Unsupported,
   PermissionDenied,
   InvalidInput,
@@ -256,6 +257,7 @@ impl From<auv_driver::DriverError> for InvokeFailure {
       }
       DriverError::Unsupported { .. } => FailureCode::Unsupported,
       DriverError::NotFound { .. } => FailureCode::NotFound,
+      DriverError::TargetLost { .. } => FailureCode::TargetLost,
       DriverError::PermissionDenied { .. } => FailureCode::PermissionDenied,
       DriverError::InvalidInput { .. } => FailureCode::InvalidInput,
       DriverError::StaleUiReference { .. } => FailureCode::StaleUiReference,
@@ -283,6 +285,7 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
   use auv::error::ClientErrorKind;
   match kind {
     Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
+    Some(ClientErrorKind::TargetLost) => FailureCode::TargetLost,
     Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
     Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
     Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
@@ -295,7 +298,14 @@ impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
     match error {
-      auv::client::runner::CapabilityError::KeyboardInput { progress, .. } => failure.keyboard_progress = Some(progress),
+      auv::client::runner::CapabilityError::KeyboardInput {
+        progress,
+        input_progress,
+        ..
+      } => {
+        failure.keyboard_progress = Some(progress);
+        failure.input_progress = input_progress.filter(|progress| progress.validate().is_ok());
+      }
       auv::client::runner::CapabilityError::InputAction { progress, .. } => {
         if progress.validate().is_ok() {
           failure.input_progress = Some(progress);
@@ -432,7 +442,7 @@ impl TargetPolicy {
         "Required app:<application-id> (the id window.list reports: a bundle id on macOS, an executable name on Windows; bare ids accepted); window and display targets are unsupported."
       }
       Self::OptionalKeyboard => {
-        "Optional app:<application-id> (bare ids accepted) or window:<window-id>. Default foreground-preferred activates the app; a window target also requires exact window focus. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
+        "Optional app:<application-id> (bare ids accepted) or window:<window-id>. Foreground-preferred may prepare focus where the platform supports it. Windows Window batches may activate the target once before admission; Application targets and targeted holds are unsupported. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
       }
       Self::OptionalPoint => {
         "Optional app:<application-id>, window:<window-id>, or display:<display-id>; coordinate basis defaults from target. Bare values select an application."

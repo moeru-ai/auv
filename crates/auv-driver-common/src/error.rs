@@ -11,6 +11,11 @@ pub enum DriverError {
   NotFound {
     target: String,
   },
+  /// A previously admitted input recipient lost its identity or delivery preconditions.
+  TargetLost {
+    target: String,
+    message: String,
+  },
   PermissionDenied {
     permission: &'static str,
     /// Raw backend detail when the permission failure came from a native
@@ -59,6 +64,7 @@ impl fmt::Display for DriverError {
     match self {
       Self::Unsupported { operation } => write!(f, "{operation} is not supported by this driver"),
       Self::NotFound { target } => write!(f, "{target} was not found"),
+      Self::TargetLost { target, message } => write!(f, "input target {target} was lost: {message}; inspect state before retrying"),
       Self::PermissionDenied {
         permission,
         message,

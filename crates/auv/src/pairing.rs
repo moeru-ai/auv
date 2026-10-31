@@ -121,7 +121,8 @@ impl From<ClientError> for PairingError {
       ClientErrorKind::Conflict => Self::Conflict(error),
       ClientErrorKind::Unavailable => Self::Unavailable(error),
       ClientErrorKind::Unsupported => Self::NotConfigured(error),
-      ClientErrorKind::Protocol => Self::Protocol(error),
+      // A recipient-loss receipt is not part of the pairing protocol.
+      ClientErrorKind::TargetLost | ClientErrorKind::Protocol => Self::Protocol(error),
     }
   }
 }

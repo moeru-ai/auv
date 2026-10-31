@@ -6,14 +6,14 @@ import { BinaryWriter, WireType } from '@bufbuild/protobuf/wire'
 import { anyPack, AnySchema } from '@bufbuild/protobuf/wkt'
 import { describe, expect, it } from 'vitest'
 
-import { DisturbanceLevel, InputActionFailureSchema, InputActionResultSchema, InputDeliveryPath } from '../../gen/auv/api/driver/v1/input_pb'
+import { DisturbanceLevel, InputActionFailureSchema, InputActionResultSchema, InputDeliveryPath, InputFailureReason, KeyboardInputProgressSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { AuvConnection } from '../../transport/connection'
 import { AuvRpcError } from '../../transport/errors'
 import { createAuv } from './client'
-import { inputActionProgress } from './input-failure'
+import { inputActionProgress, inputFailureReason, keyboardInputProgress } from './input-failure'
 
-function receipt(progress: MessageInitShape<typeof InputActionFailureSchema>['progress']): Any {
-  return anyPack(InputActionFailureSchema, create(InputActionFailureSchema, { progress }))
+function receipt(progress: MessageInitShape<typeof InputActionFailureSchema>['progress'], reason = InputFailureReason.UNSPECIFIED): Any {
+  return anyPack(InputActionFailureSchema, create(InputActionFailureSchema, { progress, reason }))
 }
 
 function status(details: Any[], code = 7): Uint8Array {
@@ -35,6 +35,36 @@ function submittedAction() {
 }
 
 describe('failed input progress', () => {
+  it('preserves target loss when native delivery remains unknown', () => {
+    const error = new AuvRpcError(9, 'UIA denied', undefined, status([receipt(undefined, InputFailureReason.TARGET_LOST)], 9))
+    expect(inputFailureReason(error)).toBe(InputFailureReason.TARGET_LOST)
+    expect(inputActionProgress(error)).toBeUndefined()
+    expect(keyboardInputProgress(error)).toBeUndefined()
+    const conflicting = new AuvRpcError(7, 'UIA denied', undefined, status([receipt(undefined, InputFailureReason.TARGET_LOST)]))
+    expect(inputFailureReason(conflicting)).toBeUndefined()
+    expect(inputActionProgress(conflicting)).toBeUndefined()
+  })
+
+  it('keeps batch counts, submitted prefix and target loss in one standard status', () => {
+    const batch = create(KeyboardInputProgressSchema, { actionIndex: 1, completed: [submittedAction()], completedPresses: 1 })
+    const error = new AuvRpcError(9, 'UIA denied', undefined, status([
+      anyPack(KeyboardInputProgressSchema, batch),
+      receipt({ case: 'submitted', value: submittedAction() }, InputFailureReason.TARGET_LOST),
+    ], 9))
+    expect(inputFailureReason(error)).toBe(InputFailureReason.TARGET_LOST)
+    expect(inputActionProgress(error)?.case).toBe('submitted')
+    expect(keyboardInputProgress(error)?.actionIndex).toBe(1)
+    expect(keyboardInputProgress(error)?.completed).toHaveLength(1)
+    expect(keyboardInputProgress(error)?.completedPresses).toBe(1)
+  })
+
+  it('leaves legacy raw batch details and duplicate batch receipts unknown', () => {
+    const batch = create(KeyboardInputProgressSchema, { actionIndex: 0 })
+    expect(keyboardInputProgress(new AuvRpcError(9, 'UIA denied', undefined, toBinary(KeyboardInputProgressSchema, batch)))).toBeUndefined()
+    const detail = anyPack(KeyboardInputProgressSchema, batch)
+    expect(keyboardInputProgress(new AuvRpcError(9, 'UIA denied', undefined, status([detail, detail], 9)))).toBeUndefined()
+  })
+
   it('preserves submitted unverified input without changing the original error', () => {
     const error = new AuvRpcError(7, 'UIA denied', undefined, status([receipt({ case: 'submitted', value: submittedAction() })]))
     const progress = inputActionProgress(error)

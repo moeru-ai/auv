@@ -245,6 +245,7 @@ pub(super) fn error_kind(error: &DriverError) -> &'static str {
     DriverError::InputAction { cause, .. } => error_kind(cause),
     DriverError::Unsupported { .. } => "unsupported",
     DriverError::NotFound { .. } => "not_found",
+    DriverError::TargetLost { .. } => "target_lost",
     DriverError::PermissionDenied { .. } => "permission_denied",
     DriverError::InvalidInput { .. } => "invalid_input",
     DriverError::StaleUiReference { .. } => "stale_ui_reference",

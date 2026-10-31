@@ -410,7 +410,15 @@ message InputActionResult {
   bool verified = 6;
 }
 
-// One failed native input action, packed in google.rpc.Status.details as Any.
+// Domain reasons that need more precision than the enclosing gRPC status code.
+enum InputFailureReason {
+  INPUT_FAILURE_REASON_UNSPECIFIED = 0;
+  INPUT_FAILURE_REASON_TARGET_LOST = 1;
+  // TODO(input-failure-reasons): other categories retain their existing gRPC mapping;
+  // extend this enum when an owning producer and consumer require a distinct reason.
+}
+
+// A failed admission or native action, packed in google.rpc.Status.details as Any.
 // The status retains the underlying failure category. An absent or unknown
 // progress case is unknown delivery, never proof that no input was delivered.
 message InputActionFailure {
@@ -422,6 +430,9 @@ message InputActionFailure {
     // Native submission succeeded, but the requested effect is unverified.
     InputActionResult submitted = 3;
   }
+  // May identify a lost recipient even when native progress is unknown. An absent
+  // progress value must never be interpreted as not_delivered.
+  InputFailureReason reason = 4;
 }
 
 message ClickPointRequest {
@@ -1009,7 +1020,8 @@ message InputKeyboardResponse {
   repeated InputActionResult actions = 1;
 }
 
-// Encoded in gRPC Status.details for driver validation/delivery failures.
+// Packed in google.rpc.Status.details as Any for driver failures. It can coexist
+// with InputActionFailure; batch counts do not establish the failed action's delivery.
 // The status code/message retains the underlying cause. Do not retry the whole
 // request blindly: the failed action can itself have partially affected the UI.
 message KeyboardInputProgress {

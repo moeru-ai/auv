@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn keyboard_error_decodes_both_progress_levels_and_target_loss() {
+  let mut native = input_action_progress_to_proto(auv_driver::InputActionProgress::Submitted {
+    action: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ForegroundSystemEvents),
+  })
+  .unwrap();
+  native.reason = proto::InputFailureReason::TargetLost as i32;
+  let status = auv_api_proto::input_action_failure::status(&tonic::Status::failed_precondition("foreground changed"), native);
+  let status = auv_api_proto::input_action_failure::keyboard_status(
+    &status,
+    proto::KeyboardInputProgress {
+      action_index: Some(0),
+      completed_presses: 1,
+      completed: vec![],
+    },
+  );
+  let CapabilityError::KeyboardInput {
+    source,
+    progress,
+    input_progress,
+  } = keyboard_capability_status(status)
+  else {
+    panic!("keyboard and native progress must coexist");
+  };
+  assert_eq!(source.kind(), crate::error::ClientErrorKind::TargetLost);
+  assert_eq!(progress.action_index, 0);
+  assert_eq!(progress.completed_presses, 1);
+  assert!(matches!(input_progress, Some(auv_driver::InputActionProgress::Submitted { .. })));
+}
+
+#[test]
+fn a_target_loss_reason_does_not_fabricate_native_delivery() {
+  let status = auv_api_proto::input_action_failure::status(
+    &tonic::Status::failed_precondition("window closed"),
+    proto::InputActionFailure {
+      reason: proto::InputFailureReason::TargetLost as i32,
+      progress: None,
+    },
+  );
+  let error = capability_status(status);
+  assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::TargetLost));
+  assert!(matches!(error, CapabilityError::Client(_)));
+}
+
+#[test]
 fn input_action_failure_roundtrip_preserves_progress_and_original_category() {
   let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
   let mut uncertain = action.clone();
@@ -30,6 +74,7 @@ fn invalid_or_legacy_input_error_metadata_remains_unknown() {
   action.verified = true;
   let wire = proto::InputActionFailure {
     progress: Some(proto::input_action_failure::Progress::Submitted(input_action_result_to_proto(action).unwrap())),
+    reason: proto::InputFailureReason::Unspecified as i32,
   };
   let error = capability_status(auv_api_proto::input_action_failure::status(&cause, wire));
   assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Unauthorized));

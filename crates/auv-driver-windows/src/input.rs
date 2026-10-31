@@ -7,9 +7,8 @@
 //! presses/shortcuts as virtual-key events. The coordinate math and key parsing
 //! live in host-independent helpers so they stay unit-testable without sending
 //! real input.
-// TODO(windows-input-target-lease): like the macOS slice, this types/clicks
-// into the current foreground target. Target-aware, window-prepared input is
-// deferred until an owner-approved slice connects it to focus leasing.
+// Explicit global primitives use the current foreground. Window keyboard batches install
+// recipient protection; their native submissions share this same delivery boundary.
 
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -28,6 +27,19 @@ use auv_driver_common::{
 use crate::clipboard::{ClipboardRead, ClipboardReader};
 use crate::error::{backend, invalid_input};
 use crate::session::InputApi;
+
+#[path = "input_recipient.rs"]
+mod recipient;
+
+// Validate all waits before a batch can submit its first action. The native
+// waiter checks again because the clock can advance after this preflight.
+fn validate_keyboard_waits(waits: &[Duration]) -> DriverResult<()> {
+  let now = std::time::Instant::now();
+  if waits.iter().any(|duration| now.checked_add(*duration).is_none()) {
+    return Err(invalid_input("keyboard wait exceeds the native clock range"));
+  }
+  Ok(())
+}
 
 /// Virtual-key code for a modifier, kept as a bare `u16` so shortcut parsing
 /// stays independent of the `windows` crate types.
@@ -165,12 +177,13 @@ pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult
 }
 
 pub fn type_text(text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
+  validate_keyboard_waits(&[options.inter_char_delay, options.settle])?;
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
     return Err(invalid_input("windows type_text cannot use background_only input policy"));
   }
   let submit_key = text_submit_virtual_key(options.submit)?;
   native::type_text(text, &options, submit_key)?;
-  sleep_if_nonzero(options.settle);
+  recipient::wait(options.settle)?;
   Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
@@ -236,19 +249,18 @@ fn combination(options: &PressKeysOptions) -> DriverResult<Vec<u16>> {
 }
 
 fn press_combination(codes: Vec<u16>) -> DriverResult<InputActionResult> {
+  let _reservation = recipient::reserve_submission()?;
   // The existing hold controller releases an injected prefix if a key-down
   // fails, and releases the complete chord in reverse order on success.
   let mut hold = auv_driver_common::keyboard_hold_controller()
     .clone()
-    .down(std::sync::Arc::new(HeldKeyboardBackend { keys: codes }), Duration::from_secs(2))?;
+    .down(std::sync::Arc::new(HeldKeyboardBackend::new(codes)), Duration::from_secs(2))?;
   hold.wait_and_release(Duration::ZERO)
 }
 
 impl InputApi<'_> {
-  /// Validate a foreground batch before delivery and preserve action progress.
-  /// Windows target-aware keyboard routing awaits an exact recipient lease.
-  // TODO(windows-targeted-keyboard): accept Window/Application only after the
-  // recipient can be revalidated before every action and repetition. A posted
+  /// Validate a batch and preserve native progress; Window targets retain a recipient guard.
+  // TODO(windows-targeted-keyboard): Application ids need a Windows identity producer. A posted
   // route also needs child-control resolution (a top-level window drops posted
   // `WM_CHAR`) and a decision on modifiers, which posted messages cannot carry
   // (`GetKeyState` in the target thread stays unchanged). Probe, not command
@@ -263,8 +275,13 @@ impl InputApi<'_> {
       return Err(keyboard_failure(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
     }
 
-    if !matches!(target, InputTarget::Foreground) {
+    if matches!(target, InputTarget::Application { .. }) {
       return Err(keyboard_failure(DriverError::unsupported("Windows targeted keyboard input"), 0, vec![], 0));
+    }
+    if let InputTarget::Window(window) = target {
+      if window.reference.id.parse::<isize>().ok().filter(|id| *id != 0).is_none() || window.process_id.is_none_or(|pid| pid == 0) {
+        return Err(keyboard_failure(invalid_input("window keyboard input requires an observed native id and process id"), 0, vec![], 0));
+      }
     }
 
     let plans = inputs
@@ -274,6 +291,13 @@ impl InputApi<'_> {
         if input.policy() != InputPolicy::ForegroundPreferred {
           return Err(keyboard_failure(invalid_input("Windows keyboard input requires foreground-preferred policy"), index, vec![], 0));
         }
+
+        let (interval, settle) = match input {
+          KeyboardInput::PressKeys { options, .. } => (options.interval, options.settle),
+          KeyboardInput::TypeText { options, .. } => (options.inter_char_delay, options.settle),
+          KeyboardInput::PasteText { options, .. } => (Duration::ZERO, options.settle),
+        };
+        validate_keyboard_waits(&[interval, settle]).map_err(|cause| keyboard_failure(cause, index, vec![], 0))?;
 
         let plan = match input {
           KeyboardInput::PressKeys { options, .. } => combination(options).map(Some),
@@ -289,20 +313,55 @@ impl InputApi<'_> {
       return Ok(None);
     }
 
+    let guard = match target {
+      InputTarget::Window(window) => Some(recipient::Guard::open(window).map_err(|cause| {
+        // Admission queries identity and installs hooks; it never submits input.
+        keyboard_failure(
+          DriverError::InputAction {
+            cause: Box::new(cause),
+            progress: auv_driver_common::InputActionProgress::NotDelivered,
+          },
+          0,
+          vec![],
+          0,
+        )
+      })?),
+      _ => None,
+    };
+
     let mut completed = Vec::with_capacity(inputs.len());
 
     for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
+      if let Some(guard) = &guard {
+        guard.begin_action(if matches!(&input, KeyboardInput::PasteText { .. }) {
+          DisturbanceLevel::Temporary
+        } else {
+          DisturbanceLevel::None
+        });
+      }
+      let failure = |cause, completed: &Vec<InputActionResult>, presses| {
+        let cause = if let Some(guard) = &guard {
+          guard.stamp(cause)
+        } else {
+          cause
+        };
+        keyboard_failure(cause, index, completed.clone(), presses)
+      };
+      let completed_presses = match &input {
+        KeyboardInput::PressKeys { options, .. } => options.count,
+        _ => 0,
+      };
       let action = match input {
         KeyboardInput::PressKeys { options, .. } => {
           let mut combined: Option<InputActionResult> = None;
 
           for repetition in 0..options.count {
             if repetition > 0 {
-              std::thread::sleep(options.interval);
+              recipient::wait(options.interval).map_err(|cause| failure(cause, &completed, repetition))?;
             }
 
             let action = press_combination(plan.as_ref().expect("validated press combination").clone())
-              .map_err(|cause| keyboard_failure(cause, index, completed.clone(), repetition))?;
+              .map_err(|cause| failure(cause, &completed, repetition))?;
 
             if let Some(combined) = &mut combined {
               combined.attempts.extend(action.attempts);
@@ -312,19 +371,16 @@ impl InputApi<'_> {
           }
 
           if !options.settle.is_zero() {
-            std::thread::sleep(options.settle);
+            recipient::wait(options.settle).map_err(|cause| failure(cause, &completed, options.count))?;
           }
 
           combined.expect("validated positive press count")
         }
-        KeyboardInput::TypeText { text, options } => {
-          type_text(&text, options).map_err(|cause| keyboard_failure(cause, index, completed.clone(), 0))?
-        }
-        KeyboardInput::PasteText { options, .. } => {
-          paste_text(options).map_err(|cause| keyboard_failure(cause, index, completed.clone(), 0))?
-        }
+        KeyboardInput::TypeText { text, options } => type_text(&text, options).map_err(|cause| failure(cause, &completed, 0))?,
+        KeyboardInput::PasteText { options, .. } => paste_text(options).map_err(|cause| failure(cause, &completed, 0))?,
       };
 
+      recipient::wait(Duration::ZERO).map_err(|cause| failure(cause, &completed, completed_presses))?;
       completed.push(action);
     }
 
@@ -334,6 +390,14 @@ impl InputApi<'_> {
 
 struct HeldKeyboardBackend {
   keys: Vec<u16>,
+  owned: Vec<std::sync::atomic::AtomicBool>,
+}
+
+impl HeldKeyboardBackend {
+  fn new(keys: Vec<u16>) -> Self {
+    let owned = keys.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+    Self { keys, owned }
+  }
 }
 
 impl KeyboardBackend for HeldKeyboardBackend {
@@ -341,7 +405,15 @@ impl KeyboardBackend for HeldKeyboardBackend {
     self.keys.len()
   }
   fn key(&self, index: usize, down: bool) -> DriverResult<()> {
-    native::key_transition(self.keys[index], down)
+    use std::sync::atomic::Ordering;
+    if !down && !self.owned[index].load(Ordering::Acquire) {
+      return Ok(());
+    }
+    native::key_transition(self.keys[index], down)?;
+    // Each transition submits exactly one event: success proves its insertion; refusal before
+    // the native call owns no key. The controller may ask to clean the full planned combination.
+    self.owned[index].store(down, Ordering::Release);
+    Ok(())
   }
   fn result(&self) -> InputActionResult {
     foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None)
@@ -357,7 +429,7 @@ pub fn key_down(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, ti
     ..Default::default()
   })?;
   let controller = auv_driver_common::keyboard_hold_controller().clone();
-  controller.down(std::sync::Arc::new(HeldKeyboardBackend { keys: codes }), timeout)
+  controller.down(std::sync::Arc::new(HeldKeyboardBackend::new(codes)), timeout)
 }
 
 pub fn key_up(hold: KeyboardHoldId) -> DriverResult<InputActionResult> {
@@ -417,6 +489,7 @@ fn paste_read(read: Option<ClipboardRead>, sent: Instant, foreground: Option<u32
 /// request for it is observed. That request is consumption of the clipboard, not proof that the
 /// text landed, so the result stays unverified.
 pub fn paste_text(options: PasteTextOptions) -> DriverResult<InputActionResult> {
+  validate_keyboard_waits(&[options.settle])?;
   let submit_key = text_submit_virtual_key(options.submit)?;
   let _paste = PASTE.lock().unwrap_or_else(PoisonError::into_inner);
   let snapshot = crate::clipboard::snapshot_rich()?;
@@ -438,7 +511,7 @@ pub fn paste_text(options: PasteTextOptions) -> DriverResult<InputActionResult> 
     paste()?;
     let read = paste_read(loan.wait_for_read(PASTE_READ_TIMEOUT), sent, foreground);
     if matches!(read, PasteRead::Other { .. }) {
-      std::thread::sleep(PASTE_UNATTRIBUTED_HOLD);
+      recipient::wait(PASTE_UNATTRIBUTED_HOLD)?;
     }
     Ok((loan, read))
   })();
@@ -477,7 +550,7 @@ pub fn paste_text(options: PasteTextOptions) -> DriverResult<InputActionResult> 
       key,
     })?;
   }
-  sleep_if_nonzero(options.settle);
+  recipient::wait(options.settle)?;
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::ClipboardPaste,
     attempts: vec![InputAttempt {
@@ -734,7 +807,6 @@ fn char_virtual_key(character: char) -> Option<(u16, bool)> {
 #[cfg(target_os = "windows")]
 mod native {
   use std::mem::size_of;
-  use std::thread;
   use std::time::Duration;
 
   use auv_driver_common::error::DriverResult;
@@ -758,11 +830,45 @@ mod native {
     if inputs.is_empty() {
       return Ok(());
     }
-    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
+    let sent = insert_inputs(inputs, false)?;
     if sent as usize != inputs.len() {
       return Err(backend(format!("SendInput injected {sent} of {} events (input may be blocked)", inputs.len())));
     }
     Ok(())
+  }
+
+  /// Central native boundary. Cleanup releases bypass recipient loss and do not replace the
+  /// original submission receipt; a cancelled action must still release AUV-owned held keys.
+  fn insert_inputs(inputs: &[INPUT], release: bool) -> DriverResult<u32> {
+    let _reservation = if release {
+      None
+    } else {
+      super::recipient::reserve_submission()?
+    };
+    if !release {
+      super::recipient::check()?;
+      super::recipient::before_submission();
+    }
+    // SAFETY: every caller initializes each INPUT union to match its type tag; the slice is live.
+    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
+    if !release {
+      super::recipient::after_submission(sent as usize == inputs.len());
+    }
+    Ok(sent)
+  }
+
+  /// A Unicode or ordinary-key pair owns its matching release even after recipient loss.
+  fn send_key_pair(inputs: [INPUT; 2]) -> DriverResult<()> {
+    let sent = insert_inputs(&inputs, false)?;
+    if sent == 2 {
+      return Ok(());
+    }
+    let release = if sent == 1 {
+      insert_inputs(&inputs[1..], true).map(|count| count == 1)
+    } else {
+      Ok(true)
+    };
+    Err(backend(format!("SendInput injected {sent} of 2 key events; owned release accepted={}", release.unwrap_or(false))))
   }
 
   fn mouse_input(dx: i32, dy: i32, mouse_data: i32, flags: MOUSE_EVENT_FLAGS) -> INPUT {
@@ -877,6 +983,7 @@ mod native {
     interval: Duration,
     modifiers: &[u16],
   ) -> DriverResult<()> {
+    let _reservation = super::recipient::reserve_submission()?;
     move_to(point)?;
     for index in 0..count {
       // Preserve already-held user keys: this operation only releases keys it
@@ -892,7 +999,7 @@ mod native {
       let inputs = click_inputs(button, &keys);
       // SAFETY: inputs contains initialized INPUT unions matching their tags,
       // and its slice remains live throughout SendInput.
-      let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
+      let sent = insert_inputs(&inputs, false)? as usize;
       if sent != inputs.len() {
         // SendInput inserts in order. Release only the injected prefix that
         // remains down, including the mouse button if its up was not inserted.
@@ -902,7 +1009,7 @@ mod native {
         return Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())));
       }
       if index + 1 < count && !interval.is_zero() {
-        thread::sleep(interval);
+        super::recipient::wait(interval)?;
       }
     }
     Ok(())
@@ -957,7 +1064,7 @@ mod native {
         modifiers: vec![super::vk::CONTROL],
         key: u16::from(b'A'),
       })?;
-      send_inputs(&[
+      send_key_pair([
         virtual_key_input(super::vk::BACK, KEYBD_EVENT_FLAGS(0)),
         virtual_key_input(super::vk::BACK, KEYEVENTF_KEYUP),
       ])?;
@@ -966,17 +1073,17 @@ mod native {
     for character in text.chars() {
       let mut buffer = [0u16; 2];
       for unit in character.encode_utf16(&mut buffer) {
-        send_inputs(&[
+        send_key_pair([
           unicode_input(*unit, KEYBD_EVENT_FLAGS(0)),
           unicode_input(*unit, KEYEVENTF_KEYUP),
         ])?;
       }
       if !inter_char_delay.is_zero() {
-        thread::sleep(inter_char_delay);
+        super::recipient::wait(inter_char_delay)?;
       }
     }
     if let Some(vk) = submit_key {
-      send_inputs(&[
+      send_key_pair([
         virtual_key_input(vk, KEYBD_EVENT_FLAGS(0)),
         virtual_key_input(vk, KEYEVENTF_KEYUP),
       ])?;
@@ -985,6 +1092,7 @@ mod native {
   }
 
   pub(super) fn press_chord(chord: &KeyChord) -> DriverResult<()> {
+    let _reservation = super::recipient::reserve_submission()?;
     let mut inputs = Vec::new();
     for modifier in &chord.modifiers {
       inputs.push(virtual_key_input(*modifier, KEYBD_EVENT_FLAGS(0)));
@@ -995,18 +1103,41 @@ mod native {
     for modifier in chord.modifiers.iter().rev() {
       inputs.push(virtual_key_input(*modifier, KEYEVENTF_KEYUP));
     }
-    send_inputs(&inputs)
+    let sent = insert_inputs(&inputs, false)? as usize;
+    if sent == inputs.len() {
+      return Ok(());
+    }
+    // Downs precede reverse-order ups. Release only keys whose down was inserted without its up.
+    let codes: Vec<_> = chord.modifiers.iter().copied().chain([chord.key]).collect();
+    let cleanup: Vec<_> = codes
+      .iter()
+      .enumerate()
+      .rev()
+      .filter(|(index, _)| sent > *index && sent <= 2 * codes.len() - 1 - *index)
+      .map(|(_, key)| virtual_key_input(*key, KEYEVENTF_KEYUP))
+      .collect();
+    let released = if cleanup.is_empty() {
+      true
+    } else {
+      insert_inputs(&cleanup, true).is_ok_and(|count| count as usize == cleanup.len())
+    };
+    Err(backend(format!("SendInput injected {sent} of {} chord events; owned releases accepted={released}", inputs.len())))
   }
 
   pub(super) fn key_transition(key: u16, down: bool) -> DriverResult<()> {
-    send_inputs(&[virtual_key_input(
+    let inputs = [virtual_key_input(
       key,
       if down {
         KEYBD_EVENT_FLAGS(0)
       } else {
         KEYEVENTF_KEYUP
       },
-    )])
+    )];
+    let sent = insert_inputs(&inputs, !down)?;
+    if sent != 1 {
+      return Err(backend(format!("SendInput injected {sent} of 1 key events")));
+    }
+    Ok(())
   }
 
   /// The process of the foreground window, the one keyboard input reaches.
