@@ -14,13 +14,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        application: [edge]
+        application: [edge, vscode, notepadnext, powershell-ise]
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 5b91057367e3a499629c909242f390c89f167fb5
+          ref: 591ef686cc1a738faf4f96e8fbec4ea83f5143d4
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -83,7 +83,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '5b91057367e3a499629c909242f390c89f167fb5') { throw "Unexpected source $source" }
+          if ($source -ne '591ef686cc1a738faf4f96e8fbec4ea83f5143d4') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -215,9 +215,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $testLog = "$env:RUNNER_TEMP/auv-app-preflight/window-selection-tests.log"
-          cargo test --locked -p auv-base-evals --lib workflow::applications::tests 2>&1 | Tee-Object -FilePath $testLog
+          cargo test --locked -p auv-base-evals --lib workflow::applications:: 2>&1 | Tee-Object -FilePath $testLog
           if ($LASTEXITCODE -ne 0) { throw 'Application discovery regression failed' }
-          if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 3 passed; 0 failed;') { throw 'Missing application discovery regressions' }
+          if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 5 passed; 0 failed;') { throw 'Missing application discovery/reacquisition regressions' }
 
       - name: Focus edit and save owned real application documents
         shell: pwsh
@@ -293,7 +293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editor-${{ matrix.application }}-5b910573
+          name: windows-app-editor-${{ matrix.application }}-591ef686
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
