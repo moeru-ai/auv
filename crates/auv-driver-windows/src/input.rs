@@ -153,32 +153,70 @@ pub(crate) fn deliver_window_click(
     if count > 1 && Instant::now().checked_add(interval).is_none() {
       return Err(invalid_input("window click interval exceeds the native clock range"));
     }
-    // Every mouse path takes the desktop coordinator before native submission.
-    // Keep that order while the recipient watcher owns the submission gate;
-    // deliver_click's same-thread reservation then nests without reacquiring it.
-    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
-    let guard = recipient::Guard::open(window)?;
-    guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
-    // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
-    // ownership need a coordinate producer/consumer contract; see the mouse recipient note.
-    let mut action = deliver_click(point, button, click, modifiers).map_err(|cause| guard.stamp(cause))?;
-    action.attempts.insert(
-      0,
-      InputAttempt {
-        path: InputDeliveryPath::ForegroundSystemEvents,
-        succeeded: true,
-        message: Some("window recipient identity and foreground admitted".into()),
-      },
-    );
-    Ok(action)
+    with_recipient(window, || deliver_click(point, button, click, modifiers))
   })();
-  result.map_err(|cause| match cause {
+  result.map_err(not_delivered)
+}
+
+/// Retains the scroll recipient through native delivery and the requested settle.
+pub(crate) fn deliver_window_scroll(
+  window: &auv_driver_common::window::Window,
+  point: Point,
+  scroll: Scroll,
+  settle: Duration,
+) -> DriverResult<InputActionResult> {
+  let result = (|| {
+    wheel_units(scroll)?;
+    if !point.x.is_finite() || !point.y.is_finite() {
+      return Err(invalid_input("window scroll point must be finite"));
+    }
+    if Instant::now().checked_add(settle).is_none() {
+      return Err(invalid_input("window scroll settle exceeds the native clock range"));
+    }
+    with_recipient(window, || {
+      let action = scroll_at(point, scroll, Duration::ZERO)?;
+      recipient::wait(settle)?;
+      Ok(action)
+    })
+  })();
+  result.map_err(not_delivered)
+}
+
+/// Owns desktop/native lock ordering, recipient lifetime, and prefix stamping
+/// for foreground window mouse actions. Validation happens before this boundary.
+fn with_recipient(
+  window: &auv_driver_common::window::Window,
+  deliver: impl FnOnce() -> DriverResult<InputActionResult>,
+) -> DriverResult<InputActionResult> {
+  // Every mouse path takes the desktop coordinator before native submission.
+  // Keep that order while the recipient watcher owns the submission gate;
+  // nested click/scroll reservations share the same-thread desktop admission.
+  let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
+  let guard = recipient::Guard::open(window)?;
+  guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
+  // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
+  // ownership need a coordinate producer/consumer contract; see the mouse recipient note.
+  let mut action = deliver().map_err(|cause| guard.stamp(cause))?;
+  action.attempts.insert(
+    0,
+    InputAttempt {
+      path: InputDeliveryPath::ForegroundSystemEvents,
+      succeeded: true,
+      message: Some("window recipient identity and foreground admitted".into()),
+    },
+  );
+  Ok(action)
+}
+
+/// Refusal before submission must not overwrite an existing partial receipt.
+fn not_delivered(cause: DriverError) -> DriverError {
+  match cause {
     cause @ DriverError::InputAction { .. } => cause,
     cause => DriverError::InputAction {
       cause: Box::new(cause),
       progress: auv_driver_common::InputActionProgress::NotDelivered,
     },
-  })
+  }
 }
 
 fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {

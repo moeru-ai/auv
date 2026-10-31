@@ -43,6 +43,12 @@ pub fn run(output: &Path) -> Result<bool> {
     "scroll_aba",
     "scroll_minimize",
     "scroll_close",
+    "scroll_invalid_point",
+    "scroll_invalid_delta",
+    "scroll_invalid_settle",
+    "scroll_pre_cancel",
+    "scroll_owner_mismatch",
+    "scroll_cancel_after_effect",
   ];
   let mut records = Records::create(&output.join("window-mouse.jsonl"), &run_id(), "window-mouse")?;
   let mut all_passed = true;
@@ -66,7 +72,10 @@ pub fn run(output: &Path) -> Result<bool> {
     b.request(json!({"cmd": "keep_foreground"}))?;
     let (window, _) = discover_by_hwnd(&session, a.hwnd())?;
     let (other, _) = discover_by_hwnd(&session, b.hwnd())?;
-    let no_input = matches!(case, "invalid_count" | "invalid_point" | "invalid_interval" | "pre_cancel" | "owner_mismatch");
+    let no_input = matches!(
+      kind,
+      "invalid_count" | "invalid_point" | "invalid_interval" | "invalid_delta" | "invalid_settle" | "pre_cancel" | "owner_mismatch"
+    );
     session.window().activate(if no_input { &other } else { &window })?;
     let scroll_point = point_in_window(&window, a.layout.edit_center);
     let point = if kind == "invalid_point" {
@@ -88,9 +97,12 @@ pub fn run(output: &Path) -> Result<bool> {
         },
       )?;
       records.write("setup", json!({"case": case, "action": setup}))?;
+      if no_input {
+        session.window().activate(&other)?;
+      }
     }
     let mut requested = window.clone();
-    if case == "owner_mismatch" {
+    if kind == "owner_mismatch" {
       requested.process_id = Some(0);
     }
     if matches!(kind, "stay" | "aba" | "minimize" | "close") {
@@ -106,7 +118,7 @@ pub fn run(output: &Path) -> Result<bool> {
     let before = watch.snapshot();
     ensure!(before.physical_keys == 0 && before.physical_mouse == 0, "physical input: case refused");
     let cancellation = Arc::new(InputCancellation::default());
-    if case == "pre_cancel" {
+    if kind == "pre_cancel" {
       cancellation.cancel();
     }
     let deliver = || {
@@ -115,10 +127,21 @@ pub fn run(output: &Path) -> Result<bool> {
           return session.window().scroll(
             &requested,
             point,
-            Scroll::new(0.0, 100.0),
+            Scroll::new(
+              0.0,
+              if kind == "invalid_delta" {
+                f64::NAN
+              } else {
+                100.0
+              },
+            ),
             ScrollOptions {
               policy: InputPolicy::ForegroundPreferred,
-              settle: Duration::from_secs(1),
+              settle: if kind == "invalid_settle" {
+                Duration::MAX
+              } else {
+                Duration::from_secs(1)
+              },
               ..Default::default()
             },
           );
@@ -141,7 +164,8 @@ pub fn run(output: &Path) -> Result<bool> {
         )
       })
     };
-    let (operation, cancellation_receipt) = if case == "cancel_after_click" {
+    let cancel_after_effect = matches!(kind, "cancel_after_click" | "cancel_after_effect");
+    let (operation, cancellation_receipt) = if cancel_after_effect {
       // Cancel only after the application acknowledges delivery, as in the
       // keyboard prefix case. No delay is used to guess whether input arrived.
       std::thread::scope(|scope| -> Result<_> {
@@ -152,11 +176,20 @@ pub fn run(output: &Path) -> Result<bool> {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
               let state = receiver.request(json!({"cmd": "state"}))?;
-              let clicks = state["clicks"].as_u64().context("cancel observer omitted click count")?;
-              if clicks > 0 {
-                return Ok(json!({"after_clicks": clicks, "requested": true}));
+              let count = if scrolling {
+                state["raw"]["edit_wheel"].as_u64()
+              } else {
+                state["clicks"].as_u64()
               }
-              ensure!(Instant::now() < deadline, "application never acknowledged the first click");
+              .context("cancel observer omitted delivered count")?;
+              if count > 0 {
+                return Ok(if scrolling {
+                  json!({"after_wheels": count, "requested": true})
+                } else {
+                  json!({"after_clicks": count, "requested": true})
+                });
+              }
+              ensure!(Instant::now() < deadline, "application never acknowledged the first mouse effect");
               std::thread::sleep(Duration::from_millis(10));
             }
           })();
@@ -202,7 +235,7 @@ pub fn run(output: &Path) -> Result<bool> {
       } else {
         1
       };
-      if total >= expected && (no_input || matches!(kind, "success" | "cancel_after_click") || !receipt["receipt"].is_null()) {
+      if total >= expected && (no_input || kind == "success" || cancel_after_effect || !receipt["receipt"].is_null()) {
         break (a_state, b_state, receipt);
       }
       ensure!(Instant::now() < deadline, "application did not acknowledge the submitted click prefix");
@@ -227,10 +260,14 @@ pub fn run(output: &Path) -> Result<bool> {
     let passed = if no_input {
       operation.is_err()
         && matches!(progress, Some(auv_driver_common::InputActionProgress::NotDelivered))
-        && (case != "owner_mismatch" || target_lost)
-        && (case != "pre_cancel" || cancelled)
+        && (kind != "owner_mismatch" || target_lost)
+        && (kind != "pre_cancel" || cancelled)
         && after_a["clicks"] == 0
         && after_b["clicks"] == 0
+        && after_a["raw"]["edit_wheel"] == before_a["raw"]["edit_wheel"]
+        && after_a["first_line"] == before_a["first_line"]
+        && after_b["raw"]["edit_wheel"] == before_b["raw"]["edit_wheel"]
+        && after_b["first_line"] == before_b["first_line"]
         && after.foreground == before.foreground
         && after.cursor == before.cursor
         && after.injected_mouse == before.injected_mouse
@@ -242,15 +279,22 @@ pub fn run(output: &Path) -> Result<bool> {
         } else {
           after_a["clicks"] == 3 && after_b["clicks"] == 0
         }
-    } else if case == "cancel_after_click" {
+    } else if cancel_after_effect {
       cancelled
         && !target_lost
         && matches!(progress, Some(auv_driver_common::InputActionProgress::Submitted { action })
           if action.mouse_disturbance == auv_driver_common::DisturbanceLevel::Temporary)
-        && cancellation_receipt["after_clicks"] == 1
+        && if scrolling {
+          cancellation_receipt["after_wheels"] == 1
+        } else {
+          cancellation_receipt["after_clicks"] == 1
+        }
         && cancellation_receipt["requested"] == true
-        && after_a["clicks"] == 1
-        && after_b["clicks"] == 0
+        && if scrolling {
+          scrolled
+        } else {
+          after_a["clicks"] == 1 && after_b["clicks"] == 0
+        }
     } else {
       operation.is_err()
         && target_lost

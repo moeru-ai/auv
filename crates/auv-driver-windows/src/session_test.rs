@@ -172,6 +172,35 @@ fn pre_cancelled_foreground_window_click_reports_not_delivered() {
     if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
 }
 
+// ROOT CAUSE:
+//
+// If a foreground scroll was already cancelled, desktop admission returned a
+// plain error before any input. The caller could not distinguish this known
+// zero-delivery refusal from a later failure.
+// The fix retains NotDelivered at the public window-scroll boundary.
+#[test]
+fn pre_cancelled_foreground_window_scroll_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress};
+
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().scroll(
+      &sample_window(),
+      WindowPoint::new(1.0, 1.0),
+      Scroll::new(0.0, 100.0),
+      ScrollOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::NotDelivered }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
+}
+
 #[test]
 fn window_scroll_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();

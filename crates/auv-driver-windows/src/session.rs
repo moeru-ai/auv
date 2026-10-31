@@ -319,8 +319,8 @@ impl WindowApi<'_> {
   /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
   /// falls back to `SendInput`.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
-    // TODO(windows-mouse-recipient): scroll effects need an app-owned interruption
-    // oracle before sharing click admission; see the mouse recipient note.
+    // TODO(windows-scroll-fallback-progress): posted-wheel failure needs typed
+    // partial receipts before changing its foreground fallback; see the mouse lifecycle note.
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
       match candidate {
@@ -380,6 +380,12 @@ impl WindowInput for WindowApi<'_> {
   }
 
   fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    // TODO(windows-scroll-motion-recipient): sampled/streamed scroll still
+    // calls this capability per sample; retain a parent lease in that slice.
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      let point = self.to_screen_point(window, point)?.point();
+      return crate::input::deliver_window_scroll(window, point, scroll, options.settle);
+    }
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
