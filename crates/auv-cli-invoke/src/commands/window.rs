@@ -411,7 +411,7 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
       show_options(120, 240),
     )?;
 
-    let mut output = window_text_click_output_base(&result)?;
+    let mut output = record_window_text_click_output(&result)?;
     output.report.as_mut().expect("window text click output always has a report").fields.push(overlay.report_field());
     Ok(output)
   }
@@ -441,11 +441,11 @@ pub fn recorded_window_text_click_output(result: &WindowTextClick, ocr_source: O
   if let Some(capture) = ocr_source {
     emit_capture("auv.driver.window_ocr_source", capture);
   }
-  super::input::emit_input_action_result(&result.action);
-  window_text_click_output_base(result)
+  record_window_text_click_output(result)
 }
 
-fn window_text_click_output_base(result: &WindowTextClick) -> InvokeCommandResult {
+fn record_window_text_click_output(result: &WindowTextClick) -> InvokeCommandResult {
+  super::input::emit_input_action_result(&result.action);
   let mut report = crate::commands::ocr::match_report(&result.matches.matches, Some(result.selected_index));
   report.fields.extend(window_report_fields(&result.window));
   report.fields.extend(super::input::input_action_report_fields(&result.action));
