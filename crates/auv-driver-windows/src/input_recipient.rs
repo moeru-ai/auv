@@ -700,6 +700,10 @@ pub(super) fn stamp_current(cause: auv_driver_common::DriverError) -> auv_driver
   cause
 }
 #[cfg(not(target_os = "windows"))]
+pub(super) fn check() -> auv_driver_common::DriverResult<()> {
+  Err(auv_driver_common::DriverError::unsupported("Windows window input recipient"))
+}
+#[cfg(not(target_os = "windows"))]
 pub(super) fn wait(duration: std::time::Duration) -> auv_driver_common::DriverResult<()> {
   std::thread::sleep(duration);
   Ok(())

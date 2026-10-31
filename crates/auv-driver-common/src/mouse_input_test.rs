@@ -5,11 +5,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 struct Receiver {
   events: Mutex<Vec<String>>,
   fail_up: AtomicBool,
+  move_error: Mutex<Option<DriverError>>,
   up_gate: Option<(std::sync::mpsc::Sender<()>, Mutex<std::sync::mpsc::Receiver<()>>)>,
 }
 impl MouseBackend for Receiver {
   fn move_to(&self, _: Point, held: Option<MouseButton>) -> DriverResult<InputActionResult> {
     self.events.lock().unwrap().push(if held.is_some() { "drag" } else { "move" }.into());
+    if held.is_some()
+      && let Some(error) = self.move_error.lock().unwrap().take()
+    {
+      return Err(error);
+    }
     Ok(InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents))
   }
   fn button(&self, _: Point, _: MouseButton, down: bool) -> DriverResult<InputActionResult> {
@@ -156,6 +162,131 @@ fn cancelled_drag_uses_the_same_release_primitive() {
   assert!(result.is_err());
   assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "drag", "up"]);
   assert_eq!(coordinator.state.lock().unwrap().holder, None);
+}
+
+// ROOT CAUSE:
+//
+// If a target-lost drag also failed release, combine flattened both errors to
+// Backend and discarded the submitted prefix. Keep the original typed cause
+// and mark delivery uncertain until an explicit release confirms recovery.
+#[test]
+fn drag_release_failure_preserves_target_lost_and_uncertain_prefix() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let action = InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents);
+  let receiver = Arc::new(Receiver {
+    fail_up: AtomicBool::new(true),
+    move_error: Mutex::new(Some(DriverError::InputAction {
+      cause: Box::new(DriverError::TargetLost {
+        target: "test recipient".into(),
+        message: "foreground changed".into(),
+      }),
+      progress: crate::InputActionProgress::Submitted { action },
+    })),
+    ..Default::default()
+  });
+  let error = coordinator
+    .motion(crate::MoveMouseRequest::direct(Point::new(1., 2.)), Some(MouseButton::Left), receiver.clone(), |_| true)
+    .unwrap_err();
+  let refused = coordinator.move_to(0, Point::new(3., 4.), receiver.clone()).is_err();
+  receiver.fail_up.store(false, Ordering::SeqCst);
+  coordinator.up(0).unwrap();
+  assert!(refused, "unknown release must retain the desktop reservation");
+  assert!(matches!(error, DriverError::InputAction { cause, progress: crate::InputActionProgress::DeliveryUncertain { action } }
+    if matches!(*cause, DriverError::TargetLost { .. }) && action.attempts.iter().any(|attempt| !attempt.succeeded && attempt.message.as_deref().is_some_and(|message| message.contains("release")))));
+  assert_eq!(coordinator.state.lock().unwrap().holder, None);
+}
+
+struct MotionRecipient {
+  receiver: Receiver,
+  coordinator: std::sync::Weak<MouseCoordinator>,
+  lost: AtomicBool,
+  active: AtomicBool,
+}
+impl MouseBackend for MotionRecipient {
+  fn move_to(&self, point: Point, held: Option<MouseButton>) -> DriverResult<InputActionResult> {
+    assert!(self.active.load(Ordering::SeqCst), "native motion escaped its recipient");
+    self.receiver.move_to(point, held)
+  }
+  fn button(&self, point: Point, button: MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    assert!(self.active.load(Ordering::SeqCst), "release escaped its recipient");
+    self.receiver.button(point, button, down)
+  }
+  fn with_motion(
+    &self,
+    motion: Box<dyn FnOnce() -> DriverResult<(Point, InputActionResult)> + '_>,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    let coordinator = self.coordinator.upgrade().unwrap();
+    assert!(coordinator.state.try_lock().expect("native admission must not hold state lock").active);
+    assert!(!self.active.swap(true, Ordering::SeqCst));
+    self.receiver.events.lock().unwrap().push("enter".into());
+    let result = motion();
+    self.receiver.events.lock().unwrap().push("exit".into());
+    self.active.store(false, Ordering::SeqCst);
+    result
+  }
+  fn check_motion(&self) -> DriverResult<()> {
+    let coordinator = self.coordinator.upgrade().unwrap();
+    assert!(coordinator.state.try_lock().expect("native check must not hold state lock").active);
+    if self.lost.load(Ordering::SeqCst) {
+      return Err(DriverError::InputAction {
+        cause: Box::new(DriverError::TargetLost {
+          target: "test motion recipient".into(),
+          message: "foreground history changed".into(),
+        }),
+        progress: crate::InputActionProgress::Submitted {
+          action: InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents),
+        },
+      });
+    }
+    Ok(())
+  }
+}
+
+#[test]
+fn complete_drag_keeps_native_recipient_through_release_after_sparse_sample_loss() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let recipient = Arc::new(MotionRecipient {
+    receiver: Receiver::default(),
+    coordinator: Arc::downgrade(&coordinator),
+    lost: AtomicBool::new(false),
+    active: AtomicBool::new(false),
+  });
+  let mut movement = crate::MoveMouseRequest::direct(Point::new(1., 2.));
+  movement.curve.segments.push(crate::MouseCubicBezierSegment {
+    control_1: Point::new(1., 0.),
+    control_2: Point::new(2., 0.),
+    end: Point::new(3., 0.),
+  });
+  movement.options.duration = Duration::from_secs(1);
+  movement.options.sample_rate_hz = 1;
+  movement.options.curve_tolerance = 0.5;
+  let result = coordinator.motion(movement, Some(MouseButton::Left), recipient.clone(), |event| {
+    if matches!(event, MotionEvent::Progress { .. }) {
+      recipient.lost.store(true, Ordering::SeqCst);
+    }
+    true
+  });
+  assert!(matches!(result, Err(DriverError::InputAction { cause, progress: crate::InputActionProgress::Submitted { .. } })
+    if matches!(*cause, DriverError::TargetLost { .. })));
+  assert_eq!(*recipient.receiver.events.lock().unwrap(), ["enter", "move", "down", "drag", "up", "exit"]);
+  assert_eq!(coordinator.state.lock().unwrap().holder, None);
+}
+
+#[test]
+fn invalid_complete_drag_never_opens_native_recipient() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let recipient = Arc::new(MotionRecipient {
+    receiver: Receiver::default(),
+    coordinator: Arc::downgrade(&coordinator),
+    lost: AtomicBool::new(false),
+    active: AtomicBool::new(false),
+  });
+  assert!(
+    coordinator
+      .motion(crate::MoveMouseRequest::direct(Point::new(f64::NAN, 2.)), Some(MouseButton::Left), recipient.clone(), |_| true)
+      .is_err()
+  );
+  assert!(recipient.receiver.events.lock().unwrap().is_empty());
 }
 
 #[test]

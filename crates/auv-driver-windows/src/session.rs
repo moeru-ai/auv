@@ -439,17 +439,13 @@ impl WindowInput for WindowApi<'_> {
     button: auv_driver_common::MouseButton,
     policy: InputPolicy,
   ) -> DriverResult<(Point, InputActionResult)> {
-    // TODO(windows-mouse-recipient): held motion needs app-owned interruption
-    // fixtures before sharing click admission; see the mouse recipient note.
     if !matches!(policy, InputPolicy::ForegroundPreferred) {
+      // TODO(windows-background-drag): posted delivery and fallback progress
+      // await a separate receiver contract; see the complete-drag note.
       movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
       return self.session.input().drag_mouse(movement, button);
     }
-    let activation_attempt = foreground_window_attempt(window, "pointer drag");
-    movement.target = Some(auv_driver_common::InputTarget::Foreground);
-    let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
-    result.attempts.insert(0, activation_attempt);
-    Ok((point, result))
+    crate::input::deliver_window_drag(window, movement, button)
   }
 }
 
@@ -522,7 +518,7 @@ impl InputApi<'_> {
 
   fn pointer_backend(&self, target: Option<&InputTarget>) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
     match target {
-      None | Some(InputTarget::Foreground) => Ok(std::sync::Arc::new(crate::input::MouseBackend)),
+      None | Some(InputTarget::Foreground) => Ok(std::sync::Arc::new(crate::input::MouseBackend::default())),
       Some(InputTarget::Window(window)) => crate::background_input::mouse_backend(window.clone()),
       Some(InputTarget::Application { .. }) => Err(DriverError::unsupported("mouse input requires a window or foreground target")),
     }
@@ -588,8 +584,11 @@ impl InputApi<'_> {
   }
 
   pub fn move_mouse_to(&self, mouse: u64, point: Point) -> DriverResult<InputActionResult> {
-    let result =
-      auv_driver_common::mouse_input::mouse_coordinator().move_to(mouse, point, std::sync::Arc::new(crate::input::MouseBackend))?;
+    let result = auv_driver_common::mouse_input::mouse_coordinator().move_to(
+      mouse,
+      point,
+      std::sync::Arc::new(crate::input::MouseBackend::default()),
+    )?;
     // The overlay draws one cursor, so only the shared default mouse reports (see `move_mouse`).
     #[cfg(feature = "overlay")]
     if mouse == 0 {

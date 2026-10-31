@@ -23,6 +23,22 @@ pub trait MouseBackend: Send + Sync + 'static {
   }
   fn move_to(&self, point: Point, held: Option<MouseButton>) -> DriverResult<InputActionResult>;
   fn button(&self, point: Point, button: MouseButton, down: bool) -> DriverResult<InputActionResult>;
+
+  /// Retains native recipient state for a complete motion, including owned
+  /// cleanup. The coordinator has already validated and admitted the request.
+  /// The callback stays on the admitting thread; native guards need not be Send.
+  fn with_motion(
+    &self,
+    motion: Box<dyn FnOnce() -> DriverResult<(Point, InputActionResult)> + '_>,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    motion()
+  }
+
+  /// Revalidates the native recipient between scheduled samples. This is called
+  /// without the coordinator state lock, including during sparse sample waits.
+  fn check_motion(&self) -> DriverResult<()> {
+    Ok(())
+  }
 }
 
 struct Held {
@@ -280,6 +296,9 @@ impl MouseCoordinator {
     let id = request.mouse;
     validate_mouse(id)?;
     let _admission = self.enter(id, false)?;
+    if button.is_some() && self.state.lock().unwrap().mice[&id].held.is_some() {
+      return Err(invalid("this mouse already holds a button"));
+    }
     if let Some(target) = &request.target {
       let state = self.state.lock().unwrap();
       if let Some(held) = &state.mice[&id].held
@@ -295,49 +314,53 @@ impl MouseCoordinator {
     let samples = request.samples(start)?;
     let started = Instant::now();
     started.checked_add(request.options.duration).ok_or_else(|| invalid("mouse movement exceeds the platform clock range"))?;
-    if !notify(MotionEvent::Started {
-      point: start,
-      samples: samples.len(),
-      duration: request.options.duration,
-    }) {
-      return combine(Err(invalid("mouse movement cancelled before delivery")), self.release_admitted(id)).map(|action| (start, action));
-    }
-    if let Some(button) = button {
-      self.down_admitted(id, start, button, request.options.duration, backend.clone())?;
-    }
-    let result = (|| {
-      let started = Instant::now();
-      let mut result = InputActionResult::single_success(crate::InputDeliveryPath::Noop);
-      let mut next_index = 0;
-      while next_index < samples.len() {
-        let index = samples.latest_due(next_index, started.elapsed());
-        let sample = samples.at(index);
-        let mut deadline = started.checked_add(sample.elapsed).ok_or_else(|| invalid("mouse sample exceeds the platform clock range"))?;
-        if button.is_none() {
-          // A cross-call hold must expire even between widely spaced samples.
-          if let Some(held) = &self.state.lock().unwrap().mice[&id].held {
-            deadline = deadline.min(held.deadline);
-          }
-        }
-        self.wait_until(deadline, "mouse movement cancelled")?;
-        let expired = self.state.lock().unwrap().mice[&id].held.as_ref().is_some_and(|held| Instant::now() >= held.deadline);
-        if expired && button.is_none() {
-          return Err(invalid("held mouse deadline expired"));
-        }
-        result = self.move_admitted(id, sample.point, backend.clone())?;
-        if !notify(MotionEvent::Progress { index, sample }) {
-          return Err(invalid("mouse movement cancelled"));
-        }
-        next_index = index + 1;
+    backend.with_motion(Box::new(|| {
+      if !notify(MotionEvent::Started {
+        point: start,
+        samples: samples.len(),
+        duration: request.options.duration,
+      }) {
+        return combine(Err(invalid("mouse movement cancelled before delivery")), self.release_admitted(id)).map(|action| (start, action));
       }
-      Ok(result)
-    })();
-    let result = if button.is_some() || result.is_err() {
-      combine(result, self.release_admitted(id))
-    } else {
-      result
-    };
-    Ok((samples.at(samples.len() - 1).point, result?))
+      if let Some(button) = button {
+        self.down_admitted(id, start, button, request.options.duration, backend.clone())?;
+      }
+      let result = (|| {
+        let started = Instant::now();
+        let mut result = InputActionResult::single_success(crate::InputDeliveryPath::Noop);
+        let mut next_index = 0;
+        while next_index < samples.len() {
+          let index = samples.latest_due(next_index, started.elapsed());
+          let sample = samples.at(index);
+          let mut deadline = started.checked_add(sample.elapsed).ok_or_else(|| invalid("mouse sample exceeds the platform clock range"))?;
+          if button.is_none() {
+            // A cross-call hold must expire even between widely spaced samples.
+            if let Some(held) = &self.state.lock().unwrap().mice[&id].held {
+              deadline = deadline.min(held.deadline);
+            }
+          }
+          self
+            .wait_until(deadline, "mouse movement cancelled", Some(backend.as_ref()))
+            .map_err(|error| backend.check_motion().err().unwrap_or(error))?;
+          let expired = self.state.lock().unwrap().mice[&id].held.as_ref().is_some_and(|held| Instant::now() >= held.deadline);
+          if expired && button.is_none() {
+            return Err(invalid("held mouse deadline expired"));
+          }
+          result = self.move_admitted(id, sample.point, backend.clone())?;
+          if !notify(MotionEvent::Progress { index, sample }) {
+            return Err(invalid("mouse movement cancelled"));
+          }
+          next_index = index + 1;
+        }
+        Ok(result)
+      })();
+      let result = if button.is_some() || result.is_err() {
+        combine(result, self.release_admitted(id))
+      } else {
+        result
+      };
+      Ok((samples.at(samples.len() - 1).point, result?))
+    }))
   }
 
   /// A bounded hold is the primitive press/release lifecycle under one admission.
@@ -357,7 +380,7 @@ impl MouseCoordinator {
     let _admission = self.enter(id, false)?;
     self.down_admitted(id, point, button, duration, backend)?;
     let deadline = self.state.lock().unwrap().mice[&id].held.as_ref().unwrap().deadline;
-    let wait = self.wait_until(deadline, "mouse hold cancelled");
+    let wait = self.wait_until(deadline, "mouse hold cancelled", None);
     let release = self.release_admitted(id);
     match wait {
       Ok(()) => release,
@@ -384,9 +407,14 @@ impl MouseCoordinator {
 
   /// Active gestures keep admission while waiting, but must let cancellation
   /// and shutdown reach their release path without waiting for the full delay.
-  fn wait_until(&self, deadline: Instant, cancelled: &str) -> DriverResult<()> {
+  fn wait_until(&self, deadline: Instant, cancelled: &str, backend: Option<&dyn MouseBackend>) -> DriverResult<()> {
     let mut state = self.state.lock().unwrap();
     loop {
+      if let Some(backend) = backend {
+        drop(state);
+        backend.check_motion()?;
+        state = self.state.lock().unwrap();
+      }
       if input_cancelled() || state.stopping {
         return Err(invalid(cancelled));
       }
@@ -394,6 +422,13 @@ impl MouseCoordinator {
       if remaining.is_zero() {
         return Ok(());
       }
+      // Native foreground/destroy events do not own this condition variable.
+      // Bound only motion waits so a sparse schedule still notices target loss.
+      let remaining = if backend.is_some() {
+        remaining.min(Duration::from_millis(25))
+      } else {
+        remaining
+      };
       state = self.changed.wait_timeout(state, remaining).unwrap().0;
     }
   }
@@ -470,10 +505,35 @@ fn validate_point(point: Point) -> DriverResult<()> {
 fn combine(action: DriverResult<InputActionResult>, cleanup: DriverResult<InputActionResult>) -> DriverResult<InputActionResult> {
   match (action, cleanup) {
     (result, Ok(_)) => result,
-    (Ok(_), Err(error)) => Err(error),
+    (Ok(action), Err(error)) => {
+      let cause = match error {
+        DriverError::InputAction { cause, .. } => *cause,
+        error => error,
+      };
+      let detail = cause.to_string();
+      Err(release_failure(cause, action, detail))
+    }
+    (
+      Err(DriverError::InputAction {
+        cause,
+        progress: crate::InputActionProgress::Submitted { action } | crate::InputActionProgress::DeliveryUncertain { action },
+      }),
+      Err(cleanup),
+    ) => Err(release_failure(*cause, action, cleanup.to_string())),
+    // NOTICE: errors without a receipt remain unknown. Cross-call adapters
+    // need their own typed native evidence before this branch can claim more.
     (Err(action), Err(cleanup)) => Err(DriverError::Backend {
       message: format!("{action}; release also failed: {cleanup}"),
     }),
+  }
+}
+
+fn release_failure(cause: DriverError, mut action: InputActionResult, detail: String) -> DriverError {
+  action.verified = false;
+  action.attempts.push(crate::InputAttempt::failure(action.selected_path, format!("owned mouse release failed: {detail}")));
+  DriverError::InputAction {
+    cause: Box::new(cause),
+    progress: crate::InputActionProgress::DeliveryUncertain { action },
   }
 }
 

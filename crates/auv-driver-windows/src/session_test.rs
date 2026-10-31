@@ -233,6 +233,26 @@ fn pre_cancelled_window_scroll_motion_reports_not_delivered() {
 }
 
 #[test]
+fn pre_cancelled_foreground_window_drag_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress, MouseButton, MoveMouseRequest, Point};
+
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().drag(
+      &sample_window(),
+      MoveMouseRequest::direct(Point::new(1.0, 1.0)),
+      MouseButton::Left,
+      InputPolicy::ForegroundPreferred,
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::NotDelivered }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
+}
+
+#[test]
 fn pre_cancelled_window_scroll_stream_reports_not_delivered() {
   use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
   use auv_driver_common::{DriverError, InputActionProgress, ScrollStreamControl, ScrollStreamOptions};

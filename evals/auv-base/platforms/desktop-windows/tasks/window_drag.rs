@@ -37,9 +37,20 @@ pub fn run(output: &Path) -> Result<bool> {
     "minimize",
     "close",
     "cancel_after_move",
+    "pre_cancel",
+    "invalid_start",
+    "invalid_curve",
+    "invalid_timing",
+    "invalid_duration",
+    "invalid_mouse",
+    "owner_mismatch",
   ];
   let mut all_passed = true;
   for case in cases {
+    let no_input = matches!(
+      case,
+      "pre_cancel" | "invalid_start" | "invalid_curve" | "invalid_timing" | "invalid_duration" | "invalid_mouse" | "owner_mismatch"
+    );
     // SAFETY: read-only high-bit query. Never start with a user's button held.
     ensure!(watch.modifiers_released() && unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) >= 0 }, "input already held");
     let spec = |index, title: &str, color: &str| ReceiverSpec {
@@ -73,6 +84,21 @@ pub fn run(output: &Path) -> Result<bool> {
     movement.options.duration = Duration::from_secs(1);
     movement.options.sample_rate_hz = 4;
     movement.options.curve_tolerance = 0.5;
+    match case {
+      "invalid_start" => movement.start = auv_driver_common::MouseStart::Screen(Point::new(f64::NAN, start.y)),
+      "invalid_curve" => movement.curve.segments[0].end.x = f64::NAN,
+      "invalid_timing" => movement.options.sample_rate_hz = 0,
+      "invalid_duration" => movement.options.duration = Duration::MAX,
+      "invalid_mouse" => movement.mouse = u64::MAX,
+      _ => {}
+    }
+    let mut requested = window.clone();
+    if case == "owner_mismatch" {
+      requested.process_id = Some(0);
+    }
+    if no_input {
+      session.window().activate(&other)?;
+    }
     if matches!(case, "stay" | "aba" | "minimize" | "close") {
       ensure!(
         a.request(json!({"cmd": "arm_mouse_fault", "kind": case, "target": b.hwnd().to_string(), "trigger": "drag"}))?["armed"] == true,
@@ -84,9 +110,12 @@ pub fn run(output: &Path) -> Result<bool> {
     let before = watch.snapshot();
     ensure!(before.physical_keys == 0 && before.physical_mouse == 0, "physical input: case refused");
     let cancellation = Arc::new(InputCancellation::default());
+    if case == "pre_cancel" {
+      cancellation.cancel();
+    }
     let deliver = || {
       with_input_cancellation(cancellation.clone(), || {
-        session.window().drag(&window, movement, MouseButton::Left, InputPolicy::ForegroundPreferred)
+        session.window().drag(&requested, movement, MouseButton::Left, InputPolicy::ForegroundPreferred)
       })
     };
     let started = Instant::now();
@@ -154,7 +183,19 @@ pub fn run(output: &Path) -> Result<bool> {
     let no_wrong_move = after_b["raw"]["frame_down"] == before_b["raw"]["frame_down"]
       && after_b["raw"]["frame_move"] == before_b["raw"]["frame_move"]
       && after_b["pad"].is_null();
-    let passed = if case == "success" {
+    let passed = if no_input {
+      operation.is_err()
+        && matches!(progress, Some(InputActionProgress::NotDelivered))
+        && (case != "owner_mismatch" || target_lost)
+        && (case != "pre_cancel" || cancelled)
+        && after_a["pad"].is_null()
+        && after_a["raw"] == before_a["raw"]
+        && after_b["raw"] == before_b["raw"]
+        && after.cursor == before.cursor
+        && after.foreground == before.foreground
+        && after.injected_mouse == before.injected_mouse
+        && after.injected_keys == before.injected_keys
+    } else if case == "success" {
       operation.is_ok()
         && after_a["pad"]["down"] == json!([start.x as i32, start.y as i32])
         && after_a["pad"]["up"] == json!([end.x as i32, end.y as i32])

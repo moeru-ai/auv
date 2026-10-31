@@ -153,6 +153,7 @@ pub(crate) fn deliver_window_click(
     if count > 1 && Instant::now().checked_add(interval).is_none() {
       return Err(invalid_input("window click interval exceeds the native clock range"));
     }
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     with_recipient(window, || deliver_click(point, button, click, modifiers)).map(add_admission_attempt)
   })();
   result.map_err(not_delivered)
@@ -181,19 +182,16 @@ pub(crate) fn deliver_window_scroll(
     if recipient::reuse_scroll_recipient(window)? {
       deliver().map_err(recipient::stamp_current)
     } else {
+      let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
       with_recipient(window, deliver).map(add_admission_attempt)
     }
   })();
   result.map_err(not_delivered)
 }
 
-/// Owns desktop/native lock ordering, recipient lifetime, and prefix stamping
-/// for foreground window mouse actions. Validation happens before this boundary.
+/// Owns native recipient lifetime and prefix stamping. The caller must already
+/// own desktop admission; a complete motion owns it in the common coordinator.
 fn with_recipient<T>(window: &auv_driver_common::window::Window, deliver: impl FnOnce() -> DriverResult<T>) -> DriverResult<T> {
-  // Every mouse path takes the desktop coordinator before native submission.
-  // Keep that order while the recipient watcher owns the submission gate;
-  // nested click/scroll reservations share the same-thread desktop admission.
-  let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   let guard = recipient::Guard::open(window)?;
   guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
   // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
@@ -215,6 +213,23 @@ fn add_admission_attempt(mut action: InputActionResult) -> InputActionResult {
   action
 }
 
+/// Complete foreground drags select the native window recipient explicitly;
+/// InputApi's Window target remains its separate posted-message route.
+pub(crate) fn deliver_window_drag(
+  window: &auv_driver_common::Window,
+  mut movement: auv_driver_common::MoveMouseRequest,
+  button: auv_driver_common::MouseButton,
+) -> DriverResult<(Point, InputActionResult)> {
+  movement.target = Some(InputTarget::Window(window.clone()));
+  let backend = std::sync::Arc::new(MouseBackend {
+    target: InputTarget::Window(window.clone()),
+  });
+  auv_driver_common::mouse_input::mouse_coordinator()
+    .motion(movement, Some(button), backend, |_| true)
+    .map(|(point, action)| (point, add_admission_attempt(action)))
+    .map_err(not_delivered)
+}
+
 /// Runs the shared schedule under one retained Windows scroll recipient.
 pub(crate) fn deliver_window_scroll_motion(
   input: &impl auv_driver_common::WindowInput,
@@ -233,6 +248,7 @@ pub(crate) fn deliver_window_scroll_motion(
     if Instant::now().checked_add(duration).and_then(|deadline| deadline.checked_add(options.settle)).is_none() {
       return Err(invalid_input("window scroll motion exceeds the native clock range"));
     }
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let mut completed = with_recipient(window, || {
       recipient::with_scroll_steps(|| {
         auv_driver_common::scroll_motion::run_window_scroll_motion(input, window, point, motion, options, notify)
@@ -262,6 +278,7 @@ pub(crate) fn deliver_window_scroll_stream(
     if Instant::now().checked_add(options.settle).is_none() {
       return Err(invalid_input("window scroll settle exceeds the native clock range"));
     }
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let mut completed = with_recipient(window, || {
       recipient::with_scroll_steps(|| {
         auv_driver_common::scroll_stream::run_window_scroll_stream(input, window, point, control, stream, options, notify)
@@ -306,7 +323,7 @@ fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {
 }
 
 pub fn move_to(point: Point) -> DriverResult<InputActionResult> {
-  auv_driver_common::mouse_input::mouse_coordinator().move_to(0, point, std::sync::Arc::new(MouseBackend))
+  auv_driver_common::mouse_input::mouse_coordinator().move_to(0, point, std::sync::Arc::new(MouseBackend::default()))
 }
 
 pub fn current_position() -> DriverResult<Point> {
@@ -1116,8 +1133,58 @@ mod native {
   }
 
   pub(super) fn button(button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
+    send_button(button, down, insert_inputs)
+  }
+
+  fn send_button(
+    button: auv_driver_common::MouseButton,
+    down: bool,
+    mut insert: impl FnMut(&[INPUT], bool) -> DriverResult<u32>,
+  ) -> DriverResult<()> {
     let flags = button_flags(button);
-    send_inputs(&[mouse_input(0, 0, 0, if down { flags.0 } else { flags.1 })])
+    // The coordinator records button ownership before submitting its down.
+    // Its matching up must survive cancellation and recipient loss.
+    let sent = insert(&[mouse_input(0, 0, 0, if down { flags.0 } else { flags.1 })], !down)?;
+    if sent != 1 {
+      return Err(backend(format!("SendInput injected {sent} of 1 mouse button events (input may be blocked)")));
+    }
+    Ok(())
+  }
+
+  #[cfg(test)]
+  mod button_tests {
+    use super::*;
+    use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+
+    // ROOT CAUSE:
+    //
+    // A complete drag owns its down, but the old button-up used ordinary
+    // admission. Cancellation therefore rejected its matching cleanup event.
+    #[test]
+    fn owned_button_up_survives_cancellation_and_checks_native_count() {
+      let cancellation = std::sync::Arc::new(InputCancellation::default());
+      cancellation.cancel();
+      let mut inserted = Vec::new();
+      let result = with_input_cancellation(cancellation, || {
+        send_button(auv_driver_common::MouseButton::Left, false, |inputs, release| {
+          if !release {
+            super::super::recipient::check()?;
+          }
+          assert_eq!(inputs.len(), 1);
+          // SAFETY: send_button initialized this INPUT as a mouse event.
+          assert_eq!(unsafe { inputs[0].Anonymous.mi.dwFlags }, MOUSEEVENTF_LEFTUP);
+          inserted.push(release);
+          Ok(1)
+        })
+      });
+      assert!(result.is_ok(), "owned up must bypass cancelled delivery admission: {result:?}");
+      assert_eq!(inserted, [true]);
+      let short = send_button(auv_driver_common::MouseButton::Left, false, |_, release| {
+        assert!(release);
+        Ok(0)
+      });
+      assert!(short.is_err(), "a refused up must never confirm release");
+    }
   }
 
   pub(super) fn move_to(point: Point) -> DriverResult<()> {
@@ -1428,17 +1495,41 @@ mod native {
 mod tests;
 
 #[derive(Clone)]
-pub(crate) struct MouseBackend;
+pub(crate) struct MouseBackend {
+  pub(crate) target: InputTarget,
+}
+impl Default for MouseBackend {
+  fn default() -> Self {
+    Self {
+      target: InputTarget::Foreground,
+    }
+  }
+}
 impl auv_driver_common::mouse_input::MouseBackend for MouseBackend {
+  fn target(&self) -> InputTarget {
+    self.target.clone()
+  }
   fn current_position(&self) -> DriverResult<Point> {
     native::current_position()
   }
   fn move_to(&self, point: Point, _held: Option<auv_driver_common::MouseButton>) -> DriverResult<InputActionResult> {
-    native::move_to(point)?;
+    native::move_to(point).map_err(recipient::stamp_current)?;
     Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
   fn button(&self, _point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
-    native::button(button, down)?;
+    native::button(button, down).map_err(recipient::stamp_current)?;
     Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+  }
+  fn with_motion(
+    &self,
+    motion: Box<dyn FnOnce() -> DriverResult<(Point, InputActionResult)> + '_>,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    match &self.target {
+      InputTarget::Window(window) => with_recipient(window, motion),
+      _ => motion(),
+    }
+  }
+  fn check_motion(&self) -> DriverResult<()> {
+    recipient::check().map_err(recipient::stamp_current)
   }
 }
