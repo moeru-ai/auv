@@ -1,12 +1,12 @@
 # Windows foreground mouse recipient
 
-Status: native bug reproduced; fix compiled, corrected native replay pending.
+Status: scoped native acceptance passed; PR #448 is under review and unmerged.
 Classification: bug fix with application-owned regression coverage.
 
 The owner goal requires input to stop when its target loses foreground, disappears,
 or becomes unavailable. The accepted keyboard slice already retains window/process identity
-and latches foreground loss during a batch. Window-targeted foreground clicks still call
-global mouse delivery after an activation attempt. They do not currently open that recipient guard.
+and latches foreground loss during a batch. At the baseline, window-targeted foreground clicks called
+global mouse delivery after an activation attempt. They did not open that recipient guard.
 
 ## Reproduction boundary
 
@@ -95,4 +95,31 @@ All 20 mouse receivers exited with destroyed HWNDs, and pointer/foreground were 
 
 A public-boundary unit reproduced the missing pre-cancel receipt before production changes.
 Foreground click now leaves desktop admission to its existing delivery boundary, which stamps refusal.
-Posted background click keeps its outer reservation. Corrected native acceptance remains pending.
+Posted background click keeps its outer reservation. The next section records corrected native acceptance.
+
+## Native acceptance
+
+The [receipt-corrected replay](https://github.com/moeru-ai/auv/actions/runs/41189403167)
+passed at source `5f666614fc8a70f9b12f3405b59d136d03c67f3e`,
+workflow `67d191ee149e7c5c2ceacc7238823abef949b2fa`, job `124502875300`.
+Artifact `13038700569` matched SHA-256
+`3fcf90deaa85445ddf553317859aa028220f058385a8a6d5ea4e20a9756e124a` on download.
+The [permanent manifest](evidence/2026-10-31-windows-mouse-recipient/acceptance.json)
+retains source, environment, binary hashes, per-case receipts, and capture hashes.
+
+All ten mouse cases passed. Success delivered three clicks to A and none to B.
+Takeover, ABA, minimize, and cancellation after acknowledgement each stopped after one A click,
+with no B click and a submitted-prefix receipt. The five pre-delivery refusal cases emitted no
+mouse or keyboard input and preserved foreground/pointer state. Pre-cancel now retains its cause
+and `NotDelivered` receipt; owner mismatch retains `TargetLost`.
+
+The same job passed all 15 existing keyboard cases, five watcher lifecycle models,
+the owned-release model, and the pre-cancel unit. All 50 owned receivers exited with destroyed HWNDs.
+No physical input or held modifiers were detected; foreground and pointer restoration passed.
+All 19 mouse captures were reviewed against application counters. The minimized recipient's capture
+was explicitly refused without restoring the window. The offline acceptance check rejected the earlier
+missing-receipt run before accepting this corrected run.
+
+This evidence used build 26100, image `20261021.278.1`, interactive session 2,
+one 1024 by 768 display, and a measured 96-DPI window. It does not cover 125% or 150% scaling,
+real short `SendInput` returns, other frontends' cancellation propagation, or the full Windows goal.

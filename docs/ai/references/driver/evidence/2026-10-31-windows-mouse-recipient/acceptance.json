@@ -1,0 +1,392 @@
+{
+  "accepted": true,
+  "scope": "foreground window click batches",
+  "full_goal_accepted": false,
+  "run_id": 41189403167,
+  "job_id": 124502875300,
+  "artifact_id": 13038700569,
+  "archive_sha256": "3fcf90deaa85445ddf553317859aa028220f058385a8a6d5ea4e20a9756e124a",
+  "preflight": {
+    "source_sha": "5f666614fc8a70f9b12f3405b59d136d03c67f3e",
+    "base_sha": "132d051d820f5670322b03c11758e1e32e774e5b",
+    "workflow_sha": "67d191ee149e7c5c2ceacc7238823abef949b2fa",
+    "os": "Microsoft Windows NT 10.0.26100.0",
+    "image_version": "20261030.294.1",
+    "session_id": 2,
+    "user_interactive": true,
+    "input_desktop_accessible": true,
+    "screens": [
+      "{X=0,Y=0,Width=1024,Height=768}"
+    ],
+    "primary_window_dpi": 96,
+    "expected_baseline_failure": false
+  },
+  "mouse_cases": [
+    {
+      "case": "success",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 3,
+      "alternate_clicks": 0,
+      "input_progress": null,
+      "injected_mouse": 7,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stay",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "aba",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "minimize",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_count",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_point",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "invalid_interval",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "pre_cancel",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "owner_mismatch",
+      "passed": true,
+      "target_lost": true,
+      "cancelled": false,
+      "cancellation_receipt": null,
+      "recipient_clicks": 0,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "cancel_after_click",
+      "passed": true,
+      "target_lost": false,
+      "cancelled": true,
+      "cancellation_receipt": {
+        "after_clicks": 1,
+        "requested": true
+      },
+      "recipient_clicks": 1,
+      "alternate_clicks": 0,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": "native input accepted; this may be only a prefix of the requested action",
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "injected_mouse": 3,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    }
+  ],
+  "keyboard_cases": 15,
+  "pure_models": 7,
+  "verified_owned_cleanup": 50,
+  "desktop_summary": {
+    "cases": 10,
+    "foreground_restored": true,
+    "input_retries": 0,
+    "kind": "summary",
+    "modifiers_released": true,
+    "passed": true,
+    "pointer_restored": true,
+    "run": "1793439639-948",
+    "scenario": "window-mouse",
+    "seq": 31,
+    "t_ms": 9126.1183,
+    "wall_ms": 1793439649118
+  },
+  "capture_errors": [
+    {
+      "case": "minimize",
+      "error": "window is minimized and cannot be captured; AUV does not restore windows",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793439639-948",
+      "scenario": "window-mouse",
+      "seq": 9,
+      "t_ms": 4180.7379,
+      "wall_ms": 1793439644172
+    }
+  ],
+  "captures": [
+    {
+      "path": "mouse/aba/alternate.png",
+      "bytes": 16923,
+      "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a"
+    },
+    {
+      "path": "mouse/aba/recipient.png",
+      "bytes": 17172,
+      "sha256": "488dc1750b129e7fb55a05031248e6faf639bec96a026709fccbc73fa8a9ab07"
+    },
+    {
+      "path": "mouse/cancel_after_click/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/cancel_after_click/recipient.png",
+      "bytes": 18138,
+      "sha256": "b4a2fbf9563f193ff2639e994b7927d32b8f5e3d0f5b642676ffcbfa01d8085d"
+    },
+    {
+      "path": "mouse/invalid_count/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_count/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/invalid_interval/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_interval/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/invalid_point/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/invalid_point/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/minimize/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/owner_mismatch/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/owner_mismatch/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/pre_cancel/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/pre_cancel/recipient.png",
+      "bytes": 15235,
+      "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+    },
+    {
+      "path": "mouse/stay/alternate.png",
+      "bytes": 17156,
+      "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+    },
+    {
+      "path": "mouse/stay/recipient.png",
+      "bytes": 16798,
+      "sha256": "3f05d2d0fb3730a4a09379c231b5768dd907b0dcd4193bf34a7c592ff8bf371a"
+    },
+    {
+      "path": "mouse/success/alternate.png",
+      "bytes": 15242,
+      "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+    },
+    {
+      "path": "mouse/success/recipient.png",
+      "bytes": 18328,
+      "sha256": "407df9632ab1a014ff63074794d817b8923411aa1a8c74d12e6d16f0a9da15ad"
+    }
+  ],
+  "binaries": [
+    {
+      "path": "D:\\a\\auv\\auv\\target\\debug\\background-session-eval.exe",
+      "sha256": "bf5c86877f2f48035d85f12e3a7bc4c52a774152c2ae8ea10adc4cbebea0dd24"
+    },
+    {
+      "path": "D:\\a\\auv\\auv\\target\\debug\\win32-receiver.exe",
+      "sha256": "46f26c428c99e563703262b4b48a09a9e39ed84993b0cfe07e83d866b7c19ffc"
+    }
+  ],
+  "visually_reviewed_mouse_captures": 19,
+  "visual_review": "All 19 captures match receiver click counters. Minimized recipient is explicitly refused without restoration."
+}
