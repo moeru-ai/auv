@@ -270,7 +270,7 @@ fn focus_selected(
   mut read_current: impl FnMut() -> DriverResult<AxNode>,
   focus: impl FnOnce() -> DriverResult<()>,
 ) -> DriverResult<InputActionResult> {
-  let current = read_current().map_err(mark_focus_delivery_uncertain)?;
+  let current = read_current()?;
   let mut expected = selected.clone();
   expected.focused = current.focused;
   if current != expected || !usable_focus_target(&current) {
@@ -288,7 +288,7 @@ fn focus_selected(
   // Focus can legitimately change bounds, value, name, or other UIA facts.
   // Requiring the whole pre-action snapshot to remain equal is not evidence
   // of focus and can turn a successful SetFocus into a false failure.
-  let current = read_current()?;
+  let current = read_current().map_err(mark_focus_delivery_uncertain)?;
   if !current.focused {
     return Err(crate::error::backend(
       "UIA SetFocus returned, but focus readback did not confirm the selected control; inspect state before retrying",

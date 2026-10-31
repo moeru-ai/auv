@@ -355,6 +355,8 @@ fn native_identity_failure_refuses_focus_without_delivery() {
     },
   );
   assert!(matches!(&result, Err(DriverError::StaleUiReference { .. })));
+  let error = result.unwrap_err().to_string();
+  assert!(!error.contains("Focus delivery was attempted"), "{error}");
   assert_eq!(delivered.get(), 0);
 }
 
