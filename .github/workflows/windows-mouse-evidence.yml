@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 62c1808659581c0386d61a9806b032e0697f705b
+          ref: 88769ca70961cd1d5850d049bf919cdbd6f7ca2b
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '62c1808659581c0386d61a9806b032e0697f705b') { throw "Unexpected source $actual" }
+          if ($actual -ne '88769ca70961cd1d5850d049bf919cdbd6f7ca2b') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -119,6 +119,9 @@ jobs:
           cargo test --locked -p auv-driver-windows --lib input::recipient::native::tests > "$directory/watcher.stdout.log" 2> "$directory/watcher.stderr.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -LiteralPath "$directory/watcher.stdout.log" -SimpleMatch 'test result: ok. 5 passed; 0 failed')) { throw 'Expected five watcher lifecycle models' }
+          cargo test --locked -p auv-driver-windows --lib input::native::click_tests > "$directory/partial-click.stdout.log" 2> "$directory/partial-click.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/partial-click.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected owned partial-click cleanup model' }
 
       - name: Recheck the existing keyboard fault receiver after shared fixture extraction
         shell: pwsh
@@ -155,7 +158,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-mouse-recipient-62c18086-fixed
+          name: windows-mouse-recipient-88769ca7-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
