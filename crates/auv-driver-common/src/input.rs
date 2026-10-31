@@ -453,6 +453,13 @@ pub trait WindowInput {
     1.0
   }
 
+  /// Waits for the next scroll deadline within the current batch.
+  /// Adapters can stop this wait when their retained recipient is lost.
+  /// The default observes the current input cancellation signal.
+  fn wait_scroll(&self, deadline: std::time::Instant) -> DriverResult<()> {
+    crate::input_cancellation::wait_until(deadline, "scroll motion")
+  }
+
   /// Spreads one scroll over time with a timing function. The first non-empty
   /// sample selects the delivery path; later samples reuse it. `notify`
   /// receives latest progress after each delivered or skipped sample.

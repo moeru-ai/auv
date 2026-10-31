@@ -1138,10 +1138,18 @@ mod native {
         // SAFETY: GetFocus queries only this thread's input queue.
         json!({"focused": unsafe { GetFocus() } == typing})
       }
-      Some(command @ ("arm_keyboard_fault" | "arm_mouse_fault")) if FOREGROUND_INPUT.load(Relaxed) => {
+      Some(command @ ("arm_keyboard_fault" | "arm_mouse_fault" | "apply_mouse_fault")) if FOREGROUND_INPUT.load(Relaxed) => {
         let kind = request["kind"].as_str().unwrap_or("");
         let target = request["target"].as_str().and_then(|value| value.parse::<isize>().ok()).unwrap_or(0);
         if ["stay", "aba", "minimize", "close"].contains(&kind) && target != 0 {
+          if command == "apply_mouse_fault" {
+            // A batch task calls this only after the application acknowledges
+            // a completed sample. It can expose loss between sample admissions.
+            *MOUSE_FAULT.lock().unwrap() = None;
+            let receipt = apply_recipient_fault(handle(&BUTTON), kind, target);
+            *MOUSE_FAULT_RECEIPT.lock().unwrap() = Some(receipt.clone());
+            return json!({"ok": true, "cmd": command, "applied": true, "receipt": receipt});
+          }
           if command == "arm_mouse_fault" {
             let trigger = match request["trigger"].as_str() {
               None | Some("click") => WM_LBUTTONUP,

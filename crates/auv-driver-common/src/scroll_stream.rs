@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{InputActionResult, Scroll, ScrollOptions};
 use crate::input_cancellation::current_input_cancellation;
-use crate::input_cancellation::wait_until;
 use crate::scroll_motion::{CumulativeQuantizer, partial_failure, pinned_options};
 use crate::{DriverError, DriverResult, Window, WindowInput, WindowPoint};
 
@@ -179,8 +178,9 @@ impl ScrollStreamControl {
 /// As with timed motion, the first non-empty sample selects the delivery path
 /// and later samples reuse it. Input cancellation (for example a transport
 /// disconnect) ends the stream with an error.
-// TODO(scroll-motion-admission): each sample takes its own desktop input
-// admission, as for timed scroll motion.
+// TODO(scroll-motion-admission): adapters without an outer batch lease still
+// admit each sample separately, as for timed motion. Windows foreground scroll
+// retains a lease around this executor; other adapters need their own slice.
 pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
   input: &W,
   window: &Window,
@@ -205,7 +205,9 @@ pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
   };
   let reason = loop {
     next_tick += period;
-    wait_until(next_tick, "scroll motion")?;
+    input
+      .wait_scroll(next_tick)
+      .map_err(|error| partial_failure(error, quantizer.delivered(), Scroll::new(0.0, 0.0), first_action.as_ref()))?;
     let now = Instant::now();
     let (target, ending) = {
       let state = control.state.lock().unwrap();
@@ -228,7 +230,7 @@ pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
     if delta.delta_x != 0.0 || delta.delta_y != 0.0 {
       let action = input
         .scroll(window, point, delta, sample_options.clone())
-        .map_err(|error| partial_failure(error, quantizer.delivered(), delta, first_action.is_some()))?;
+        .map_err(|error| partial_failure(error, quantizer.delivered(), delta, first_action.as_ref()))?;
       if first_action.is_none() {
         sample_options = pinned_options(&action, &options);
         first_action = Some(action);
@@ -250,7 +252,9 @@ pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
     }
   };
   if !options.settle.is_zero() && current_input_cancellation().is_none_or(|cancellation| !cancellation.is_cancelled()) {
-    wait_until(Instant::now() + options.settle, "scroll motion")?;
+    input
+      .wait_scroll(Instant::now() + options.settle)
+      .map_err(|error| partial_failure(error, quantizer.delivered(), Scroll::new(0.0, 0.0), first_action.as_ref()))?;
   }
   Ok(ScrollStreamResult {
     action: first_action,

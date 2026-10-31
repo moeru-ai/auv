@@ -202,6 +202,66 @@ fn pre_cancelled_foreground_window_scroll_reports_not_delivered() {
 }
 
 #[test]
+fn pre_cancelled_window_scroll_motion_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress, MotionTiming, ScrollMotion, TimingFunction};
+
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().scroll_motion(
+      &sample_window(),
+      WindowPoint::new(1.0, 1.0),
+      &ScrollMotion {
+        total: Scroll::new(0.0, 100.0),
+        timing: MotionTiming::FixedDuration {
+          duration: std::time::Duration::from_secs(1),
+          function: TimingFunction::Linear,
+        },
+        sample_rate_hz: 4,
+      },
+      ScrollOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+      &mut |_| {},
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::NotDelivered }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
+}
+
+#[test]
+fn pre_cancelled_window_scroll_stream_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress, ScrollStreamControl, ScrollStreamOptions};
+
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().scroll_stream(
+      &sample_window(),
+      WindowPoint::new(1.0, 1.0),
+      &ScrollStreamControl::new(),
+      ScrollStreamOptions {
+        sample_rate_hz: 4,
+        max_acceleration: None,
+        lease: std::time::Duration::from_secs(1),
+      },
+      ScrollOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+      &mut |_| {},
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::NotDelivered }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
+}
+
+#[test]
 fn window_scroll_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();
   let error = session()

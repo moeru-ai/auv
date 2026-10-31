@@ -1,0 +1,4081 @@
+{
+  "accepted": true,
+  "scope": "complete foreground-preferred timed and live scroll batches",
+  "full_goal_accepted": false,
+  "run_id": 41206480036,
+  "job_id": 124552467771,
+  "artifact_id": 13044666273,
+  "archive_sha256": "a32b3eb13991101a0194b0ce32bee03740b7ac9ee3b7ea37b9c353dc8d33bbd0",
+  "preflight": {
+    "source_sha": "ad0441bc26243cf6a5ac31a6c964588ad4e893f1",
+    "base_sha": "05b583359fd79ab9ab526598db7f64ad917392ff",
+    "workflow_sha": "ac5cabcfed1c9cbed3c75b73cb15573006a2b5cd",
+    "os": "Microsoft Windows NT 10.0.26100.0",
+    "image_version": "20261021.278.1",
+    "session_id": 2,
+    "user_interactive": true,
+    "input_desktop_accessible": true,
+    "screens": [
+      "{X=0,Y=0,Width=1024,Height=768}"
+    ],
+    "primary_window_dpi": 96,
+    "expected_baseline_failure": false
+  },
+  "binaries": [
+    {
+      "sha256": "2749c05b8e72a023a99425ca4f264a0a03e8f4efe2e67f1759150b242ebe0ed9",
+      "path": "D:\\a\\auv\\auv\\target\\debug\\background-session-eval.exe"
+    },
+    {
+      "sha256": "a09bbe9f2c96d2b9593f077d9e1897d081650558c598c0ba3a92b6fca55c5c79",
+      "path": "D:\\a\\auv\\auv\\target\\debug\\win32-receiver.exe"
+    }
+  ],
+  "batch_cases": [
+    {
+      "case": "motion_success",
+      "passed": true,
+      "native_ok": true,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": null,
+      "result": {
+        "action": {
+          "attempts": [
+            {
+              "message": "window recipient identity and foreground admitted",
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "delivered": {
+          "delta_x": 0.0,
+          "delta_y": 400.0
+        },
+        "planned_sample_count": 5
+      },
+      "a_wheels": 4,
+      "b_wheels": 0,
+      "a_line": 12,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 1124.4350000000002,
+      "foreground_before": 2424932,
+      "foreground_after": 2424932,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 8,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_stay",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100 logical px; sample dx=0 dy=0 failed: input target window:1180202 was lost: foreground history invalidated the recipient (named=1442342, current=1442342); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.0
+        },
+        "receipt": {
+          "kind": "stay",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 266.6659,
+      "foreground_before": 1180202,
+      "foreground_after": 1442342,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_aba",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100 logical px; sample dx=0 dy=0 failed: input target window:2228768 was lost: foreground history invalidated the recipient (named=2556004, current=2556004); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.0
+        },
+        "receipt": {
+          "kind": "aba",
+          "reached_target": true,
+          "returned_owner": true
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 319.3252,
+      "foreground_before": 2228768,
+      "foreground_after": 2228768,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_minimize",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100 logical px; sample dx=0 dy=0 failed: input target window:3211426 was lost: foreground history invalidated the recipient (named=2359824, current=2359824); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.0
+        },
+        "receipt": {
+          "kind": "minimize",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 420.9423,
+      "foreground_before": 3211426,
+      "foreground_after": 2359824,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_close",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100 logical px; sample dx=0 dy=0 failed: input target window:3080728 was lost: foreground history invalidated the recipient (named=3211468, current=3211468); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.0
+        },
+        "receipt": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": {
+        "event": "closing",
+        "fault": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        },
+        "state": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": false,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        }
+      },
+      "elapsed_ms": 265.0783,
+      "foreground_before": 3080728,
+      "foreground_after": 3211468,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_success",
+      "passed": true,
+      "native_ok": true,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": null,
+      "result": {
+        "action": {
+          "attempts": [
+            {
+              "message": "window recipient identity and foreground admitted",
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "delivered": {
+          "delta_x": 0.0,
+          "delta_y": 304.1666666666667
+        },
+        "elapsed": {
+          "nanos": 132092300,
+          "secs": 1
+        },
+        "reason": "lease_expired"
+      },
+      "a_wheels": 3,
+      "b_wheels": 0,
+      "a_line": 9,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 1132.8641,
+      "foreground_before": 1966628,
+      "foreground_after": 1966628,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 6,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_stay",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=103.33333333333334 logical px; sample dx=0 dy=0 failed: input target window:1770022 was lost: foreground history invalidated the recipient (named=2556432, current=2556432); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 103.33333333333334
+        },
+        "receipt": {
+          "kind": "stay",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 264.4956,
+      "foreground_before": 1770022,
+      "foreground_after": 2556432,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_aba",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=102.5 logical px; sample dx=0 dy=0 failed: input target window:3277268 was lost: foreground history invalidated the recipient (named=2097700, current=2097700); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 102.5
+        },
+        "receipt": {
+          "kind": "aba",
+          "reached_target": true,
+          "returned_owner": true
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 317.97090000000003,
+      "foreground_before": 3277268,
+      "foreground_after": 3277268,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_minimize",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=103.33333333333334 logical px; sample dx=0 dy=0 failed: input target window:2621970 was lost: foreground history invalidated the recipient (named=3146248, current=3146248); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 103.33333333333334
+        },
+        "receipt": {
+          "kind": "minimize",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 410.2104,
+      "foreground_before": 2621970,
+      "foreground_after": 3146248,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_close",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100.83333333333334 logical px; sample dx=0 dy=0 failed: input target window:3342858 was lost: foreground history invalidated the recipient (named=3539052, current=3539052); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.83333333333334
+        },
+        "receipt": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": {
+        "event": "closing",
+        "fault": {
+          "kind": "close",
+          "reached_target": true,
+          "returned_owner": false
+        },
+        "state": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": false,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        }
+      },
+      "elapsed_ms": 258.3216,
+      "foreground_before": 3342858,
+      "foreground_after": 3539052,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_idle_loss",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 0,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 0,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 0.0
+        },
+        "receipt": {
+          "kind": "stay",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 263.75910000000005,
+      "foreground_before": 3473930,
+      "foreground_after": 2818576,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_pre_cancel",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": true,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0331,
+      "foreground_before": 2359844,
+      "foreground_after": 2359844,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_pre_cancel",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": true,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0393,
+      "foreground_before": 2425372,
+      "foreground_after": 2425372,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_invalid_point",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0209,
+      "foreground_before": 3801196,
+      "foreground_after": 3801196,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_invalid_point",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0219,
+      "foreground_before": 3080720,
+      "foreground_after": 3080720,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_invalid_timing",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0171,
+      "foreground_before": 2621988,
+      "foreground_after": 2621988,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_invalid_options",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0217,
+      "foreground_before": 2687516,
+      "foreground_after": 2687516,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_invalid_settle",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0191,
+      "foreground_before": 4063340,
+      "foreground_after": 4063340,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_invalid_settle",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.0244,
+      "foreground_before": 3342864,
+      "foreground_after": 3342864,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_owner_mismatch",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.3292,
+      "foreground_before": 2884132,
+      "foreground_after": 2884132,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_owner_mismatch",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 0.1072,
+      "foreground_before": 2949660,
+      "foreground_after": 2949660,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_cancel_after_prefix",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": true,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=100 logical px; sample dx=0 dy=0 failed: window input cancelled before further delivery",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 2,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 100.0
+        },
+        "requested": true
+      },
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 253.5968,
+      "foreground_before": 4325844,
+      "foreground_after": 4325844,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_cancel_after_prefix",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": true,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=103.33333333333334 logical px; sample dx=0 dy=0 failed: window input cancelled before further delivery",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 1,
+      "b_wheels": 0,
+      "a_line": 3,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 103.33333333333334
+        },
+        "requested": true
+      },
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 262.40799999999996,
+      "foreground_before": 4391020,
+      "foreground_after": 4391020,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 2,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_idle_cancel",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": false,
+      "cancelled": true,
+      "input_progress": {
+        "state": "not_delivered"
+      },
+      "result": null,
+      "a_wheels": 0,
+      "b_wheels": 0,
+      "a_line": 0,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 0,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 0,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 0.0
+        },
+        "requested": true
+      },
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 262.6408,
+      "foreground_before": 4522188,
+      "foreground_after": 4522188,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 0,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_settle_loss",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=400 logical px; sample dx=0 dy=0 failed: input target window:3932704 was lost: foreground history invalidated the recipient (named=3211814, current=3211814); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 4,
+      "b_wheels": 0,
+      "a_line": 12,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 12,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 4,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 400.0
+        },
+        "receipt": {
+          "kind": "stay",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 1014.0856,
+      "foreground_before": 3932704,
+      "foreground_after": 3211814,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 8,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "stream_settle_loss",
+      "passed": true,
+      "native_ok": false,
+      "target_lost": true,
+      "cancelled": false,
+      "input_progress": {
+        "action": {
+          "attempts": [
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": "scroll motion stopped after delivering dx=0 dy=309.1666666666667 logical px; sample dx=0 dy=0 failed: input target window:3342874 was lost: foreground history invalidated the recipient (named=4653260, current=4653260); inspect state before retrying",
+              "path": "foreground_system_events",
+              "succeeded": false
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "state": "submitted"
+      },
+      "result": null,
+      "a_wheels": 3,
+      "b_wheels": 0,
+      "a_line": 9,
+      "b_line": 0,
+      "fault": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 9,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 4,
+            "edit_wheel": 3,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "after_progress": {
+          "delta_x": 0.0,
+          "delta_y": 309.1666666666667
+        },
+        "receipt": {
+          "kind": "stay",
+          "reached_target": true,
+          "returned_owner": false
+        }
+      },
+      "cancellation_receipt": null,
+      "nested_receipt": null,
+      "terminal_receipt": null,
+      "elapsed_ms": 1030.1956,
+      "foreground_before": 3342874,
+      "foreground_after": 4653260,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 6,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    },
+    {
+      "case": "motion_nested_retarget",
+      "passed": true,
+      "native_ok": true,
+      "target_lost": false,
+      "cancelled": false,
+      "input_progress": null,
+      "result": {
+        "action": {
+          "attempts": [
+            {
+              "message": "window recipient identity and foreground admitted",
+              "path": "foreground_system_events",
+              "succeeded": true
+            },
+            {
+              "message": null,
+              "path": "foreground_system_events",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "unknown",
+          "mouse_disturbance": "temporary",
+          "selected_path": "foreground_system_events",
+          "verified": false
+        },
+        "delivered": {
+          "delta_x": 0.0,
+          "delta_y": 400.0
+        },
+        "planned_sample_count": 5
+      },
+      "a_wheels": 4,
+      "b_wheels": 0,
+      "a_line": 12,
+      "b_line": 0,
+      "fault": null,
+      "cancellation_receipt": null,
+      "nested_receipt": {
+        "acknowledged": {
+          "activated": 1,
+          "button_focused": false,
+          "clicks": 0,
+          "cmd": "state",
+          "first_line": 3,
+          "focus_set": 1,
+          "foreground": true,
+          "foreground_taken": 1,
+          "foreground_yielded": 0,
+          "minimized": false,
+          "mouse_activate": 2,
+          "ok": true,
+          "pad": null,
+          "raw": {
+            "button_down": 0,
+            "button_move": 0,
+            "button_up": 0,
+            "button_wheel": 0,
+            "edit_down": 1,
+            "edit_hwheel": 0,
+            "edit_move": 3,
+            "edit_wheel": 1,
+            "frame_down": 0
+          },
+          "submitted_text": "",
+          "typing": {
+            "button_down": 0,
+            "chars": 0,
+            "focus_received": 0,
+            "focus_rejected": 0,
+            "focused": false,
+            "keys": [],
+            "selection": [
+              0,
+              0
+            ],
+            "text": ""
+          }
+        },
+        "error": "input was submitted but is unverified; inspect state before retrying: scroll sample cannot change its admitted recipient",
+        "rejected": true
+      },
+      "terminal_receipt": null,
+      "elapsed_ms": 1104.9524,
+      "foreground_before": 5046394,
+      "foreground_after": 5046394,
+      "cursor_before": [
+        246,
+        277
+      ],
+      "cursor_after": [
+        246,
+        277
+      ],
+      "injected_mouse": 8,
+      "injected_keys": 0,
+      "physical_mouse": 0,
+      "physical_keys": 0,
+      "modifiers_released": true
+    }
+  ],
+  "prior_mouse_cases": 22,
+  "keyboard_cases": 15,
+  "pure_regressions": 34,
+  "verified_owned_cleanup": 128,
+  "desktop_summary": {
+    "cases": 27,
+    "foreground_restored": true,
+    "input_retries": 0,
+    "kind": "summary",
+    "modifiers_released": true,
+    "passed": true,
+    "pointer_restored": true,
+    "run": "1793454090-8324",
+    "scenario": "window-scroll-batch",
+    "seq": 112,
+    "t_ms": 22728.2852,
+    "wall_ms": 1793454113463
+  },
+  "capture_errors": [
+    {
+      "case": "motion_minimize",
+      "error": "window is minimized and cannot be captured; AUV does not restore windows",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793454090-8324",
+      "scenario": "window-scroll-batch",
+      "seq": 13,
+      "t_ms": 3959.8797,
+      "wall_ms": 1793454094694
+    },
+    {
+      "case": "motion_close",
+      "error": "window:3080728 was not found",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793454090-8324",
+      "scenario": "window-scroll-batch",
+      "seq": 18,
+      "t_ms": 4693.9836000000005,
+      "wall_ms": 1793454095428
+    },
+    {
+      "case": "stream_minimize",
+      "error": "window is minimized and cannot be captured; AUV does not restore windows",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793454090-8324",
+      "scenario": "window-scroll-batch",
+      "seq": 35,
+      "t_ms": 8826.8339,
+      "wall_ms": 1793454099561
+    },
+    {
+      "case": "stream_close",
+      "error": "window:3342858 was not found",
+      "kind": "capture_error",
+      "receiver": "recipient",
+      "run": "1793454090-8324",
+      "scenario": "window-scroll-batch",
+      "seq": 40,
+      "t_ms": 9546.6775,
+      "wall_ms": 1793454100281
+    }
+  ],
+  "captures": [
+    {
+      "path": "batch/motion_aba/alternate.png",
+      "bytes": 16864,
+      "sha256": "e3d4f2d7ceb3b5355c8d407b20dc2ed2d98600b4577419d03d74628f29f0d1fd"
+    },
+    {
+      "path": "batch/motion_aba/recipient.png",
+      "bytes": 17598,
+      "sha256": "aef087329da908ec267f06d78f1e59cd6443e848d881e99e9bce96de077188a2"
+    },
+    {
+      "path": "batch/motion_cancel_after_prefix/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/motion_cancel_after_prefix/recipient.png",
+      "bytes": 17478,
+      "sha256": "9874529eeabdcef65dc00db758beeb92143cea9da46a772dac101a67f0fcbb8e"
+    },
+    {
+      "path": "batch/motion_close/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_invalid_point/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_invalid_point/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/motion_invalid_settle/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_invalid_settle/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/motion_invalid_timing/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_invalid_timing/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/motion_minimize/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_nested_retarget/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/motion_nested_retarget/recipient.png",
+      "bytes": 17256,
+      "sha256": "70e394785791089ebf8f61dce1cbde4ab433198b70cb48c703b2ef384c3bb79b"
+    },
+    {
+      "path": "batch/motion_owner_mismatch/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_owner_mismatch/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/motion_pre_cancel/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_pre_cancel/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/motion_settle_loss/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_settle_loss/recipient.png",
+      "bytes": 16942,
+      "sha256": "bc4c01e9f8955369fde0caed04ebade2801c083cab6a3a3dfd44c3c476089e0e"
+    },
+    {
+      "path": "batch/motion_stay/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/motion_stay/recipient.png",
+      "bytes": 17151,
+      "sha256": "249a4bb763fbbce8d4ba3b9388ce46c1b6e87ff39c04d8689472d6c30c98230c"
+    },
+    {
+      "path": "batch/motion_success/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/motion_success/recipient.png",
+      "bytes": 17256,
+      "sha256": "70e394785791089ebf8f61dce1cbde4ab433198b70cb48c703b2ef384c3bb79b"
+    },
+    {
+      "path": "batch/stream_aba/alternate.png",
+      "bytes": 16864,
+      "sha256": "e3d4f2d7ceb3b5355c8d407b20dc2ed2d98600b4577419d03d74628f29f0d1fd"
+    },
+    {
+      "path": "batch/stream_aba/recipient.png",
+      "bytes": 17598,
+      "sha256": "aef087329da908ec267f06d78f1e59cd6443e848d881e99e9bce96de077188a2"
+    },
+    {
+      "path": "batch/stream_cancel_after_prefix/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/stream_cancel_after_prefix/recipient.png",
+      "bytes": 17478,
+      "sha256": "9874529eeabdcef65dc00db758beeb92143cea9da46a772dac101a67f0fcbb8e"
+    },
+    {
+      "path": "batch/stream_close/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_idle_cancel/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/stream_idle_cancel/recipient.png",
+      "bytes": 17207,
+      "sha256": "8dffa04b1cc45f49865ceed9a5695cc6bcdefc60fc1229cb883bbedab9e06fea"
+    },
+    {
+      "path": "batch/stream_idle_loss/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_idle_loss/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_invalid_options/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_invalid_options/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_invalid_point/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_invalid_point/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_invalid_settle/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_invalid_settle/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_minimize/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_owner_mismatch/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_owner_mismatch/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_pre_cancel/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_pre_cancel/recipient.png",
+      "bytes": 16876,
+      "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5"
+    },
+    {
+      "path": "batch/stream_settle_loss/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_settle_loss/recipient.png",
+      "bytes": 17136,
+      "sha256": "3d231cfaf2980696e4de40d25c4f0239176103b5b4048577eb0d04c118791a67"
+    },
+    {
+      "path": "batch/stream_stay/alternate.png",
+      "bytes": 17121,
+      "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782"
+    },
+    {
+      "path": "batch/stream_stay/recipient.png",
+      "bytes": 17151,
+      "sha256": "249a4bb763fbbce8d4ba3b9388ce46c1b6e87ff39c04d8689472d6c30c98230c"
+    },
+    {
+      "path": "batch/stream_success/alternate.png",
+      "bytes": 15094,
+      "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d"
+    },
+    {
+      "path": "batch/stream_success/recipient.png",
+      "bytes": 17450,
+      "sha256": "2005d5de46c23461f6a24500993befd2be515004941bb3218679d69dcdc63949"
+    }
+  ],
+  "prior_regressions": {
+    "accepted": true,
+    "scope": "single-call foreground scroll and mouse close receipts",
+    "full_goal_accepted": false,
+    "run_id": 41206480036,
+    "job_id": 124552467771,
+    "artifact_id": 13044666273,
+    "archive_sha256": "a32b3eb13991101a0194b0ce32bee03740b7ac9ee3b7ea37b9c353dc8d33bbd0",
+    "preflight": {
+      "source_sha": "ad0441bc26243cf6a5ac31a6c964588ad4e893f1",
+      "base_sha": "05b583359fd79ab9ab526598db7f64ad917392ff",
+      "workflow_sha": "ac5cabcfed1c9cbed3c75b73cb15573006a2b5cd",
+      "os": "Microsoft Windows NT 10.0.26100.0",
+      "image_version": "20261021.278.1",
+      "session_id": 2,
+      "user_interactive": true,
+      "input_desktop_accessible": true,
+      "screens": [
+        "{X=0,Y=0,Width=1024,Height=768}"
+      ],
+      "primary_window_dpi": 96,
+      "expected_baseline_failure": false
+    },
+    "binaries": [
+      {
+        "sha256": "2749c05b8e72a023a99425ca4f264a0a03e8f4efe2e67f1759150b242ebe0ed9",
+        "path": "D:\\a\\auv\\auv\\target\\debug\\background-session-eval.exe"
+      },
+      {
+        "sha256": "a09bbe9f2c96d2b9593f077d9e1897d081650558c598c0ba3a92b6fca55c5c79",
+        "path": "D:\\a\\auv\\auv\\target\\debug\\win32-receiver.exe"
+      }
+    ],
+    "mouse_cases": [
+      {
+        "case": "success",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 3,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": null,
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 7,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "stay",
+        "operation": "click",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 1,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 3,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "aba",
+        "operation": "click",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 1,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 3,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "minimize",
+        "operation": "click",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 1,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 3,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "invalid_count",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          512,
+          384
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "invalid_point",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          512,
+          384
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "invalid_interval",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          512,
+          384
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "pre_cancel",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": true,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          512,
+          384
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "owner_mismatch",
+        "operation": "click",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          512,
+          384
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "cancel_after_click",
+        "operation": "click",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": true,
+        "cancellation_receipt": {
+          "after_clicks": 1,
+          "requested": true
+        },
+        "terminal_receipt": null,
+        "recipient_clicks": 1,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 3,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "close",
+        "operation": "click",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": {
+          "event": "closing",
+          "fault": {
+            "kind": "close",
+            "reached_target": true,
+            "returned_owner": false
+          },
+          "state": {
+            "activated": 1,
+            "button_focused": false,
+            "clicks": 1,
+            "cmd": "state",
+            "first_line": 0,
+            "focus_set": 1,
+            "foreground": false,
+            "foreground_taken": 1,
+            "foreground_yielded": 0,
+            "minimized": false,
+            "mouse_activate": 2,
+            "ok": true,
+            "pad": null,
+            "raw": {
+              "button_down": 1,
+              "button_move": 1,
+              "button_up": 1,
+              "button_wheel": 0,
+              "edit_down": 0,
+              "edit_hwheel": 0,
+              "edit_move": 0,
+              "edit_wheel": 0,
+              "frame_down": 0
+            },
+            "submitted_text": "",
+            "typing": {
+              "button_down": 0,
+              "chars": 0,
+              "focus_received": 0,
+              "focus_rejected": 0,
+              "focused": false,
+              "keys": [],
+              "selection": [
+                0,
+                0
+              ],
+              "text": ""
+            }
+          }
+        },
+        "recipient_clicks": 1,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          512,
+          384
+        ],
+        "cursor_after": [
+          154,
+          163
+        ],
+        "injected_mouse": 3,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_success",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": null,
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_stay",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_aba",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_minimize",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_close",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": {
+          "event": "closing",
+          "fault": {
+            "kind": "close",
+            "reached_target": true,
+            "returned_owner": false
+          },
+          "state": {
+            "activated": 1,
+            "button_focused": false,
+            "clicks": 0,
+            "cmd": "state",
+            "first_line": 3,
+            "focus_set": 1,
+            "foreground": false,
+            "foreground_taken": 1,
+            "foreground_yielded": 0,
+            "minimized": false,
+            "mouse_activate": 2,
+            "ok": true,
+            "pad": null,
+            "raw": {
+              "button_down": 0,
+              "button_move": 0,
+              "button_up": 0,
+              "button_wheel": 0,
+              "edit_down": 1,
+              "edit_hwheel": 0,
+              "edit_move": 2,
+              "edit_wheel": 1,
+              "frame_down": 0
+            },
+            "submitted_text": "",
+            "typing": {
+              "button_down": 0,
+              "chars": 0,
+              "focus_received": 0,
+              "focus_rejected": 0,
+              "focused": false,
+              "keys": [],
+              "selection": [
+                0,
+                0
+              ],
+              "text": ""
+            }
+          }
+        },
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_invalid_point",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_invalid_delta",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_invalid_settle",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_pre_cancel",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": true,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_owner_mismatch",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": true,
+        "cancelled": false,
+        "cancellation_receipt": null,
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 0,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "state": "not_delivered"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 0,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      },
+      {
+        "case": "scroll_cancel_after_effect",
+        "operation": "scroll",
+        "passed": true,
+        "target_lost": false,
+        "cancelled": true,
+        "cancellation_receipt": {
+          "after_wheels": 1,
+          "requested": true
+        },
+        "terminal_receipt": null,
+        "recipient_clicks": 0,
+        "alternate_clicks": 0,
+        "recipient_line_before": 0,
+        "recipient_line_after": 3,
+        "alternate_line_after": 0,
+        "input_progress": {
+          "action": {
+            "attempts": [
+              {
+                "message": "native input accepted; this may be only a prefix of the requested action",
+                "path": "foreground_system_events",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "unknown",
+            "mouse_disturbance": "temporary",
+            "selected_path": "foreground_system_events",
+            "verified": false
+          },
+          "state": "submitted"
+        },
+        "cursor_before": [
+          246,
+          277
+        ],
+        "cursor_after": [
+          246,
+          277
+        ],
+        "injected_mouse": 2,
+        "injected_keys": 0,
+        "physical_mouse": 0,
+        "physical_keys": 0,
+        "modifiers_released": true
+      }
+    ],
+    "keyboard_cases": 15,
+    "pure_models": 8,
+    "verified_owned_cleanup": 74,
+    "desktop_summary": {
+      "cases": 22,
+      "foreground_restored": true,
+      "input_retries": 0,
+      "kind": "summary",
+      "modifiers_released": true,
+      "passed": true,
+      "pointer_restored": true,
+      "run": "1793454076-7684",
+      "scenario": "window-mouse",
+      "seq": 81,
+      "t_ms": 13949.596,
+      "wall_ms": 1793454090371
+    },
+    "capture_errors": [
+      {
+        "case": "minimize",
+        "error": "window is minimized and cannot be captured; AUV does not restore windows",
+        "kind": "capture_error",
+        "receiver": "recipient",
+        "run": "1793454076-7684",
+        "scenario": "window-mouse",
+        "seq": 9,
+        "t_ms": 3004.0596,
+        "wall_ms": 1793454079426
+      },
+      {
+        "case": "close",
+        "error": "window:1311264 was not found",
+        "kind": "capture_error",
+        "receiver": "recipient",
+        "run": "1793454076-7684",
+        "scenario": "window-mouse",
+        "seq": 31,
+        "t_ms": 6783.374699999999,
+        "wall_ms": 1793454083205
+      },
+      {
+        "case": "scroll_minimize",
+        "error": "window is minimized and cannot be captured; AUV does not restore windows",
+        "kind": "capture_error",
+        "receiver": "recipient",
+        "run": "1793454076-7684",
+        "scenario": "window-mouse",
+        "seq": 48,
+        "t_ms": 10038.385,
+        "wall_ms": 1793454086460
+      },
+      {
+        "case": "scroll_close",
+        "error": "window:1507858 was not found",
+        "kind": "capture_error",
+        "receiver": "recipient",
+        "run": "1793454076-7684",
+        "scenario": "window-mouse",
+        "seq": 53,
+        "t_ms": 10519.2752,
+        "wall_ms": 1793454086941
+      }
+    ],
+    "captures": [
+      {
+        "path": "mouse/aba/alternate.png",
+        "bytes": 16923,
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a"
+      },
+      {
+        "path": "mouse/aba/recipient.png",
+        "bytes": 17172,
+        "sha256": "488dc1750b129e7fb55a05031248e6faf639bec96a026709fccbc73fa8a9ab07"
+      },
+      {
+        "path": "mouse/cancel_after_click/alternate.png",
+        "bytes": 15242,
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+      },
+      {
+        "path": "mouse/cancel_after_click/recipient.png",
+        "bytes": 18138,
+        "sha256": "b4a2fbf9563f193ff2639e994b7927d32b8f5e3d0f5b642676ffcbfa01d8085d"
+      },
+      {
+        "path": "mouse/close/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/invalid_count/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/invalid_count/recipient.png",
+        "bytes": 15235,
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+      },
+      {
+        "path": "mouse/invalid_interval/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/invalid_interval/recipient.png",
+        "bytes": 15235,
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+      },
+      {
+        "path": "mouse/invalid_point/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/invalid_point/recipient.png",
+        "bytes": 15235,
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+      },
+      {
+        "path": "mouse/minimize/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/owner_mismatch/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/owner_mismatch/recipient.png",
+        "bytes": 15235,
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+      },
+      {
+        "path": "mouse/pre_cancel/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/pre_cancel/recipient.png",
+        "bytes": 15235,
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b"
+      },
+      {
+        "path": "mouse/scroll_aba/alternate.png",
+        "bytes": 16923,
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a"
+      },
+      {
+        "path": "mouse/scroll_aba/recipient.png",
+        "bytes": 17584,
+        "sha256": "5e34712adf30f54e23c181dcc59fa86b1ee03f3c8cc0be01fb3757ac8bf19032"
+      },
+      {
+        "path": "mouse/scroll_cancel_after_effect/alternate.png",
+        "bytes": 15242,
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+      },
+      {
+        "path": "mouse/scroll_cancel_after_effect/recipient.png",
+        "bytes": 17471,
+        "sha256": "0f97d248a332f6b6d0d36cd175fe58819c07f020122477ab31889de6ec2f1f62"
+      },
+      {
+        "path": "mouse/scroll_close/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/scroll_invalid_delta/alternate.png",
+        "bytes": 17267,
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+      },
+      {
+        "path": "mouse/scroll_invalid_delta/recipient.png",
+        "bytes": 16921,
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+      },
+      {
+        "path": "mouse/scroll_invalid_point/alternate.png",
+        "bytes": 17267,
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+      },
+      {
+        "path": "mouse/scroll_invalid_point/recipient.png",
+        "bytes": 16921,
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+      },
+      {
+        "path": "mouse/scroll_invalid_settle/alternate.png",
+        "bytes": 17267,
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+      },
+      {
+        "path": "mouse/scroll_invalid_settle/recipient.png",
+        "bytes": 16921,
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+      },
+      {
+        "path": "mouse/scroll_minimize/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/scroll_owner_mismatch/alternate.png",
+        "bytes": 17267,
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+      },
+      {
+        "path": "mouse/scroll_owner_mismatch/recipient.png",
+        "bytes": 16921,
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+      },
+      {
+        "path": "mouse/scroll_pre_cancel/alternate.png",
+        "bytes": 17267,
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e"
+      },
+      {
+        "path": "mouse/scroll_pre_cancel/recipient.png",
+        "bytes": 16921,
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f"
+      },
+      {
+        "path": "mouse/scroll_stay/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/scroll_stay/recipient.png",
+        "bytes": 17196,
+        "sha256": "fab66b32bcfb9a1edaeb3d9b7425b0fc12af6bec61660870a3836c1626b82b5d"
+      },
+      {
+        "path": "mouse/scroll_success/alternate.png",
+        "bytes": 15242,
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+      },
+      {
+        "path": "mouse/scroll_success/recipient.png",
+        "bytes": 17459,
+        "sha256": "f2926d73582e4476c5b2f5f8e8197c68f3de4300212a5587a960f2abc3c2fc9a"
+      },
+      {
+        "path": "mouse/stay/alternate.png",
+        "bytes": 17156,
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6"
+      },
+      {
+        "path": "mouse/stay/recipient.png",
+        "bytes": 16798,
+        "sha256": "3f05d2d0fb3730a4a09379c231b5768dd907b0dcd4193bf34a7c592ff8bf371a"
+      },
+      {
+        "path": "mouse/success/alternate.png",
+        "bytes": 15242,
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9"
+      },
+      {
+        "path": "mouse/success/recipient.png",
+        "bytes": 18328,
+        "sha256": "407df9632ab1a014ff63074794d817b8923411aa1a8c74d12e6d16f0a9da15ad"
+      }
+    ]
+  },
+  "visual_review": {
+    "captures_covered": 90,
+    "prior_exact_sha256_matches": 59,
+    "new_captures_covered": 31,
+    "new_unique_contents_reviewed": 11,
+    "prior_matches": [
+      {
+        "path": "batch/motion_close/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_invalid_point/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_invalid_settle/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_invalid_timing/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_minimize/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_owner_mismatch/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_pre_cancel/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_settle_loss/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/motion_stay/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_close/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_idle_loss/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_invalid_options/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_invalid_point/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_invalid_settle/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_minimize/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_owner_mismatch/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_pre_cancel/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_settle_loss/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "batch/stream_stay/alternate.png",
+        "sha256": "7216b9e3a6239df13bc621e779d9a8b8cbf2740b5c6c575b09dbc8e353a0f782",
+        "source_run": 41201512555,
+        "source_path": "batch/stream_idle_loss/alternate.png"
+      },
+      {
+        "path": "mouse/aba/alternate.png",
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_aba/alternate.png"
+      },
+      {
+        "path": "mouse/aba/recipient.png",
+        "sha256": "488dc1750b129e7fb55a05031248e6faf639bec96a026709fccbc73fa8a9ab07",
+        "source_run": 41192270017,
+        "source_path": "mouse/aba/recipient.png"
+      },
+      {
+        "path": "mouse/cancel_after_click/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41192270017,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/cancel_after_click/recipient.png",
+        "sha256": "b4a2fbf9563f193ff2639e994b7927d32b8f5e3d0f5b642676ffcbfa01d8085d",
+        "source_run": 41192270017,
+        "source_path": "mouse/cancel_after_click/recipient.png"
+      },
+      {
+        "path": "mouse/close/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_count/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_count/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41192270017,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/invalid_interval/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_interval/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41192270017,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/invalid_point/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/invalid_point/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41192270017,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/minimize/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/owner_mismatch/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/owner_mismatch/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41192270017,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/pre_cancel/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/pre_cancel/recipient.png",
+        "sha256": "c6e9427d618f09913d25aa1a408b37b3792b2005bde2889c6e369bdb367f768b",
+        "source_run": 41192270017,
+        "source_path": "mouse/pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_aba/alternate.png",
+        "sha256": "909608decff29415beb7c55ffe9f4f2c16b0d00199c38aea4e4213b04538f74a",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_aba/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_aba/recipient.png",
+        "sha256": "5e34712adf30f54e23c181dcc59fa86b1ee03f3c8cc0be01fb3757ac8bf19032",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_aba/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_cancel_after_effect/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41192270017,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_cancel_after_effect/recipient.png",
+        "sha256": "0f97d248a332f6b6d0d36cd175fe58819c07f020122477ab31889de6ec2f1f62",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_cancel_after_effect/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_close/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_delta/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_delta/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_point/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_point/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_settle/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_invalid_settle/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_minimize/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_owner_mismatch/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_owner_mismatch/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_pre_cancel/alternate.png",
+        "sha256": "fc3141b63f2d9c082bb9df24801608a65f8141bf725e5000a6419881b24e452e",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_pre_cancel/recipient.png",
+        "sha256": "d623d796ea99f8ed37029a160d32951ab4e0bee00b0b46f2727df8f71a62119f",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_pre_cancel/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_stay/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_stay/recipient.png",
+        "sha256": "fab66b32bcfb9a1edaeb3d9b7425b0fc12af6bec61660870a3836c1626b82b5d",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_stay/recipient.png"
+      },
+      {
+        "path": "mouse/scroll_success/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41192270017,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/scroll_success/recipient.png",
+        "sha256": "f2926d73582e4476c5b2f5f8e8197c68f3de4300212a5587a960f2abc3c2fc9a",
+        "source_run": 41192270017,
+        "source_path": "mouse/scroll_success/recipient.png"
+      },
+      {
+        "path": "mouse/stay/alternate.png",
+        "sha256": "47394f77cfadf34192408bdf03ba981c6acb4d7b2345126ec53a4b46e3cdc5e6",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/alternate.png"
+      },
+      {
+        "path": "mouse/stay/recipient.png",
+        "sha256": "3f05d2d0fb3730a4a09379c231b5768dd907b0dcd4193bf34a7c592ff8bf371a",
+        "source_run": 41192270017,
+        "source_path": "mouse/stay/recipient.png"
+      },
+      {
+        "path": "mouse/success/alternate.png",
+        "sha256": "93035e367e327bee5e9d4495d08e46dec07079be61ade847d6384ff24284d4c9",
+        "source_run": 41192270017,
+        "source_path": "mouse/success/alternate.png"
+      },
+      {
+        "path": "mouse/success/recipient.png",
+        "sha256": "407df9632ab1a014ff63074794d817b8923411aa1a8c74d12e6d16f0a9da15ad",
+        "source_run": 41192270017,
+        "source_path": "mouse/success/recipient.png"
+      }
+    ],
+    "new_groups": [
+      {
+        "representative": "batch/motion_aba/alternate.png",
+        "sha256": "e3d4f2d7ceb3b5355c8d407b20dc2ed2d98600b4577419d03d74628f29f0d1fd",
+        "paths": [
+          "batch/motion_aba/alternate.png",
+          "batch/stream_aba/alternate.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_aba/recipient.png",
+        "sha256": "aef087329da908ec267f06d78f1e59cd6443e848d881e99e9bce96de077188a2",
+        "paths": [
+          "batch/motion_aba/recipient.png",
+          "batch/stream_aba/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_cancel_after_prefix/alternate.png",
+        "sha256": "cee146d2792dc8e8bffd86f72d58a27b6d550572efe924e0b44a303bf3b4c40d",
+        "paths": [
+          "batch/motion_cancel_after_prefix/alternate.png",
+          "batch/motion_nested_retarget/alternate.png",
+          "batch/motion_success/alternate.png",
+          "batch/stream_cancel_after_prefix/alternate.png",
+          "batch/stream_idle_cancel/alternate.png",
+          "batch/stream_success/alternate.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_cancel_after_prefix/recipient.png",
+        "sha256": "9874529eeabdcef65dc00db758beeb92143cea9da46a772dac101a67f0fcbb8e",
+        "paths": [
+          "batch/motion_cancel_after_prefix/recipient.png",
+          "batch/stream_cancel_after_prefix/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_invalid_point/recipient.png",
+        "sha256": "4126e535dfaa7656364d6680543c52eda64ccd662cfa25fab273df1b504b1aa5",
+        "paths": [
+          "batch/motion_invalid_point/recipient.png",
+          "batch/motion_invalid_settle/recipient.png",
+          "batch/motion_invalid_timing/recipient.png",
+          "batch/motion_owner_mismatch/recipient.png",
+          "batch/motion_pre_cancel/recipient.png",
+          "batch/stream_idle_loss/recipient.png",
+          "batch/stream_invalid_options/recipient.png",
+          "batch/stream_invalid_point/recipient.png",
+          "batch/stream_invalid_settle/recipient.png",
+          "batch/stream_owner_mismatch/recipient.png",
+          "batch/stream_pre_cancel/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_nested_retarget/recipient.png",
+        "sha256": "70e394785791089ebf8f61dce1cbde4ab433198b70cb48c703b2ef384c3bb79b",
+        "paths": [
+          "batch/motion_nested_retarget/recipient.png",
+          "batch/motion_success/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_settle_loss/recipient.png",
+        "sha256": "bc4c01e9f8955369fde0caed04ebade2801c083cab6a3a3dfd44c3c476089e0e",
+        "paths": [
+          "batch/motion_settle_loss/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/motion_stay/recipient.png",
+        "sha256": "249a4bb763fbbce8d4ba3b9388ce46c1b6e87ff39c04d8689472d6c30c98230c",
+        "paths": [
+          "batch/motion_stay/recipient.png",
+          "batch/stream_stay/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/stream_idle_cancel/recipient.png",
+        "sha256": "8dffa04b1cc45f49865ceed9a5695cc6bcdefc60fc1229cb883bbedab9e06fea",
+        "paths": [
+          "batch/stream_idle_cancel/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/stream_settle_loss/recipient.png",
+        "sha256": "3d231cfaf2980696e4de40d25c4f0239176103b5b4048577eb0d04c118791a67",
+        "paths": [
+          "batch/stream_settle_loss/recipient.png"
+        ]
+      },
+      {
+        "representative": "batch/stream_success/recipient.png",
+        "sha256": "2005d5de46c23461f6a24500993befd2be515004941bb3218679d69dcdc63949",
+        "paths": [
+          "batch/stream_success/recipient.png"
+        ]
+      }
+    ]
+  }
+}
