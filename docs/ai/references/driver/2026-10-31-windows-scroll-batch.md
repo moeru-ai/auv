@@ -1,6 +1,6 @@
 # Windows complete scroll batch lifetime
 
-Status: native baseline reproduced; implementation compiled, corrected native replay pending.
+Status: scoped native acceptance passed; unmerged implementation prepared for review.
 Classification: bug fix with application-owned regression coverage.
 Base: PR #449, `05b583359fd79ab9ab526598db7f64ad917392ff`.
 
@@ -74,6 +74,44 @@ The same job passed the existing 22 mouse cases, fifteen keyboard cases, and eig
 
 Two local regressions first failed for typed target loss and cancellation after
 accepted delivery, then passed with the common fix. All 110 common units and both
-new public-boundary pre-cancel units passed. Corrected native acceptance is pending.
+new public-boundary pre-cancel units passed.
 The corrected task adds refusal, cancellation, final-settle loss, and nested
 retarget rejection cases for 27 total batch cases.
+
+## Corrected native acceptance
+
+The [corrected replay](https://github.com/moeru-ai/auv/actions/runs/41206480036)
+passed at source `ad0441bc26243cf6a5ac31a6c964588ad4e893f1`,
+workflow `ac5cabcfed1c9cbed3c75b73cb15573006a2b5cd`, job `124552467771`.
+Artifact `13044666273` matched SHA-256
+`a32b3eb13991101a0194b0ce32bee03740b7ac9ee3b7ea37b9c353dc8d33bbd0` after download.
+The [permanent manifest](evidence/2026-10-31-windows-scroll-batch/acceptance.json)
+retains source, environment, binary hashes, application state, typed receipts,
+terminal close state, capture hashes, and visual-review groups.
+
+All 27 batch cases passed. Takeover, ABA, minimize, and close stopped after one
+acknowledged wheel in both motion and stream, with no B input or automatic revival.
+Cancellation after the prefix retained submitted progress. Empty-stream loss and
+cancellation retained `NotDelivered`. Ten admission/refusal cases produced no native
+input or pointer/foreground change. Final-settle loss retained the accepted prefix,
+and a nested attempt to change the recipient was refused without B input.
+
+The same source passed all 22 prior mouse cases, fifteen keyboard cases, and
+34 selected pure regressions. Independent audit checked all 128 receiver exits
+and HWND destructions, zero physical input, released modifiers, and desktop restoration.
+Eight minimized/closed capture refusals cover the new batch and prior mouse matrices.
+The task did not restore those windows to obtain pixels.
+
+Visual review covers fifty batch and forty prior mouse captures. Fifty-nine
+exactly match previously reviewed hashes; the remaining 31 share eleven new
+image contents, each inspected against the application counters. The manifest
+records the prior run/path/hash matches and new representative groups.
+Offline audit rejected the baseline before accepting the corrected source.
+
+Local checks passed: all 110 common units, two new pre-cancel units, 34 Windows
+input units with one ignored, and 167 Invoke units with one ignored. All-target
+and all-feature Driver checks, Clippy with existing warnings, both command helps,
+formatting, and diff checks passed. No local desktop input was used.
+This native evidence used build 26100, image `20261021.278.1`, interactive session 2,
+one 1024 by 768 display, and measured 96 DPI. It does not accept the remaining
+background, drag, coordinate, scaled-DPI, or full frontend requirements of the owner goal.
