@@ -466,14 +466,13 @@ mod native {
         if let Some(error) = failure {
           return Err(error);
         }
-        if node.focused {
-          // SAFETY: GetFocusedElement returns an owned COM interface in the
-          // same apartment. Confirmation checks the actual focused element.
-          let focused = unsafe { automation.GetFocusedElement() }.map_err(|error| focus_error("read focused control", error))?;
-          node.focused = unsafe { automation.CompareElements(original, &focused) }
-            .map_err(|error| focus_error("confirm focused control", error))?
-            .as_bool();
-        }
+        // SAFETY: GetFocusedElement returns an owned COM interface in the
+        // same apartment. Confirmation checks the actual focused element
+        // rather than trusting the mutable CurrentHasKeyboardFocus property.
+        let focused = unsafe { automation.GetFocusedElement() }.map_err(|error| focus_error("read focused control", error))?;
+        node.focused = unsafe { automation.CompareElements(original, &focused) }
+          .map_err(|error| focus_error("confirm focused control", error))?
+          .as_bool();
         Ok(node)
       },
       || {
