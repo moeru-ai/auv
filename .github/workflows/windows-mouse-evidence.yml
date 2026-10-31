@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: dc4482ff35cb511396fedf0eb7b506e8850b2c02
+          ref: 93696abc44666568720539a77ae0795beaae3665
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'dc4482ff35cb511396fedf0eb7b506e8850b2c02') { throw "Unexpected source $actual" }
+          if ($actual -ne '93696abc44666568720539a77ae0795beaae3665') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -93,18 +93,16 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $true
+            expected_baseline_failure = $false
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build unchanged Driver and test-only complete drag reproduction
+      - name: Build fixed Driver and complete drag regression
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
-          git diff --exit-code 1f112bf145ddb23583b7aac83d0fa8e8cf1d29af HEAD -- crates
-          if ($LASTEXITCODE -ne 0) { throw 'Baseline must contain no production crate changes' }
           rustc --version | Tee-Object -FilePath "$directory/rustc.txt"
           cargo build --locked -p auv-base-evals --bin background-session-eval --bin win32-receiver
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -136,6 +134,21 @@ jobs:
           cargo test --locked -p auv-driver-windows --lib pre_cancelled_window_scroll_ > "$directory/batch-pre-cancel.stdout.log" 2> "$directory/batch-pre-cancel.stderr.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -LiteralPath "$directory/batch-pre-cancel.stdout.log" -SimpleMatch 'test result: ok. 2 passed; 0 failed')) { throw 'Expected two batch pre-cancel regressions' }
+
+      - name: Verify complete motion lifecycle and owned release models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          cargo test --locked -p auv-driver-common --lib mouse_input::tests > "$directory/drag-common.stdout.log" 2> "$directory/drag-common.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/drag-common.stdout.log" -SimpleMatch 'test result: ok. 19 passed; 0 failed')) { throw 'Expected nineteen mouse lifecycle models' }
+          cargo test --locked -p auv-driver-windows --lib input::native::button_tests > "$directory/owned-button.stdout.log" 2> "$directory/owned-button.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/owned-button.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected owned button-up model' }
+          cargo test --locked -p auv-driver-windows --lib session::tests::pre_cancelled_foreground_window_drag_reports_not_delivered > "$directory/drag-pre-cancel.stdout.log" 2> "$directory/drag-pre-cancel.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/drag-pre-cancel.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected drag pre-cancel receipt' }
 
       - name: Recheck the existing keyboard fault receiver after shared fixture extraction
         shell: pwsh
@@ -184,7 +197,7 @@ jobs:
           if ($cleanup.Count -ne 54 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned batch receiver cleanup incomplete' }
           if ($exit -ne 0 -or $cases.Count -ne 27 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Whole scroll recipient invariant failed; inspect application prefix receipts' }
 
-      - name: Reproduce complete drag interruption and owned release
+      - name: Verify complete drag interruption and owned release
         shell: pwsh
         env:
           AUV_ISOLATED_DESKTOP_EVAL: '1'
@@ -197,14 +210,14 @@ jobs:
           $cases = @($rows | Where-Object kind -eq 'case')
           $cases | Select-Object case,passed,native_ok,target_lost,cancelled,button_released_before_controller_cleanup,cursor_after,input_progress,error | ConvertTo-Json -Depth 15 | Tee-Object -FilePath "$directory/drag-result.json"
           $cleanup = @($rows | Where-Object kind -eq 'cleanup')
-          if ($cleanup.Count -ne 12 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned drag receiver cleanup incomplete' }
-          if ($exit -ne 0 -or $cases.Count -ne 6 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Complete drag recipient invariant failed; inspect retained application and release receipts' }
+          if ($cleanup.Count -ne 26 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned drag receiver cleanup incomplete' }
+          if ($exit -ne 0 -or $cases.Count -ne 13 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Complete drag recipient invariant failed; inspect retained application and release receipts' }
 
       - name: Preserve source-bound native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-drag-dc4482ff-baseline
+          name: windows-drag-93696abc-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
