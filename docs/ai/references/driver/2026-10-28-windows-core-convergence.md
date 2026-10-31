@@ -448,7 +448,18 @@ Artifact `13005653981` matched SHA-256
 The raw [environment inventory](evidence/2026-10-31-windows-app-preflight/environment.json)
 and [portable package records](evidence/2026-10-31-windows-app-preflight/portable-apps.json)
 are retained here. These are preparation facts; application launch, control focus,
-edit/save verification, and compatibility failure cases remain unverified.
+and do not establish functional acceptance. Later controls and edit evidence follows below.
+
+Draft [#447](https://github.com/moeru-ai/auv/pull/447) owns real-application workflow cases.
+The [controls run](https://github.com/moeru-ai/auv/actions/runs/41125933697) at `cbd34975`
+captured complete Edge, VS Code, NotepadNext, and ISE trees and four independently reviewed windows.
+All owned processes exited; foreground/pointer restoration and zero physical input were verified.
+The [first input run](https://github.com/moeru-ai/auv/actions/runs/41128561574) at `7e7dd2a7`
+verified Edge's absent-query refusal, semantic focus, and trusted native text entry.
+It stopped at saved-file verification, before driving other apps.
+A [fresh reproduction](https://github.com/moeru-ai/auv/actions/runs/41174216160) recorded the expected
+download target, zero received bytes, 43 total bytes, and browser `FILE_FAILED`.
+This retained failure does not accept saving or general application support.
 
 ## Remaining acceptance
 
@@ -463,8 +474,9 @@ Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
-The next test slice launches the prepared cohort with owned files and profiles,
-then reads accessibility trees before selecting focus/edit/save checks.
+Draft #447 has the four controls inventories and a reproduced Edge save failure.
+Its selected-app cases allow independent desktops without continuing an uncertain input run.
+Positive edit/save, scrolling/dialogs, and foreground-loss cases remain acceptance work.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
 
