@@ -1,0 +1,32 @@
+{
+  "workflow_sha": "80ff95c40490de7101e1ab61e8f5cd30d93cefc7",
+  "preflight_only": true,
+  "packages": [
+    {
+      "id": "notepadnext",
+      "version": "0.15",
+      "toolkit": "Qt",
+      "url": "https://github.com/dail8859/NotepadNext/releases/download/v0.15/NotepadNext-v0.15-win64.zip",
+      "archive_sha256": "148aa88d706bb67a7c1f3727953ed686204be52876336971634b0223e6ed2148",
+      "digest_verified": true,
+      "executable": "D:\\a\\_temp\\auv-portable-apps\\notepadnext\\NotepadNext.exe",
+      "file_version": "0.15",
+      "executable_sha256": "7a835158d78780751805bca22239eef6dbb3022febf9126325f3cc229cf4ec1f",
+      "bundled_qt_version": "6.5.3.0",
+      "launched": false
+    },
+    {
+      "id": "vscode",
+      "version": "1.144.0",
+      "toolkit": "Electron",
+      "url": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/2c33b50b16c472efe58357d1d2a8a5414bc23fbf/VSCode-win32-x64-1.144.0.zip",
+      "archive_sha256": "055722269e3c9531af0c50a8b757c14e8062a0d02fc973b038863d9732c567ea",
+      "digest_verified": true,
+      "executable": "D:\\a\\_temp\\auv-portable-apps\\vscode\\Code.exe",
+      "file_version": "1.144.0",
+      "executable_sha256": "9f33ede68f3317402280fa997bc8963f93e67f2905e416d6bb092c03d60a37eb",
+      "bundled_qt_version": null,
+      "launched": false
+    }
+  ]
+}

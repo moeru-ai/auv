@@ -2,6 +2,26 @@
 
 Status: Phase 0 source audit complete. Phase 1 passed isolated Win32 receiver acceptance on one hosted Windows desktop.
 
+## Current direction (2026-10-30)
+
+PR #429 was closed without merging on 2026-10-28 UTC.
+The [maintainer's decision](https://github.com/moeru-ai/auv/pull/429#issuecomment-6481267529)
+rejects screenshot comparison as proof that a click's decision premise remains valid.
+Equal pixels cannot rule out intervening changes; unequal pixels can concern unrelated content.
+Waiting for a new capture also refuses static streams and adds capture latency.
+The capture-guard review below is historical and does not approve that design.
+
+Dependent PR #441 is closed and its capture/focus integration branch is retired.
+Its 14 passing controlled workflows describe that implementation's behavior only.
+They do not establish the rejected premise or complete Phase 2.
+The [raw experiment](https://github.com/moeru-ai/auv/actions/runs/40731551833/artifacts/12835702553)
+remains available as historical evidence, with SHA-256 `2003532fbe310a5e23b0349a8d7ce2476b2b0321a3e01acbd89252b82cb61cec`.
+
+Semantic focus, cancellation admission, and delivery-progress receipts do not depend on #429.
+WGC queued-frame freshness is also an independent capture bug.
+Replacement click admission needs a separate owner-reviewed contract for computable state, event coverage, missed changes, and unsupported platforms.
+No screenshot predicate, subscription API, or replacement token is approved by this note.
+
 ## Baseline and evidence
 
 The audit uses upstream `main@68c4cf7c4a0646fd471f7db48241cffb2fc37329` on 2026-10-28.
@@ -15,7 +35,7 @@ Those changes remain outside this work.
 | --- | --- | --- |
 | #409 | Merged as `8bf7e4f1`; three Win32 workflow routes have isolated hosted-desktop evidence. | Reuse its receiver and independent application checks. |
 | #425, #428, #430, #431, #432, #433, #434 | Present in the audited main history. | Start from main instead of the older benchmark checkout. |
-| Capture guard #429 | Open at `7cce1d93bbcdd2ccf8405dd943879f6e8528282b`. | Review and reuse its admission contract in Phase 2. Do not build a competing guard. |
+| Capture guard #429 | Closed without merging; reviewed source was `7cce1d93bbcdd2ccf8405dd943879f6e8528282b`, closed head was `e56b0ecc8f419c0925da9208727952042b71ed55`. | Retire the screenshot predicate. Preserve the review as history; replacement admission requires a new contract. |
 | Track A | Local `88807d0e7c9f37b9106b480a3b0f0ba2a75fad35`; not an ancestor of main. | Keep separate. Window-target deduplication is not a Phase 1 dependency and overlaps #429. |
 | Track B | Local `6452920493d936c1b084c69cc41dfaa2c0d46f95`; not an ancestor of main. | Reuse and revise the matcher before connecting native focus. |
 | Local isolated VM | VirtualBox lists one inaccessible registration and no running VM. | No foreground or DPI experiment on the owner's desktop. |
@@ -160,9 +180,9 @@ No timeout or test assertion was weakened.
 This evidence applies to native Win32 EDIT query focus on the recorded hosted desktop.
 It does not prove general application support, live MCP parity, provider cancellation, or other DPI behavior.
 
-## Capture guard review
+## Historical capture guard review
 
-The [#429 head](https://github.com/moeru-ai/auv/pull/429) uses a dedicated guarded-click RPC.
+The reviewed [#429 revision](https://github.com/moeru-ai/auv/commit/7cce1d93bbcdd2ccf8405dd943879f6e8528282b) used a dedicated guarded-click RPC.
 An older Runner therefore cannot silently ignore a new request field.
 Admission holds the shared desktop input reservation across recapture and delivery.
 Its tests cover changed pixels, moved or resized windows, target mismatches, unavailable evidence, and cancellation with zero delivery.
@@ -284,14 +304,252 @@ The environment was Windows Server 2025 build 26100, interactive session 2, with
 Actual DPI was not recorded; these receipts do not establish scaled-coordinate coverage.
 The source's [Check run](https://github.com/moeru-ai/auv/actions/runs/40699687747)
 and [JavaScript run](https://github.com/moeru-ai/auv/actions/runs/40699687353) passed.
-Post-delivery refusal remains unit and transport evidence until a separate native fault scenario validates it.
+At that source, post-delivery refusal had unit and transport evidence only.
+The following scenario adds native submission/readback evidence.
+
+## Phase 2: native focus refusal scenario
+
+Classification: test-only, scoped to the owner's failure-recovery acceptance.
+The existing semantic workflow now arms its receiver to redirect text-box focus to its own button.
+The receiver counts received and redirected focus on its GUI thread and reports its final `GetFocus` state.
+After the single focus call fails, the evaluator requires an unverified `submitted` or `delivery_uncertain` receipt with one AxFocus attempt.
+It also requires unchanged text, keys, clicks, pointer position, and injected mouse/key counts.
+An explicit zero-delivery receipt fails this check because the receiver has independently confirmed a focus side effect.
+The scenario adds no fallback, input retry, Driver branch, RPC, or command flag.
+
+The receiver and evaluation binaries pass all-target compilation.
+All nine no-desktop workflow regression tests pass; formatting and whitespace checks pass.
+The [isolated Windows run](https://github.com/moeru-ai/auv/actions/runs/40704562930)
+passed at source `46c2ba723c83fc1b66595d5733d979ee794100ff`, based on `1e80a5fd8b56043195160d773891dcb94239899a`.
+The evidence workflow used commit `d7dd586f6ae70c7e547763f2b11496b4b50c22f1`.
+Independent artifact checks confirmed all 12 workflows and six post-delivery refusals.
+Every refusal retained `backend` / `submitted`, one AxFocus attempt, and `verified: false` through its selected route.
+The application confirmed received and redirected focus, with final focus on its own button.
+Text, keys, clicks, pointer position, and injected mouse/key counts stayed unchanged during each refusal.
+The six missing-query refusals still retained `not_found` / `not_delivered` with zero-input checks.
+All 30 captures matched application state; all 18 pointer deliveries matched their planned coordinates.
+All fixture and four Runner cleanups passed, physical input was zero, and pointer/foreground restoration passed.
+No capture or input-action retry occurred.
+
+The [raw fault artifact](https://github.com/moeru-ai/auv/actions/runs/40704562930/artifacts/12824311947)
+matched SHA-256 `e42912c430ba15a4beeceee8313eeef3aa1bbb911cdeb650bcca725407b77d57` after download.
+GitHub retention ends 2026-11-11.
+The environment remained Windows Server 2025 build 26100, interactive session 2, with one 1024 by 768 display and no recorded actual DPI.
+This fixture validates native `submitted` readback failure; failed-HRESULT `delivery_uncertain` still has unit and wire evidence only.
+The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
+
+## Independent Phase 2 repairs
+
+The following proposed PRs are based on `main@d9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3`.
+They are independent of the focus stack and the retired screenshot guard; this focus branch does not contain their production changes.
+
+- [#443](https://github.com/moeru-ai/auv/pull/443) moves on-demand WGC window/display images onto the existing continuously drained stream.
+  A test-only native run returned red after independent paint receipts confirmed yellow.
+  At repaired source `366d7e01`, the unchanged first-read regression returned yellow; all 19 WGC capture, COM, and unit checks passed.
+  The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40916911481/artifacts/12915803148)
+  matched SHA-256 `3b5ef713f2348452f433833b75a4d9913757bc86cba6c1ebfbe43565d69c1058` after download.
+  Latest received pixels do not establish post-request painting or click-premise validity; the separate health sampler remains unchanged.
+- [#444](https://github.com/moeru-ai/auv/pull/444) stops global click, wheel, and drag after foreground activation errors.
+  Before repair, all three closed-target calls delivered mouse messages to another owned receiver and moved the pointer.
+  At repaired source `8656b95a`, all three returned the original error with empty receiver messages and unchanged pointer/foreground.
+  Three valid-window controls and 18 existing button/count/modifier cases also passed; five native tests completed.
+  The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40921807996/artifacts/12919061447)
+  matched SHA-256 `7d381a995b6c57b523da0610256f1c992bd86402db778f341e0cb9918384ad37` after download.
+  This is activation-error admission, not an exact recipient lease or a full-desktop teardown receipt.
+  [Check](https://github.com/moeru-ai/auv/actions/runs/40923181672) and [Check JS](https://github.com/moeru-ai/auv/actions/runs/40923181716) passed for #444 at `4781e120`.
+- [#445](https://github.com/moeru-ai/auv/pull/445) records native foreground event coverage and fixes an ambiguous witness verdict.
+  Its [isolated run](https://github.com/moeru-ai/auv/actions/runs/40931339602) at `46b8aab6` completed 20 stable, 20 A-to-B-to-A, and 20 background-click cases.
+  One C takeover/return was directly confirmed; another receipt named C while reading A without another application-reported takeover.
+  The [artifact](https://github.com/moeru-ai/auv/actions/runs/40931339602/artifacts/12923502019)
+  matched SHA-256 `db1f0c100bb67790b536446c04859d66be18fca5cab5e980040b93cecad64e6a` after download.
+  All three receiver teardowns and pointer/foreground restoration passed; injected and physical input stayed zero.
+  The original witness failed a delayed-ABA unit model. Repaired policy `b207fd8a` passes 11 pure tests and preserves named/current disagreement as `inconclusive`.
+  No native delayed-ABA reproduction or input lease is claimed; the raw diagnostic does not call the corrected verdict policy.
+
+These accepted native runs recorded build 26100, image `20261021.278.1`, interactive session 2, one 1024 by 768 display, and 96 DPI.
+Their dated notes retain complete baseline/fix source identities and raw evidence links.
+This does not complete the full Phase 2 acceptance or promote general platform support.
+
+## Window keyboard batches under review
+
+Draft [#446](https://github.com/moeru-ai/auv/pull/446) adds foreground-preferred
+`InputTarget::Window` keyboard batches on top of this focus stack.
+It permits one initial foreground preparation, then latches detected recipient loss.
+Loss stops later submissions without automatic reactivation or replay.
+Native submission facts remain separate from completed actions and repetitions.
+The draft preserves `target_lost` through shared Rust, Invoke, Runner, and JS error projections.
+It also migrates experimental keyboard error details to standard `google.rpc.Status`.
+
+The [six-case run](https://github.com/moeru-ai/auv/actions/runs/41087448481)
+at `af374c5b` passed direct Win32 text delivery and four recipient-loss scenarios.
+Its artifact `12992935468` matched SHA-256
+`5e5de560323caee6fe03fbeae29ecae7644d5a6b6904a94743323c9eb86ee8ab`.
+The global control produced A=`a`, B=`bc`; protected fault cases left B without keys.
+All 12 receiver cleanups and desktop restoration passed, with no physical input.
+
+The first expanded run at `bd219a46` passed 14 of 15 cases.
+One evaluator assertion wrongly rejected the existing initial-activation behavior.
+The corrected fixture separates initial preparation from takeover after admission.
+Its [15-case task](https://github.com/moeru-ai/auv/actions/runs/41101183228)
+at `264143c4` passed text, repeated presses, combinations, paste, cancellation,
+initial activation, and wrong-owner rejection.
+Artifact `12999121492` matched SHA-256
+`0857064873c27e7e163ff6d87d6cf59c13ac051a0fd514b05068381931412a31`.
+All 30 receiver cleanups and desktop restoration passed, with no physical input.
+B received no keys in protected cases; clipboard-text and modifier readbacks passed.
+The [draft contract](https://github.com/moeru-ai/auv/blob/90bb9c435ca1f6a0521d13d0fbfea94e41319839/docs/ai/references/driver/2026-10-30-windows-keyboard-recipient.md)
+records the API migration, tests, artifact provenance, and limits.
+The first actual MCP task found late repeated input after local-MCP cancellation.
+At source `925e29f5`, Windows local Invoke now uses the existing cancellable input boundary.
+Its [replay](https://github.com/moeru-ai/auv/actions/runs/41111375084) passed all 12
+keyboard cases across direct Driver, local Invoke, selected Runner, local MCP, and Runner MCP.
+Both MCP cancellation cases stopped after the acknowledged first character.
+Artifact `13004865694` matched SHA-256
+`e89d081a0c40c0b1a4e470a0d9aaee96f3696efa9511b59ca7191ce2ad3da7e7`.
+All 24 PNGs, application states, durable failure records, and artifact-body hashes were checked.
+The replay also passed the 15 direct cases: 54 receiver cleanups and both desktop restorations passed.
+The canceled requests retained cancellation events; their final native delivery receipts remain unknown.
+At source `4c24a184`, the [hook lifecycle replay](https://github.com/moeru-ai/auv/actions/runs/41118695972)
+passed five fault models and all 27 native cases again.
+Artifact `13006444643` matched SHA-256
+`c4b10d3b7ec861be19a0b391bcd57a769fe60ea6dd42a7209e4d502a343031f5`.
+The fault models use fake hook registrations; forced real Win32 failures remain unverified.
+The guard does not provide atomic `SendInput` recipient binding or replace #429.
+
+A 2026-10-31 refresh found `origin/main` at
+`a6ea946181b60736cf6c2c1b04a592a14d2a4fe8`.
+Only the Scoop recipe changed after the previously recorded `d9d2bdcc` baseline.
+PRs #437–#440 and #443–#446 remain open; none was merged by this work.
+
+## Application and DPI environment preflight
+
+The independent [environment run](https://github.com/moeru-ai/auv/actions/runs/40733696621)
+used workflow `c858d081c31a00e83fe136bef483be2b6314be9b` and checked out source `c7d6b53f`.
+It performed read-only environment queries without invoking the retired capture guard.
+It recorded build 26100, image `20261021.278.1`, session 2, and one 1024 by 768 display.
+An owned hidden per-monitor-v2 window reported 96 DPI; the probe destroyed it and restored its thread context without changing system scaling.
+
+Edge `155.0.4283.62` was present at the checked Program Files path.
+VS Code, VLC, qBittorrent, and ILSpy were absent from the common paths checked; the `code` command was also absent.
+Windows Desktop .NET runtimes from the 8.0, 9.0, and 10.0 families were available.
+These facts describe that hosted image, not application-workflow or scaled-coordinate acceptance.
+Recheck application versions and DPI in each later functional run.
+The [environment artifact](https://github.com/moeru-ai/auv/actions/runs/40733696621/artifacts/12835068803)
+matched SHA-256 `3638b7fc54a57be25659429fd460d686a85f3b5c83e26fdc1b101b87ed78cf5e` after download; retention ends 2026-11-11.
+
+The [2026-10-31 package preflight](https://github.com/moeru-ai/auv/actions/runs/41117632304)
+checked source `4c24a184` with workflow `80ff95c4`, still on one 96-DPI display.
+Edge `155.0.4283.62` and Windows PowerShell ISE `10.0.26100.33158` were present.
+The workflow downloaded pinned VS Code `1.144.0` and NotepadNext `0.15` portable archives.
+Both archive hashes matched their published values; NotepadNext contains Qt `6.5.3.0`.
+It read executable metadata without launching these applications.
+Artifact `13005653981` matched SHA-256
+`eadb4dcd40dc1a06916de4d3a43883e8dd3d25948542e0d0481bc1a5ff8ff72c` after download.
+The raw [environment inventory](evidence/2026-10-31-windows-app-preflight/environment.json)
+and [portable package records](evidence/2026-10-31-windows-app-preflight/portable-apps.json)
+are retained here as preparation facts. This preflight did not launch an app
+and does not establish functional acceptance. Later controls and input evidence follow below.
+
+PR [#447](https://github.com/moeru-ai/auv/pull/447) owns real-application workflow cases.
+The [controls run](https://github.com/moeru-ai/auv/actions/runs/41125933697) at `cbd34975`
+captured complete Edge, VS Code, NotepadNext, and ISE trees and four independently reviewed windows.
+All owned processes exited; foreground/pointer restoration and zero physical input were verified.
+The [first input run](https://github.com/moeru-ai/auv/actions/runs/41128561574) at `7e7dd2a7`
+verified Edge's absent-query refusal, semantic focus, and trusted native text entry.
+It stopped at saved-file verification, before driving other apps.
+A [fresh reproduction](https://github.com/moeru-ai/auv/actions/runs/41174216160) recorded the expected
+download target, zero received bytes, 43 total bytes, and browser `FILE_FAILED`.
+This retained failure does not accept saving or general application support.
+Subsequent scoped acceptance is now available for two apps: [ISE](https://github.com/moeru-ai/auv/actions/runs/41181010921)
+at `86d36a1e` and [Edge](https://github.com/moeru-ai/auv/actions/runs/41181310496) at `5b910573`.
+Independent audit verified their 53-byte and 43-byte files, ten actual command completions,
+eight input-result bodies, six reviewed captures, and owned cleanup with desktop restoration.
+The Edge correction serializes a native absolute download directory instead of mixed separators;
+the failing and passing browser executable hashes match.
+The [four-app replay](https://github.com/moeru-ai/auv/actions/runs/41182331780) at `591ef686`
+saved matching files in all four apps. Qt still failed controller pointer restoration;
+its local OCR click returned an action but omitted the delivery artifact from the run.
+VS Code passed file/trace checks, but pixel review found its welcome modal covering the editor.
+Those facts do not accept complete Qt or visible VS Code workflows.
+PR #447 now has a reproduced/passing output-recorder regression, explicit pointer teardown,
+shared modifier readback, and AUV onboarding dismissal with a fresh readiness check.
+The local Invoke suite passed 167 tests with one ignored; six evaluation regressions passed.
+The [corrected replay](https://github.com/moeru-ai/auv/actions/runs/41184343474) at `2cdffd1e`
+passed all four native tasks. Independent audit verified four saved files, 21 actual command completions,
+17 input-result bodies, and 13 reviewed captures. Every case verified foreground/pointer restoration,
+released modifiers, zero physical input, and owned-job cleanup on one measured 96-DPI display.
+VS Code's ready/final images show the exposed editor; Qt retains the missing delivery artifact and a separate pointer-cleanup receipt.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/132d051d820f5670322b03c11758e1e32e774e5b/docs/ai/references/driver/evidence/2026-10-31-windows-application-editor/acceptance.json)
+retains archive, file, and capture hashes. #447 is ready for review and remains unmerged.
+Its optional stale-focus reacquisition branch has pure eligibility coverage only.
+
+## Window foreground click batches under review
+
+PR [#448](https://github.com/moeru-ai/auv/pull/448) extends the existing recipient guard to foreground click batches.
+Its unchanged-production baseline delivered later clicks to B after takeover/minimize and revived an ABA batch.
+The first corrected replay stopped those faults but exposed a missing pre-cancel delivery receipt.
+A unit reproduced that receipt failure before the fix; owned partial-click cleanup also has a failing-then-passing native-boundary model.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41189403167), source `5f666614`,
+passed ten mouse cases, fifteen existing keyboard cases, and seven pure regressions.
+Independent audit verified the artifact digest, fifty receiver exits/destructions, zero physical input,
+released modifiers, desktop restoration, and nineteen reviewed captures. Minimized capture was explicitly refused.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/9810bd254f752619291977c73c7d586ffea99f42/docs/ai/references/driver/evidence/2026-10-31-windows-mouse-recipient/acceptance.json)
+retains source, environment, binary/capture hashes, and typed prefix/refusal receipts.
+This is scoped Win32 foreground-click evidence at measured 96 DPI. #448 is ready for review and unmerged.
+Scrolling/held motion, root-close mouse receipts, frame/coordinate freshness, and complete frontend cancellation parity remain open.
+The closed #429 screenshot predicate remains retired.
+
+## Single-call foreground scroll and close under review
+
+PR [#449](https://github.com/moeru-ai/auv/pull/449) retains the recipient through single-call foreground scroll and its requested settle.
+Its baseline reproduced success after takeover, ABA, minimize, and close.
+It also adds an application-owned terminal GUI receipt before mouse-close destruction.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41192270017), source `4715bd57`,
+passed 22 mouse cases, fifteen keyboard cases, and eight pure regressions.
+Independent audit verified the artifact digest, 74 receiver exits/destructions,
+zero physical input, released modifiers, desktop restoration, and forty capture contents.
+Four minimized/closed recipients were refused by capture without restoration.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/05b583359fd79ab9ab526598db7f64ad917392ff/docs/ai/references/driver/evidence/2026-10-31-windows-mouse-lifecycle/acceptance.json)
+retains close state, typed receipts, binary/capture hashes, and visual-review groups.
+#449 is ready for review and unmerged. Background fallback needs typed posted-partial receipts;
+the following #451 slice covers foreground scroll batches. Drag still needs its hold/worker lease.
+This is measured 96-DPI Win32 evidence, not complete Phase 2 or toolkit support.
+
+## Complete foreground scroll batches under review
+
+PR [#451](https://github.com/moeru-ai/auv/pull/451) retains one recipient through timed/live foreground scroll and every wait.
+Its baseline confirmed input resumed after takeover or ABA, while later failures lost typed progress.
+The common provided `WindowInput::wait_scroll` boundary now permits platform recipient checks;
+the shared executor preserves original causes and submitted/uncertain prefixes.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41206480036), source `ad0441bc`,
+passed 27 batch cases, 22 prior mouse cases, fifteen keyboard cases, and 34 selected pure regressions.
+Independent audit verified 128 receiver exits/destructions, zero physical input,
+released modifiers, desktop restoration, eight capture refusals, and ninety capture contents.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/1f112bf145ddb23583b7aac83d0fa8e8cf1d29af/docs/ai/references/driver/evidence/2026-10-31-windows-scroll-batch/acceptance.json)
+retains application state, typed receipts, binary/capture hashes, and visual-review groups.
+#451 is ready for review and unmerged. This scoped 96-DPI Win32 evidence covers
+between-sample loss, idle and final waits, cancellation, refusal, and nested retarget rejection.
+Drag, background partial delivery, frame/coordinate admission, and complete frontend parity remain open.
 
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.
-The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
-Phase 2 depends on the reviewed capture guard and separately scoped input-lifetime work.
+The typed Invoke path is available to MCP, with scoped keyboard evidence above.
+Complete semantic-focus/edit/verification workflows through MCP remain unverified.
+Phase 2 remains incomplete after retirement of the screenshot guard.
+The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
+Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
+Draft #446 passed the stated Win32 keyboard route matrix and five hook lifecycle fault models.
+PR #448 passed the scoped foreground-click matrix; it does not complete other mouse capabilities or frame/coordinate admission.
+PR #449 passed single-call foreground scroll and mouse-close lifetime.
+PR #451 passed complete foreground timed/live scroll batches; drag and background partial progress remain open.
+Complete application workflows remain open.
+Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
+This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
+PR #447 has four controls inventories plus scoped local-Invoke edit/save acceptance in all four apps.
+Its selected-app cases allow independent desktops without continuing an uncertain input run.
+Scrolling/dialogs, richer text, and foreground-loss cases remain acceptance work.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
 

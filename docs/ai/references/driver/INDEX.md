@@ -9,7 +9,7 @@ use TypeScript. Raw run output stays local.
 
 Count: **83**
 
-- [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, capture guard review, semantic focus, cancellation, and shared failure progress with explicit evidence boundaries.
+- [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, semantic focus, failure progress, retired screenshot-guard decision, and remaining acceptance.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)

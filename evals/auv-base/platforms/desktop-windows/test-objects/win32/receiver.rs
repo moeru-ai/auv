@@ -43,6 +43,9 @@
 //! request, a window that real input made the foreground window keeps the foreground: the
 //! evaluation hands it back itself when it is done. `--topmost` creates the window above ordinary
 //! windows, so its text can be read off the screen and real input aimed at it lands on it.
+//!
+//! An explicitly armed `reject_typing_focus` request redirects received text-box focus to this
+//! receiver's own button. Its counters and GetFocus state expose a real post-delivery refusal.
 
 #[cfg(not(windows))]
 fn main() {
@@ -70,7 +73,7 @@ mod native {
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
   use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
   use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
-  use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture};
+  use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
   use windows::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
     ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
@@ -189,6 +192,8 @@ mod native {
     foreground_yielded: AtomicU64,
     typing_chars: AtomicU64,
     typing_down: AtomicU64,
+    typing_focus: AtomicU64,
+    typing_focus_rejected: AtomicU64,
   }
 
   static COUNTERS: Counters = Counters {
@@ -209,6 +214,8 @@ mod native {
     foreground_yielded: AtomicU64::new(0),
     typing_chars: AtomicU64::new(0),
     typing_down: AtomicU64::new(0),
+    typing_focus: AtomicU64::new(0),
+    typing_focus_rejected: AtomicU64::new(0),
   };
 
   // The window thread is the only writer of these handles, set during `WM_CREATE`.
@@ -231,6 +238,8 @@ mod native {
   static KEEP_FOREGROUND: AtomicBool = AtomicBool::new(false);
   /// Started with `--keep-ime`: the text box keeps the thread's input method.
   static KEEP_IME: AtomicBool = AtomicBool::new(false);
+  /// Explicit fault injection only: reject text focus by focusing our own button.
+  static REJECT_TYPING_FOCUS: AtomicBool = AtomicBool::new(false);
   static TYPING: AtomicIsize = AtomicIsize::new(0);
   static TYPING_PROC: AtomicIsize = AtomicIsize::new(0);
   /// Key messages the text box received, oldest first, at most `KEY_LOG_LIMIT`. They can only be
@@ -529,11 +538,25 @@ mod native {
       WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => count(&COUNTERS.typing_down),
       WM_SETFOCUS => {
         count(&COUNTERS.focus_set);
+        count(&COUNTERS.typing_focus);
         publish_title(unsafe { GetParent(hwnd) }.unwrap_or_default());
       }
       _ => {}
     }
-    call_original(&TYPING_PROC, hwnd, message, wparam, lparam)
+    let result = call_original(&TYPING_PROC, hwnd, message, wparam, lparam);
+    if message == WM_SETFOCUS && REJECT_TYPING_FOCUS.load(Relaxed) {
+      let button = handle(&BUTTON);
+      // SAFETY: this request is armed after both controls are created. Both
+      // controls belong to this GUI thread; no mutex or mutable borrow spans
+      // the reentrant focus callbacks. Other processes' windows are untouched.
+      unsafe {
+        let _ = SetFocus(button);
+        if GetFocus() == button {
+          count(&COUNTERS.typing_focus_rejected);
+        }
+      }
+    }
+    result
   }
 
   /// Records a drag over the pad: where the button went down and up on the screen, and how many
@@ -925,6 +948,7 @@ mod native {
       "foreground_yielded": c.foreground_yielded.load(Relaxed),
       "minimized": minimized,
       "foreground": foreground,
+      "button_focused": unsafe { GetFocus() } == handle(&BUTTON),
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
@@ -947,6 +971,8 @@ mod native {
         "focused": unsafe { GetFocus() } == typing,
         "chars": c.typing_chars.load(Relaxed),
         "button_down": c.typing_down.load(Relaxed),
+        "focus_received": c.typing_focus.load(Relaxed),
+        "focus_rejected": c.typing_focus_rejected.load(Relaxed),
         "keys": KEY_LOG.lock().map(|log| log.clone()).unwrap_or_default(),
       });
       state["pad"] = PAD.lock().ok().and_then(|pad| pad.clone()).unwrap_or(Value::Null);
@@ -1006,6 +1032,14 @@ mod native {
       Some("keep_foreground") if FOREGROUND_INPUT.load(Relaxed) => {
         KEEP_FOREGROUND.store(true, Relaxed);
         json!({})
+      }
+      Some("reject_typing_focus") if FOREGROUND_INPUT.load(Relaxed) => {
+        if let Some(enabled) = request["enabled"].as_bool() {
+          REJECT_TYPING_FOCUS.store(enabled, Relaxed);
+          json!({"enabled": enabled})
+        } else {
+          json!({"ok": false, "error": "reject_typing_focus needs enabled"})
+        }
       }
       // Forgets the logged keys and the last drag, so the next step is read on its own.
       Some("reset_log") => {
