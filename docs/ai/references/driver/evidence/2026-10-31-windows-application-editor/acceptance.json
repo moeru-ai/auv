@@ -57,7 +57,19 @@
       "controller_pointer_restoration_used": false,
       "focus_reacquired": false,
       "edit_save_accepted": true,
-      "workflow_accepted": false
+      "workflow_accepted": false,
+      "environment": {
+        "image_os": "win25-vs2026",
+        "image_version": "20261021.278.1",
+        "os": "Microsoft Windows NT 10.0.26100.0",
+        "session_id": 2,
+        "user_interactive": true,
+        "input_desktop_accessible": true,
+        "screen_count": 1,
+        "primary_window_dpi": 96,
+        "primary_effective_scale_percent": 100.0,
+        "dpi_method": "GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored"
+      }
     },
     {
       "application": "vscode",
@@ -123,7 +135,19 @@
       "controller_pointer_restoration_used": false,
       "focus_reacquired": false,
       "edit_save_accepted": true,
-      "workflow_accepted": false
+      "workflow_accepted": false,
+      "environment": {
+        "image_os": "win25-vs2026",
+        "image_version": "20261021.278.1",
+        "os": "Microsoft Windows NT 10.0.26100.0",
+        "session_id": 2,
+        "user_interactive": true,
+        "input_desktop_accessible": true,
+        "screen_count": 1,
+        "primary_window_dpi": 96,
+        "primary_effective_scale_percent": 100.0,
+        "dpi_method": "GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored"
+      }
     },
     {
       "application": "notepadnext",
@@ -183,7 +207,19 @@
       "controller_pointer_restoration_used": true,
       "focus_reacquired": false,
       "edit_save_accepted": true,
-      "workflow_accepted": false
+      "workflow_accepted": false,
+      "environment": {
+        "image_os": "win25-vs2026",
+        "image_version": "20261030.294.1",
+        "os": "Microsoft Windows NT 10.0.26100.0",
+        "session_id": 2,
+        "user_interactive": true,
+        "input_desktop_accessible": true,
+        "screen_count": 1,
+        "primary_window_dpi": 96,
+        "primary_effective_scale_percent": 100.0,
+        "dpi_method": "GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored"
+      }
     },
     {
       "application": "powershell-ise",
@@ -237,7 +273,19 @@
       "controller_pointer_restoration_used": false,
       "focus_reacquired": false,
       "edit_save_accepted": true,
-      "workflow_accepted": false
+      "workflow_accepted": false,
+      "environment": {
+        "image_os": "win25-vs2026",
+        "image_version": "20261021.278.1",
+        "os": "Microsoft Windows NT 10.0.26100.0",
+        "session_id": 2,
+        "user_interactive": true,
+        "input_desktop_accessible": true,
+        "screen_count": 1,
+        "primary_window_dpi": 96,
+        "primary_effective_scale_percent": 100.0,
+        "dpi_method": "GetDpiForWindow on an owned hidden PMv2 window; window destroyed and thread context restored"
+      }
     }
   ],
   "remaining_gates": [

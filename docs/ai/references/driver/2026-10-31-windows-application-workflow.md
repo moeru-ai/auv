@@ -176,5 +176,6 @@ All 13 captures were reviewed. VS Code's extra command dismissed onboarding thro
 its readiness and final captures show the exposed editor and expected saved text.
 Qt's OCR click now retains its typed delivery artifact. Its separately recorded controller move restored the pointer.
 Every case verified foreground/pointer restoration, released modifiers, zero physical input, and complete owned-job cleanup.
+Each task had one accessible interactive display at measured 96 DPI (100% scale); the manifest records each image and program version.
 The optional stale-focus reacquisition branch was not exercised in this successful run.
 These receipts accept this edit/save slice only; every summary still records `workflow_accepted=false`.
