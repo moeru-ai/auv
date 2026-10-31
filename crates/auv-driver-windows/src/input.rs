@@ -300,7 +300,7 @@ pub(crate) fn wait_scroll(deadline: Instant) -> DriverResult<()> {
 }
 
 /// Refusal before submission must not overwrite an existing partial receipt.
-fn not_delivered(cause: DriverError) -> DriverError {
+pub(crate) fn not_delivered(cause: DriverError) -> DriverError {
   match cause {
     cause @ DriverError::InputAction { .. } => cause,
     cause => DriverError::InputAction {

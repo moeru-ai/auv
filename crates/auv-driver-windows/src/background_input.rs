@@ -69,12 +69,12 @@ pub(crate) fn click_at_window(
 
 #[cfg(target_os = "windows")]
 pub(crate) fn scroll_at_window(window: &Window, screen_point: Point, scroll: Scroll) -> DriverResult<()> {
-  native::scroll(window, screen_point, crate::input::wheel_units(scroll)?)
+  native::scroll(window, screen_point, crate::input::wheel_units(scroll).map_err(crate::input::not_delivered)?)
 }
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn scroll_at_window(_window: &Window, _screen_point: Point, _scroll: Scroll) -> DriverResult<()> {
-  Err(auv_driver_common::error::DriverError::unsupported("window.scroll background delivery"))
+  Err(crate::input::not_delivered(auv_driver_common::error::DriverError::unsupported("window.scroll background delivery")))
 }
 
 pub(crate) fn mouse_backend(window: Window) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
@@ -248,17 +248,151 @@ mod native {
   }
 
   pub(super) fn scroll(window: &Window, screen_point: Point, units: crate::input::WheelUnits) -> DriverResult<()> {
+    // TODO(windows-posted-recipient): root/child identity and minimized-window
+    // leases need their own native admission fixture; see the posted-scroll note.
     let target = resolve_target_hwnd(window, screen_point)?;
     // WM_MOUSEWHEEL/WM_MOUSEHWHEEL report the pointer position in *screen*
     // coordinates, unlike WM_LBUTTONDOWN/UP which use client coordinates.
     let lparam = make_lparam(round_to_i32(screen_point.x), round_to_i32(screen_point.y));
-    if units.vertical != 0 {
-      post(target, WM_MOUSEWHEEL, make_wheel_wparam(units.vertical), lparam)?;
-    }
-    if units.horizontal != 0 {
-      post(target, WM_MOUSEHWHEEL, make_wheel_wparam(units.horizontal), lparam)?;
+    post_scroll(units, |message, delta| post(target, message, delta, lparam))
+  }
+
+  /// Queues the two axes in order at the native message boundary.
+  fn post_scroll(units: crate::input::WheelUnits, mut post: impl FnMut(u32, WPARAM) -> DriverResult<()>) -> DriverResult<()> {
+    use auv_driver_common::{DriverError, InputActionProgress, InputActionResult, InputAttempt, InputDeliveryPath};
+    let mut accepted = 0;
+    for (message, delta) in [
+      (WM_MOUSEWHEEL, units.vertical),
+      (WM_MOUSEHWHEEL, units.horizontal),
+    ] {
+      if delta == 0 {
+        continue;
+      }
+      let result = if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
+        Err(crate::error::invalid_input("posted wheel input cancelled before further delivery"))
+      } else {
+        post(message, make_wheel_wparam(delta))
+      };
+      if let Err(cause) = result {
+        let progress = if accepted == 0 {
+          InputActionProgress::NotDelivered
+        } else {
+          let mut action = InputActionResult::single_success(InputDeliveryPath::WindowTargetedWheel);
+          action.attempts[0].message = Some(format!("queued {accepted} wheel messages before failure; application effect is unverified"));
+          action.attempts.push(InputAttempt::failure(action.selected_path, cause.to_string()));
+          // NOTICE: per-axis counts stay diagnostic until a shared scroll
+          // receipt has an approved producer/consumer; retry state uses the
+          // existing InputActionProgress contract, not a parallel result type.
+          InputActionProgress::Submitted { action }
+        };
+        return Err(DriverError::InputAction {
+          cause: Box::new(cause),
+          progress,
+        });
+      }
+      accepted += 1;
     }
     Ok(())
+  }
+
+  #[cfg(test)]
+  mod scroll_tests {
+    use super::*;
+    use auv_driver_common::{DriverError, InputActionProgress, InputDeliveryPath};
+
+    // ROOT CAUSE:
+    //
+    // The first axis can be queued before the second post fails. Flattening
+    // that error loses the accepted prefix and enables a duplicated fallback.
+    #[test]
+    fn second_post_failure_retains_submitted_vertical_axis() {
+      let mut messages = Vec::new();
+      let error = post_scroll(
+        crate::input::WheelUnits {
+          vertical: -120,
+          horizontal: 120,
+        },
+        |message, _| {
+          messages.push(message);
+          if message == WM_MOUSEHWHEEL {
+            Err(backend("injected horizontal queue refusal"))
+          } else {
+            Ok(())
+          }
+        },
+      )
+      .unwrap_err();
+      assert_eq!(messages, [WM_MOUSEWHEEL, WM_MOUSEHWHEEL]);
+      assert!(matches!(error,DriverError::InputAction {progress:InputActionProgress::Submitted {action},..}
+        if action.selected_path == InputDeliveryPath::WindowTargetedWheel));
+    }
+
+    #[test]
+    fn first_post_failure_reports_not_delivered_without_second_post() {
+      let mut messages = Vec::new();
+      let error = post_scroll(
+        crate::input::WheelUnits {
+          vertical: -120,
+          horizontal: 120,
+        },
+        |message, _| {
+          messages.push(message);
+          Err(backend("queue full"))
+        },
+      )
+      .unwrap_err();
+      assert_eq!(messages, [WM_MOUSEWHEEL]);
+      assert!(matches!(
+        error,
+        DriverError::InputAction {
+          progress: InputActionProgress::NotDelivered,
+          ..
+        }
+      ));
+    }
+
+    #[test]
+    fn cancellation_after_first_post_retains_prefix_and_stops_horizontal() {
+      use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+      let cancellation = std::sync::Arc::new(InputCancellation::default());
+      let mut messages = Vec::new();
+      let error = with_input_cancellation(cancellation.clone(), || {
+        post_scroll(
+          crate::input::WheelUnits {
+            vertical: -120,
+            horizontal: 120,
+          },
+          |message, _| {
+            messages.push(message);
+            cancellation.cancel();
+            Ok(())
+          },
+        )
+      })
+      .unwrap_err();
+      assert_eq!(messages, [WM_MOUSEWHEEL]);
+      assert!(matches!(error,DriverError::InputAction {cause,progress:InputActionProgress::Submitted {..}}
+        if matches!(*cause,DriverError::InvalidInput {ref message} if message.contains("cancelled"))));
+    }
+
+    #[test]
+    fn pre_cancelled_posted_scroll_refuses_before_native_queue_call() {
+      use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+      let cancellation = std::sync::Arc::new(InputCancellation::default());
+      cancellation.cancel();
+      let error = with_input_cancellation(cancellation, || {
+        post_scroll(
+          crate::input::WheelUnits {
+            vertical: -120,
+            horizontal: 120,
+          },
+          |_, _| panic!("cancelled action must not post"),
+        )
+      })
+      .unwrap_err();
+      assert!(matches!(error,DriverError::InputAction {cause,progress:InputActionProgress::NotDelivered}
+        if matches!(*cause,DriverError::InvalidInput {ref message} if message.contains("cancelled"))));
+    }
   }
 
   /// Descends from the window's top-level `HWND` to the innermost child under
