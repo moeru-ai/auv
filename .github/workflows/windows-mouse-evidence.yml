@@ -1,0 +1,152 @@
+name: Windows mouse recipient evidence
+
+on:
+  push:
+    branches:
+      - codex/windows-mouse-evidence
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  mouse-recipient:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: e39b9cdf27b9615577ac2d41f3da49f44bfbae31
+          persist-credentials: false
+
+      - name: Record exact source and isolated desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = git rev-parse HEAD
+          if ($actual -ne 'e39b9cdf27b9615577ac2d41f3da49f44bfbae31') { throw "Unexpected source $actual" }
+          $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class MouseDesktopProbe {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+              [DllImport("user32.dll")]
+              public static extern bool CloseDesktop(IntPtr desktop);
+              [DllImport("user32.dll")]
+              static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+              [DllImport("user32.dll")]
+              static extern bool AreDpiAwarenessContextsEqual(IntPtr left, IntPtr right);
+              [DllImport("user32.dll")]
+              static extern IntPtr GetThreadDpiAwarenessContext();
+              [DllImport("user32.dll")]
+              static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+              [DllImport("user32.dll")]
+              static extern uint GetDpiForWindow(IntPtr window);
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              static extern IntPtr CreateWindowExW(uint extra, string kind, string title, uint style,
+                  int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr data);
+              [DllImport("user32.dll")]
+              static extern bool DestroyWindow(IntPtr window);
+              public static uint ReadDpi() {
+                  var requested = new IntPtr(-4);
+                  var previous = SetThreadDpiAwarenessContext(requested);
+                  if (previous == IntPtr.Zero) throw new InvalidOperationException("DPI context failed");
+                  var window = IntPtr.Zero;
+                  try {
+                      window = CreateWindowExW(0x08000080, "STATIC", "AUV foreground DPI preflight", 0,
+                          0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                      if (window == IntPtr.Zero || !AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), requested))
+                          throw new InvalidOperationException("DPI window creation failed");
+                      var dpi = GetDpiForWindow(window);
+                      if (dpi == 0) throw new InvalidOperationException("DPI query failed");
+                      return dpi;
+                  } finally {
+                      var destroyed = window == IntPtr.Zero || DestroyWindow(window);
+                      var restored = SetThreadDpiAwarenessContext(previous) != IntPtr.Zero
+                          && AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), previous);
+                      if (!destroyed || !restored) throw new InvalidOperationException("DPI probe cleanup failed");
+                  }
+              }
+          }
+          '@
+          $desktop = [MouseDesktopProbe]::OpenInputDesktop(0, $false, 1)
+          $accessible = $desktop -ne [IntPtr]::Zero
+          if ($accessible -and -not [MouseDesktopProbe]::CloseDesktop($desktop)) { throw 'Desktop handle did not close' }
+          $screens = @([System.Windows.Forms.Screen]::AllScreens)
+          if (-not [Environment]::UserInteractive -or -not $accessible -or $screens.Count -ne 1) {
+            throw 'Stop before native tests: one accessible isolated interactive display is required'
+          }
+          [ordered]@{
+            source_sha = $actual
+            base_sha = '132d051d820f5670322b03c11758e1e32e774e5b'
+            workflow_sha = '${{ github.sha }}'
+            os = [Environment]::OSVersion.VersionString
+            image_version = $env:ImageVersion
+            session_id = (Get-Process -Id $PID).SessionId
+            user_interactive = [Environment]::UserInteractive
+            input_desktop_accessible = $accessible
+            screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
+            primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
+            expected_baseline_failure = $true
+          } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the unchanged Driver and test-only mouse reproduction
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          rustc --version | Tee-Object -FilePath "$directory/rustc.txt"
+          git diff --exit-code 132d051d820f5670322b03c11758e1e32e774e5b HEAD -- crates
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline reproduction must not change production crates' }
+          cargo build --locked -p auv-base-evals --bin background-session-eval --bin win32-receiver
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @('target/debug/background-session-eval.exe','target/debug/win32-receiver.exe') | ForEach-Object {
+            $item = Get-Item -LiteralPath $_
+            @{ path=$item.FullName; sha256=(Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+          } | ConvertTo-Json | Set-Content -LiteralPath "$directory/binaries.json"
+
+      - name: Recheck the existing keyboard fault receiver after shared fixture extraction
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          & 'target/debug/background-session-eval.exe' window-keyboard --output "$directory/keyboard" > "$directory/keyboard.stdout.log" 2> "$directory/keyboard.stderr.log"
+          $exit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/keyboard/window-keyboard.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 60 })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          if ($exit -ne 0 -or $cases.Count -ne 15 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Existing keyboard fixture regression failed' }
+          if (@($rows | Where-Object { $_.kind -eq 'cleanup' -and (-not $_.process_exited -or -not $_.window_destroyed) }).Count -ne 0) { throw 'Keyboard receiver cleanup incomplete' }
+
+      - name: Reproduce foreground click recipient loss
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          & 'target/debug/background-session-eval.exe' window-mouse --output "$directory/mouse" > "$directory/mouse.stdout.log" 2> "$directory/mouse.stderr.log"
+          $exit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/mouse/window-mouse.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 60 })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $cases | Select-Object case,passed,target_lost,@{n='a_clicks';e={$_.after_a.clicks}},@{n='b_clicks';e={$_.after_b.clicks}},input_progress | ConvertTo-Json -Depth 12 | Tee-Object -FilePath "$directory/mouse-result.json"
+          $cleanup = @($rows | Where-Object kind -eq 'cleanup')
+          if ($cleanup.Count -ne 8 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned mouse receiver cleanup incomplete' }
+          if ($exit -ne 0 -or $cases.Count -ne 4 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Mouse recipient invariant failed; inspect retained native application counters' }
+
+      - name: Preserve source-bound native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-mouse-recipient-e39b9cdf-baseline
+          path: ${{ runner.temp }}/auv-mouse-evidence/
+          if-no-files-found: warn
+          retention-days: 14
