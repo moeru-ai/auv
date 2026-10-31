@@ -15,7 +15,7 @@ Those changes remain outside this work.
 | --- | --- | --- |
 | #409 | Merged as `8bf7e4f1`; three Win32 workflow routes have isolated hosted-desktop evidence. | Reuse its receiver and independent application checks. |
 | #425, #428, #430, #431, #432, #433, #434 | Present in the audited main history. | Start from main instead of the older benchmark checkout. |
-| Capture guard #429 | Open at `7cce1d93bbcdd2ccf8405dd943879f6e8528282b`. | Review and reuse its admission contract in Phase 2. Do not build a competing guard. |
+| Capture guard #429 | Closed without merge on 2026-10-30; dependent #441 closed. | Semantic focus does not depend on its screenshot predicate. Phase 2 admission proceeds independently. |
 | Track A | Local `88807d0e7c9f37b9106b480a3b0f0ba2a75fad35`; not an ancestor of main. | Keep separate. Window-target deduplication is not a Phase 1 dependency and overlaps #429. |
 | Track B | Local `6452920493d936c1b084c69cc41dfaa2c0d46f95`; not an ancestor of main. | Reuse and revise the matcher before connecting native focus. |
 | Local isolated VM | VirtualBox lists one inaccessible registration and no running VM. | No foreground or DPI experiment on the owner's desktop. |
@@ -162,6 +162,10 @@ It does not prove general application support, live MCP parity, provider cancell
 
 ## Capture guard review
 
+> [!NOTE]
+> Roadmap update (2026-10-30): PR #429 was closed without merging, and dependent #441 is closed.
+> This semantic-focus stack is independent of its screenshot predicate. Phase 2 admission and input-lifetime work will proceed as an independent slice rather than reusing #429.
+
 The [#429 head](https://github.com/moeru-ai/auv/pull/429) uses a dedicated guarded-click RPC.
 An older Runner therefore cannot silently ignore a new request field.
 Admission holds the shared desktop input reservation across recapture and delivery.
@@ -176,7 +180,7 @@ Phase 2 must preserve these limits and must never retry a refused guard through 
 
 Phase 1 has isolated receiver evidence for all three selected routes.
 The typed Invoke path is available to MCP; no live MCP workflow evidence is claimed here.
-Phase 2 depends on the reviewed capture guard and separately scoped input-lifetime work.
+Phase 2 depends on independent admission and separately scoped input-lifetime work (no longer blocked on #429).
 Phase 3 needs repeatable application-owned checks for each named toolkit.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.

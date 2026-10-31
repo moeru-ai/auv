@@ -3,7 +3,7 @@
 //! Native AX capture/focus stay behind this module. Product and app crates
 //! should call [`crate::session::AccessibilityApi`] instead of `native`.
 
-use crate::support::{find_best_ax_node, score_ax_node_match};
+use crate::support::score_ax_node_match;
 use crate::types::{ObservedAxNode, ObservedAxTreeSnapshot};
 use auv_driver_common::accessibility::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOptions};
 use auv_driver_common::error::{DriverError, DriverResult};
@@ -114,9 +114,18 @@ fn select_focus_node<'a>(
   expected_role: Option<&str>,
   candidate: &str,
 ) -> DriverResult<&'a ObservedAxNode> {
+  let expected_role = expected_role.map(|role| role.trim()).filter(|role| !role.is_empty());
   let candidate = candidate.trim();
   if !candidate.is_empty() {
     if let Some(node) = snapshot.nodes.iter().find(|node| node.path == candidate) {
+      if let Some(expected) = expected_role {
+        if !node.role.eq_ignore_ascii_case(expected) {
+          return Err(DriverError::RoleMismatch {
+            message: format!("AX candidate {candidate} has role {}, expected {expected}", node.role),
+            recovery: Some("read a new AX tree and select the target again".into()),
+          });
+        }
+      }
       return Ok(node);
     }
     // NOTICE(textedit-ax-candidate-json): full promoted CandidateRef JSON
@@ -139,9 +148,7 @@ fn select_focus_node<'a>(
     .nodes
     .iter()
     .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
-    .filter(|node| {
-      expected_role.map(|role| role.trim()).filter(|role| !role.is_empty()).is_none_or(|role| node.role.eq_ignore_ascii_case(role))
-    })
+    .filter(|node| expected_role.is_none_or(|role| node.role.eq_ignore_ascii_case(role)))
     .filter_map(|node| score_ax_node_match(node, &query.to_lowercase()).map(|score| (score, node)))
     .collect::<Vec<_>>();
   ranked.sort_by(|left, right| right.0.cmp(&left.0));
@@ -150,8 +157,11 @@ fn select_focus_node<'a>(
     return Ok(node);
   }
 
-  find_best_ax_node(snapshot, query).ok_or_else(|| DriverError::NotFound {
-    target: format!("AX text node matching query {query}"),
+  Err(DriverError::NotFound {
+    target: match expected_role {
+      Some(role) => format!("AX text node with role {role} matching query {query}"),
+      None => format!("AX text node matching query {query}"),
+    },
   })
 }
 
