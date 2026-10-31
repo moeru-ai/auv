@@ -1,7 +1,7 @@
 # Windows complete-drag recipient lifetime
 
-Status: fix implemented; native acceptance pending. Based on PR #451 revision
-`1f112bf145ddb23583b7aac83d0fa8e8cf1d29af`. No corrected native result is accepted yet.
+Status: scoped native acceptance passed; PR #452 is under review and unmerged.
+Based on PR #451 revision `1f112bf145ddb23583b7aac83d0fa8e8cf1d29af`.
 
 The assigned bug-fix slice is `WindowInput::drag` with
 `InputPolicy::ForegroundPreferred`. A complete gesture must retain its native
@@ -141,3 +141,47 @@ deadlock within two seconds. No production code changed. All 113 common tests
 passed afterward. Artifact `13047504606`, SHA-256
 `e66948ee7f09dd9c30c46f55c7dfc5a0b363ec8bc337ad90a99d3e8fff23d631`,
 retains the exact failed pure-test log and is not GUI evidence.
+
+## Accepted native evidence
+
+[Run 41215734604](https://github.com/moeru-ai/auv/actions/runs/41215734604),
+job `124579742037`, checked out `50d04308a8fd476e56e1038570de363fcef928ff`.
+Workflow revision: `914ff38c3db464a1e144aae3883ecbf69a69f764`.
+Production Driver code is unchanged from `93696abc44666568720539a77ae0795beaae3665`.
+Artifact `13048870187` was downloaded and verified before extraction:
+SHA-256 `3b160fb06a7899ef0b81cc5c2b5c89b32124e776c41fe09476959c653aebda4d`.
+
+Independent audits accepted all 13 drag cases, 27 existing scroll-batch cases,
+22 click/scroll cases, fifteen keyboard cases, and 56 selected pure regressions.
+Each interrupted drag had exactly three injected moves and one down/up. The
+pointer stopped at the application-acknowledged fault/cancel point. Refusals had
+zero injected events, pointer changes, or foreground changes. A-B-A readback
+confirmed A foreground and one handoff from B. The accepted replay had zero
+alternate held moves in every case, so the one-message OS classification was
+not exercised in this replay. It remains an explicit witness-validation gap.
+
+All 154 owned receivers exited and destroyed their windows. Physical input
+counts were zero. Buttons/modifiers were released before controller recovery;
+every controller release was a Noop. Pointer and foreground were restored.
+Ten minimized/closed captures across the three mouse suites were explicitly
+refused. All 114 captures were reviewed: 101 exact hashes match previously
+reviewed contents; thirteen captures contain four new contents, all inspected.
+Images establish receiver appearance. Gesture delivery is established separately
+by application state and the independent hook witness, not by blank pad pixels.
+
+The [permanent manifest](evidence/2026-10-31-windows-drag-recipient/acceptance.json)
+retains source/workflow/binary/capture hashes, native message kinds, typed
+progress, application receipts, restoration/cleanup, and visual-review groups.
+Raw hosted artifacts have fourteen-day retention; the local ignored archive is
+retained. The final code change after native acceptance is a deferral comment;
+all other final changes are documentation and the manifest.
+
+Local validation: 113 common tests; 35 Windows input tests plus five pre-cancel
+tests; 167 Invoke tests; 29 eval library tests. The Windows input, Invoke, and
+eval suites each retain one existing ignored test. Affected all-target checks,
+Windows all-features check, clippy, format/diff checks, evaluator help, and
+production Invoke/input.drag help passed. Clippy retains existing warnings.
+
+This is direct Driver, single-display 96-DPI Win32 evidence. The full owner goal
+remains incomplete, including cross-frontend drag workflows, background partial
+delivery, frame/coordinate admission, higher DPI, and complete real-app flows.

@@ -194,6 +194,9 @@ pub fn run(output: &Path) -> Result<bool> {
     // WM_MOUSEMOVE in B. It is not a new native injection. Require both its
     // coordinate and the exact injected prefix, never just a quiet final cursor.
     // See `https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343`.
+    // TODO(windows-close-witness): accepted replay had no alternate frame move;
+    // force this OS-only branch with a deterministic isolated fixture before
+    // treating its classification as independently exercised native evidence.
     let closure_message =
       case == "close" && native_prefix && after_b["raw"]["frame_move"] == 1 && after_b["raw"]["frame_move_at"] == fault["cursor_at_fault"];
     let no_wrong_move = after_b["raw"]["frame_down"] == before_b["raw"]["frame_down"]
