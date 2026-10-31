@@ -91,7 +91,7 @@ mod native {
 
     fn check(&self) -> DriverResult<()> {
       if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
-        return Err(invalid_input("window keyboard input cancelled before further delivery"));
+        return Err(invalid_input("window input cancelled before further delivery"));
       }
       if let Some(message) = self.lost.lock().unwrap_or_else(PoisonError::into_inner).clone() {
         return Err(self.error(message));

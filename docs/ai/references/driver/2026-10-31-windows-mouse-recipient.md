@@ -46,6 +46,10 @@ Admission opens the guard and permits at most one initial activation. The guard 
 Its receipt records mouse disturbance as temporary, while the existing keyboard clipboard policy remains unchanged.
 Errors after accepted submission retain `InputActionProgress`; they do not claim zero delivery.
 Successful output retains a foreground-admission attempt followed by the native delivery attempt.
+If native insertion returns a short click count, cleanup releases only the accepted downs.
+Those releases use the existing cleanup boundary, bypass admission, and preserve the uncertain
+submission receipt. A fake native-boundary regression first reproduced cleanup refusal after
+admission loss, then passed after the fix. This is not a claim that CI forced a real short `SendInput` return.
 
 This slice targets a foreground click batch. Posted background mouse messages remain a separate policy.
 Foreground scrolling/held motion and local OCR-click cancellation-context installation need their own
