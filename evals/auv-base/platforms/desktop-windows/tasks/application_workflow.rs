@@ -174,18 +174,31 @@ fn inspect_controls(processes: &mut native::Processes, window: &Window, director
 /// Launches four real toolkits, records their controls/pixels, and verifies ownership cleanup.
 /// NOTICE: this inventory issues no application input and never accepts an edit/save workflow.
 pub fn run_controls(options: &Options) -> Result<bool> {
-  run(options, None)
+  run(options, None, None)
 }
 
 /// Runs explicit AUV editor/save cases and verifies app-owned files. This does
 /// not accept the later scroll/dialog, DPI, or full cross-frontend workflow gates.
-pub fn run_editor(options: &Options, auv: &Path) -> Result<bool> {
+/// `application` selects one named cohort app; `None` runs the full cohort.
+pub fn run_editor(options: &Options, auv: &Path, application: Option<&str>) -> Result<bool> {
   ensure!(auv.is_file(), "explicit AUV executable is required");
-  run(options, Some(auv))
+  run(options, Some(auv), application)
 }
 
-fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
+fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Result<bool> {
   isolated()?;
+  let applications = [
+    ("edge", &options.edge),
+    ("vscode", &options.vscode),
+    ("notepadnext", &options.notepadnext),
+    ("powershell-ise", &options.powershell_ise),
+  ];
+  ensure!(application.is_none_or(|selected| applications.iter().any(|(name, _)| *name == selected)), "unknown cohort application");
+  let expected_apps = if application.is_some() {
+    1
+  } else {
+    applications.len()
+  };
   ensure!(!options.output.exists(), "controls output must be a fresh directory");
   std::fs::create_dir_all(&options.output)?;
   let session = WindowsDriver::new().open_local()?;
@@ -202,12 +215,7 @@ fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
   let mut complete = true;
   let mut editors_passed = true;
   let mut attempts = 0;
-  for (name, program) in [
-    ("edge", &options.edge),
-    ("vscode", &options.vscode),
-    ("notepadnext", &options.notepadnext),
-    ("powershell-ise", &options.powershell_ise),
-  ] {
+  for (name, program) in applications.into_iter().filter(|(name, _)| application.is_none_or(|selected| selected == *name)) {
     let before = watch.snapshot();
     if before.physical_keys != original.physical_keys || before.physical_mouse != original.physical_mouse {
       records.write("abort", json!({"reason": "physical input", "next_app": name}))?;
@@ -350,14 +358,14 @@ fn run(options: &Options, auv: Option<&Path>) -> Result<bool> {
   }
   let final_state = watch.snapshot();
   let restored = final_state.foreground == original.foreground && final_state.cursor == original.cursor;
-  complete &= attempts == 4
+  complete &= attempts == expected_apps
     && restored
     && final_state.physical_keys == original.physical_keys
     && final_state.physical_mouse == original.physical_mouse;
   // TODO(windows-application-workflow): scrolling/dialogs, target-loss cases,
   // DPI, and cross-frontend acceptance remain separate owner-named goal gates;
   // see 2026-10-31-windows-application-workflow.md before expanding these cases.
-  records.write("summary", json!({"apps": attempts, "inventory_complete": complete, "edit_save_accepted": auv.is_some() && editors_passed && complete, "workflow_accepted": false,
+  records.write("summary", json!({"apps": attempts, "application": application, "inventory_complete": complete, "edit_save_accepted": auv.is_some() && editors_passed && complete, "workflow_accepted": false,
     "foreground_restored": final_state.foreground == original.foreground, "pointer_restored": final_state.cursor == original.cursor,
     "physical_keys": final_state.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": final_state.physical_mouse.saturating_sub(original.physical_mouse)}))?;
   Ok(complete && (auv.is_none() || editors_passed))

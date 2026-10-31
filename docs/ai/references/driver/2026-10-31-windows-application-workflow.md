@@ -88,6 +88,9 @@ VS Code's initial incomplete tree was transient; no Driver traversal policy chan
 ## Edit/save execution
 
 `background-session-eval app-editor` uses the same four paths plus an explicit `--auv` executable.
+Its optional `--application` selects `edge`, `vscode`, `notepadnext`, or `powershell-ise`.
+Separate isolated desktops can test these cases independently without continuing after another app's uncertain input.
+The summary records that selector and the actual application count; one accepted case does not accept the whole cohort.
 It invokes AUV's JSON CLI inside the owned job; every step retains stdout, stderr, and its run store.
 An absent semantic query must return `not_found` with `not_delivered`, leave the fixture unchanged,
 and inject no input before the positive case proceeds.

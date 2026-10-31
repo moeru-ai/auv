@@ -66,6 +66,9 @@ fn main() -> std::process::ExitCode {
       output: PathBuf,
       #[arg(long)]
       auv: PathBuf,
+      /// Run only edge, vscode, notepadnext, or powershell-ise on this isolated desktop.
+      #[arg(long)]
+      application: Option<String>,
       #[arg(long)]
       edge: PathBuf,
       #[arg(long)]
@@ -239,6 +242,7 @@ fn main() -> std::process::ExitCode {
     Scenario::AppEditor {
       output,
       auv,
+      application,
       edge,
       vscode,
       notepadnext,
@@ -252,6 +256,7 @@ fn main() -> std::process::ExitCode {
         powershell_ise,
       },
       &auv,
+      application.as_deref(),
     ),
     Scenario::AppControls {
       output,
