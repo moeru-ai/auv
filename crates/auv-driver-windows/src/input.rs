@@ -1083,46 +1083,6 @@ mod native {
     Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())))
   }
 
-  #[cfg(test)]
-  mod click_tests {
-    use super::*;
-
-    // ROOT CAUSE:
-    //
-    // If a click was partially inserted, recipient loss or cancellation could
-    // refuse its owned releases because cleanup reused ordinary admission.
-    // Before the fix, a modifier and button could remain down.
-    // The fix releases the inserted downs without admitting another action.
-    #[test]
-    fn partial_click_releases_owned_keys_and_button_after_admission_loss() {
-      let mut calls = Vec::new();
-      let result = send_click(auv_driver_common::MouseButton::Left, &[super::super::vk::SHIFT], |inputs, release| {
-        calls.push((release, inputs.to_vec()));
-        if calls.len() == 1 {
-          return Ok(2); // Shift and button downs were inserted; their ups were not.
-        }
-        if !release {
-          return Err(crate::error::invalid_input("input cancelled before native submission"));
-        }
-        Ok(inputs.len() as u32)
-      });
-      assert!(result.unwrap_err().to_string().contains("SendInput injected 2 of 4 click events"));
-      assert_eq!(calls.len(), 2);
-      assert!(!calls[0].0);
-      assert!(calls[1].0, "owned releases must bypass lost/cancelled admission");
-      assert_eq!(calls[1].1.len(), 2);
-      // SAFETY: these events come from click_cleanup, which initializes each
-      // INPUT union consistently with its type tag.
-      unsafe {
-        assert_eq!(calls[1].1[0].r#type, INPUT_MOUSE);
-        assert_eq!(calls[1].1[0].Anonymous.mi.dwFlags, MOUSEEVENTF_LEFTUP);
-        assert_eq!(calls[1].1[1].r#type, INPUT_KEYBOARD);
-        assert_eq!(calls[1].1[1].Anonymous.ki.wVk.0, super::super::vk::SHIFT);
-        assert_eq!(calls[1].1[1].Anonymous.ki.dwFlags, KEYEVENTF_KEYUP);
-      }
-    }
-  }
-
   fn button_flags(button: auv_driver_common::MouseButton) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
       MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
@@ -1258,6 +1218,45 @@ mod native {
     let mut process = 0u32;
     unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
     (process != 0).then_some(process)
+  }
+  #[cfg(test)]
+  mod click_tests {
+    use super::*;
+
+    // ROOT CAUSE:
+    //
+    // If a click was partially inserted, recipient loss or cancellation could
+    // refuse its owned releases because cleanup reused ordinary admission.
+    // Before the fix, a modifier and button could remain down.
+    // The fix releases the inserted downs without admitting another action.
+    #[test]
+    fn partial_click_releases_owned_keys_and_button_after_admission_loss() {
+      let mut calls = Vec::new();
+      let result = send_click(auv_driver_common::MouseButton::Left, &[super::super::vk::SHIFT], |inputs, release| {
+        calls.push((release, inputs.to_vec()));
+        if calls.len() == 1 {
+          return Ok(2); // Shift and button downs were inserted; their ups were not.
+        }
+        if !release {
+          return Err(crate::error::invalid_input("input cancelled before native submission"));
+        }
+        Ok(inputs.len() as u32)
+      });
+      assert!(result.unwrap_err().to_string().contains("SendInput injected 2 of 4 click events"));
+      assert_eq!(calls.len(), 2);
+      assert!(!calls[0].0);
+      assert!(calls[1].0, "owned releases must bypass lost/cancelled admission");
+      assert_eq!(calls[1].1.len(), 2);
+      // SAFETY: these events come from click_cleanup, which initializes each
+      // INPUT union consistently with its type tag.
+      unsafe {
+        assert_eq!(calls[1].1[0].r#type, INPUT_MOUSE);
+        assert_eq!(calls[1].1[0].Anonymous.mi.dwFlags, MOUSEEVENTF_LEFTUP);
+        assert_eq!(calls[1].1[1].r#type, INPUT_KEYBOARD);
+        assert_eq!(calls[1].1[1].Anonymous.ki.wVk.0, super::super::vk::SHIFT);
+        assert_eq!(calls[1].1[1].Anonymous.ki.dwFlags, KEYEVENTF_KEYUP);
+      }
+    }
   }
 }
 

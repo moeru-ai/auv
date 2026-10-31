@@ -62,8 +62,9 @@ Root-close fault coverage needs a terminal receiver receipt before process exit 
 ## Validation
 
 Local Windows compilation and Clippy passed with existing warnings. No local desktop input was run.
-Local input units passed 28 tests with one ignored, Invoke units passed 167 with one ignored,
+Local input units and native-boundary models passed 34 tests with one ignored, Invoke units passed 167 with one ignored,
 and all six existing evaluation units passed. These do not prove native click delivery.
+All-feature Driver compilation and the new evaluation command's help also passed.
 The first CI preparation stopped before input because a shallow checkout lacked the parent used for production-diff validation.
 That task is not native behavior evidence. Fetching the parent corrected the preparation boundary.
 
