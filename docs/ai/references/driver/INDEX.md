@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **82**
+Count: **83**
+
+- [`2026-10-30-foreground-event-coverage.md`](2026-10-30-foreground-event-coverage.md): Native foreground ABA and background-activation diagnostics; ambiguous witness receipts now remain inconclusive, with limits for the pending input-recipient contract.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
