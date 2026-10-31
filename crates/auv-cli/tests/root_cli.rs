@@ -1252,15 +1252,19 @@ fn windows_doctor_smoke_reports_live_process_diagnostics() {
   // The report contract keeps `executable` optional (`current_exe().ok()`),
   // so the smoke test must accept both shapes instead of promising a string.
   assert!(body["executable"].is_string() || body["executable"].is_null(), "{body}");
-  for key in ["elevated", "ui_access", "nonzero_session"] {
+  // elevated and ui_access carry the shared permission vocabulary;
+  // nonzero_session carries the boolean fact (true / false / null for an
+  // unanswered query).
+  for key in ["elevated", "ui_access"] {
     let status = body[key].as_str().unwrap_or_else(|| panic!("{key} must be a status string: {body}"));
     assert!(matches!(status, "granted" | "missing" | "unknown"), "{key} = {status}");
   }
+  assert!(matches!(body["nonzero_session"], serde_json::Value::Bool(_) | serde_json::Value::Null), "{body}");
   assert!(body.get("all_ok").is_none(), "no aggregate verdict may be implied: {body}");
   assert!(body.get("interactive_session").is_none(), "{body}");
   let notes = body["notes"].as_array().expect("notes array");
   assert!(notes.iter().any(|note| note.as_str().unwrap().contains("selected Runner")), "{body}");
-  if body["nonzero_session"] == "missing" {
+  if body["nonzero_session"] == false {
     assert!(notes.iter().any(|note| note.as_str().unwrap().contains("Session 0")), "{body}");
   }
 
@@ -1270,14 +1274,17 @@ fn windows_doctor_smoke_reports_live_process_diagnostics() {
   assert!(text.contains("platform: windows"), "{text}");
   assert!(!text.contains("interactive session"), "{text}");
   assert!(!text.to_lowercase().contains("all ok"), "{text}");
-  // Human and JSON render one report: every JSON status must appear on its
-  // human line.
-  for (label, json_key) in [
-    ("elevated", "elevated"),
-    ("ui access", "ui_access"),
-    ("nonzero session", "nonzero_session"),
-  ] {
+  // Human and JSON render one report: every JSON fact must appear on its
+  // human line. A failed nonzero_session query prints "unknown" where the
+  // JSON carries null.
+  for (label, json_key) in [("elevated", "elevated"), ("ui access", "ui_access")] {
     let status = body[json_key].as_str().unwrap();
     assert!(text.contains(&format!("{label}: {status}")), "{text}");
   }
+  let session_word = match body["nonzero_session"] {
+    serde_json::Value::Bool(true) => "true",
+    serde_json::Value::Bool(false) => "false",
+    _ => "unknown",
+  };
+  assert!(text.contains(&format!("nonzero session: {session_word}")), "{text}");
 }
