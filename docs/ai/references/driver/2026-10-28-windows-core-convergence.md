@@ -450,7 +450,7 @@ and [portable package records](evidence/2026-10-31-windows-app-preflight/portabl
 are retained here as preparation facts. This preflight did not launch an app
 and does not establish functional acceptance. Later controls and input evidence follow below.
 
-Draft [#447](https://github.com/moeru-ai/auv/pull/447) owns real-application workflow cases.
+PR [#447](https://github.com/moeru-ai/auv/pull/447) owns real-application workflow cases.
 The [controls run](https://github.com/moeru-ai/auv/actions/runs/41125933697) at `cbd34975`
 captured complete Edge, VS Code, NotepadNext, and ISE trees and four independently reviewed windows.
 All owned processes exited; foreground/pointer restoration and zero physical input were verified.
@@ -471,10 +471,17 @@ saved matching files in all four apps. Qt still failed controller pointer restor
 its local OCR click returned an action but omitted the delivery artifact from the run.
 VS Code passed file/trace checks, but pixel review found its welcome modal covering the editor.
 Those facts do not accept complete Qt or visible VS Code workflows.
-Draft #447 now has a reproduced/passing output-recorder regression, explicit pointer teardown,
+PR #447 now has a reproduced/passing output-recorder regression, explicit pointer teardown,
 shared modifier readback, and AUV onboarding dismissal with a fresh readiness check.
 The local Invoke suite passed 167 tests with one ignored; six evaluation regressions passed.
-Native replay of these corrections remains pending.
+The [corrected replay](https://github.com/moeru-ai/auv/actions/runs/41184343474) at `2cdffd1e`
+passed all four native tasks. Independent audit verified four saved files, 21 actual command completions,
+17 input-result bodies, and 13 reviewed captures. Every case verified foreground/pointer restoration,
+released modifiers, zero physical input, and owned-job cleanup on one measured 96-DPI display.
+VS Code's ready/final images show the exposed editor; Qt retains the missing delivery artifact and a separate pointer-cleanup receipt.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/132d051d820f5670322b03c11758e1e32e774e5b/docs/ai/references/driver/evidence/2026-10-31-windows-application-editor/acceptance.json)
+retains archive, file, and capture hashes. #447 is ready for review and remains unmerged.
+Its optional stale-focus reacquisition branch has pure eligibility coverage only.
 
 ## Remaining acceptance
 
@@ -489,9 +496,9 @@ Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
 Phase 3 needs repeatable application-owned checks for each named toolkit.
-Draft #447 has four controls inventories plus scoped Edge and ISE edit/save acceptance.
+PR #447 has four controls inventories plus scoped local-Invoke edit/save acceptance in all four apps.
 Its selected-app cases allow independent desktops without continuing an uncertain input run.
-The other edit/save cases, scrolling/dialogs, and foreground-loss cases remain acceptance work.
+Scrolling/dialogs, richer text, and foreground-loss cases remain acceptance work.
 Phase 4 needs disposable single-display environments at 100%, 125%, and 150% DPI.
 Phase 5 needs equivalent direct, Invoke, selected Runner, and MCP records.
 
