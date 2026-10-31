@@ -220,6 +220,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       .and_then(|probe| crate::commands::app::permission_probe_output(&probe).map_err(Into::into)),
     "input.focusText" | "input.axFocusText" => {
       let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
+      let expected_role = input.inputs.get("expected_role").cloned().filter(|role| !role.trim().is_empty());
       let selector = if candidate.trim().is_empty() {
         auv_driver::AxTextSelector::Query(input.inputs.get("query").cloned().unwrap_or_default())
       } else {
@@ -230,7 +231,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         .focus_text(auv_driver::FocusTextOptions {
           app: input.application_target()?.expect("validated target").to_string(),
           selector,
-          expected_role: None,
+          expected_role,
         })
         .await
         .map_err(|error| step_failure("AccessibilityService/FocusText", error))

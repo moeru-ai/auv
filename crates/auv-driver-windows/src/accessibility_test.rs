@@ -354,7 +354,7 @@ fn native_identity_failure_refuses_focus_without_delivery() {
       Ok(())
     },
   );
-  assert!(matches!(result, Err(DriverError::StaleUiReference { .. })));
+  assert!(matches!(&result, Err(DriverError::StaleUiReference { .. })));
   assert_eq!(delivered.get(), 0);
 }
 
@@ -416,6 +416,9 @@ fn post_focus_native_identity_failure_is_not_accepted_or_retried() {
     },
   );
   assert!(matches!(result, Err(DriverError::StaleUiReference { .. })));
+  let error = result.unwrap_err().to_string();
+  assert!(error.contains("Focus delivery was attempted. The final state is uncertain."), "{error}");
+  assert!(error.contains("Inspect focus before retrying"), "{error}");
   assert_eq!(reads.get(), 2);
   assert_eq!(delivered.get(), 1);
 }

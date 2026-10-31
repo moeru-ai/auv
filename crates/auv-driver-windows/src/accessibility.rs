@@ -270,7 +270,7 @@ fn focus_selected(
   mut read_current: impl FnMut() -> DriverResult<AxNode>,
   focus: impl FnOnce() -> DriverResult<()>,
 ) -> DriverResult<InputActionResult> {
-  let current = read_current()?;
+  let current = read_current().map_err(mark_focus_delivery_uncertain)?;
   let mut expected = selected.clone();
   expected.focused = current.focused;
   if current != expected || !usable_focus_target(&current) {
@@ -302,6 +302,32 @@ fn focus_selected(
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
   })
+}
+
+fn mark_focus_delivery_uncertain(error: auv_driver_common::DriverError) -> auv_driver_common::DriverError {
+  use auv_driver_common::DriverError;
+
+  const MESSAGE: &str = "Focus delivery was attempted. The final state is uncertain.";
+  const RECOVERY: &str = "Inspect focus before retrying";
+  match error {
+    DriverError::StaleUiReference { message, .. } => DriverError::StaleUiReference {
+      message: format!("{MESSAGE} {message}"),
+      recovery: Some(RECOVERY.into()),
+    },
+    DriverError::RoleMismatch { message, .. } => DriverError::RoleMismatch {
+      message: format!("{MESSAGE} {message}"),
+      recovery: Some(RECOVERY.into()),
+    },
+    DriverError::PermissionDenied { permission, message, .. } => DriverError::PermissionDenied {
+      permission,
+      message: Some(format!("{MESSAGE} {}", message.unwrap_or_default())),
+      recovery: Some(RECOVERY.into()),
+    },
+    DriverError::Backend { message } => DriverError::Backend {
+      message: format!("{MESSAGE} {message}"),
+    },
+    other => other,
+  }
 }
 
 /// Builds a screen-space rectangle from UIA bounding-rectangle edges.
