@@ -5,11 +5,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
 use auv_driver_common::{Click, ClickOptions, Driver, DriverError, InputPolicy, Point, WindowInput};
 use auv_driver_windows::WindowsDriver;
-use serde_json::json;
+use serde_json::{Value, json};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
@@ -36,6 +36,7 @@ pub fn run(output: &Path) -> Result<bool> {
     "invalid_interval",
     "pre_cancel",
     "owner_mismatch",
+    "cancel_after_click",
   ];
   // TODO(windows-mouse-recipient): root-close receipts need the receiver's
   // terminal state before exit; add that owned terminal receipt before close cases.
@@ -84,24 +85,55 @@ pub fn run(output: &Path) -> Result<bool> {
     if case == "pre_cancel" {
       cancellation.cancel();
     }
-    let operation = with_input_cancellation(cancellation, || {
-      session.window().click(
-        &requested,
-        point,
-        ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
-          click: Click::Repeated {
-            count: if case == "invalid_count" { 0 } else { 3 },
-            interval: if case == "invalid_interval" {
-              Duration::MAX
-            } else {
-              Duration::from_millis(400)
+    let deliver = || {
+      with_input_cancellation(cancellation.clone(), || {
+        session.window().click(
+          &requested,
+          point,
+          ClickOptions {
+            policy: InputPolicy::ForegroundPreferred,
+            click: Click::Repeated {
+              count: if case == "invalid_count" { 0 } else { 3 },
+              interval: if case == "invalid_interval" {
+                Duration::MAX
+              } else {
+                Duration::from_millis(400)
+              },
             },
+            ..Default::default()
           },
-          ..Default::default()
-        },
-      )
-    });
+        )
+      })
+    };
+    let (operation, cancellation_receipt) = if case == "cancel_after_click" {
+      // Cancel only after the application acknowledges delivery, as in the
+      // keyboard prefix case. No delay is used to guess whether input arrived.
+      std::thread::scope(|scope| -> Result<_> {
+        let observer_cancellation = cancellation.clone();
+        let receiver = &mut a;
+        let observer = scope.spawn(move || {
+          let receipt = (|| -> Result<Value> {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+              let state = receiver.request(json!({"cmd": "state"}))?;
+              let clicks = state["clicks"].as_u64().context("cancel observer omitted click count")?;
+              if clicks > 0 {
+                return Ok(json!({"after_clicks": clicks, "requested": true}));
+              }
+              ensure!(Instant::now() < deadline, "application never acknowledged the first click");
+              std::thread::sleep(Duration::from_millis(10));
+            }
+          })();
+          observer_cancellation.cancel();
+          receipt
+        });
+        let operation = deliver();
+        let receipt = observer.join().map_err(|_| anyhow::anyhow!("cancel observer panicked"))??;
+        Ok((operation, receipt))
+      })?
+    } else {
+      (deliver(), Value::Null)
+    };
     let deadline = Instant::now() + Duration::from_secs(2);
     let (after_a, after_b, fault) = loop {
       let a_state = a.request(json!({"cmd": "state"}))?;
@@ -115,7 +147,7 @@ pub fn run(output: &Path) -> Result<bool> {
       } else {
         1
       };
-      if total >= expected && (no_input || case == "success" || !receipt["receipt"].is_null()) {
+      if total >= expected && (no_input || matches!(case, "success" | "cancel_after_click") || !receipt["receipt"].is_null()) {
         break (a_state, b_state, receipt);
       }
       ensure!(Instant::now() < deadline, "application did not acknowledge the submitted click prefix");
@@ -126,6 +158,11 @@ pub fn run(output: &Path) -> Result<bool> {
       DriverError::TargetLost { .. } => (true, None),
       DriverError::InputAction { cause, progress } => (matches!(cause.as_ref(), DriverError::TargetLost { .. }), Some(progress)),
       _ => (false, None),
+    });
+    let cancelled = operation.as_ref().err().is_some_and(|error| {
+      matches!(error,
+      DriverError::InputAction { cause, .. } if matches!(cause.as_ref(),
+        DriverError::InvalidInput { message } if message.contains("cancelled")))
     });
     let passed = if no_input {
       operation.is_err()
@@ -138,6 +175,15 @@ pub fn run(output: &Path) -> Result<bool> {
         && after.injected_keys == before.injected_keys
     } else if case == "success" {
       operation.is_ok() && after_a["clicks"] == 3 && after_b["clicks"] == 0
+    } else if case == "cancel_after_click" {
+      cancelled
+        && !target_lost
+        && matches!(progress, Some(auv_driver_common::InputActionProgress::Submitted { action })
+          if action.mouse_disturbance == auv_driver_common::DisturbanceLevel::Temporary)
+        && cancellation_receipt["after_clicks"] == 1
+        && cancellation_receipt["requested"] == true
+        && after_a["clicks"] == 1
+        && after_b["clicks"] == 0
     } else {
       operation.is_err()
         && target_lost
@@ -163,6 +209,7 @@ pub fn run(output: &Path) -> Result<bool> {
     }
     records.write("case", json!({"case": case, "passed": passed, "before_a": before_a, "before_b": before_b,
       "after_a": after_a, "after_b": after_b, "fault": fault, "target_lost": target_lost, "input_progress": progress,
+      "cancelled": cancelled, "cancellation_receipt": cancellation_receipt,
       "action": operation.as_ref().ok(), "error": operation.as_ref().err().map(ToString::to_string),
       "foreground_before": before.foreground, "foreground_after": after.foreground,
       "injected_mouse": after.injected_mouse.saturating_sub(before.injected_mouse), "injected_keys": after.injected_keys.saturating_sub(before.injected_keys),
