@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 4715bd57ea1104f9ee09ef97aeb1ff880c3fdb7b
+          ref: 4ea2559831d1a15635f11d2df4306a24493359bb
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne '4715bd57ea1104f9ee09ef97aeb1ff880c3fdb7b') { throw "Unexpected source $actual" }
+          if ($actual -ne '4ea2559831d1a15635f11d2df4306a24493359bb') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -84,7 +84,7 @@ jobs:
           }
           [ordered]@{
             source_sha = $actual
-            base_sha = '9810bd254f752619291977c73c7d586ffea99f42'
+            base_sha = '05b583359fd79ab9ab526598db7f64ad917392ff'
             workflow_sha = '${{ github.sha }}'
             os = [Environment]::OSVersion.VersionString
             image_version = $env:ImageVersion
@@ -93,17 +93,19 @@ jobs:
             input_desktop_accessible = $accessible
             screens = @($screens | ForEach-Object { $_.Bounds.ToString() })
             primary_window_dpi = [MouseDesktopProbe]::ReadDpi()
-            expected_baseline_failure = $false
+            expected_baseline_failure = $true
           } | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$directory/preflight.json"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build fixed Driver and scroll lifetime regression
+      - name: Build unchanged Driver and complete scroll batch reproduction
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
           rustc --version | Tee-Object -FilePath "$directory/rustc.txt"
+          git diff --exit-code 05b583359fd79ab9ab526598db7f64ad917392ff HEAD -- crates
+          if ($LASTEXITCODE -ne 0) { throw 'Scroll batch baseline must not change production crates' }
           cargo build --locked -p auv-base-evals --bin background-session-eval --bin win32-receiver
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           @('target/debug/background-session-eval.exe','target/debug/win32-receiver.exe') | ForEach-Object {
@@ -160,11 +162,27 @@ jobs:
           if ($cleanup.Count -ne 44 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned mouse receiver cleanup incomplete' }
           if ($exit -ne 0 -or $cases.Count -ne 22 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Mouse recipient invariant failed; inspect retained native application counters' }
 
+      - name: Reproduce recipient loss between timed and live scroll samples
+        shell: pwsh
+        env:
+          AUV_ISOLATED_DESKTOP_EVAL: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-mouse-evidence"
+          & 'target/debug/background-session-eval.exe' window-scroll-batch --output "$directory/batch" > "$directory/batch.stdout.log" 2> "$directory/batch.stderr.log"
+          $exit = $LASTEXITCODE
+          $rows = @(Get-Content -LiteralPath "$directory/batch/window-scroll-batch.jsonl" | ForEach-Object { $_ | ConvertFrom-Json -Depth 60 })
+          $cases = @($rows | Where-Object kind -eq 'case')
+          $cases | Select-Object case,passed,native_ok,target_lost,@{n='a_wheels';e={$_.after_a.raw.edit_wheel}},@{n='b_wheels';e={$_.after_b.raw.edit_wheel}},@{n='a_line';e={$_.after_a.first_line}},input_progress | ConvertTo-Json -Depth 12 | Tee-Object -FilePath "$directory/batch-result.json"
+          $cleanup = @($rows | Where-Object kind -eq 'cleanup')
+          if ($cleanup.Count -ne 22 -or @($cleanup | Where-Object { -not $_.process_exited -or -not $_.window_destroyed }).Count -ne 0) { throw 'Owned batch receiver cleanup incomplete' }
+          if ($exit -ne 0 -or $cases.Count -ne 11 -or @($cases | Where-Object { -not $_.passed }).Count -ne 0) { throw 'Whole scroll recipient invariant failed; inspect application prefix receipts' }
+
       - name: Preserve source-bound native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-mouse-lifecycle-4715bd57-fixed
+          name: windows-scroll-batch-4ea25598-baseline
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
