@@ -129,9 +129,8 @@ fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
   assert_eq!(outline.rect(), Rect::new(40.0, 50.0, 70.0, 20.0));
 }
 
-#[test]
-fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
-  let click = WindowTextClick {
+fn window_text_click_fixture() -> WindowTextClick {
+  WindowTextClick {
     window: Window {
       reference: WindowRef {
         id: "window_click".to_string(),
@@ -173,7 +172,55 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
       ..auv_driver::ClickOptions::default()
     },
     action: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
-  };
+  }
+}
+
+// https://github.com/moeru-ai/auv/actions/runs/41182331780/job/124482099769
+// ROOT CAUSE:
+// Local window.clickText built its result without the input-result recorder.
+// The reply contained delivery facts, but the durable run retained only its OCR
+// source. Local and recorded output paths must each publish exactly one typed result.
+#[tokio::test]
+async fn local_window_text_click_output_ci_124482099769_records_delivery_once() {
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+  use std::sync::Arc;
+
+  let click = window_text_click_fixture();
+  for recorded_route in [false, true] {
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().unwrap();
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let output = root
+      .instrument(async {
+        if recorded_route {
+          recorded_window_text_click_output(&click, None)
+        } else {
+          record_window_text_click_output(&click)
+        }
+      })
+      .await
+      .unwrap();
+    dispatch.flush().await.unwrap();
+    let records = store.records();
+    let artifacts: Vec<_> = records
+      .iter()
+      .filter_map(|record| match record {
+        TraceRecord::Artifact { metadata, .. } => Some(metadata),
+        _ => None,
+      })
+      .collect();
+    assert_eq!(artifacts.len(), 1, "one delivery artifact for recorded_route={recorded_route}");
+    assert_eq!(artifacts[0].purpose().as_str(), "auv.driver.input_action_result");
+    let body = store.artifact(artifacts[0].uri()).unwrap();
+    let action: auv_driver::InputActionResult = serde_json::from_slice(&body).unwrap();
+    assert_eq!(action, click.action);
+    assert_eq!(output.result().unwrap()["action"], serde_json::to_value(&action).unwrap());
+  }
+}
+
+#[test]
+fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
+  let click = window_text_click_fixture();
 
   let capture = auv_driver::Capture {
     origin: None,

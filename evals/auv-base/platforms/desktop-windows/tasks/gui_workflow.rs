@@ -2,6 +2,10 @@
 //! are the independent oracle. Foreground guards are checked immediately before dispatch; they
 //! are not an atomic OS focus lease. No failed or uncertain input action is retried.
 
+#[path = "application_workflow.rs"]
+mod applications;
+pub use applications::{Options as AppControlsOptions, launch_host, run_controls, run_editor, snapshot_controls};
+
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 

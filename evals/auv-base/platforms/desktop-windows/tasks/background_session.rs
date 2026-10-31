@@ -47,6 +47,55 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       auv: PathBuf,
     },
+    /// Inspect real application controls on an isolated desktop; does not accept workflows.
+    AppControls {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long)]
+      edge: PathBuf,
+      #[arg(long)]
+      vscode: PathBuf,
+      #[arg(long)]
+      notepadnext: PathBuf,
+      #[arg(long)]
+      powershell_ise: PathBuf,
+    },
+    /// Real editor focus/type/save cases with independent file verification.
+    AppEditor {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long)]
+      auv: PathBuf,
+      /// Run only edge, vscode, notepadnext, or powershell-ise on this isolated desktop.
+      #[arg(long)]
+      application: Option<String>,
+      #[arg(long)]
+      edge: PathBuf,
+      #[arg(long)]
+      vscode: PathBuf,
+      #[arg(long)]
+      notepadnext: PathBuf,
+      #[arg(long)]
+      powershell_ise: PathBuf,
+    },
+    #[command(hide = true)]
+    AppHost {
+      #[arg(long)]
+      program: PathBuf,
+      #[arg(long)]
+      logs: PathBuf,
+      #[arg(last = true)]
+      args: Vec<std::ffi::OsString>,
+    },
+    #[command(hide = true)]
+    AppSnapshot {
+      #[arg(long)]
+      window_id: String,
+      #[arg(long)]
+      process_id: u32,
+      #[arg(long)]
+      output: PathBuf,
+    },
     /// Diagnostic: does WGC keep delivering fresh frames for a window nobody is looking at?
     Freshness {
       #[arg(long)]
@@ -190,6 +239,50 @@ fn main() -> std::process::ExitCode {
   }
 
   let result = match Cli::parse().scenario {
+    Scenario::AppEditor {
+      output,
+      auv,
+      application,
+      edge,
+      vscode,
+      notepadnext,
+      powershell_ise,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::run_editor(
+      &auv_base_evals::desktop_windows::foreground_commands::workflow::AppControlsOptions {
+        output,
+        edge,
+        vscode,
+        notepadnext,
+        powershell_ise,
+      },
+      &auv,
+      application.as_deref(),
+    ),
+    Scenario::AppControls {
+      output,
+      edge,
+      vscode,
+      notepadnext,
+      powershell_ise,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::run_controls(
+      &auv_base_evals::desktop_windows::foreground_commands::workflow::AppControlsOptions {
+        output,
+        edge,
+        vscode,
+        notepadnext,
+        powershell_ise,
+      },
+    ),
+    Scenario::AppHost {
+      program,
+      logs,
+      args,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::launch_host(&program, &logs, &args),
+    Scenario::AppSnapshot {
+      window_id,
+      process_id,
+      output,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::snapshot_controls(&window_id, process_id, &output),
     Scenario::WindowKeyboard { output } => auv_base_evals::desktop_windows::window_keyboard::run(&output),
     Scenario::WindowKeyboardRoutes { output, auv } => {
       auv_base_evals::desktop_windows::foreground_commands::workflow::run_keyboard_routes(&output, &auv)
