@@ -466,7 +466,15 @@ Independent audit verified their 53-byte and 43-byte files, ten actual command c
 eight input-result bodies, six reviewed captures, and owned cleanup with desktop restoration.
 The Edge correction serializes a native absolute download directory instead of mixed separators;
 the failing and passing browser executable hashes match.
-Qt's invalid harness selector and VS Code's undelivered stale focus have corrections pending replay.
+The [four-app replay](https://github.com/moeru-ai/auv/actions/runs/41182331780) at `591ef686`
+saved matching files in all four apps. Qt still failed controller pointer restoration;
+its local OCR click returned an action but omitted the delivery artifact from the run.
+VS Code passed file/trace checks, but pixel review found its welcome modal covering the editor.
+Those facts do not accept complete Qt or visible VS Code workflows.
+Draft #447 now has a reproduced/passing output-recorder regression, explicit pointer teardown,
+shared modifier readback, and AUV onboarding dismissal with a fresh readiness check.
+The local Invoke suite passed 167 tests with one ignored; six evaluation regressions passed.
+Native replay of these corrections remains pending.
 
 ## Remaining acceptance
 
