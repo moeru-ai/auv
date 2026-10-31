@@ -10,12 +10,17 @@ permissions:
 
 jobs:
   inventory:
+    name: editor-${{ matrix.application }}
+    strategy:
+      fail-fast: false
+      matrix:
+        application: [vscode, notepadnext, powershell-ise]
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 84675a8ba5e0a9b8898d013c6e2ee73ecc091afe
+          ref: 86d36a1ec86982aeeb0b27570ae3271a982f118b
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -78,7 +83,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '84675a8ba5e0a9b8898d013c6e2ee73ecc091afe') { throw "Unexpected source $source" }
+          if ($source -ne '86d36a1ec86982aeeb0b27570ae3271a982f118b') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -227,6 +232,7 @@ jobs:
           $notepadnext = @($portable.packages | Where-Object id -eq 'notepadnext')[0].executable
           $auv = (Get-Item -LiteralPath 'target/debug/auv.exe').FullName
           & 'target/debug/background-session-eval.exe' app-editor --auv $auv --output "$directory/controls" `
+            --application '${{ matrix.application }}' `
             --edge $environmentFacts.applications.edge.path --vscode $code --notepadnext $notepadnext `
             --powershell-ise $environmentFacts.applications.powershell_ise.path `
             > "$directory/controls.stdout.log" 2> "$directory/controls.stderr.log"
@@ -238,7 +244,7 @@ jobs:
           if (@($apps | Where-Object { $_.cleanup.active_processes -ne 0 -or -not $_.cleanup.roots_exited }).Count -ne 0) {
             throw 'Owned application cleanup records are incomplete'
           }
-          if ($apps.Count -ne 4) { throw 'Input run stopped after a failed editor case; inspect editor-case.json and editor-steps.jsonl' }
+          if ($apps.Count -ne 1 -or $summary.application -ne '${{ matrix.application }}') { throw 'Selected application result is missing; inspect retained case records' }
           if ($summary.workflow_accepted -ne $false) { throw 'Edit/save cases must not accept the full workflow' }
           if ($evaluationExit -ne 0 -or -not $summary.inventory_complete -or -not $summary.edit_save_accepted) { throw 'Application edit/save acceptance failed; inspect retained step results' }
 
@@ -251,6 +257,7 @@ jobs:
           $records = "$directory/controls/application-editor.jsonl"
           if (-not (Test-Path -LiteralPath $records)) { exit 0 }
           $edge = @(Get-Content -LiteralPath $records | ForEach-Object { $_ | ConvertFrom-Json -Depth 70 } | Where-Object { $_.kind -eq 'app' -and $_.app -eq 'edge' })
+          if ($edge.Count -eq 0) { exit 0 }
           if ($edge.Count -ne 1 -or $edge[0].cleanup.active_processes -ne 0 -or -not $edge[0].cleanup.roots_exited) { throw 'Refusing profile inspection before controlled Edge cleanup' }
           node --version
           @'
@@ -286,7 +293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editors-84675a8b-browser-log
+          name: windows-app-editor-${{ matrix.application }}-86d36a1e
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
