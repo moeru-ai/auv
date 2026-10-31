@@ -8,7 +8,7 @@ import type {
 } from '@bufbuild/protobuf'
 import type { DurationSchema } from '@bufbuild/protobuf/wkt'
 
-import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
+import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/v1/accessibility_pb'
 import type { ActivateApplicationRequestSchema } from '../../gen/auv/api/driver/v1/application_pb'
 import type { CaptureRefSchema, CaptureResolution, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1/display_pb'
@@ -50,9 +50,9 @@ import type { WithMillis } from './duration'
 
 import { create } from '@bufbuild/protobuf'
 
-import { AccessibilityService } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
 import { MediaControlService } from '../../gen/auv/api/driver/macos/v1/media_control_pb'
 import { PermissionService } from '../../gen/auv/api/driver/macos/v1/permission_pb'
+import { AccessibilityService } from '../../gen/auv/api/driver/v1/accessibility_pb'
 import { ApplicationService } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureService } from '../../gen/auv/api/driver/v1/capture_pb'
 import { DisplayService } from '../../gen/auv/api/driver/v1/display_pb'
@@ -116,6 +116,9 @@ export type RecognitionSource = CaptureTarget | { frame: Init<typeof ImageFrameS
 export interface RecognizeTextOptions extends InputFields<typeof RecognizeTextRequestSchema, 'source'>, OperationOptions {}
 
 export interface RunnerClient {
+  readonly accessibility: {
+    focusText: (request: Init<typeof FocusTextRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof AccessibilityService.method.focusText.output>>
+  }
   readonly applications: {
     /**
      * Brings an application to the front by the application ID that
@@ -176,9 +179,6 @@ export interface RunnerClient {
     typeText: (text: string, inputOptions?: Init<typeof TypeTextOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.typeText.output>>
   }
   readonly macos: {
-    readonly accessibility: {
-      focusText: (request: Init<typeof FocusTextRequestSchema>, options?: OperationOptions) => Promise<Shape<typeof AccessibilityService.method.focusText.output>>
-    }
     readonly media: {
       nextTrack: (options?: OperationOptions) => Promise<Shape<typeof MediaControlService.method.nextTrack.output>>
       nowPlaying: (options?: OperationOptions) => Promise<Shape<typeof MediaControlService.method.getNowPlaying.output>>
@@ -570,6 +570,9 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
   }
 
   return {
+    accessibility: {
+      focusText: (request, options) => unary(AccessibilityService.method.focusText, request, options),
+    },
     applications: {
       activate: (request, options) => unary(ApplicationService.method.activateApplication, request, options),
     },
@@ -613,9 +616,6 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       typeText: (text, options, operation) => unary(InputService.method.typeText, { options, text }, operation),
     },
     macos: {
-      accessibility: {
-        focusText: (request, options) => unary(AccessibilityService.method.focusText, request, options),
-      },
       media: {
         nextTrack: options => unary(MediaControlService.method.nextTrack, {}, options),
         nowPlaying: options => unary(MediaControlService.method.getNowPlaying, {}, options),

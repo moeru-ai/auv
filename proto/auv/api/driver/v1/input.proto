@@ -404,6 +404,9 @@ message InputActionResult {
   DisturbanceLevel mouse_disturbance = 3;
   DisturbanceLevel focus_disturbance = 4;
   DisturbanceLevel clipboard_disturbance = 5;
+  // A post-action readback confirmed this action's requested effect. Dispatch
+  // success alone must leave this false. This does not verify a whole workflow.
+  bool verified = 6;
 }
 
 message ClickPointRequest {

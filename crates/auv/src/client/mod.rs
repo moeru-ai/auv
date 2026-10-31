@@ -601,6 +601,11 @@ impl RunnerExecution {
     self.runner.applications()
   }
 
+  /// Returns platform accessibility focus capabilities.
+  pub fn accessibility(&self) -> runner::AccessibilityClient {
+    self.runner.accessibility()
+  }
+
   /// Returns macOS-specific capabilities.
   pub fn macos(&self) -> runner::MacosClient {
     self.runner.macos()

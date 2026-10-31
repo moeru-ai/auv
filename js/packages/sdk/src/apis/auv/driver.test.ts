@@ -3,10 +3,11 @@ import type { UnaryCall } from '../../transport/types'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 
+import { FocusTextRequestSchema, FocusTextResponseSchema } from '../../gen/auv/api/driver/v1/accessibility_pb'
 import { ActivateApplicationRequestSchema, ActivateApplicationResponseSchema, ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
@@ -15,6 +16,66 @@ import { createAuv } from './client'
 import { splitKeyCombination } from './driver'
 
 describe('runner Driver control surface', () => {
+  it('uses the shared accessibility RPC and preserves focus readback', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          if (call.method !== '/auv.api.driver.v1.AccessibilityService/FocusText')
+            throw new Error(`unexpected method: ${call.method}`)
+          return toBinary(FocusTextResponseSchema, create(FocusTextResponseSchema, {
+            result: {
+              action: {
+                attempts: [{ path: InputDeliveryPath.AX_FOCUS, succeeded: true }],
+                clipboardDisturbance: DisturbanceLevel.NONE,
+                focusDisturbance: DisturbanceLevel.FOREGROUND,
+                mouseDisturbance: DisturbanceLevel.NONE,
+                selectedPath: InputDeliveryPath.AX_FOCUS,
+                verified: true,
+              },
+              app: 'fixture.exe',
+              path: '0/1',
+              pid: 42,
+              role: 'Edit',
+            },
+          }))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const response = await runner.accessibility.focusText({ application: 'fixture.exe', expectedRole: 'Edit', selector: { case: 'query', value: 'Search' } })
+    expect(calls).toHaveLength(1)
+    expect(fromBinary(FocusTextRequestSchema, calls[0]!.body)).toMatchObject({ application: 'fixture.exe', expectedRole: 'Edit', selector: { case: 'query', value: 'Search' } })
+    expect(response.result).toMatchObject({ action: { verified: true }, app: 'fixture.exe', path: '0/1', pid: 42, role: 'Edit' })
+    expect(runner.macos).not.toHaveProperty('accessibility')
+    await connection.close()
+  })
+
+  it('does not retry an unavailable shared focus RPC through an older endpoint', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          throw new Error('focus RPC unavailable')
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    await expect(runner.accessibility.focusText({ application: 'fixture.exe', selector: { case: 'query', value: 'Search' } })).rejects.toThrow('focus RPC unavailable')
+    expect(calls.map(call => call.method)).toEqual(['/auv.api.driver.v1.AccessibilityService/FocusText'])
+    await connection.close()
+  })
+
   it('recognizes Runner captures by reference and fetches pixels only on request', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({

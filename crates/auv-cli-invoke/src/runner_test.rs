@@ -557,17 +557,15 @@ fn runner_platform_gate_refuses_only_explicitly_unsupported_cells() {
   let registry = crate::default_registry();
   use auv::devices::DevicePlatform;
 
-  // Explicit Cells: linux and windows unsupported, macOS supported.
+  // Linux has no backend; Windows query focus is partial; macOS is supported.
   let focus_text = registry.resolve("input.focusText").unwrap();
-  for (platform, label) in [
-    (DevicePlatform::Linux, "Linux"),
-    (DevicePlatform::Windows, "Windows"),
-  ] {
+  for (platform, label) in [(DevicePlatform::Linux, "Linux")] {
     let error = runner_platform_gate("input.focusText", focus_text, Some(platform)).unwrap_err();
     assert_eq!(error.code, crate::FailureCode::Unsupported);
     assert_eq!(error.message, format!("input.focusText has no {label} Runner path; the declared Runner support for {label} is unsupported"));
   }
   assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Macos)).is_ok());
+  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Windows)).is_ok());
 
   // Partial proceeds: nowPlaying is Partial on Windows.
   let now_playing = registry.resolve("mediaControl.nowPlaying").unwrap();

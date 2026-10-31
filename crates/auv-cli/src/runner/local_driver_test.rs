@@ -143,26 +143,66 @@ fn application_request_validation_rejects_blank_application_id_and_invalid_durat
 #[test]
 fn accessibility_request_validation_rejects_malformed_selector_before_native_capture() {
   for request in [
-    macos_proto::FocusTextRequest::default(),
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest::default(),
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Query("".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Query("".to_string())),
       ..Default::default()
     },
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Path("  ".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Path("  ".to_string())),
       ..Default::default()
     },
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Query("Search".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Query("Search".to_string())),
       expected_role: Some("".to_string()),
       ..Default::default()
     },
   ] {
     assert_eq!(focus_text_options_from_proto(request).expect_err("malformed focus request").code(), tonic::Code::InvalidArgument);
   }
+}
+
+// ROOT CAUSE:
+//
+// A Driver could confirm focus readback, but InputActionResult's wire shape
+// omitted verified and the client restored false. The selected Runner then
+// disagreed with the same direct operation about its verification evidence.
+#[test]
+fn input_action_wire_preserves_confirmed_readback() {
+  let mut expected = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  expected.verified = true;
+  let wire = input_action_to_proto(expected.clone()).expect("encode confirmed action");
+  let actual = auv::client::runner::input_action_result_from_proto(wire).expect("decode confirmed action");
+  assert_eq!(actual, expected);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn shared_accessibility_service_preserves_windows_missing_app_and_path_refusals() {
+  let service = LocalAccessibilityService {
+    session: auv::local::open().expect("local session without input"),
+  };
+  let error = service
+    .focus_text(Request::new(proto::FocusTextRequest {
+      application: "auv-nonexistent-focus-fixture-a7b74d5a.exe".into(),
+      selector: Some(proto::focus_text_request::Selector::Query("Search".into())),
+      expected_role: None,
+    }))
+    .await
+    .expect_err("missing application cannot receive input");
+  assert_eq!(error.code(), tonic::Code::NotFound);
+  let error = service
+    .focus_text(Request::new(proto::FocusTextRequest {
+      application: "auv-nonexistent-focus-fixture-a7b74d5a.exe".into(),
+      selector: Some(proto::focus_text_request::Selector::Path("0/0".into())),
+      expected_role: None,
+    }))
+    .await
+    .expect_err("raw child path cannot receive input");
+  assert_eq!(error.code(), tonic::Code::Unimplemented);
 }
 
 #[test]

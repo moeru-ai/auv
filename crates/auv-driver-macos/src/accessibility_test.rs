@@ -74,6 +74,23 @@ fn select_focus_node_rejects_unknown_candidate_without_fallback() {
 }
 
 #[test]
+fn select_focus_node_rejects_query_mismatch_without_fallback() {
+  let snapshot = sample_snapshot();
+  let error = select_focus_node(&snapshot, "First Text View", Some("AXButton"), "").expect_err("mismatched expected_role");
+  assert!(matches!(error, DriverError::NotFound { .. }));
+  assert!(error.to_string().contains("AXButton"), "{error}");
+}
+
+#[test]
+fn select_focus_node_rejects_candidate_path_with_mismatched_role() {
+  let snapshot = sample_snapshot();
+  let error = select_focus_node(&snapshot, "", Some("AXButton"), "0.1.2").expect_err("mismatched candidate role");
+  assert!(matches!(error, DriverError::RoleMismatch { .. }));
+  let message = error.to_string();
+  assert!(message.contains("role AXTextArea, expected AXButton"), "{message}");
+}
+
+#[test]
 fn focus_text_options_validate_selector_before_native_capture() {
   for options in [
     FocusTextOptions {

@@ -220,22 +220,25 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       .and_then(|probe| crate::commands::app::permission_probe_output(&probe).map_err(Into::into)),
     "input.focusText" | "input.axFocusText" => {
       let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
+      let expected_role = input.inputs.get("expected_role").cloned().filter(|role| !role.trim().is_empty());
       let selector = if candidate.trim().is_empty() {
         auv_driver::AxTextSelector::Query(input.inputs.get("query").cloned().unwrap_or_default())
       } else {
         auv_driver::AxTextSelector::Path(candidate.clone())
       };
       runner
-        .macos()
         .accessibility()
         .focus_text(auv_driver::FocusTextOptions {
           app: input.application_target()?.expect("validated target").to_string(),
           selector,
-          expected_role: None,
+          expected_role,
         })
         .await
         .map_err(|error| step_failure("AccessibilityService/FocusText", error))
-        .and_then(|result| crate::commands::input::focus_text_output(&result, &candidate).map_err(Into::into))
+        .and_then(|result| {
+          crate::emit_input_action_result(&result.input_action_result);
+          crate::commands::input::focus_text_output(&result, &candidate).map_err(Into::into)
+        })
     }
     "mediaControl.nowPlaying" => runner
       .macos()
