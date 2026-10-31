@@ -1,6 +1,7 @@
 # Windows application workflow acceptance
 
-Status: test-only controls inventory accepted; Edge and ISE edit/save accepted; Qt and VS Code corrections await replay.
+Status: controls inventory accepted; Edge and ISE have scoped edit/save acceptance.
+Qt cleanup and recording corrections, plus visible VS Code readiness, await replay.
 
 The owner goal names Edge, Electron, Qt, and WPF application validation.
 The prepared cohort is Edge, VS Code 1.144.0, NotepadNext 0.15 with Qt 6.5.3,
@@ -29,6 +30,12 @@ An inspector process retains the observed HWND and PID and has a 25-second deadl
 Tree and capture errors remain separate in the evidence; neither invokes an input fallback.
 Desktop witness counts, foreground restoration, pointer restoration, and process cleanup
 remain separate from controls and pixels.
+The existing keyboard modifier sampler is shared through `DesktopWatch::modifiers_released`.
+Application cases require Ctrl, Shift, Alt, and both Windows keys to report released before commands and after cleanup.
+This read sends no synthetic key-up events. A down modifier refuses further input instead of masking a stuck-key failure.
+Permitted foreground OCR clicks can leave the pointer at their target.
+Controller teardown uses the Driver to restore its original pointer only while physical-input counts remain unchanged.
+The pre-restoration point, cleanup action, and independent position readback remain distinct from app-delivery facts.
 
 The internal `app-host` and `app-snapshot` subprocess commands are hidden evaluation helpers.
 Their Rust entries, `run_controls`, and `run_editor` belong to the unpublished evaluation crate.
@@ -134,3 +141,16 @@ The old preference mixed separators; the corrected preference used backslashes t
 Independent audit read the 43-byte saved file and verified five actual command completions plus four input-result bodies.
 Three Edge captures and three ISE captures were reviewed; their foreground/pointer restoration and zero-physical-input gates passed.
 This does not establish the browser's internal failing function or compatibility at another version.
+
+The [four-app replay](https://github.com/moeru-ai/auv/actions/runs/41182331780) at `591ef686`
+saved correct files in all four apps. Edge and ISE passed; Qt's task failed its pointer-restoration gate.
+Its foreground OCR click left the pointer at the clicked text, and the controller had not restored it.
+The Qt reply retained its typed action, but local `window.clickText` recorded only the OCR source artifact.
+A pure regression reproduced zero delivery artifacts in the local output path.
+The shared output recorder now publishes exactly one typed result for local and recorded callers.
+
+VS Code's file/run-store checks passed, but independent pixels showed the welcome modal covering its buffer.
+That is not accepted as a complete visible editor workflow. The case now dismisses the recorded onboarding through
+AUV's Escape key and requires a new complete tree without that blocker before typing.
+Three Edge and three ISE captures from earlier acceptance, plus the new VS Code/Qt images, were reviewed independently.
+The last replay did not exercise the optional VS Code stale-focus reacquisition branch; its eligibility has pure coverage only.

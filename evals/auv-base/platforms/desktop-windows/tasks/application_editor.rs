@@ -24,6 +24,12 @@ fn focus_reacquisition_allowed(app: &str, reply: &Value, zero_input_witness: boo
     && reply["failure_details"]["input_progress"]["state"] == "not_delivered"
 }
 
+fn vscode_onboarding_visible(snapshot: &Value) -> bool {
+  snapshot["tree"]["nodes"].as_array().is_some_and(|nodes| {
+    nodes.iter().any(|node| node["role"] == "Button" && node["name"] == "Continue without Signing In" && node["offscreen"] == false)
+  })
+}
+
 fn invoke(
   processes: &mut native::Processes,
   auv: &Path,
@@ -35,6 +41,7 @@ fn invoke(
 ) -> Result<Value> {
   let witness = watch.snapshot();
   ensure!(witness.physical_keys == 0 && witness.physical_mouse == 0, "physical input: action refused");
+  ensure!(watch.modifiers_released(), "modifier already down: action refused without cleanup input");
   std::fs::create_dir(directory)?;
   let mut command = helper_command("app-host", directory)?;
   command
@@ -91,6 +98,30 @@ pub(super) fn run(
       candidates.len() == 1 && candidates[0].reference == window.reference && candidates[0].process_id == window.process_id,
       "application selector has competing or changed main windows"
     );
+    if app == "vscode" {
+      let initial: Value = serde_json::from_slice(&std::fs::read(directory.join("snapshot.json"))?)?;
+      if vscode_onboarding_visible(&initial) {
+        // Pixel review of CI 124482099674 found the welcome modal still covering
+        // an edited buffer. Dismiss it through AUV and require a fresh readback;
+        // saved-file equality alone cannot accept that visually hidden workflow.
+        let operation = invoke(
+          processes,
+          auv,
+          &directory.join("00-onboarding-dismiss"),
+          "input.key",
+          &["escape", "--input-policy", "foreground-preferred"],
+          &window_target,
+          watch,
+        )?;
+        records.write("onboarding", json!({"operation": operation}))?;
+        ensure!(operation["reply"]["status"] == "completed", "onboarding dismissal failed; stop");
+        let ready = directory.join("ready");
+        std::fs::create_dir(&ready)?;
+        let snapshot = inspect_controls(processes, window, &ready)?;
+        records.write("onboarding_readback", json!({"snapshot": snapshot}))?;
+        ensure!(snapshot["tree"]["truncated"] == false && !vscode_onboarding_visible(&snapshot), "onboarding still covers the editor");
+      }
+    }
     let before = watch.snapshot();
     let missing = format!("AUV-ABSENT-{marker}");
     let refusal = invoke(processes, auv, &directory.join("01-refusal"), "input.focusText", &[&missing], &app_target, watch)?;
@@ -188,6 +219,7 @@ pub(super) fn run(
     let focused = directory.join("focused");
     std::fs::create_dir(&focused)?;
     let readback = inspect_controls(processes, window, &focused)?;
+    ensure!(app != "vscode" || !vscode_onboarding_visible(&readback), "onboarding appeared before typing; stop");
     let focused_editor = readback["tree"]["nodes"].as_array().context("focus readback omitted controls")?.iter().any(|node| {
       node["focused"] == true
         && node["keyboard_focusable"] == true
@@ -260,5 +292,17 @@ mod tests {
     }
     let other = json!({"status": "failed", "failure_details": {"code": "backend", "input_progress": {"state": "not_delivered"}}});
     assert!(!focus_reacquisition_allowed("vscode", &other, true));
+  }
+
+  // https://github.com/moeru-ai/auv/actions/runs/41182331780/job/124482099674
+  // Pixel review found this visible modal covering a correctly saved editor.
+  #[test]
+  fn vscode_onboarding_ci_124482099674_blocks_visible_editor_acceptance() {
+    let mut snapshot = json!({"tree": {"nodes": [{"role": "Button", "name": "Continue without Signing In", "offscreen": false}]}});
+    assert!(vscode_onboarding_visible(&snapshot));
+    snapshot["tree"]["nodes"][0]["offscreen"] = json!(true);
+    assert!(!vscode_onboarding_visible(&snapshot));
+    snapshot["tree"]["nodes"] = json!([]);
+    assert!(!vscode_onboarding_visible(&snapshot));
   }
 }

@@ -13,7 +13,6 @@ use auv_driver_common::{
 use auv_driver_windows::WindowsDriver;
 use serde_json::{Value, json};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
 use super::background::{discover_by_hwnd, run_id};
@@ -224,9 +223,7 @@ pub fn run(output: &Path) -> Result<bool> {
       Some(original) => auv_driver_windows::clipboard::snapshot()? == *original,
       None => true,
     };
-    // SAFETY: read-only key-state queries on the isolated input desktop.
-    let modifiers_released =
-      [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN].iter().all(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) >= 0 });
+    let modifiers_released = watch.modifiers_released();
     let fired = fault_receipt.as_ref().is_some_and(|value| value["receipt"]["reached_target"] == true);
     // SAFETY: read-only liveness query of the HWND owned by fixture A.
     let closed = unsafe { !IsWindow(HWND(a.hwnd() as _)).as_bool() };

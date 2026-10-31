@@ -35,6 +35,7 @@ use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
   CallNextHookEx, DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
   HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_LOWER_IL_INJECTED, LLKHF_UP, LLMHF_INJECTED, LLMHF_LOWER_IL_INJECTED, MSG,
@@ -419,6 +420,12 @@ impl DesktopWatch {
         Err(anyhow!("the desktop watch thread did not start"))
       }
     }
+  }
+
+  /// Reads modifier state without sending cleanup input or changing the desktop.
+  pub fn modifiers_released(&self) -> bool {
+    // SAFETY: read-only key-state queries on the witness's isolated input desktop.
+    [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN].iter().all(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) >= 0 })
   }
 
   pub fn snapshot(&self) -> Snapshot {

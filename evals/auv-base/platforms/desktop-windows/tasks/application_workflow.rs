@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use auv_driver_common::{Driver, window::Window};
+use auv_driver_common::{Driver, Point, window::Window};
 use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
 use serde_json::{Value, json};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -217,6 +217,11 @@ fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Resu
   let mut attempts = 0;
   for (name, program) in applications.into_iter().filter(|(name, _)| application.is_none_or(|selected| selected == *name)) {
     let before = watch.snapshot();
+    if !watch.modifiers_released() {
+      records.write("abort", json!({"reason": "modifier already down", "next_app": name}))?;
+      complete = false;
+      break;
+    }
     if before.physical_keys != original.physical_keys || before.physical_mouse != original.physical_mouse {
       records.write("abort", json!({"reason": "physical input", "next_app": name}))?;
       complete = false;
@@ -332,26 +337,49 @@ fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Resu
       Ok(json!({"window": window, "snapshot": snapshot, "fixture": fixture, "launched_program": program, "editor": editor_result}))
     })();
     let cleanup = processes.finish();
+    let modifiers_released = watch.modifiers_released();
     let after = watch.snapshot();
-    let restored = if after.physical_keys == original.physical_keys && after.physical_mouse == original.physical_mouse {
-      if let Some(window) = &original_window {
-        session.window().activate(window).map_err(|error| error.to_string())
-      } else {
-        Ok(())
+    let restored = (|| -> Result<Option<auv_driver_common::InputActionResult>, String> {
+      if after.physical_keys != original.physical_keys || after.physical_mouse != original.physical_mouse {
+        return Err("physical input: desktop restoration skipped".into());
       }
-    } else {
-      Err("physical input: foreground restoration skipped".to_string())
-    };
-    complete &= attempt.is_ok() && cleanup.is_ok();
+      if let Some(window) = &original_window {
+        session.window().activate(window).map_err(|error| error.to_string())?;
+      }
+      if after.cursor == original.cursor {
+        return Ok(None);
+      }
+      // NOTICE: a permitted foreground click moves the physical pointer. This
+      // is controller teardown, recorded separately from the application's input.
+      let action =
+        session.input().move_to(Point::new(original.cursor.0.into(), original.cursor.1.into())).map_err(|error| error.to_string())?;
+      let deadline = Instant::now() + Duration::from_secs(1);
+      loop {
+        let state = watch.snapshot();
+        if state.physical_keys != original.physical_keys || state.physical_mouse != original.physical_mouse {
+          return Err("physical input interrupted pointer readback".into());
+        }
+        if state.cursor == original.cursor {
+          return Ok(Some(action));
+        }
+        if Instant::now() >= deadline {
+          return Err("pointer restoration did not match independent readback".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+      }
+    })();
+    complete &= attempt.is_ok() && cleanup.is_ok() && modifiers_released && restored.is_ok();
     if auv.is_some() {
       editors_passed &= attempt.as_ref().is_ok_and(|result| result["editor"]["passed"] == true);
     }
     records.write("app", json!({"app": name, "inventory": attempt.as_ref().ok(), "error": attempt.as_ref().err().map(ToString::to_string),
-      "cleanup": cleanup.as_ref().ok(), "cleanup_error": cleanup.as_ref().err().map(ToString::to_string), "restore_error": restored.err(),
+      "cleanup": cleanup.as_ref().ok(), "cleanup_error": cleanup.as_ref().err().map(ToString::to_string), "restore_error": restored.as_ref().err(),
+      "cursor_before_restore": after.cursor, "cursor_restoration": restored.as_ref().ok(),
+      "modifiers_released": modifiers_released,
       "physical_keys": after.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": after.physical_mouse.saturating_sub(original.physical_mouse),
       "injected_keys": after.injected_keys.saturating_sub(original.injected_keys), "injected_mouse": after.injected_mouse.saturating_sub(original.injected_mouse),
       "foreground_before": before.foreground, "foreground_after": after.foreground}))?;
-    if auv.is_some() && !editors_passed {
+    if auv.is_some() && (!editors_passed || !modifiers_released) {
       // A failed/uncertain action ends this input run. Preserve evidence and
       // cleanup rather than driving the remaining applications blindly.
       records.write("abort", json!({"reason": "editor case failed; input run stopped", "app": name}))?;
@@ -359,8 +387,10 @@ fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Resu
     }
   }
   let final_state = watch.snapshot();
+  let modifiers_released = watch.modifiers_released();
   let restored = final_state.foreground == original.foreground && final_state.cursor == original.cursor;
   complete &= attempts == expected_apps
+    && modifiers_released
     && restored
     && final_state.physical_keys == original.physical_keys
     && final_state.physical_mouse == original.physical_mouse;
@@ -368,6 +398,7 @@ fn run(options: &Options, auv: Option<&Path>, application: Option<&str>) -> Resu
   // DPI, and cross-frontend acceptance remain separate owner-named goal gates;
   // see 2026-10-31-windows-application-workflow.md before expanding these cases.
   records.write("summary", json!({"apps": attempts, "application": application, "inventory_complete": complete, "edit_save_accepted": auv.is_some() && editors_passed && complete, "workflow_accepted": false,
+    "modifiers_released": modifiers_released,
     "foreground_restored": final_state.foreground == original.foreground, "pointer_restored": final_state.cursor == original.cursor,
     "physical_keys": final_state.physical_keys.saturating_sub(original.physical_keys), "physical_mouse": final_state.physical_mouse.saturating_sub(original.physical_mouse)}))?;
   Ok(complete && (auv.is_none() || editors_passed))
