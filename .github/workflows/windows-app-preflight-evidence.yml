@@ -14,13 +14,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        application: [vscode, notepadnext, powershell-ise]
+        application: [edge]
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 86d36a1ec86982aeeb0b27570ae3271a982f118b
+          ref: 5b91057367e3a499629c909242f390c89f167fb5
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -83,7 +83,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '86d36a1ec86982aeeb0b27570ae3271a982f118b') { throw "Unexpected source $source" }
+          if ($source -ne '5b91057367e3a499629c909242f390c89f167fb5') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -293,7 +293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editor-${{ matrix.application }}-86d36a1e
+          name: windows-app-editor-${{ matrix.application }}-5b910573
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
