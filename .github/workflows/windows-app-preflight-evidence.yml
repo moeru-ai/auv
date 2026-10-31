@@ -235,17 +235,58 @@ jobs:
           $summary = @($rows | Where-Object kind -eq 'summary')[0]
           $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$directory/controls-result.json"
           $apps = @($rows | Where-Object kind -eq 'app')
-          if ($apps.Count -ne 4 -or @($apps | Where-Object { $_.cleanup.active_processes -ne 0 -or -not $_.cleanup.roots_exited }).Count -ne 0) {
+          if (@($apps | Where-Object { $_.cleanup.active_processes -ne 0 -or -not $_.cleanup.roots_exited }).Count -ne 0) {
             throw 'Owned application cleanup records are incomplete'
           }
+          if ($apps.Count -ne 4) { throw 'Input run stopped after a failed editor case; inspect editor-case.json and editor-steps.jsonl' }
           if ($summary.workflow_accepted -ne $false) { throw 'Edit/save cases must not accept the full workflow' }
           if ($evaluationExit -ne 0 -or -not $summary.inventory_complete -or -not $summary.edit_save_accepted) { throw 'Application edit/save acceptance failed; inspect retained step results' }
+
+      - name: Inspect controlled Edge download metadata after verified process cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:RUNNER_TEMP/auv-app-preflight"
+          $records = "$directory/controls/application-editor.jsonl"
+          if (-not (Test-Path -LiteralPath $records)) { exit 0 }
+          $edge = @(Get-Content -LiteralPath $records | ForEach-Object { $_ | ConvertFrom-Json -Depth 70 } | Where-Object { $_.kind -eq 'app' -and $_.app -eq 'edge' })
+          if ($edge.Count -ne 1 -or $edge[0].cleanup.active_processes -ne 0 -or -not $edge[0].cleanup.roots_exited) { throw 'Refusing profile inspection before controlled Edge cleanup' }
+          node --version
+          @'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { DatabaseSync } = require('node:sqlite');
+          const root = process.argv[2];
+          const profile = path.join(root, 'controls', 'edge', 'profile', 'Default');
+          const destination = path.join(root, 'edge-download-diagnostics');
+          fs.mkdirSync(destination);
+          const prefs = JSON.parse(fs.readFileSync(path.join(profile, 'Preferences'), 'utf8'));
+          fs.writeFileSync(path.join(destination, 'preferences.json'), JSON.stringify({ download: prefs.download, savefile: prefs.savefile }, null, 2));
+          // The fresh, controlled profile contains only this fixture. Keep the
+          // database and its journals; query a copy so recovery cannot alter app evidence.
+          for (const name of ['History', 'History-journal', 'History-wal', 'History-shm']) {
+            const source = path.join(profile, name);
+            if (fs.existsSync(source)) fs.copyFileSync(source, path.join(destination, name));
+          }
+          let db;
+          try {
+            db = new DatabaseSync(path.join(destination, 'History'));
+            const downloads = db.prepare('SELECT id, current_path, target_path, received_bytes, total_bytes, state, danger_type, interrupt_reason, mime_type FROM downloads').all();
+            fs.writeFileSync(path.join(destination, 'downloads.json'), JSON.stringify(downloads, null, 2));
+            console.log(JSON.stringify(downloads));
+          } catch (error) {
+            fs.writeFileSync(path.join(destination, 'query-error.txt'), String(error));
+            process.exitCode = 1;
+          } finally { if (db) db.close(); }
+          '@ | node --input-type=commonjs - $directory
+          if ($LASTEXITCODE -ne 0) { throw 'Controlled download history inspection failed; raw copy retained' }
 
       - name: Preserve the environment inventory
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editors-7e7dd2a7
+          name: windows-app-editors-7e7dd2a7-downloads
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
