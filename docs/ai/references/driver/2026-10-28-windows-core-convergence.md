@@ -447,8 +447,8 @@ Artifact `13005653981` matched SHA-256
 `eadb4dcd40dc1a06916de4d3a43883e8dd3d25948542e0d0481bc1a5ff8ff72c` after download.
 The raw [environment inventory](evidence/2026-10-31-windows-app-preflight/environment.json)
 and [portable package records](evidence/2026-10-31-windows-app-preflight/portable-apps.json)
-are retained here. These are preparation facts; application launch, control focus,
-and do not establish functional acceptance. Later controls and edit evidence follows below.
+are retained here as preparation facts. This preflight did not launch an app
+and does not establish functional acceptance. Later controls and input evidence follow below.
 
 Draft [#447](https://github.com/moeru-ai/auv/pull/447) owns real-application workflow cases.
 The [controls run](https://github.com/moeru-ai/auv/actions/runs/41125933697) at `cbd34975`
