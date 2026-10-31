@@ -385,6 +385,12 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
       required_substring: None,
     },
     RejectionCase {
+      name: "outside right boundary (450.1, 200.0)",
+      window_frame: standard_window,
+      screen_point: (450.1, 200.0),
+      required_substring: None,
+    },
+    RejectionCase {
       name: "before origin coordinate (49.9, 149.9)",
       window_frame: standard_window,
       screen_point: (49.9, 149.9),
@@ -394,6 +400,12 @@ fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery(
       name: "outside right edge on negative-origin secondary monitor",
       window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
       screen_point: (-500.0, -600.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "beyond right edge on negative-origin secondary monitor",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-499.9, -600.0),
       required_substring: None,
     },
     // Non-finite screen coordinates

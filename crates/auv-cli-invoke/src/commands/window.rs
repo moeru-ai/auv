@@ -514,12 +514,14 @@ pub fn selected_window_text_match<'a>(
 }
 
 /// Projects an OCR match point into window space and verifies it falls within
-/// the resolved window bounds. Both direct local invoke and selected Runner routes
+/// the resolved `window.frame`. Both direct local invoke and selected Runner routes
 /// share this check so out-of-bounds candidates are rejected before input delivery.
 ///
-/// Enforces half-open valid pixel containment `[0.0, width)` and `[0.0, height)`
-/// alongside non-finite and positive dimension validation, rejecting points on or
-/// beyond the window perimeter before any pointer input is dispatched.
+/// NOTICE: The boundary check evaluates against the `resolved window.frame`, NOT
+/// against `capture.bounds` or the native desktop geometry at the moment of delivery.
+///
+/// Enforces continuous half-open valid pixel containment `[0.0, width)` and `[0.0, height)`
+/// alongside non-finite and positive dimension validation.
 pub(crate) fn matched_window_point(
   window: &auv_driver::Window,
   matched: &auv_driver::OcrMatch,
@@ -545,6 +547,7 @@ pub(crate) fn matched_window_point(
       format!("recognized text point {},{} is outside resolved window bounds; no input delivered", screen_point.x, screen_point.y),
     ));
   }
+
   Ok(point)
 }
 
