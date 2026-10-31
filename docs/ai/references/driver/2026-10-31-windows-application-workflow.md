@@ -1,6 +1,6 @@
 # Windows application workflow acceptance
 
-Status: test-only controls inventory accepted; ISE edit/save accepted; the other app cases remain incomplete.
+Status: test-only controls inventory accepted; Edge and ISE edit/save accepted; Qt and VS Code corrections await replay.
 
 The owner goal names Edge, Electron, Qt, and WPF application validation.
 The prepared cohort is Edge, VS Code 1.144.0, NotepadNext 0.15 with Qt 6.5.3,
@@ -117,7 +117,7 @@ reproduced that failure on the same source in a fresh isolated desktop.
 Its browser database recorded the expected target path, 43 total bytes, zero received bytes,
 and interrupt reason 1 (`FILE_FAILED`). The page's state and CLI receipts did not override this failure.
 Both runs restored the foreground and pointer, observed no physical input, and verified owned job cleanup.
-Native browser file logging now records the next diagnostic boundary; Edge edit/save remains unaccepted.
+At that revision, browser file logging retained the next diagnostic boundary; Edge edit/save remained unaccepted.
 
 The [independent app runs](https://github.com/moeru-ai/auv/actions/runs/41181010921) at `86d36a1e`
 accepted ISE's comment-only edit/save case. Independent readback verified its 53-byte file,
@@ -126,3 +126,11 @@ VS Code stopped before input at an unavailable provider property (`stale_ui_refe
 Qt stopped at CLI validation because the case supplied an unsupported `window:` target to `window.clickText`.
 Its corrected call selects `app:` plus the owned document's title marker, following the current command contract.
 These failures remain separate from ISE acceptance; complete cohort workflows remain open.
+
+The [normalized-path Edge run](https://github.com/moeru-ai/auv/actions/runs/41181310496) at `5b910573`
+accepted the same download workflow after serializing the download preference as a native absolute path.
+The before/after browser executable hashes matched (`c2451a01...`, version 155.0.4283.62).
+The old preference mixed separators; the corrected preference used backslashes throughout.
+Independent audit read the 43-byte saved file and verified five actual command completions plus four input-result bodies.
+Three Edge captures and three ISE captures were reviewed; their foreground/pointer restoration and zero-physical-input gates passed.
+This does not establish the browser's internal failing function or compatibility at another version.
