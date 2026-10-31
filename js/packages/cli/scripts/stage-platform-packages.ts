@@ -4,7 +4,7 @@ import process from 'node:process'
 
 import { execFileSync } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { findWorkspaceDir } from '@pnpm/find-workspace-dir'
@@ -123,14 +123,8 @@ async function stageTarget(
   }
 
   const relativeExecutable = `bin/${target.executable}`
-  const packagedPath = target.bundled ? 'bin' : relativeExecutable
-  if (!manifest.files?.includes(packagedPath)) {
-    manifest.files = [...new Set([...(manifest.files ?? []), packagedPath])]
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-  }
-
+  const binRoot = join(packageRoot, 'bin')
   if (target.bundled) {
-    const binRoot = join(packageRoot, 'bin')
     const temporary = await mkdtemp(join(packageRoot, '.bundle-'))
     try {
       extractBundle(archive, temporary)
@@ -156,6 +150,21 @@ async function stageTarget(
     finally {
       await rm(temporary, { force: true })
     }
+  }
+
+  // NOTICE: `napi prepublish` (`@napi-rs/cli` 3.8) requires every `files`
+  // entry to be a regular file, so the Linux bundle lists each file under
+  // `bin` instead of the directory. The bundle has no symlinks.
+  const packagedPaths = target.bundled
+    ? (await collectFiles(binRoot)).map(file => relative(packageRoot, file).split(sep).join('/')).sort()
+    : [relativeExecutable]
+  const files = [
+    ...(manifest.files ?? []).filter(file => file !== 'bin' && !file.startsWith('bin/')),
+    ...packagedPaths,
+  ]
+  if (JSON.stringify(files) !== JSON.stringify(manifest.files)) {
+    manifest.files = files
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
   await copyFile(join(await findWorkspaceDir(cliRoot) ?? cliRoot, 'LICENSE'), join(packageRoot, 'LICENSE'))
