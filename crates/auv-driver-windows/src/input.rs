@@ -153,7 +153,7 @@ pub(crate) fn deliver_window_click(
     if count > 1 && Instant::now().checked_add(interval).is_none() {
       return Err(invalid_input("window click interval exceeds the native clock range"));
     }
-    with_recipient(window, || deliver_click(point, button, click, modifiers))
+    with_recipient(window, || deliver_click(point, button, click, modifiers)).map(add_admission_attempt)
   })();
   result.map_err(not_delivered)
 }
@@ -173,21 +173,23 @@ pub(crate) fn deliver_window_scroll(
     if Instant::now().checked_add(settle).is_none() {
       return Err(invalid_input("window scroll settle exceeds the native clock range"));
     }
-    with_recipient(window, || {
+    let deliver = || {
       let action = scroll_at(point, scroll, Duration::ZERO)?;
       recipient::wait(settle)?;
       Ok(action)
-    })
+    };
+    if recipient::reuse_scroll_recipient(window)? {
+      deliver().map_err(recipient::stamp_current)
+    } else {
+      with_recipient(window, deliver).map(add_admission_attempt)
+    }
   })();
   result.map_err(not_delivered)
 }
 
 /// Owns desktop/native lock ordering, recipient lifetime, and prefix stamping
 /// for foreground window mouse actions. Validation happens before this boundary.
-fn with_recipient(
-  window: &auv_driver_common::window::Window,
-  deliver: impl FnOnce() -> DriverResult<InputActionResult>,
-) -> DriverResult<InputActionResult> {
+fn with_recipient<T>(window: &auv_driver_common::window::Window, deliver: impl FnOnce() -> DriverResult<T>) -> DriverResult<T> {
   // Every mouse path takes the desktop coordinator before native submission.
   // Keep that order while the recipient watcher owns the submission gate;
   // nested click/scroll reservations share the same-thread desktop admission.
@@ -196,7 +198,12 @@ fn with_recipient(
   guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
   // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
   // ownership need a coordinate producer/consumer contract; see the mouse recipient note.
-  let mut action = deliver().map_err(|cause| guard.stamp(cause))?;
+  let result = deliver().map_err(|cause| guard.stamp(cause))?;
+  guard.check().map_err(|cause| guard.stamp(cause))?;
+  Ok(result)
+}
+
+fn add_admission_attempt(mut action: InputActionResult) -> InputActionResult {
   action.attempts.insert(
     0,
     InputAttempt {
@@ -205,7 +212,74 @@ fn with_recipient(
       message: Some("window recipient identity and foreground admitted".into()),
     },
   );
-  Ok(action)
+  action
+}
+
+/// Runs the shared schedule under one retained Windows scroll recipient.
+pub(crate) fn deliver_window_scroll_motion(
+  input: &impl auv_driver_common::WindowInput,
+  window: &auv_driver_common::Window,
+  point: auv_driver_common::WindowPoint,
+  motion: &auv_driver_common::ScrollMotion,
+  options: auv_driver_common::ScrollOptions,
+  notify: &mut dyn FnMut(auv_driver_common::ScrollMotionProgress),
+) -> DriverResult<auv_driver_common::ScrollMotionResult> {
+  let result = (|| {
+    motion.schedule()?;
+    if !point.point().x.is_finite() || !point.point().y.is_finite() {
+      return Err(invalid_input("window scroll point must be finite"));
+    }
+    let auv_driver_common::MotionTiming::FixedDuration { duration, .. } = motion.timing;
+    if Instant::now().checked_add(duration).and_then(|deadline| deadline.checked_add(options.settle)).is_none() {
+      return Err(invalid_input("window scroll motion exceeds the native clock range"));
+    }
+    let mut completed = with_recipient(window, || {
+      recipient::with_scroll_steps(|| {
+        auv_driver_common::scroll_motion::run_window_scroll_motion(input, window, point, motion, options, notify)
+      })
+    })?;
+    completed.action = add_admission_attempt(completed.action);
+    Ok(completed)
+  })();
+  result.map_err(not_delivered)
+}
+
+/// Runs live velocity control under the same recipient while idle or moving.
+pub(crate) fn deliver_window_scroll_stream(
+  input: &impl auv_driver_common::WindowInput,
+  window: &auv_driver_common::Window,
+  point: auv_driver_common::WindowPoint,
+  control: &auv_driver_common::ScrollStreamControl,
+  stream: auv_driver_common::ScrollStreamOptions,
+  options: auv_driver_common::ScrollOptions,
+  notify: &mut dyn FnMut(auv_driver_common::ScrollStreamProgress),
+) -> DriverResult<auv_driver_common::ScrollStreamResult> {
+  let result = (|| {
+    stream.validate()?;
+    if !point.point().x.is_finite() || !point.point().y.is_finite() {
+      return Err(invalid_input("window scroll point must be finite"));
+    }
+    if Instant::now().checked_add(options.settle).is_none() {
+      return Err(invalid_input("window scroll settle exceeds the native clock range"));
+    }
+    let mut completed = with_recipient(window, || {
+      recipient::with_scroll_steps(|| {
+        auv_driver_common::scroll_stream::run_window_scroll_stream(input, window, point, control, stream, options, notify)
+      })
+    })?;
+    completed.action = completed.action.map(add_admission_attempt);
+    Ok(completed)
+  })();
+  result.map_err(not_delivered)
+}
+
+/// The shared executor uses the platform wait only inside an admitted batch.
+pub(crate) fn wait_scroll(deadline: Instant) -> DriverResult<()> {
+  if recipient::scroll_batch_active() {
+    recipient::wait(deadline.saturating_duration_since(Instant::now()))
+  } else {
+    auv_driver_common::input_cancellation::wait_until(deadline, "scroll motion")
+  }
 }
 
 /// Refusal before submission must not overwrite an existing partial receipt.

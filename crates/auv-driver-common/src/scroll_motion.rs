@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use crate::input::{
   InputActionResult, InputDeliveryPath, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
 };
-use crate::input_cancellation::wait_until;
 use crate::{DriverError, DriverResult, Window, WindowInput, WindowPoint};
 
 /// Maps normalized elapsed time `t` in `[0, 1]` to normalized progress.
@@ -238,9 +237,9 @@ impl CumulativeQuantizer {
 /// policy and strategy. Later samples are pinned to that path: a mid-motion
 /// fallback would move the pointer or change focus partway through a gesture.
 /// A failed later sample ends the motion with an error that reports progress.
-// TODO(scroll-motion-admission): each sample takes its own desktop input
-// admission, so another input can interleave between samples. Hold one
-// admission for the whole motion when adapters expose a re-entrant scroll.
+// TODO(scroll-motion-admission): adapters without an outer batch lease still
+// admit each sample separately. Their ownership policy needs a platform slice;
+// Windows foreground scroll retains a lease around this shared executor.
 pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
   input: &W,
   window: &Window,
@@ -261,14 +260,16 @@ pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
   let mut next = 0;
   loop {
     let (elapsed, _) = schedule.at(next);
-    wait_until(started + elapsed, "scroll motion")?;
+    input
+      .wait_scroll(started + elapsed)
+      .map_err(|error| partial_failure(error, quantizer.delivered(), Scroll::new(0.0, 0.0), first_action.as_ref()))?;
     let index = schedule.latest_due(next, started.elapsed());
     let (scheduled_elapsed, progress) = schedule.at(index);
     let delta = quantizer.step(progress);
     if delta.delta_x != 0.0 || delta.delta_y != 0.0 {
       let action = input
         .scroll(window, point, delta, sample_options.clone())
-        .map_err(|error| partial_failure(error, quantizer.delivered(), delta, first_action.is_some()))?;
+        .map_err(|error| partial_failure(error, quantizer.delivered(), delta, first_action.as_ref()))?;
       if first_action.is_none() {
         sample_options = pinned_options(&action, &options);
         first_action = Some(action);
@@ -286,7 +287,9 @@ pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
     next = index + 1;
   }
   if !options.settle.is_zero() {
-    wait_until(Instant::now() + options.settle, "scroll motion")?;
+    input
+      .wait_scroll(Instant::now() + options.settle)
+      .map_err(|error| partial_failure(error, quantizer.delivered(), Scroll::new(0.0, 0.0), first_action.as_ref()))?;
   }
   let action = first_action.ok_or_else(|| invalid("scroll motion total is smaller than one native wheel unit"))?;
   Ok(ScrollMotionResult {
@@ -322,19 +325,49 @@ pub(crate) fn pinned_options(action: &InputActionResult, options: &ScrollOptions
   }
 }
 
-pub(crate) fn partial_failure(error: DriverError, delivered: Scroll, attempted: Scroll, started: bool) -> DriverError {
-  if !started {
+pub(crate) fn partial_failure(error: DriverError, delivered: Scroll, attempted: Scroll, prior: Option<&InputActionResult>) -> DriverError {
+  let Some(prior) = prior else {
     return error;
+  };
+  let detail = format!(
+    "scroll motion stopped after delivering dx={} dy={} logical px; sample dx={} dy={} failed: {error}",
+    delivered.delta_x - attempted.delta_x,
+    delivered.delta_y - attempted.delta_y,
+    attempted.delta_x,
+    attempted.delta_y
+  );
+  use crate::InputActionProgress;
+  let (cause, mut progress) = match error {
+    DriverError::InputAction { cause, progress } => {
+      let progress = match progress {
+        // Zero delivery of this sample does not erase earlier accepted samples.
+        InputActionProgress::NotDelivered => InputActionProgress::Submitted {
+          action: prior.clone(),
+        },
+        progress => progress,
+      };
+      (cause, progress)
+    }
+    cause => {
+      let action = prior.clone();
+      // A failed wait submits no new sample. A failed native call without a
+      // receipt may have had effects beyond the earlier accepted prefix.
+      let progress = if attempted == Scroll::new(0.0, 0.0) {
+        InputActionProgress::Submitted { action }
+      } else {
+        InputActionProgress::DeliveryUncertain { action }
+      };
+      (Box::new(cause), progress)
+    }
+  };
+  match &mut progress {
+    InputActionProgress::Submitted { action } | InputActionProgress::DeliveryUncertain { action } => {
+      action.verified = false;
+      action.attempts.push(crate::InputAttempt::failure(action.selected_path, detail));
+    }
+    InputActionProgress::NotDelivered => unreachable!("prior delivery is retained above"),
   }
-  DriverError::Backend {
-    message: format!(
-      "scroll motion stopped after delivering dx={} dy={} logical px; sample dx={} dy={} failed: {error}",
-      delivered.delta_x - attempted.delta_x,
-      delivered.delta_y - attempted.delta_y,
-      attempted.delta_x,
-      attempted.delta_y
-    ),
-  }
+  DriverError::InputAction { cause, progress }
 }
 
 // CSS cubic-bezier: solve x(s) = t for the curve parameter, then return y(s).

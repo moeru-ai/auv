@@ -64,6 +64,42 @@ fn options(max_acceleration: Option<f64>, lease_ms: u64) -> ScrollStreamOptions 
   }
 }
 
+// ROOT CAUSE:
+//
+// If cancellation followed an accepted scroll sample, the next wait returned
+// a plain error and discarded the earlier input receipt.
+// Before the fix, callers could not classify the delivered prefix.
+// The fix retains Submitted with the original cancellation cause.
+#[test]
+fn cancellation_after_delivery_retains_submitted_receipt() {
+  use crate::InputActionProgress;
+  use crate::input_cancellation::{InputCancellation, with_input_cancellation};
+
+  let input = recording();
+  let control = ScrollStreamControl::new();
+  control.set_velocity(ScrollVelocity::new(0.0, 400.0)).unwrap();
+  let cancellation = Arc::new(InputCancellation::default());
+  let error = with_input_cancellation(cancellation.clone(), || {
+    input.scroll_stream(
+      &test_window(),
+      WindowPoint::new(10.0, 20.0),
+      &control,
+      options(None, 60_000),
+      ScrollOptions::default(),
+      &mut |progress| {
+        if progress.delivered.delta_y > 0.0 {
+          cancellation.cancel();
+        }
+      },
+    )
+  })
+  .unwrap_err();
+  assert_eq!(input.calls.borrow().len(), 1);
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::Submitted { action } }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))
+      && action.selected_path == InputDeliveryPath::WindowTargetedWheel));
+}
+
 fn run(
   input: &RecordingInput,
   control: &ScrollStreamControl,

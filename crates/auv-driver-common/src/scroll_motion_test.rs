@@ -244,9 +244,80 @@ fn failed_later_sample_reports_partial_delivery() {
       &mut |_| {},
     )
     .unwrap_err();
-  let message = error.to_string();
-  assert!(message.contains("scroll motion stopped after delivering"), "{message}");
-  assert!(message.contains("native wheel failed"), "{message}");
+  assert!(matches!(error, DriverError::InputAction { cause, progress: crate::InputActionProgress::DeliveryUncertain { action } }
+    if matches!(cause.as_ref(), DriverError::Backend { message } if message.contains("native wheel failed"))
+      && action.attempts.last().unwrap().message.as_ref().unwrap().contains("scroll motion stopped after delivering")));
+}
+
+// ROOT CAUSE:
+//
+// A later sample's typed target loss was formatted into Backend, discarding
+// the native submitted receipt and the category needed by frontends.
+// The fix preserves both through the shared motion/stream failure boundary.
+#[test]
+fn later_target_loss_keeps_typed_cause_and_input_receipt() {
+  use crate::InputActionProgress;
+
+  let prior = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+  let error = partial_failure(
+    DriverError::InputAction {
+      cause: Box::new(DriverError::TargetLost {
+        target: "window:1".into(),
+        message: "foreground left the admitted recipient".into(),
+      }),
+      progress: InputActionProgress::Submitted {
+        action: InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents),
+      },
+    },
+    Scroll::new(0.0, 200.0),
+    Scroll::new(0.0, 100.0),
+    Some(&prior),
+  );
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::Submitted { .. } }
+    if matches!(cause.as_ref(), DriverError::TargetLost { .. })));
+}
+
+#[test]
+fn later_not_delivered_does_not_erase_accepted_scroll_prefix() {
+  use crate::InputActionProgress;
+
+  let prior = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+  let error = partial_failure(
+    DriverError::InputAction {
+      cause: Box::new(DriverError::InvalidInput {
+        message: "invalid later sample".into(),
+      }),
+      progress: InputActionProgress::NotDelivered,
+    },
+    Scroll::new(0.0, 200.0),
+    Scroll::new(0.0, 100.0),
+    Some(&prior),
+  );
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::Submitted { action } }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { .. }) && !action.verified));
+}
+
+#[test]
+fn uncertain_scroll_sample_keeps_uncertainty_and_original_cause() {
+  use crate::InputActionProgress;
+
+  let prior = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+  let error = partial_failure(
+    DriverError::InputAction {
+      cause: Box::new(DriverError::Backend {
+        message: "short native input count".into(),
+      }),
+      progress: InputActionProgress::DeliveryUncertain {
+        action: prior.clone(),
+      },
+    },
+    Scroll::new(0.0, 200.0),
+    Scroll::new(0.0, 100.0),
+    Some(&prior),
+  );
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::DeliveryUncertain { action } }
+    if matches!(cause.as_ref(), DriverError::Backend { message } if message == "short native input count")
+      && action.attempts.last().unwrap().message.as_ref().unwrap().contains("dx=0 dy=100")));
 }
 
 #[test]

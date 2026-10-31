@@ -1,4 +1,4 @@
-//! Window-bound keyboard admission, native submission receipts, and foreground lifetime.
+//! Window-bound input admission, native submission receipts, and foreground lifetime.
 
 #[cfg(target_os = "windows")]
 mod native {
@@ -34,6 +34,7 @@ mod native {
     static WATCHED: RefCell<Option<Arc<State>>> = const { RefCell::new(None) };
     static RESERVED: Cell<bool> = const { Cell::new(false) };
     static PREPARING: Cell<bool> = const { Cell::new(false) };
+    static SCROLL_STEPS: Cell<bool> = const { Cell::new(false) };
   }
 
   fn current() -> Option<Arc<State>> {
@@ -389,12 +390,49 @@ mod native {
     pub(in super::super) fn stamp(&self, cause: DriverError) -> DriverError {
       self.state.stamp(cause)
     }
+    pub(in super::super) fn check(&self) -> DriverResult<()> {
+      self.state.check()
+    }
   }
 
   impl Drop for Guard {
     fn drop(&mut self) {
       PREPARING.with(|value| value.set(true));
       CURRENT.with(|value| value.borrow_mut().take());
+    }
+  }
+
+  /// A complete scroll alone may reuse its recipient for its own samples.
+  /// Other nested input batches continue to require a new admission and fail.
+  pub(in super::super) fn with_scroll_steps<T>(action: impl FnOnce() -> T) -> T {
+    struct RestoreScrollSteps(bool);
+    impl Drop for RestoreScrollSteps {
+      fn drop(&mut self) {
+        SCROLL_STEPS.with(|value| value.set(self.0));
+      }
+    }
+    debug_assert!(current().is_some());
+    let _restore = RestoreScrollSteps(SCROLL_STEPS.with(|value| value.replace(true)));
+    action()
+  }
+  pub(in super::super) fn scroll_batch_active() -> bool {
+    SCROLL_STEPS.with(Cell::get)
+  }
+  pub(in super::super) fn reuse_scroll_recipient(window: &Window) -> DriverResult<bool> {
+    if !scroll_batch_active() {
+      return Ok(false);
+    }
+    let state = current().ok_or_else(|| invalid_input("scroll batch has no admitted recipient"))?;
+    if window.reference.id.parse::<isize>().ok() != Some(state.hwnd) || window.process_id != Some(state.identity.process_id) {
+      return Err(state.stamp(invalid_input("scroll sample cannot change its admitted recipient")));
+    }
+    state.check().map_err(|cause| state.stamp(cause))?;
+    Ok(true)
+  }
+  pub(in super::super) fn stamp_current(cause: DriverError) -> DriverError {
+    match current() {
+      Some(state) => state.stamp(cause),
+      None => cause,
     }
   }
 
@@ -620,7 +658,10 @@ mod native {
 }
 
 #[cfg(target_os = "windows")]
-pub(super) use native::{Guard, after_submission, before_submission, check, reserve_submission, wait};
+pub(super) use native::{
+  Guard, after_submission, before_submission, check, reserve_submission, reuse_scroll_recipient, scroll_batch_active, stamp_current, wait,
+  with_scroll_steps,
+};
 
 #[cfg(not(target_os = "windows"))]
 pub(super) struct Guard;
@@ -638,6 +679,25 @@ impl Guard {
   pub(super) fn stamp(&self, cause: auv_driver_common::DriverError) -> auv_driver_common::DriverError {
     cause
   }
+  pub(super) fn check(&self) -> auv_driver_common::DriverResult<()> {
+    Err(auv_driver_common::DriverError::unsupported("Windows window input recipient"))
+  }
+}
+#[cfg(not(target_os = "windows"))]
+pub(super) fn with_scroll_steps<T>(action: impl FnOnce() -> T) -> T {
+  action()
+}
+#[cfg(not(target_os = "windows"))]
+pub(super) fn scroll_batch_active() -> bool {
+  false
+}
+#[cfg(not(target_os = "windows"))]
+pub(super) fn reuse_scroll_recipient(_window: &auv_driver_common::Window) -> auv_driver_common::DriverResult<bool> {
+  Ok(false)
+}
+#[cfg(not(target_os = "windows"))]
+pub(super) fn stamp_current(cause: auv_driver_common::DriverError) -> auv_driver_common::DriverError {
+  cause
 }
 #[cfg(not(target_os = "windows"))]
 pub(super) fn wait(duration: std::time::Duration) -> auv_driver_common::DriverResult<()> {

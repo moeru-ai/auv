@@ -41,14 +41,37 @@ pub fn run(output: &Path) -> Result<bool> {
     "stream_minimize",
     "stream_close",
     "stream_idle_loss",
+    "motion_pre_cancel",
+    "stream_pre_cancel",
+    "motion_invalid_point",
+    "stream_invalid_point",
+    "motion_invalid_timing",
+    "stream_invalid_options",
+    "motion_invalid_settle",
+    "stream_invalid_settle",
+    "motion_owner_mismatch",
+    "stream_owner_mismatch",
+    "motion_cancel_after_prefix",
+    "stream_cancel_after_prefix",
+    "stream_idle_cancel",
+    "motion_settle_loss",
+    "stream_settle_loss",
+    "motion_nested_retarget",
   ];
   let mut all_passed = true;
   for case in cases {
     ensure!(watch.modifiers_released(), "modifier already held; no input allowed");
     let streaming = case.starts_with("stream_");
     let kind = case.split_once('_').unwrap().1;
-    let idle = kind == "idle_loss";
-    let fault_kind = if idle { "stay" } else { kind };
+    let idle = matches!(kind, "idle_loss" | "idle_cancel");
+    let no_input =
+      matches!(kind, "pre_cancel" | "invalid_point" | "invalid_timing" | "invalid_options" | "invalid_settle" | "owner_mismatch");
+    let cancelling = matches!(kind, "cancel_after_prefix" | "idle_cancel");
+    let fault_kind = if idle || kind == "settle_loss" {
+      "stay"
+    } else {
+      kind
+    };
     let spec = |index, title: &str, color: &str| ReceiverSpec {
       index,
       title: title.into(),
@@ -76,17 +99,41 @@ pub fn run(output: &Path) -> Result<bool> {
       },
     )?;
     records.write("setup", json!({"case": case, "action": setup}))?;
+    if no_input {
+      session.window().activate(&other)?;
+    }
+    let mut requested = window.clone();
+    if kind == "owner_mismatch" {
+      requested.process_id = Some(0);
+    }
+    let requested_point = if kind == "invalid_point" {
+      auv_driver_common::WindowPoint::new(f64::NAN, 10.0)
+    } else {
+      point
+    };
     let before_a = a.request(json!({"cmd": "state"}))?;
     let before_b = b.request(json!({"cmd": "state"}))?;
     let before = watch.snapshot();
     ensure!(before.physical_keys == 0 && before.physical_mouse == 0, "physical input: case refused");
     let cancellation = Arc::new(InputCancellation::default());
+    if kind == "pre_cancel" {
+      cancellation.cancel();
+    }
     let mut fault = Value::Null;
+    let mut cancellation_receipt = Value::Null;
+    let mut nested_receipt = Value::Null;
+    let mut injected = false;
     let mut callback_error = None;
     let mut sample_count = 0_u64;
-    let mut notify = |delivered: Scroll| {
+    let mut notify = |delivered: Scroll, complete: bool| {
       sample_count += 1;
-      if kind == "success" || !fault.is_null() || callback_error.is_some() || (!idle && delivered.delta_y == 0.0) {
+      if kind == "success"
+        || no_input
+        || injected
+        || callback_error.is_some()
+        || (!idle && delivered.delta_y == 0.0)
+        || (kind == "settle_loss" && !complete)
+      {
         return;
       }
       // Pause the actor at its progress callback. The old per-sample guard has
@@ -103,12 +150,35 @@ pub fn run(output: &Path) -> Result<bool> {
           ensure!(Instant::now() < deadline, "application never acknowledged the first wheel");
           std::thread::sleep(Duration::from_millis(10));
         };
+        if cancelling {
+          cancellation_receipt = json!({"requested": true, "after_progress": delivered, "acknowledged": acknowledged});
+          cancellation.cancel();
+          return Ok(Value::Null);
+        }
+        if kind == "nested_retarget" {
+          let nested = session.window().scroll(
+            &other,
+            point_in_window(&other, b.layout.edit_center),
+            Scroll::new(0.0, 100.0),
+            ScrollOptions {
+              policy: InputPolicy::ForegroundPreferred,
+              ..Default::default()
+            },
+          );
+          let rejected = matches!(nested.as_ref(), Err(DriverError::InputAction { cause, .. })
+            if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cannot change its admitted recipient")));
+          nested_receipt = json!({"rejected": rejected, "error": nested.err().map(|error| error.to_string()), "acknowledged": acknowledged});
+          return Ok(Value::Null);
+        }
         let reply = a.request(json!({"cmd": "apply_mouse_fault", "kind": fault_kind, "target": b.hwnd().to_string()}))?;
         ensure!(reply["applied"] == true, "application did not apply its batch fault");
         Ok(json!({"after_progress": delivered, "acknowledged": acknowledged, "receipt": reply["receipt"]}))
       })();
       match applied {
-        Ok(receipt) => fault = receipt,
+        Ok(receipt) => {
+          fault = receipt;
+          injected = true;
+        }
         Err(error) => {
           callback_error = Some(error.to_string());
           cancellation.cancel();
@@ -119,7 +189,11 @@ pub fn run(output: &Path) -> Result<bool> {
     let operation = with_input_cancellation(cancellation.clone(), || {
       let options = ScrollOptions {
         policy: InputPolicy::ForegroundPreferred,
-        settle: Duration::from_millis(100),
+        settle: if kind == "invalid_settle" {
+          Duration::MAX
+        } else {
+          Duration::from_millis(100)
+        },
         ..Default::default()
       };
       if streaming {
@@ -130,34 +204,41 @@ pub fn run(output: &Path) -> Result<bool> {
         session
           .window()
           .scroll_stream(
-            &window,
-            point,
+            &requested,
+            requested_point,
             &control,
             ScrollStreamOptions {
-              sample_rate_hz: 4,
+              sample_rate_hz: if kind == "invalid_options" { 0 } else { 4 },
               max_acceleration: None,
               lease: Duration::from_secs(1),
             },
             options,
-            &mut |progress| notify(progress.delivered),
+            &mut |progress| {
+              notify(
+                progress.delivered,
+                progress.velocity.delta_x_per_second == 0.0
+                  && progress.velocity.delta_y_per_second == 0.0
+                  && progress.delivered.delta_y > 0.0,
+              )
+            },
           )
           .map(|result| json!(result))
       } else {
         session
           .window()
           .scroll_motion(
-            &window,
-            point,
+            &requested,
+            requested_point,
             &ScrollMotion {
               total: Scroll::new(0.0, 400.0),
               timing: MotionTiming::FixedDuration {
                 duration: Duration::from_secs(1),
                 function: TimingFunction::Linear,
               },
-              sample_rate_hz: 4,
+              sample_rate_hz: if kind == "invalid_timing" { 0 } else { 4 },
             },
             options,
-            &mut |progress| notify(progress.delivered),
+            &mut |progress| notify(progress.delivered, progress.sample_index + 1 == progress.planned_sample_count),
           )
           .map(|result| json!(result))
       }
@@ -180,17 +261,45 @@ pub fn run(output: &Path) -> Result<bool> {
       Some(DriverError::TargetLost { .. }) => (true, None),
       _ => (false, None),
     };
+    let cancelled = matches!(operation.as_ref(), Err(DriverError::InputAction { cause, .. })
+      if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled")));
     let a_wheels = after_a["raw"]["edit_wheel"].as_u64().context("recipient omitted final wheels")?;
     let advanced = after_a["first_line"].as_i64().context("recipient omitted final line")?
       > before_a["first_line"].as_i64().context("recipient omitted initial line")?;
-    let passed = if kind == "success" {
+    let passed = if no_input {
+      operation.is_err()
+        && matches!(progress, Some(InputActionProgress::NotDelivered))
+        && (kind != "owner_mismatch" || target_lost)
+        && (kind != "pre_cancel" || cancelled)
+        && a_wheels == 0
+        && !advanced
+        && after.injected_mouse == before.injected_mouse
+        && after.injected_keys == before.injected_keys
+        && after.foreground == before.foreground
+        && after.cursor == before.cursor
+    } else if matches!(kind, "success" | "nested_retarget") {
       operation.is_ok()
         && a_wheels > 0
         && advanced
+        && (kind != "nested_retarget" || nested_receipt["rejected"] == true)
         && if streaming {
           operation.as_ref().unwrap()["reason"] == "lease_expired"
         } else {
           operation.as_ref().unwrap()["delivered"]["delta_y"] == 400.0
+        }
+    } else if cancelling {
+      operation.is_err()
+        && cancelled
+        && !target_lost
+        && cancellation_receipt["requested"] == true
+        && if idle {
+          matches!(progress, Some(InputActionProgress::NotDelivered))
+            && a_wheels == 0
+            && !advanced
+            && after.injected_mouse == before.injected_mouse
+            && after.cursor == before.cursor
+        } else {
+          matches!(progress, Some(InputActionProgress::Submitted { .. })) && a_wheels == 1 && advanced
         }
     } else {
       operation.is_err()
@@ -203,7 +312,13 @@ pub fn run(output: &Path) -> Result<bool> {
             && after.injected_mouse == before.injected_mouse
             && after.cursor == before.cursor
         } else {
-          matches!(progress, Some(InputActionProgress::Submitted { .. })) && a_wheels == 1 && advanced
+          matches!(progress, Some(InputActionProgress::Submitted { .. }))
+            && advanced
+            && if kind == "settle_loss" {
+              a_wheels > 0
+            } else {
+              a_wheels == 1
+            }
         }
         && (kind != "aba" || fault["receipt"]["returned_owner"] == true)
         && (kind != "minimize" || after_a["minimized"] == true)
@@ -228,6 +343,7 @@ pub fn run(output: &Path) -> Result<bool> {
       "error": operation.as_ref().err().map(ToString::to_string), "input_progress": progress, "target_lost": target_lost,
       "before_a": before_a, "before_b": before_b, "after_a": after_a, "after_b": after_b,
       "fault": fault, "callback_error": callback_error, "terminal_receipt": terminal, "samples": sample_count, "elapsed_ms": elapsed_ms,
+      "cancelled": cancelled, "cancellation_receipt": cancellation_receipt, "nested_receipt": nested_receipt,
       "foreground_before": before.foreground, "foreground_after": after.foreground, "cursor_before": before.cursor, "cursor_after": after.cursor,
       "physical_keys": after.physical_keys, "physical_mouse": after.physical_mouse, "modifiers_released": watch.modifiers_released(),
       "injected_mouse": after.injected_mouse.saturating_sub(before.injected_mouse), "injected_keys": after.injected_keys.saturating_sub(before.injected_keys), "input_retries": 0}))?;

@@ -380,8 +380,6 @@ impl WindowInput for WindowApi<'_> {
   }
 
   fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
-    // TODO(windows-scroll-motion-recipient): sampled/streamed scroll still
-    // calls this capability per sample; retain a parent lease in that slice.
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       let point = self.to_screen_point(window, point)?.point();
       return crate::input::deliver_window_scroll(window, point, scroll, options.settle);
@@ -393,6 +391,42 @@ impl WindowInput for WindowApi<'_> {
   /// One Win32 wheel unit (1/120 notch) in logical pixels.
   fn scroll_quantum(&self) -> f64 {
     crate::input::SCROLL_PIXELS_PER_WHEEL_UNIT
+  }
+
+  fn wait_scroll(&self, deadline: std::time::Instant) -> DriverResult<()> {
+    crate::input::wait_scroll(deadline)
+  }
+
+  fn scroll_motion(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    motion: &auv_driver_common::ScrollMotion,
+    options: ScrollOptions,
+    notify: &mut dyn FnMut(auv_driver_common::ScrollMotionProgress),
+  ) -> DriverResult<auv_driver_common::ScrollMotionResult> {
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      return crate::input::deliver_window_scroll_motion(self, window, point, motion, options, notify);
+    }
+    // TODO(windows-scroll-fallback-progress): background path selection needs
+    // posted-partial receipts before sharing this batch lease; see the scroll batch note.
+    auv_driver_common::scroll_motion::run_window_scroll_motion(self, window, point, motion, options, notify)
+  }
+
+  fn scroll_stream(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    control: &auv_driver_common::ScrollStreamControl,
+    stream: auv_driver_common::ScrollStreamOptions,
+    options: ScrollOptions,
+    notify: &mut dyn FnMut(auv_driver_common::ScrollStreamProgress),
+  ) -> DriverResult<auv_driver_common::ScrollStreamResult> {
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      return crate::input::deliver_window_scroll_stream(self, window, point, control, stream, options, notify);
+    }
+    // TODO(windows-scroll-fallback-progress): see scroll_motion above.
+    auv_driver_common::scroll_stream::run_window_scroll_stream(self, window, point, control, stream, options, notify)
   }
 
   /// `ForegroundPreferred` foregrounds the window like a foreground click and
