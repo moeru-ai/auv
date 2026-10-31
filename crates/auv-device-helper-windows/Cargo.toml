@@ -24,7 +24,7 @@ path = "src/main.rs"
 required-features = ["host"]
 
 [dependencies]
-auv-driver-windows = { version = "0.0.38", path = "../auv-driver-windows" }
+auv-driver-windows = { version = "0.0.39", path = "../auv-driver-windows" }
 thiserror = "2"
 zeroize = "1"
 

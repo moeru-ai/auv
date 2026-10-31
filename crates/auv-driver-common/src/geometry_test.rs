@@ -24,11 +24,19 @@ fn projection_basis_serializes_generic_provenance() {
 fn relative_rect_is_only_inside_the_unit_square() {
   assert!(RelativeRect::new(0.0, 0.0, 1.0, 1.0).is_normalized());
   assert!(RelativeRect::new(0.25, 0.1, 0.5, 0.8).is_normalized());
+  assert!(RelativeRect::new(0.5, 0.5, 0.5, 0.5).is_normalized());
   for rect in [
     RelativeRect::new(0.5, 0.0, 0.6, 1.0),
     RelativeRect::new(-0.1, 0.0, 0.5, 0.5),
     RelativeRect::new(0.0, 0.0, 0.0, 0.5),
+    RelativeRect::new(0.0, 0.0, 1.0, 0.0),
+    RelativeRect::new(0.0, 0.0, -0.5, 0.5),
     RelativeRect::new(0.0, 0.0, f64::NAN, 0.5),
+    RelativeRect::new(f64::NAN, 0.0, 0.5, 0.5),
+    RelativeRect::new(0.0, f64::INFINITY, 0.5, 0.5),
+    RelativeRect::new(0.0, 0.0, f64::NEG_INFINITY, 0.5),
+    RelativeRect::new(0.8, 0.0, 0.3, 0.5),
+    RelativeRect::new(0.0, 0.7, 0.5, 0.4),
   ] {
     assert!(!rect.is_normalized(), "{rect:?}");
   }

@@ -150,9 +150,7 @@ mod native {
         return Err(backend("held mouse receiver disappeared"));
       }
       let client = screen_to_client(target, point)?;
-      if i16::try_from(client.x).is_err() || i16::try_from(client.y).is_err() {
-        return Err(backend("background pointer coordinate exceeds signed 16-bit message range"));
-      }
+      let lparam = checked_client_lparam(client)?;
       let (down, up, held) = match button.unwrap_or(auv_driver_common::MouseButton::Left) {
         auv_driver_common::MouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
         auv_driver_common::MouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
@@ -168,7 +166,7 @@ mod native {
       } else {
         0
       };
-      post(target, message, WPARAM(flags), make_lparam(client.x, client.y))?;
+      post(target, message, WPARAM(flags), lparam)?;
       Ok(auv_driver_common::InputActionResult::single_success(auv_driver_common::InputDeliveryPath::WindowTargetedMouse))
     }
   }
@@ -202,7 +200,7 @@ mod native {
   ) -> DriverResult<()> {
     let target = resolve_target_hwnd(window, screen_point)?;
     let client = screen_to_client(target, screen_point)?;
-    let lparam = make_lparam(client.x, client.y);
+    let lparam = checked_client_lparam(client)?;
     let (count, interval) = click_parts(&click)?;
     // Windows' own double-click detection runs on hardware input translation,
     // which posting messages directly bypasses. Posting a second down/up pair
@@ -295,6 +293,15 @@ mod native {
 
   fn round_to_i32(value: f64) -> i32 {
     value.round() as i32
+  }
+
+  /// Verifies that client coordinates fit within signed 16-bit integers
+  /// as required by Win32 mouse message `lParam` contracts (LOWORD/HIWORD as SHORT).
+  pub(super) fn checked_client_lparam(client: POINT) -> DriverResult<LPARAM> {
+    if i16::try_from(client.x).is_err() || i16::try_from(client.y).is_err() {
+      return Err(backend("background pointer coordinate exceeds signed 16-bit message range"));
+    }
+    Ok(make_lparam(client.x, client.y))
   }
 
   /// Packs coordinates into an `LPARAM` the way `MAKELPARAM` does: zero-extended

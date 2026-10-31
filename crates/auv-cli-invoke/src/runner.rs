@@ -802,15 +802,7 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
   })
 }
 
-fn matched_window_point(window: &auv_driver::Window, matched: &auv_driver::OcrMatch) -> Result<auv_driver::WindowPoint, String> {
-  let screen_point = matched.action_point();
-  let point = auv_driver::WindowPoint::new(screen_point.x - window.frame.origin.x, screen_point.y - window.frame.origin.y);
-  let point_value = point.point();
-  if !(0.0..=window.frame.size.width).contains(&point_value.x) || !(0.0..=window.frame.size.height).contains(&point_value.y) {
-    return Err(format!("recognized text point {},{} is outside resolved window bounds", screen_point.x, screen_point.y));
-  }
-  Ok(point)
-}
+pub(crate) use crate::commands::window::matched_window_point;
 
 fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::WindowSelector {
   let app = input

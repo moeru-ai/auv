@@ -283,6 +283,218 @@ fn window_text_match_failures_carry_the_shared_failure_codes() {
   assert_eq!(out_of_range.message, "window.clickText --index 1 is out of range for 1 text match(es)");
 }
 
+fn sample_window(frame: auv_driver::Rect) -> Window {
+  Window {
+    reference: WindowRef {
+      id: "fixture_win".into(),
+    },
+    title: Some("Fixture Window".into()),
+    app_name: Some("fixture.exe".into()),
+    application_id: None,
+    process_id: Some(100),
+    frame,
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  }
+}
+
+fn ocr_match_at(center_x: f64, center_y: f64) -> auv_driver::OcrMatch {
+  auv_driver::OcrMatch {
+    text: "Target".to_string(),
+    confidence: 0.95,
+    bounds: auv_driver::Rect::new(center_x - 10.0, center_y - 10.0, 20.0, 20.0),
+  }
+}
+
+#[test]
+fn matched_window_point_maps_interior_and_rejects_out_of_bounds_before_delivery() {
+  struct ValidCase {
+    name: &'static str,
+    window_frame: auv_driver::Rect,
+    screen_point: (f64, f64),
+    expected_local: (f64, f64),
+  }
+
+  let valid_cases = [
+    ValidCase {
+      name: "standard interior point",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      screen_point: (100.0, 200.0),
+      expected_local: (50.0, 50.0),
+    },
+    ValidCase {
+      name: "exact top-left origin boundary",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      screen_point: (50.0, 150.0),
+      expected_local: (0.0, 0.0),
+    },
+    ValidCase {
+      name: "point just inside right-bottom perimeter (449.9, 449.9)",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0),
+      screen_point: (449.9, 449.9),
+      expected_local: (399.9, 299.9),
+    },
+    ValidCase {
+      name: "negative origin interior point on secondary monitor",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-1000.0, -600.0),
+      expected_local: (500.0, 400.0),
+    },
+    ValidCase {
+      name: "point just inside perimeter on negative-origin secondary monitor",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-500.1, -200.1),
+      expected_local: (999.9, 799.9),
+    },
+  ];
+
+  for case in valid_cases {
+    let window = sample_window(case.window_frame);
+    let matched = ocr_match_at(case.screen_point.0, case.screen_point.1);
+    let point = matched_window_point(&window, &matched)
+      .unwrap_or_else(|err| panic!("case '{}' should map successfully but got error: {:?}", case.name, err));
+    assert_eq!(
+      point,
+      auv_driver::geometry::WindowPoint::new(case.expected_local.0, case.expected_local.1),
+      "case '{}' local point mismatch",
+      case.name
+    );
+  }
+
+  struct RejectionCase {
+    name: &'static str,
+    window_frame: auv_driver::Rect,
+    screen_point: (f64, f64),
+    required_substring: Option<&'static str>,
+  }
+
+  let standard_window = auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0);
+  let rejection_cases = [
+    // Half-open exclusion: [0, width) x [0, height)
+    RejectionCase {
+      name: "exact right boundary x == origin + width (450.0, 200.0)",
+      window_frame: standard_window,
+      screen_point: (450.0, 200.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "exact bottom boundary y == origin + height (100.0, 450.0)",
+      window_frame: standard_window,
+      screen_point: (100.0, 450.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "outside right boundary (450.1, 200.0)",
+      window_frame: standard_window,
+      screen_point: (450.1, 200.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "before origin coordinate (49.9, 149.9)",
+      window_frame: standard_window,
+      screen_point: (49.9, 149.9),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "outside right edge on negative-origin secondary monitor",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-500.0, -600.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "beyond right edge on negative-origin secondary monitor",
+      window_frame: auv_driver::Rect::new(-1500.0, -1000.0, 1000.0, 800.0),
+      screen_point: (-499.9, -600.0),
+      required_substring: None,
+    },
+    // Non-finite screen coordinates
+    RejectionCase {
+      name: "NaN coordinate",
+      window_frame: standard_window,
+      screen_point: (f64::NAN, 200.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "Infinity coordinate",
+      window_frame: standard_window,
+      screen_point: (f64::INFINITY, 200.0),
+      required_substring: None,
+    },
+    // Zero, negative, and non-finite window dimensions
+    RejectionCase {
+      name: "zero size window",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, 0.0, 0.0),
+      screen_point: (50.0, 150.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "negative dimension window",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, -10.0, 300.0),
+      screen_point: (50.0, 150.0),
+      required_substring: None,
+    },
+    RejectionCase {
+      name: "NaN dimension window",
+      window_frame: auv_driver::Rect::new(50.0, 150.0, f64::NAN, 300.0),
+      screen_point: (100.0, 200.0),
+      required_substring: None,
+    },
+    // Micro out-of-bounds float precision preserved in error message
+    RejectionCase {
+      name: "micro out-of-bounds float precision preserved in message",
+      window_frame: standard_window,
+      screen_point: (450.0001, 200.0),
+      required_substring: Some("450.0001,200"),
+    },
+  ];
+
+  for case in rejection_cases {
+    let window = sample_window(case.window_frame);
+    let matched = ocr_match_at(case.screen_point.0, case.screen_point.1);
+    let err = match matched_window_point(&window, &matched) {
+      Err(err) => err,
+      Ok(point) => panic!("case '{}' should fail but mapped successfully to {:?}", case.name, point),
+    };
+    assert_eq!(err.code, crate::FailureCode::InvalidTarget, "case '{}': failure code must be InvalidTarget", case.name);
+    assert!(
+      err.message.contains("outside resolved window bounds; no input delivered"),
+      "case '{}': failure message must report outside resolved window bounds",
+      case.name
+    );
+    if let Some(substring) = case.required_substring {
+      assert!(err.message.contains(substring), "case '{}': failure message '{}' must contain '{}'", case.name, err.message, substring);
+    }
+  }
+}
+
+#[test]
+fn matched_window_point_out_of_bounds_serializes_to_structured_invalid_target_failure() {
+  let window = sample_window(auv_driver::Rect::new(50.0, 150.0, 400.0, 300.0));
+  let outside = ocr_match_at(450.0, 200.0); // exact right edge
+  let failure = matched_window_point(&window, &outside).expect_err("exact right edge is outside half-open window bounds");
+  assert_eq!(failure.code, crate::FailureCode::InvalidTarget);
+
+  let registry = crate::default_registry();
+  let command = registry.resolve("window.clickText").expect("resolve window.clickText");
+  let output = crate::models::InvokeResult::from_command_result(auv_tracing::RunId::new(), command, Err(failure.clone()));
+  let json: serde_json::Value = serde_json::from_str(
+    &output
+      .render_to_string(crate::models::InvokeOutputOptions {
+        json: true,
+        ..Default::default()
+      })
+      .expect("render json"),
+  )
+  .expect("parse json");
+
+  assert_eq!(json["status"], "failed");
+  assert_eq!(json["command_id"], "window.clickText");
+  assert_eq!(json["failure"], failure.message);
+  assert_eq!(json["failure_details"]["code"], "invalid_target");
+  assert_eq!(json["failure_details"]["message"], failure.message);
+}
+
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

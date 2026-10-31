@@ -1,6 +1,6 @@
 {
   "name": "@auv-js/cli-linux-x64-gnu",
-  "version": "0.0.38",
+  "version": "0.0.39",
   "cpu": [
     "x64"
   ],
@@ -21,7 +21,7 @@
   "main": "auv-binding.linux-x64-gnu.node",
   "files": [
     "auv-binding.linux-x64-gnu.node",
-    "bin"
+    "bin/auv"
   ],
   "engines": {
     "node": ">=20.19.0"
