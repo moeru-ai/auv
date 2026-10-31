@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **88**
+Count: **89**
 
 - [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, semantic focus, failure progress, retired screenshot-guard decision, and remaining acceptance.
 - [`2026-10-30-windows-keyboard-recipient.md`](2026-10-30-windows-keyboard-recipient.md): Window keyboard admission, partial progress, rich-error migration, native evidence, and remaining gates.
@@ -17,6 +17,7 @@ Count: **88**
 - [`2026-10-31-windows-scroll-batch.md`](2026-10-31-windows-scroll-batch.md): Complete timed/live scroll recipient lifetime and structured partial failure.
 - [`2026-10-31-windows-drag-recipient.md`](2026-10-31-windows-drag-recipient.md): Accepted foreground drag interruption, owned release, and independent injected-event evidence.
 - [`2026-11-01-windows-posted-scroll-progress.md`](2026-11-01-windows-posted-scroll-progress.md): Accepted posted-wheel partial receipts and guarded not-delivered fallback evidence.
+- [`2026-11-01-windows-background-scroll-lease.md`](2026-11-01-windows-background-scroll-lease.md): In-progress background-policy wheel lifetime regressions and recipient-lease contract.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)

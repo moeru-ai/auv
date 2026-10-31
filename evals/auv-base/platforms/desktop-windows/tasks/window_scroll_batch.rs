@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, ensure};
 use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
 use auv_driver_common::{
-  ClickOptions, Driver, DriverError, InputActionProgress, InputPolicy, MotionTiming, Point, Scroll, ScrollMotion, ScrollOptions,
-  ScrollStreamControl, ScrollStreamOptions, ScrollVelocity, TimingFunction, WindowInput,
+  ClickOptions, Driver, DriverError, InputActionProgress, InputPolicy, MotionTiming, Point, Scroll, ScrollDeliveryCandidate,
+  ScrollDeliveryStrategy, ScrollMotion, ScrollOptions, ScrollStreamControl, ScrollStreamOptions, ScrollVelocity, TimingFunction,
+  WindowInput,
 };
 use auv_driver_windows::WindowsDriver;
 use serde_json::{Value, json};
@@ -21,6 +22,15 @@ use super::records::Records;
 use super::watch::DesktopWatch;
 
 pub fn run(output: &Path) -> Result<bool> {
+  run_profile(output, false)
+}
+
+/// Exercises posted and foreground-selected BackgroundPreferred schedules.
+pub fn run_background(output: &Path) -> Result<bool> {
+  run_profile(output, true)
+}
+
+fn run_profile(output: &Path, background: bool) -> Result<bool> {
   ensure!(std::env::var("AUV_ISOLATED_DESKTOP_EVAL").as_deref() == Ok("1"), "requires an isolated desktop");
   ensure!(!output.exists(), "scroll batch evidence directory must be fresh");
   std::fs::create_dir_all(output)?;
@@ -28,46 +38,100 @@ pub fn run(output: &Path) -> Result<bool> {
   let binary = receiver_binary()?;
   let watch = DesktopWatch::start()?;
   let original = watch.snapshot();
-  let mut records = Records::create(&output.join("window-scroll-batch.jsonl"), &run_id(), "window-scroll-batch")?;
-  let cases = [
-    "motion_success",
-    "motion_stay",
-    "motion_aba",
-    "motion_minimize",
-    "motion_close",
-    "stream_success",
-    "stream_stay",
-    "stream_aba",
-    "stream_minimize",
-    "stream_close",
-    "stream_idle_loss",
-    "motion_pre_cancel",
-    "stream_pre_cancel",
-    "motion_invalid_point",
-    "stream_invalid_point",
-    "motion_invalid_timing",
-    "stream_invalid_options",
-    "motion_invalid_settle",
-    "stream_invalid_settle",
-    "motion_owner_mismatch",
-    "stream_owner_mismatch",
-    "motion_cancel_after_prefix",
-    "stream_cancel_after_prefix",
-    "stream_idle_cancel",
-    "motion_settle_loss",
-    "stream_settle_loss",
-    "motion_nested_retarget",
-  ];
+  let profile = if background {
+    "window-background-scroll"
+  } else {
+    "window-scroll-batch"
+  };
+  let mut records = Records::create(&output.join(format!("{profile}.jsonl")), &run_id(), profile)?;
+  let cases: &[&str] = if background {
+    &[
+      "posted_motion_success",
+      "posted_motion_minimize",
+      "posted_motion_close",
+      "posted_motion_cancel_after_prefix",
+      "posted_motion_pre_cancel",
+      "posted_motion_owner_mismatch",
+      "posted_motion_settle_minimize",
+      "posted_stream_success",
+      "posted_stream_minimize",
+      "posted_stream_close",
+      "posted_stream_idle_minimize",
+      "posted_stream_cancel_after_prefix",
+      "posted_stream_pre_cancel",
+      "posted_stream_settle_minimize",
+      "preferred_motion_minimize",
+      "preferred_stream_minimize",
+      "foreground_motion_success",
+      "foreground_motion_stay",
+      "foreground_motion_aba",
+      "foreground_motion_minimize",
+      "foreground_motion_close",
+      "foreground_motion_settle_loss",
+      "foreground_stream_success",
+      "foreground_stream_stay",
+      "foreground_stream_aba",
+      "foreground_stream_minimize",
+      "foreground_stream_close",
+      "foreground_stream_idle_loss",
+      "foreground_stream_settle_loss",
+    ]
+  } else {
+    &[
+      "motion_success",
+      "motion_stay",
+      "motion_aba",
+      "motion_minimize",
+      "motion_close",
+      "stream_success",
+      "stream_stay",
+      "stream_aba",
+      "stream_minimize",
+      "stream_close",
+      "stream_idle_loss",
+      "motion_pre_cancel",
+      "stream_pre_cancel",
+      "motion_invalid_point",
+      "stream_invalid_point",
+      "motion_invalid_timing",
+      "stream_invalid_options",
+      "motion_invalid_settle",
+      "stream_invalid_settle",
+      "motion_owner_mismatch",
+      "stream_owner_mismatch",
+      "motion_cancel_after_prefix",
+      "stream_cancel_after_prefix",
+      "stream_idle_cancel",
+      "motion_settle_loss",
+      "stream_settle_loss",
+      "motion_nested_retarget",
+    ]
+  };
   let mut all_passed = true;
-  for case in cases {
+  for &case in cases {
     ensure!(watch.modifiers_released(), "modifier already held; no input allowed");
-    let streaming = case.starts_with("stream_");
-    let kind = case.split_once('_').unwrap().1;
-    let idle = matches!(kind, "idle_loss" | "idle_cancel");
+    let (selection, operation_case) = if background {
+      case.split_once('_').unwrap()
+    } else {
+      ("foreground", case)
+    };
+    let posted = selection != "foreground";
+    let policy = if !background {
+      InputPolicy::ForegroundPreferred
+    } else if selection == "posted" {
+      InputPolicy::BackgroundOnly
+    } else {
+      InputPolicy::BackgroundPreferred
+    };
+    let streaming = operation_case.starts_with("stream_");
+    let kind = operation_case.split_once('_').unwrap().1;
+    let idle = kind.starts_with("idle_");
     let no_input =
       matches!(kind, "pre_cancel" | "invalid_point" | "invalid_timing" | "invalid_options" | "invalid_settle" | "owner_mismatch");
     let cancelling = matches!(kind, "cancel_after_prefix" | "idle_cancel");
-    let fault_kind = if idle || kind == "settle_loss" {
+    let fault_kind = if matches!(kind, "idle_minimize" | "settle_minimize") {
+      "minimize"
+    } else if idle || kind == "settle_loss" {
       "stay"
     } else {
       kind
@@ -99,7 +163,7 @@ pub fn run(output: &Path) -> Result<bool> {
       },
     )?;
     records.write("setup", json!({"case": case, "action": setup}))?;
-    if no_input {
+    if no_input || posted {
       session.window().activate(&other)?;
     }
     let mut requested = window.clone();
@@ -132,7 +196,7 @@ pub fn run(output: &Path) -> Result<bool> {
         || injected
         || callback_error.is_some()
         || (!idle && delivered.delta_y == 0.0)
-        || (kind == "settle_loss" && !complete)
+        || (kind.starts_with("settle_") && !complete)
       {
         return;
       }
@@ -188,13 +252,21 @@ pub fn run(output: &Path) -> Result<bool> {
     let started = Instant::now();
     let operation = with_input_cancellation(cancellation.clone(), || {
       let options = ScrollOptions {
-        policy: InputPolicy::ForegroundPreferred,
+        policy,
         settle: if kind == "invalid_settle" {
           Duration::MAX
         } else {
           Duration::from_millis(100)
         },
-        ..Default::default()
+        delivery_strategy: if background && !posted {
+          // Select the foreground candidate through BackgroundPreferred, without
+          // a production fault switch. Queue-refusal fallback has separate evidence.
+          ScrollDeliveryStrategy {
+            candidates: vec![ScrollDeliveryCandidate::ForegroundHid],
+          }
+        } else {
+          ScrollDeliveryStrategy::default()
+        },
       };
       if streaming {
         let control = ScrollStreamControl::new();
@@ -314,7 +386,7 @@ pub fn run(output: &Path) -> Result<bool> {
         } else {
           matches!(progress, Some(InputActionProgress::Submitted { .. }))
             && advanced
-            && if kind == "settle_loss" {
+            && if kind.starts_with("settle_") {
               a_wheels > 0
             } else {
               a_wheels == 1
@@ -330,6 +402,11 @@ pub fn run(output: &Path) -> Result<bool> {
       && after_b["clicks"] == 0
       && after.physical_keys == 0
       && after.physical_mouse == 0
+      && (!posted
+        || (after.injected_mouse == before.injected_mouse
+          && after.injected_keys == before.injected_keys
+          && after.cursor == before.cursor
+          && after.foreground == before.foreground))
       && watch.modifiers_released();
     let directory = output.join(case);
     std::fs::create_dir(&directory)?;
@@ -339,7 +416,7 @@ pub fn run(output: &Path) -> Result<bool> {
         Err(error) => records.write("capture_error", json!({"case": case, "receiver": name, "error": error.to_string()}))?,
       }
     }
-    records.write("case", json!({"case": case, "passed": passed, "native_ok": operation.is_ok(), "result": operation.as_ref().ok(),
+    records.write("case", json!({"case": case, "policy": policy, "selection": selection, "passed": passed, "native_ok": operation.is_ok(), "result": operation.as_ref().ok(),
       "error": operation.as_ref().err().map(ToString::to_string), "input_progress": progress, "target_lost": target_lost,
       "before_a": before_a, "before_b": before_b, "after_a": after_a, "after_b": after_b,
       "fault": fault, "callback_error": callback_error, "terminal_receipt": terminal, "samples": sample_count, "elapsed_ms": elapsed_ms,

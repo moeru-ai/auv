@@ -562,7 +562,7 @@ mod native {
     // SAFETY: native foreground/window requests on the harness's owned receiver pair.
     // The fault mutex was released before these potentially reentrant OS calls.
     let (reached_target, returned_owner) = unsafe {
-      let requested = SetForegroundWindow(target).as_bool();
+      let requested = GetForegroundWindow() == target || SetForegroundWindow(target).as_bool();
       let reached = requested && GetForegroundWindow() == target;
       let returned = match kind {
         "aba" => {
