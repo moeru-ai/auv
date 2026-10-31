@@ -144,6 +144,34 @@ fn window_click_background_only_fails_for_invalid_window_handle() {
   assert!(error.to_string().contains("ScreenToClient"));
 }
 
+// ROOT CAUSE:
+//
+// If a window click was cancelled before admission, the outer desktop
+// reservation returned before the foreground delivery boundary could stamp it.
+// Before the fix, callers received a plain error despite zero native delivery.
+// The fix keeps the structured not-delivered receipt at the public boundary.
+#[test]
+fn pre_cancelled_foreground_window_click_reports_not_delivered() {
+  use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
+  use auv_driver_common::{DriverError, InputActionProgress};
+
+  let cancellation = std::sync::Arc::new(InputCancellation::default());
+  cancellation.cancel();
+  let error = with_input_cancellation(cancellation, || {
+    session().window().click(
+      &sample_window(),
+      WindowPoint::new(1.0, 1.0),
+      ClickOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    )
+  })
+  .unwrap_err();
+  assert!(matches!(error, DriverError::InputAction { cause, progress: InputActionProgress::NotDelivered }
+    if matches!(cause.as_ref(), DriverError::InvalidInput { message } if message.contains("cancelled"))));
+}
+
 #[test]
 fn window_scroll_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();

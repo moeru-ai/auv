@@ -269,7 +269,10 @@ impl WindowApi<'_> {
   /// Delivers a window-targeted click.
   ///
   /// `ForegroundPreferred` foregrounds the window and uses the same
-  /// `SendInput` route as global clicks. `BackgroundOnly`/`BackgroundPreferred`
+  /// `SendInput` route as global clicks. Its admitted recipient is retained for
+  /// the entire click batch; foreground loss or target unavailability stops
+  /// later submissions with typed delivery progress, without reactivation.
+  /// `BackgroundOnly`/`BackgroundPreferred`
   /// instead post `WM_LBUTTONDOWN`/`WM_LBUTTONUP` directly to the control
   /// hit-tested under `point` (`background_input::click_at_window`), which
   /// does not raise or focus the window. `window_strategy` is a macOS
@@ -281,13 +284,11 @@ impl WindowApi<'_> {
     }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
-      let activation_attempt = foreground_window_attempt(window, "pointer delivery");
       #[cfg(feature = "overlay")]
       let click = options.click.clone();
       // Delivered like a global click, but reported below as aimed at `window`, so the
       // live overlay shows it with that window's cursor.
-      let mut result = crate::input::deliver_click(screen_point, options.button, options.click, options.modifiers)?;
-      result.attempts.insert(0, activation_attempt);
+      let result = crate::input::deliver_window_click(window, screen_point, options.button, options.click, options.modifiers)?;
       #[cfg(feature = "overlay")]
       {
         let mut events = vec![crate::overlay_follow::window_targeted(window)];
@@ -318,6 +319,8 @@ impl WindowApi<'_> {
   /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
   /// falls back to `SendInput`.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    // TODO(windows-mouse-recipient): scroll effects need an app-owned interruption
+    // oracle before sharing click admission; see the mouse recipient note.
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
       match candidate {
@@ -367,6 +370,11 @@ impl WindowApi<'_> {
 
 impl WindowInput for WindowApi<'_> {
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      // Foreground delivery owns desktop admission and stamps its refusal.
+      // An outer reservation would lose not-delivered progress on pre-cancel.
+      return self.click_impl(window, point, options);
+    }
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
   }
@@ -391,6 +399,8 @@ impl WindowInput for WindowApi<'_> {
     button: auv_driver_common::MouseButton,
     policy: InputPolicy,
   ) -> DriverResult<(Point, InputActionResult)> {
+    // TODO(windows-mouse-recipient): held motion needs app-owned interruption
+    // fixtures before sharing click admission; see the mouse recipient note.
     if !matches!(policy, InputPolicy::ForegroundPreferred) {
       movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
       return self.session.input().drag_mouse(movement, button);

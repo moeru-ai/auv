@@ -7,7 +7,7 @@
 //! presses/shortcuts as virtual-key events. The coordinate math and key parsing
 //! live in host-independent helpers so they stay unit-testable without sending
 //! real input.
-// Explicit global primitives use the current foreground. Window keyboard batches install
+// Explicit global primitives use the current foreground. Window input batches install
 // recipient protection; their native submissions share this same delivery boundary.
 
 use std::sync::{Mutex, PoisonError};
@@ -135,6 +135,50 @@ pub(crate) fn deliver_click(
   let button_desc = format!("{button:?}");
   crate::latency::record_latency_event("click_at", elapsed_ms, None, Some("SendInput"), Some(&button_desc));
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+}
+
+/// Keeps a foreground click batch bound to the admitted window recipient.
+pub(crate) fn deliver_window_click(
+  window: &auv_driver_common::window::Window,
+  point: Point,
+  button: auv_driver_common::MouseButton,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<InputActionResult> {
+  let result = (|| {
+    let (count, interval) = click_parts(&click)?;
+    if !point.x.is_finite() || !point.y.is_finite() {
+      return Err(invalid_input("window click point must be finite"));
+    }
+    if count > 1 && Instant::now().checked_add(interval).is_none() {
+      return Err(invalid_input("window click interval exceeds the native clock range"));
+    }
+    // Every mouse path takes the desktop coordinator before native submission.
+    // Keep that order while the recipient watcher owns the submission gate;
+    // deliver_click's same-thread reservation then nests without reacquiring it.
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
+    let guard = recipient::Guard::open(window)?;
+    guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
+    // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
+    // ownership need a coordinate producer/consumer contract; see the mouse recipient note.
+    let mut action = deliver_click(point, button, click, modifiers).map_err(|cause| guard.stamp(cause))?;
+    action.attempts.insert(
+      0,
+      InputAttempt {
+        path: InputDeliveryPath::ForegroundSystemEvents,
+        succeeded: true,
+        message: Some("window recipient identity and foreground admitted".into()),
+      },
+    );
+    Ok(action)
+  })();
+  result.map_err(|cause| match cause {
+    cause @ DriverError::InputAction { .. } => cause,
+    cause => DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::NotDelivered,
+    },
+  })
 }
 
 fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {
@@ -333,11 +377,14 @@ impl InputApi<'_> {
 
     for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
       if let Some(guard) = &guard {
-        guard.begin_action(if matches!(&input, KeyboardInput::PasteText { .. }) {
-          DisturbanceLevel::Temporary
-        } else {
-          DisturbanceLevel::None
-        });
+        guard.begin_action(
+          DisturbanceLevel::None,
+          if matches!(&input, KeyboardInput::PasteText { .. }) {
+            DisturbanceLevel::Temporary
+          } else {
+            DisturbanceLevel::None
+          },
+        );
       }
       let failure = |cause, completed: &Vec<InputActionResult>, presses| {
         let cause = if let Some(guard) = &guard {
@@ -996,23 +1043,44 @@ mod native {
           unsafe { GetAsyncKeyState(i32::from(*key)) >= 0 }
         })
         .collect();
-      let inputs = click_inputs(button, &keys);
-      // SAFETY: inputs contains initialized INPUT unions matching their tags,
-      // and its slice remains live throughout SendInput.
-      let sent = insert_inputs(&inputs, false)? as usize;
-      if sent != inputs.len() {
-        // SendInput inserts in order. Release only the injected prefix that
-        // remains down, including the mouse button if its up was not inserted.
-        let cleanup = click_cleanup(button, &keys, sent);
-        let release = send_inputs(&cleanup);
-        let detail = release.err().map(|error| format!("; input release also failed: {error}")).unwrap_or_default();
-        return Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())));
-      }
+      send_click(button, &keys, insert_inputs)?;
       if index + 1 < count && !interval.is_zero() {
         super::recipient::wait(interval)?;
       }
     }
     Ok(())
+  }
+
+  /// Owns partial click submission and releases only its inserted downs.
+  /// A release bypasses admission and preserves the original submission receipt.
+  fn send_click(
+    button: auv_driver_common::MouseButton,
+    keys: &[u16],
+    mut insert: impl FnMut(&[INPUT], bool) -> DriverResult<u32>,
+  ) -> DriverResult<()> {
+    let inputs = click_inputs(button, keys);
+    // SAFETY: inputs contains initialized INPUT unions matching their tags,
+    // and its slice remains live throughout SendInput at the native boundary.
+    let sent = insert(&inputs, false)? as usize;
+    if sent == inputs.len() {
+      return Ok(());
+    }
+    // SendInput inserts in order. Release only the injected prefix that
+    // remains down, including the mouse button if its up was not inserted.
+    let cleanup = click_cleanup(button, keys, sent);
+    let release = if cleanup.is_empty() {
+      Ok(())
+    } else {
+      insert(&cleanup, true).and_then(|released| {
+        if released as usize == cleanup.len() {
+          Ok(())
+        } else {
+          Err(backend(format!("SendInput injected {released} of {} events (input may be blocked)", cleanup.len())))
+        }
+      })
+    };
+    let detail = release.err().map(|error| format!("; input release also failed: {error}")).unwrap_or_default();
+    Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())))
   }
 
   fn button_flags(button: auv_driver_common::MouseButton) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
@@ -1150,6 +1218,45 @@ mod native {
     let mut process = 0u32;
     unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
     (process != 0).then_some(process)
+  }
+  #[cfg(test)]
+  mod click_tests {
+    use super::*;
+
+    // ROOT CAUSE:
+    //
+    // If a click was partially inserted, recipient loss or cancellation could
+    // refuse its owned releases because cleanup reused ordinary admission.
+    // Before the fix, a modifier and button could remain down.
+    // The fix releases the inserted downs without admitting another action.
+    #[test]
+    fn partial_click_releases_owned_keys_and_button_after_admission_loss() {
+      let mut calls = Vec::new();
+      let result = send_click(auv_driver_common::MouseButton::Left, &[super::super::vk::SHIFT], |inputs, release| {
+        calls.push((release, inputs.to_vec()));
+        if calls.len() == 1 {
+          return Ok(2); // Shift and button downs were inserted; their ups were not.
+        }
+        if !release {
+          return Err(crate::error::invalid_input("input cancelled before native submission"));
+        }
+        Ok(inputs.len() as u32)
+      });
+      assert!(result.unwrap_err().to_string().contains("SendInput injected 2 of 4 click events"));
+      assert_eq!(calls.len(), 2);
+      assert!(!calls[0].0);
+      assert!(calls[1].0, "owned releases must bypass lost/cancelled admission");
+      assert_eq!(calls[1].1.len(), 2);
+      // SAFETY: these events come from click_cleanup, which initializes each
+      // INPUT union consistently with its type tag.
+      unsafe {
+        assert_eq!(calls[1].1[0].r#type, INPUT_MOUSE);
+        assert_eq!(calls[1].1[0].Anonymous.mi.dwFlags, MOUSEEVENTF_LEFTUP);
+        assert_eq!(calls[1].1[1].r#type, INPUT_KEYBOARD);
+        assert_eq!(calls[1].1[1].Anonymous.ki.wVk.0, super::super::vk::SHIFT);
+        assert_eq!(calls[1].1[1].Anonymous.ki.dwFlags, KEYEVENTF_KEYUP);
+      }
+    }
   }
 }
 

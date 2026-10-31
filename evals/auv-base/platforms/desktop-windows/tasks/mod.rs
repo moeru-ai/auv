@@ -17,3 +17,4 @@ pub mod sustained;
 pub mod watch;
 pub mod window_commands;
 pub mod window_keyboard;
+pub mod window_mouse;

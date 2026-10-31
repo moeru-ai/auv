@@ -533,6 +533,8 @@ async fn click_recognized_window_text_with_session(
   let matched = selected_window_text_match(&matches, &query, index)?;
   let point = auv_driver::geometry::ScreenPoint::from(matched.action_point());
   let window_point = session.window().to_window_point(&window, point).map_err(crate::InvokeFailure::from)?;
+  // TODO(windows-window-input-cancellation): install the frontend native cancel
+  // context in the parity slice; the recipient checks a context only where one is installed.
   let action = session.window().click(&window, window_point, options.clone()).map_err(crate::InvokeFailure::from)?;
   emit_capture("auv.driver.window_ocr_source", &capture);
   Ok(WindowTextClick {

@@ -40,6 +40,11 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       output: PathBuf,
     },
+    /// Window clicks stopped by application-owned recipient changes after the first click.
+    WindowMouse {
+      #[arg(long)]
+      output: PathBuf,
+    },
     /// Isolated keyboard delivery through Driver, Invoke, selected Runner, and MCP.
     WindowKeyboardRoutes {
       #[arg(long)]
@@ -284,6 +289,7 @@ fn main() -> std::process::ExitCode {
       output,
     } => auv_base_evals::desktop_windows::foreground_commands::workflow::snapshot_controls(&window_id, process_id, &output),
     Scenario::WindowKeyboard { output } => auv_base_evals::desktop_windows::window_keyboard::run(&output),
+    Scenario::WindowMouse { output } => auv_base_evals::desktop_windows::window_mouse::run(&output),
     Scenario::WindowKeyboardRoutes { output, auv } => {
       auv_base_evals::desktop_windows::foreground_commands::workflow::run_keyboard_routes(&output, &auv)
     }
