@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 591ef686cc1a738faf4f96e8fbec4ea83f5143d4
+          ref: 2cdffd1e5b4a0d7d02357c8f75bf4b1b9cac60e1
           persist-credentials: false
 
       - name: Inspect the isolated desktop and installed application tools
@@ -83,7 +83,7 @@ jobs:
           }
           '@
           $source = git rev-parse HEAD
-          if ($source -ne '591ef686cc1a738faf4f96e8fbec4ea83f5143d4') { throw "Unexpected source $source" }
+          if ($source -ne '2cdffd1e5b4a0d7d02357c8f75bf4b1b9cac60e1') { throw "Unexpected source $source" }
           $desktop = [AppEnvironmentProbe]::OpenInputDesktop(0, $false, 1)
           $accessible = $desktop -ne [IntPtr]::Zero
           if ($accessible -and -not [AppEnvironmentProbe]::CloseDesktop($desktop)) { throw 'Input-desktop probe handle did not close' }
@@ -217,7 +217,11 @@ jobs:
           $testLog = "$env:RUNNER_TEMP/auv-app-preflight/window-selection-tests.log"
           cargo test --locked -p auv-base-evals --lib workflow::applications:: 2>&1 | Tee-Object -FilePath $testLog
           if ($LASTEXITCODE -ne 0) { throw 'Application discovery regression failed' }
-          if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 5 passed; 0 failed;') { throw 'Missing application discovery/reacquisition regressions' }
+          if ((Get-Content -LiteralPath $testLog -Raw) -notmatch 'test result: ok\. 6 passed; 0 failed;') { throw 'Missing application discovery/readiness/reacquisition regressions' }
+          $recordingLog = "$env:RUNNER_TEMP/auv-app-preflight/local-click-recording-test.log"
+          cargo test --locked -p auv-cli-invoke --lib local_window_text_click_output_ci_124482099769_records_delivery_once 2>&1 | Tee-Object -FilePath $recordingLog
+          if ($LASTEXITCODE -ne 0) { throw 'Local OCR click recording regression failed' }
+          if ((Get-Content -LiteralPath $recordingLog -Raw) -notmatch 'test result: ok\. 1 passed; 0 failed;') { throw 'Missing local OCR click recording regression' }
 
       - name: Focus edit and save owned real application documents
         shell: pwsh
@@ -246,6 +250,7 @@ jobs:
           }
           if ($apps.Count -ne 1 -or $summary.application -ne '${{ matrix.application }}') { throw 'Selected application result is missing; inspect retained case records' }
           if ($summary.workflow_accepted -ne $false) { throw 'Edit/save cases must not accept the full workflow' }
+          if (-not $summary.modifiers_released -or @($apps | Where-Object { -not $_.modifiers_released }).Count -ne 0) { throw 'Modifier release readback failed' }
           if ($evaluationExit -ne 0 -or -not $summary.inventory_complete -or -not $summary.edit_save_accepted) { throw 'Application edit/save acceptance failed; inspect retained step results' }
 
       - name: Inspect controlled Edge download metadata after verified process cleanup
@@ -293,7 +298,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-editor-${{ matrix.application }}-591ef686
+          name: windows-app-editor-${{ matrix.application }}-2cdffd1e
           path: |
             ${{ runner.temp }}/auv-app-preflight/
             !${{ runner.temp }}/auv-app-preflight/controls/**/profile/**
