@@ -49,6 +49,28 @@ fn normalize_absolute_clamps_out_of_range_and_handles_degenerate_extent() {
 }
 
 #[test]
+fn normalize_absolute_multi_monitor_negative_virtual_desktop() {
+  // Dual-monitor layout: secondary 1920x1080 at left (-1920..0), primary 1920x1080 at right (0..1920).
+  // Total virtual screen origin = -1920, extent = 3840 (valid range -1920..=1919).
+  let origin = -1920;
+  let extent = 3840;
+
+  // Far-left edge of the secondary monitor
+  assert_eq!(normalize_absolute(-1920.0, origin, extent), 0);
+  // Center seam (left edge of primary monitor)
+  let seam = normalize_absolute(0.0, origin, extent);
+  assert!(seam > 32700 && seam < 32800);
+  // Far-right edge of the primary monitor
+  assert_eq!(normalize_absolute(1919.0, origin, extent), 65535);
+
+  // Out of bounds coordinates clamp to [0, 65535]. NOTE: This clamp is strictly
+  // a numerical mapping behavior of the normalize_absolute helper, NOT a safe click
+  // delivery contract. Boundary validation is the responsibility of callers prior to dispatch.
+  assert_eq!(normalize_absolute(-2500.0, origin, extent), 0);
+  assert_eq!(normalize_absolute(4000.0, origin, extent), 65535);
+}
+
+#[test]
 fn parse_key_chord_reads_special_keys_case_insensitively() {
   assert_eq!(
     parse_key_chord("Return").unwrap(),
