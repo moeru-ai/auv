@@ -3,6 +3,10 @@
 Status: scoped native acceptance passed; PR #448 is under review and unmerged.
 Classification: bug fix with application-owned regression coverage.
 
+Follow-up: [mouse recipient lifetime](2026-10-31-windows-mouse-lifecycle.md) adds
+terminal close receipts and single-call foreground scroll. The evidence below
+retains this initial PR #448 click matrix.
+
 The owner goal requires input to stop when its target loses foreground, disappears,
 or becomes unavailable. The accepted keyboard slice already retains window/process identity
 and latches foreground loss during a batch. At the baseline, window-targeted foreground clicks called
@@ -57,7 +61,7 @@ app-owned interruption/parity cases. The current slice does not claim those path
 It does not bind a semantic UI element to screen coordinates, make `GetForegroundWindow` plus `SendInput`
 atomic, or create a pre-admission HWND generation receipt. Coordinate/frame checks need their own
 producer/consumer evidence; the retired #429 screenshot predicate remains retired.
-Root-close fault coverage needs a terminal receiver receipt before process exit and is marked at the case list.
+Root-close was deferred from this initial click slice; the follow-up above owns its terminal receiver receipt.
 
 ## Validation
 

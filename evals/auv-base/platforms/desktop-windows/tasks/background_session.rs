@@ -40,7 +40,7 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       output: PathBuf,
     },
-    /// Window clicks stopped by application-owned recipient changes after the first click.
+    /// Window click and wheel faults with application-owned delivery receipts.
     WindowMouse {
       #[arg(long)]
       output: PathBuf,

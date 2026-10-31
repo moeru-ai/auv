@@ -19,7 +19,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
@@ -408,6 +408,14 @@ impl Receiver {
 
   pub fn state(&mut self) -> Result<State> {
     Ok(serde_json::from_value(self.request(json!({"cmd": "state"}))?)?)
+  }
+
+  /// Reads the application-owned state emitted immediately before an armed
+  /// mouse fault closes the window. Does not write to an exited process.
+  pub fn closing_receipt(&mut self) -> Result<Value> {
+    let receipt = self.lines.recv_timeout(Duration::from_secs(5)).context("receiver omitted its closing receipt")?;
+    ensure!(receipt["event"] == "closing", "unexpected receiver terminal event: {receipt}");
+    Ok(receipt)
   }
 
   pub fn refresh_layout(&mut self) -> Result<Layout> {
