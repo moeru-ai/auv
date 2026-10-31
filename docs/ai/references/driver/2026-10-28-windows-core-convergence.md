@@ -483,6 +483,22 @@ The [permanent manifest](https://github.com/moeru-ai/auv/blob/132d051d820f567032
 retains archive, file, and capture hashes. #447 is ready for review and remains unmerged.
 Its optional stale-focus reacquisition branch has pure eligibility coverage only.
 
+## Window foreground click batches under review
+
+PR [#448](https://github.com/moeru-ai/auv/pull/448) extends the existing recipient guard to foreground click batches.
+Its unchanged-production baseline delivered later clicks to B after takeover/minimize and revived an ABA batch.
+The first corrected replay stopped those faults but exposed a missing pre-cancel delivery receipt.
+A unit reproduced that receipt failure before the fix; owned partial-click cleanup also has a failing-then-passing native-boundary model.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41189403167), source `5f666614`,
+passed ten mouse cases, fifteen existing keyboard cases, and seven pure regressions.
+Independent audit verified the artifact digest, fifty receiver exits/destructions, zero physical input,
+released modifiers, desktop restoration, and nineteen reviewed captures. Minimized capture was explicitly refused.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/9810bd254f752619291977c73c7d586ffea99f42/docs/ai/references/driver/evidence/2026-10-31-windows-mouse-recipient/acceptance.json)
+retains source, environment, binary/capture hashes, and typed prefix/refusal receipts.
+This is scoped Win32 foreground-click evidence at measured 96 DPI. #448 is ready for review and unmerged.
+Scrolling/held motion, root-close mouse receipts, frame/coordinate freshness, and complete frontend cancellation parity remain open.
+The closed #429 screenshot predicate remains retired.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.
@@ -492,6 +508,7 @@ Phase 2 remains incomplete after retirement of the screenshot guard.
 The independent repairs above cover queued image frames, failed activation, and ambiguous witness verdicts.
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
 Draft #446 passed the stated Win32 keyboard route matrix and five hook lifecycle fault models.
+PR #448 passed the scoped foreground-click matrix; it does not complete other mouse capabilities or frame/coordinate admission.
 Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
