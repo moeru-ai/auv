@@ -63,7 +63,9 @@ fn normalize_absolute_multi_monitor_negative_virtual_desktop() {
   // Far-right edge of the primary monitor
   assert_eq!(normalize_absolute(1919.0, origin, extent), 65535);
 
-  // Out of bounds on both ends clamp to 0 and 65535
+  // Out of bounds coordinates clamp to [0, 65535]. NOTE: This clamp is strictly
+  // a numerical mapping behavior of the normalize_absolute helper, NOT a safe click
+  // delivery contract. Boundary validation is the responsibility of callers prior to dispatch.
   assert_eq!(normalize_absolute(-2500.0, origin, extent), 0);
   assert_eq!(normalize_absolute(4000.0, origin, extent), 65535);
 }
