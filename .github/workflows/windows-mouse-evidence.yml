@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: c87ffa53a3b1f38095541b213ff026432652b069
+          ref: b2ba7b6928de1f8179b36e34c9d09e9ea7e58068
           fetch-depth: 2
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = git rev-parse HEAD
-          if ($actual -ne 'c87ffa53a3b1f38095541b213ff026432652b069') { throw "Unexpected source $actual" }
+          if ($actual -ne 'b2ba7b6928de1f8179b36e34c9d09e9ea7e58068') { throw "Unexpected source $actual" }
           $directory = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/auv-mouse-evidence" -Force
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @'
@@ -149,6 +149,9 @@ jobs:
           cargo test --locked -p auv-driver-windows --lib session::tests::pre_cancelled_foreground_window_drag_reports_not_delivered > "$directory/drag-pre-cancel.stdout.log" 2> "$directory/drag-pre-cancel.stderr.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -LiteralPath "$directory/drag-pre-cancel.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected drag pre-cancel receipt' }
+          cargo test --locked -p auv-base-evals --lib desktop_windows::watch::tests::injected_mouse_messages_preserve_native_kind_without_keyboard_data > "$directory/mouse-kind.stdout.log" 2> "$directory/mouse-kind.stderr.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -LiteralPath "$directory/mouse-kind.stdout.log" -SimpleMatch 'test result: ok. 1 passed; 0 failed')) { throw 'Expected native mouse-kind witness model' }
 
       - name: Recheck the existing keyboard fault receiver after shared fixture extraction
         shell: pwsh
@@ -217,7 +220,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-drag-c87ffa53-fixed
+          name: windows-drag-b2ba7b69-fixed
           path: ${{ runner.temp }}/auv-mouse-evidence/
           if-no-files-found: warn
           retention-days: 14
