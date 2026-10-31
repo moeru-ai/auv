@@ -186,6 +186,7 @@ mod native {
     edit_move: AtomicU64,
     frame_down: AtomicU64,
     frame_move: AtomicU64,
+    frame_move_at: std::sync::Mutex<Option<[i32; 2]>>,
     frame_up: AtomicU64,
     activated: AtomicU64,
     mouse_activate: AtomicU64,
@@ -210,6 +211,7 @@ mod native {
     edit_move: AtomicU64::new(0),
     frame_down: AtomicU64::new(0),
     frame_move: AtomicU64::new(0),
+    frame_move_at: std::sync::Mutex::new(None),
     frame_up: AtomicU64::new(0),
     activated: AtomicU64::new(0),
     mouse_activate: AtomicU64::new(0),
@@ -914,6 +916,8 @@ mod native {
           count(&COUNTERS.frame_up);
         } else if wparam.0 & MK_LBUTTON != 0 {
           count(&COUNTERS.frame_move);
+          let point = screen_point(hwnd, lparam);
+          *COUNTERS.frame_move_at.lock().unwrap() = Some([point.x, point.y]);
         }
         pad_message(hwnd, message, wparam, lparam);
         if message == WM_MOUSEMOVE && wparam.0 & MK_LBUTTON != 0 {
@@ -1075,6 +1079,7 @@ mod native {
         "edit_move": c.edit_move.load(Relaxed),
         "frame_down": c.frame_down.load(Relaxed),
         "frame_move": c.frame_move.load(Relaxed),
+        "frame_move_at": c.frame_move_at.lock().ok().and_then(|point| *point),
         "frame_up": c.frame_up.load(Relaxed),
       },
       "activated": c.activated.load(Relaxed),

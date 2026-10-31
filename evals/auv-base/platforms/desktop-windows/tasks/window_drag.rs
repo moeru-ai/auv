@@ -14,7 +14,7 @@ use auv_driver_windows::WindowsDriver;
 use serde_json::{Value, json};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::UI::WindowsAndMessaging::{IsWindow, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE};
 
 use super::background::{discover_by_hwnd, run_id};
 use super::receiver_process::{Receiver, ReceiverSpec, receiver_binary};
@@ -165,6 +165,16 @@ pub fn run(output: &Path) -> Result<bool> {
       terminal["fault"].clone()
     };
     let after = watch.snapshot();
+    let timeline = watch.timeline(before.taken_ms, after.taken_ms);
+    let injected_messages: Vec<_> = timeline.injected_input.iter().map(|event| event.mouse_message).collect();
+    // Compare kinds/counts: distinct events can share a millisecond stamp, so
+    // the witness's timestamp ordering is not a native event sequence number.
+    let count_message = |kind| injected_messages.iter().filter(|message| **message == Some(kind)).count();
+    let native_prefix = injected_messages.len() == 5
+      && count_message(WM_MOUSEMOVE) == 3
+      && count_message(WM_LBUTTONDOWN) == 1
+      && count_message(WM_LBUTTONUP) == 1
+      && after.injected_mouse.saturating_sub(before.injected_mouse) == 5;
     // Read before the controller's separate recovery; a recovery release must
     // never turn an actor failure into success.
     // SAFETY: read-only high-bit query, with no synthesized input.
@@ -180,8 +190,14 @@ pub fn run(output: &Path) -> Result<bool> {
     });
     let submitted =
       matches!(progress, Some(InputActionProgress::Submitted { action }) if action.mouse_disturbance == DisturbanceLevel::Temporary);
+    // NOTICE: destroying the captured window may generate one same-position
+    // WM_MOUSEMOVE in B. It is not a new native injection. Require both its
+    // coordinate and the exact injected prefix, never just a quiet final cursor.
+    // See `https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343`.
+    let closure_message =
+      case == "close" && native_prefix && after_b["raw"]["frame_move"] == 1 && after_b["raw"]["frame_move_at"] == fault["cursor_at_fault"];
     let no_wrong_move = after_b["raw"]["frame_down"] == before_b["raw"]["frame_down"]
-      && after_b["raw"]["frame_move"] == before_b["raw"]["frame_move"]
+      && (after_b["raw"]["frame_move"] == before_b["raw"]["frame_move"] || closure_message)
       && after_b["pad"].is_null();
     let passed = if no_input {
       operation.is_err()
@@ -202,6 +218,7 @@ pub fn run(output: &Path) -> Result<bool> {
         && after_a["pad"]["moves"].as_u64().unwrap_or(0) > 0
     } else if case == "cancel_after_move" {
       cancelled
+        && native_prefix
         && submitted
         && !target_lost
         && cancellation_receipt["requested"] == true
@@ -209,6 +226,7 @@ pub fn run(output: &Path) -> Result<bool> {
         && json!([after.cursor.0, after.cursor.1]) == cancellation_receipt["acknowledged"]["pad"]["last"]
     } else {
       target_lost
+        && native_prefix
         && submitted
         && fault["reached_target"] == true
         && json!([after.cursor.0, after.cursor.1]) == fault["cursor_at_fault"]
@@ -237,6 +255,11 @@ pub fn run(output: &Path) -> Result<bool> {
       "cursor_before": before.cursor, "cursor_after": after.cursor, "physical_keys": after.physical_keys, "physical_mouse": after.physical_mouse,
       "modifiers_released": watch.modifiers_released(), "injected_mouse": after.injected_mouse.saturating_sub(before.injected_mouse),
       "injected_keys": after.injected_keys.saturating_sub(before.injected_keys), "input_retries": 0}))?;
+    records.write(
+      "injected_mouse_prefix",
+      json!({"case": case, "messages": injected_messages, "exact_interrupted_prefix": native_prefix,
+      "closure_system_message": closure_message}),
+    )?;
     all_passed &= passed;
     ensure!(after.physical_keys == 0 && after.physical_mouse == 0, "physical input: teardown input refused");
     // Recover only the actor-owned logical button after cancellation TLS ends.

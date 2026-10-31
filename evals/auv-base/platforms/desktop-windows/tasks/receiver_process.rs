@@ -100,6 +100,7 @@ pub struct Raw {
   pub edit_move: u64,
   pub frame_down: u64,
   pub frame_move: u64,
+  pub frame_move_at: Option<[i32; 2]>,
   pub frame_up: u64,
 }
 

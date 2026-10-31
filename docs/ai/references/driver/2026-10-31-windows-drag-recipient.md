@@ -66,8 +66,9 @@ different policy. Click and scroll callers retain the same desktop-before-native
 lock order after desktop admission moves out of their shared native helper.
 
 An owned button-up bypasses recipient/cancellation refusal but still checks the
-native insertion count. Failed cleanup retains the logical hold for explicit
-recovery. If a typed submitted or uncertain prefix exists, failed cleanup keeps
+native insertion count. Until a release is confirmed, failed cleanup retains
+the logical hold and blocks reuse. Explicit recovery remains available. If a
+typed submitted or uncertain prefix exists, failed cleanup keeps
 the original cause and returns `InputActionProgress::DeliveryUncertain` with a
 failed release attempt. A successful movement followed by failed cleanup also
 returns an uncertain receipt. A cause without native evidence remains unknown.
@@ -80,6 +81,16 @@ uncertain prefix must not be retried without checking application state.
 The evaluator adds only `window-drag --output DIR`. It tests success, four
 post-move target-loss modes, post-move cancellation, and seven pre-delivery
 refusals. The production `auv` CLI grammar is unchanged.
+
+The Windows eval library exports
+`desktop_windows::window_drag::run(&Path) -> anyhow::Result<bool>`.
+Its public receiver `Raw` adds `frame_move: u64`, `frame_up: u64`, and
+`frame_move_at: Option<[i32; 2]>`. They count held moves and button-ups handled
+by the frame and retain the last held-move position. Complete struct literals
+must supply these fields, or use `..Default::default()`. Native JSON must contain
+the new counters; missing counters are not treated as zero delivery. The public
+watch `InjectedEvent` adds `mouse_message: Option<u32>`. No physical coordinates,
+key codes, or text are collected by that field.
 
 The first corrected run
 [41212119240](https://github.com/moeru-ai/auv/actions/runs/41212119240)
@@ -106,3 +117,17 @@ B's handoff count; no activation or input is retried by this readback. Artifact
 `13047695164`, SHA-256
 `a47bcb4371e011a6a7f0a19763d7b0e3cfda9f345bdf49c272b3416b688687f7`,
 retains the unaccepted instantaneous receipt.
+
+The queue-readback run
+[41213714784](https://github.com/moeru-ai/auv/actions/runs/41213714784)
+passed A-B-A, but close was rejected because B handled one held move despite a
+frozen pointer and only five injected events. Its artifact `13046569017` has
+SHA-256 `707bb0e23849d37b5b26b173eca26c5ae30db4a9293e9b13dfe4ed9f4bde46b5`.
+[Windows can generate mouse-move messages after window changes](https://devblogs.microsoft.com/oldnewthing/20031001-00/?p=42343).
+The witness now retains injected mouse message kinds. An interrupted gesture
+must have exactly three injected moves, one down, and one up; no extra event is
+accepted. Event kinds/counts are compared because millisecond timestamps do not
+encode native ordering. B must still receive no down and start no drag. For
+close only, one same-position frame message is allowed if its coordinate equals
+the fault point and that exact injection-count evidence also passes. This does
+not promise suppression of system-generated messages or atomic native input.
