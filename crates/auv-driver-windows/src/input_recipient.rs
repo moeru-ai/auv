@@ -298,7 +298,7 @@ mod native {
   impl Guard {
     pub(in super::super) fn open(window: &Window) -> DriverResult<Self> {
       if current().is_some() {
-        return Err(invalid_input("nested window keyboard batches are unsupported"));
+        return Err(invalid_input("nested window input batches are unsupported"));
       }
       let reservation = Reservation::acquire(true)?;
       crate::desktop::try_ensure_input_desktop().map_err(|error| backend(error.to_string()))?;
@@ -324,7 +324,7 @@ mod native {
       .iter()
       .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 })
       {
-        return Err(invalid_input("release held modifiers and mouse buttons before a window keyboard batch"));
+        return Err(invalid_input("release held modifiers and mouse buttons before a window input batch"));
       }
       if !probe.exists
         || window.process_id != Some(probe.process_id)
@@ -361,7 +361,7 @@ mod native {
         )),
       });
       if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
-        return Err(invalid_input("window keyboard input cancelled before activation"));
+        return Err(invalid_input("window input cancelled before activation"));
       }
       if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
         crate::window::activate_window(window)?;
@@ -378,8 +378,8 @@ mod native {
       Ok(guard)
     }
 
-    pub(in super::super) fn begin_action(&self, clipboard: DisturbanceLevel) {
-      let mut action = super::super::foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, clipboard);
+    pub(in super::super) fn begin_action(&self, mouse: DisturbanceLevel, clipboard: DisturbanceLevel) {
+      let mut action = super::super::foreground_result(mouse, DisturbanceLevel::Unknown, clipboard);
       if clipboard == DisturbanceLevel::Temporary {
         action.selected_path = InputDeliveryPath::ClipboardPaste;
         action.attempts = vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)];
@@ -435,7 +435,7 @@ mod native {
   }
   pub(in super::super) fn wait(duration: Duration) -> DriverResult<()> {
     let deadline =
-      Instant::now().checked_add(duration).ok_or_else(|| super::super::invalid_input("keyboard wait exceeds the native clock range"))?;
+      Instant::now().checked_add(duration).ok_or_else(|| super::super::invalid_input("input wait exceeds the native clock range"))?;
     let Some(state) = current() else {
       if !duration.is_zero() {
         thread::sleep(duration);
@@ -627,9 +627,14 @@ pub(super) struct Guard;
 #[cfg(not(target_os = "windows"))]
 impl Guard {
   pub(super) fn open(_window: &auv_driver_common::window::Window) -> auv_driver_common::DriverResult<Self> {
-    Err(auv_driver_common::DriverError::unsupported("Windows window keyboard recipient"))
+    Err(auv_driver_common::DriverError::unsupported("Windows window input recipient"))
   }
-  pub(super) fn begin_action(&self, _clipboard: auv_driver_common::input::DisturbanceLevel) {}
+  pub(super) fn begin_action(
+    &self,
+    _mouse: auv_driver_common::input::DisturbanceLevel,
+    _clipboard: auv_driver_common::input::DisturbanceLevel,
+  ) {
+  }
   pub(super) fn stamp(&self, cause: auv_driver_common::DriverError) -> auv_driver_common::DriverError {
     cause
   }

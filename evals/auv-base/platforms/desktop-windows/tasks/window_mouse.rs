@@ -2,9 +2,11 @@
 //! The application changes foreground only after processing its first click.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, ensure};
+use auv_driver_common::input_cancellation::{InputCancellation, with_input_cancellation};
 use auv_driver_common::{Click, ClickOptions, Driver, DriverError, InputPolicy, Point, WindowInput};
 use auv_driver_windows::WindowsDriver;
 use serde_json::json;
@@ -24,7 +26,17 @@ pub fn run(output: &Path) -> Result<bool> {
   let binary = receiver_binary()?;
   let watch = DesktopWatch::start()?;
   let original = watch.snapshot();
-  let cases = ["success", "stay", "aba", "minimize"];
+  let cases = [
+    "success",
+    "stay",
+    "aba",
+    "minimize",
+    "invalid_count",
+    "invalid_point",
+    "invalid_interval",
+    "pre_cancel",
+    "owner_mismatch",
+  ];
   // TODO(windows-mouse-recipient): root-close receipts need the receiver's
   // terminal state before exit; add that owned terminal receipt before close cases.
   let mut records = Records::create(&output.join("window-mouse.jsonl"), &run_id(), "window-mouse")?;
@@ -47,9 +59,18 @@ pub fn run(output: &Path) -> Result<bool> {
     b.request(json!({"cmd": "keep_foreground"}))?;
     let (window, _) = discover_by_hwnd(&session, a.hwnd())?;
     let (other, _) = discover_by_hwnd(&session, b.hwnd())?;
-    session.window().activate(&window)?;
-    let point = point_in_window(&window, a.layout.button_center);
-    if case != "success" {
+    let no_input = matches!(case, "invalid_count" | "invalid_point" | "invalid_interval" | "pre_cancel" | "owner_mismatch");
+    session.window().activate(if no_input { &other } else { &window })?;
+    let point = if case == "invalid_point" {
+      auv_driver_common::geometry::WindowPoint::new(f64::NAN, 10.0)
+    } else {
+      point_in_window(&window, a.layout.button_center)
+    };
+    let mut requested = window.clone();
+    if case == "owner_mismatch" {
+      requested.process_id = Some(0);
+    }
+    if matches!(case, "stay" | "aba" | "minimize") {
       ensure!(
         a.request(json!({"cmd": "arm_mouse_fault", "kind": case, "target": b.hwnd().to_string()}))?["armed"] == true,
         "mouse fault was not armed"
@@ -59,26 +80,42 @@ pub fn run(output: &Path) -> Result<bool> {
     let before_b = b.request(json!({"cmd": "state"}))?;
     let before = watch.snapshot();
     ensure!(before.physical_keys == 0 && before.physical_mouse == 0, "physical input: case refused");
-    let operation = session.window().click(
-      &window,
-      point,
-      ClickOptions {
-        policy: InputPolicy::ForegroundPreferred,
-        click: Click::Repeated {
-          count: 3,
-          interval: Duration::from_millis(400),
+    let cancellation = Arc::new(InputCancellation::default());
+    if case == "pre_cancel" {
+      cancellation.cancel();
+    }
+    let operation = with_input_cancellation(cancellation, || {
+      session.window().click(
+        &requested,
+        point,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Repeated {
+            count: if case == "invalid_count" { 0 } else { 3 },
+            interval: if case == "invalid_interval" {
+              Duration::MAX
+            } else {
+              Duration::from_millis(400)
+            },
+          },
+          ..Default::default()
         },
-        ..Default::default()
-      },
-    );
+      )
+    });
     let deadline = Instant::now() + Duration::from_secs(2);
     let (after_a, after_b, fault) = loop {
       let a_state = a.request(json!({"cmd": "state"}))?;
       let b_state = b.request(json!({"cmd": "state"}))?;
       let receipt = a.request(json!({"cmd": "mouse_fault_receipt"}))?;
       let total = a_state["clicks"].as_u64().unwrap_or(0) + b_state["clicks"].as_u64().unwrap_or(0);
-      let expected = if operation.is_ok() { 3 } else { 1 };
-      if total >= expected && (case == "success" || !receipt["receipt"].is_null()) {
+      let expected = if no_input {
+        0
+      } else if operation.is_ok() {
+        3
+      } else {
+        1
+      };
+      if total >= expected && (no_input || case == "success" || !receipt["receipt"].is_null()) {
         break (a_state, b_state, receipt);
       }
       ensure!(Instant::now() < deadline, "application did not acknowledge the submitted click prefix");
@@ -90,12 +127,22 @@ pub fn run(output: &Path) -> Result<bool> {
       DriverError::InputAction { cause, progress } => (matches!(cause.as_ref(), DriverError::TargetLost { .. }), Some(progress)),
       _ => (false, None),
     });
-    let passed = if case == "success" {
+    let passed = if no_input {
+      operation.is_err()
+        && matches!(progress, Some(auv_driver_common::InputActionProgress::NotDelivered))
+        && after_a["clicks"] == 0
+        && after_b["clicks"] == 0
+        && after.foreground == before.foreground
+        && after.cursor == before.cursor
+        && after.injected_mouse == before.injected_mouse
+        && after.injected_keys == before.injected_keys
+    } else if case == "success" {
       operation.is_ok() && after_a["clicks"] == 3 && after_b["clicks"] == 0
     } else {
       operation.is_err()
         && target_lost
-        && progress.is_some()
+        && matches!(progress, Some(auv_driver_common::InputActionProgress::Submitted { action })
+          if action.mouse_disturbance == auv_driver_common::DisturbanceLevel::Temporary)
         && fault["receipt"]["reached_target"] == true
         && after_a["clicks"] == 1
         && after_b["clicks"] == 0

@@ -7,7 +7,7 @@
 //! presses/shortcuts as virtual-key events. The coordinate math and key parsing
 //! live in host-independent helpers so they stay unit-testable without sending
 //! real input.
-// Explicit global primitives use the current foreground. Window keyboard batches install
+// Explicit global primitives use the current foreground. Window input batches install
 // recipient protection; their native submissions share this same delivery boundary.
 
 use std::sync::{Mutex, PoisonError};
@@ -135,6 +135,50 @@ pub(crate) fn deliver_click(
   let button_desc = format!("{button:?}");
   crate::latency::record_latency_event("click_at", elapsed_ms, None, Some("SendInput"), Some(&button_desc));
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+}
+
+/// Keeps a foreground click batch bound to the admitted window recipient.
+pub(crate) fn deliver_window_click(
+  window: &auv_driver_common::window::Window,
+  point: Point,
+  button: auv_driver_common::MouseButton,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<InputActionResult> {
+  let result = (|| {
+    let (count, interval) = click_parts(&click)?;
+    if !point.x.is_finite() || !point.y.is_finite() {
+      return Err(invalid_input("window click point must be finite"));
+    }
+    if count > 1 && Instant::now().checked_add(interval).is_none() {
+      return Err(invalid_input("window click interval exceeds the native clock range"));
+    }
+    // Every mouse path takes the desktop coordinator before native submission.
+    // Keep that order while the recipient watcher owns the submission gate;
+    // deliver_click's same-thread reservation then nests without reacquiring it.
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
+    let guard = recipient::Guard::open(window)?;
+    guard.begin_action(DisturbanceLevel::Temporary, DisturbanceLevel::None);
+    // TODO(windows-mouse-coordinates): frame/point freshness and physical-pointer
+    // ownership need a coordinate producer/consumer contract; see the mouse recipient note.
+    let mut action = deliver_click(point, button, click, modifiers).map_err(|cause| guard.stamp(cause))?;
+    action.attempts.insert(
+      0,
+      InputAttempt {
+        path: InputDeliveryPath::ForegroundSystemEvents,
+        succeeded: true,
+        message: Some("window recipient identity and foreground admitted".into()),
+      },
+    );
+    Ok(action)
+  })();
+  result.map_err(|cause| match cause {
+    cause @ DriverError::InputAction { .. } => cause,
+    cause => DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::NotDelivered,
+    },
+  })
 }
 
 fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {
@@ -333,11 +377,14 @@ impl InputApi<'_> {
 
     for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
       if let Some(guard) = &guard {
-        guard.begin_action(if matches!(&input, KeyboardInput::PasteText { .. }) {
-          DisturbanceLevel::Temporary
-        } else {
-          DisturbanceLevel::None
-        });
+        guard.begin_action(
+          DisturbanceLevel::None,
+          if matches!(&input, KeyboardInput::PasteText { .. }) {
+            DisturbanceLevel::Temporary
+          } else {
+            DisturbanceLevel::None
+          },
+        );
       }
       let failure = |cause, completed: &Vec<InputActionResult>, presses| {
         let cause = if let Some(guard) = &guard {
