@@ -512,8 +512,24 @@ Four minimized/closed recipients were refused by capture without restoration.
 The [permanent manifest](https://github.com/moeru-ai/auv/blob/05b583359fd79ab9ab526598db7f64ad917392ff/docs/ai/references/driver/evidence/2026-10-31-windows-mouse-lifecycle/acceptance.json)
 retains close state, typed receipts, binary/capture hashes, and visual-review groups.
 #449 is ready for review and unmerged. Background fallback needs typed posted-partial receipts;
-sampled/live scroll and drag still need complete motion/worker leases.
+the following #451 slice covers foreground scroll batches. Drag still needs its hold/worker lease.
 This is measured 96-DPI Win32 evidence, not complete Phase 2 or toolkit support.
+
+## Complete foreground scroll batches under review
+
+PR [#451](https://github.com/moeru-ai/auv/pull/451) retains one recipient through timed/live foreground scroll and every wait.
+Its baseline confirmed input resumed after takeover or ABA, while later failures lost typed progress.
+The common provided `WindowInput::wait_scroll` boundary now permits platform recipient checks;
+the shared executor preserves original causes and submitted/uncertain prefixes.
+The [corrected native replay](https://github.com/moeru-ai/auv/actions/runs/41206480036), source `ad0441bc`,
+passed 27 batch cases, 22 prior mouse cases, fifteen keyboard cases, and 34 selected pure regressions.
+Independent audit verified 128 receiver exits/destructions, zero physical input,
+released modifiers, desktop restoration, eight capture refusals, and ninety capture contents.
+The [permanent manifest](https://github.com/moeru-ai/auv/blob/1f112bf145ddb23583b7aac83d0fa8e8cf1d29af/docs/ai/references/driver/evidence/2026-10-31-windows-scroll-batch/acceptance.json)
+retains application state, typed receipts, binary/capture hashes, and visual-review groups.
+#451 is ready for review and unmerged. This scoped 96-DPI Win32 evidence covers
+between-sample loss, idle and final waits, cancellation, refusal, and nested retarget rejection.
+Drag, background partial delivery, frame/coordinate admission, and complete frontend parity remain open.
 
 ## Remaining acceptance
 
@@ -525,7 +541,8 @@ The independent repairs above cover queued image frames, failed activation, and 
 Input-lifetime fault evidence, exact recipient leases, and an owner-reviewed replacement admission contract remain incomplete.
 Draft #446 passed the stated Win32 keyboard route matrix and five hook lifecycle fault models.
 PR #448 passed the scoped foreground-click matrix; it does not complete other mouse capabilities or frame/coordinate admission.
-PR #449 passed single-call foreground scroll and mouse-close lifetime; whole-motion leases and background partial progress remain open.
+PR #449 passed single-call foreground scroll and mouse-close lifetime.
+PR #451 passed complete foreground timed/live scroll batches; drag and background partial progress remain open.
 Complete application workflows remain open.
 Foreign or ambiguous foreground events after admission must stop the batch without automatic reactivation.
 This does not make the final foreground check and `SendInput` atomic.
