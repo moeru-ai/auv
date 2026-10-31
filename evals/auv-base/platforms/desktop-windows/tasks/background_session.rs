@@ -50,6 +50,11 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       output: PathBuf,
     },
+    /// Complete drag interruption and owned button-release receipts.
+    WindowDrag {
+      #[arg(long)]
+      output: PathBuf,
+    },
     /// Isolated keyboard delivery through Driver, Invoke, selected Runner, and MCP.
     WindowKeyboardRoutes {
       #[arg(long)]
@@ -296,6 +301,7 @@ fn main() -> std::process::ExitCode {
     Scenario::WindowKeyboard { output } => auv_base_evals::desktop_windows::window_keyboard::run(&output),
     Scenario::WindowMouse { output } => auv_base_evals::desktop_windows::window_mouse::run(&output),
     Scenario::WindowScrollBatch { output } => auv_base_evals::desktop_windows::window_scroll_batch::run(&output),
+    Scenario::WindowDrag { output } => auv_base_evals::desktop_windows::window_drag::run(&output),
     Scenario::WindowKeyboardRoutes { output, auv } => {
       auv_base_evals::desktop_windows::foreground_commands::workflow::run_keyboard_routes(&output, &auv)
     }

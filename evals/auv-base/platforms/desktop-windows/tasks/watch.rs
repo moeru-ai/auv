@@ -90,6 +90,7 @@ const INJECTED_LOWER_INTEGRITY: u64 = 2;
 const INJECTED_KEY_UP: u64 = 4;
 const KEY_KIND_SHIFT: u32 = 3;
 const KEY_KIND_MASK: u64 = 7;
+const MOUSE_MESSAGE_SHIFT: u32 = 6;
 const KEY_KINDS: [&str; 8] = [
   "other",
   "modifier",
@@ -161,6 +162,22 @@ pub struct InjectedEvent {
   pub lower_integrity: bool,
   /// For a key: its kind (see [`key_kind`]) and whether it was released.
   pub key: Option<(&'static str, bool)>,
+  /// Native mouse message kind, without physical coordinates or key contents.
+  pub mouse_message: Option<u32>,
+}
+
+impl InjectedEvent {
+  fn from_bits(at: u64, tag: u64, bits: u64) -> Self {
+    let keyboard = bits & INJECTED_KEYBOARD != 0;
+    Self {
+      at,
+      keyboard,
+      tag,
+      lower_integrity: bits & INJECTED_LOWER_INTEGRITY != 0,
+      key: keyboard.then(|| (KEY_KINDS[(bits >> KEY_KIND_SHIFT & KEY_KIND_MASK) as usize], bits & INJECTED_KEY_UP != 0)),
+      mouse_message: (!keyboard).then_some((bits >> MOUSE_MESSAGE_SHIFT) as u32),
+    }
+  }
 }
 
 /// The foreground events and physical clicks and key presses around an operation.
@@ -256,7 +273,7 @@ fn is_discrete(message: u32) -> bool {
 }
 
 /// `key`: the virtual key and whether it was released, for a keyboard event.
-fn note_injected(key: Option<(u32, bool)>, tag: usize, lower_integrity: bool) {
+fn note_injected(key: Option<(u32, bool)>, mouse: Option<u32>, tag: usize, lower_integrity: bool) {
   let slot = INJ_NEXT.fetch_add(1, Relaxed) % RING;
   INJ_TAG[slot].store(tag as u64, Relaxed);
   let mut bits = if lower_integrity {
@@ -269,6 +286,8 @@ fn note_injected(key: Option<(u32, bool)>, tag: usize, lower_integrity: bool) {
     if up {
       bits |= INJECTED_KEY_UP;
     }
+  } else if let Some(message) = mouse {
+    bits |= u64::from(message) << MOUSE_MESSAGE_SHIFT;
   }
   INJ_BITS[slot].store(bits, Relaxed);
   INJ_TIME[slot].store(now_ms(), Relaxed);
@@ -288,7 +307,7 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
     let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
     if event.flags & LLMHF_INJECTED != 0 {
       INJECTED_MOUSE.fetch_add(1, Relaxed);
-      note_injected(None, event.dwExtraInfo, event.flags & LLMHF_LOWER_IL_INJECTED != 0);
+      note_injected(None, Some(wparam.0 as u32), event.dwExtraInfo, event.flags & LLMHF_LOWER_IL_INJECTED != 0);
     } else {
       PHYSICAL_MOUSE.fetch_add(1, Relaxed);
       note_physical(is_discrete(wparam.0 as u32));
@@ -306,7 +325,7 @@ unsafe extern "system" fn key_hook(code: i32, wparam: WPARAM, lparam: LPARAM) ->
     if event.flags.0 & LLKHF_INJECTED.0 != 0 {
       INJECTED_KEYS.fetch_add(1, Relaxed);
       let up = event.flags.0 & LLKHF_UP.0 != 0;
-      note_injected(Some((event.vkCode, up)), event.dwExtraInfo, event.flags.0 & LLKHF_LOWER_IL_INJECTED.0 != 0);
+      note_injected(Some((event.vkCode, up)), None, event.dwExtraInfo, event.flags.0 & LLKHF_LOWER_IL_INJECTED.0 != 0);
     } else {
       PHYSICAL_KEYS.fetch_add(1, Relaxed);
       note_physical(true);
@@ -465,14 +484,7 @@ impl DesktopWatch {
       let at = INJ_TIME[slot].load(Relaxed);
       if at != 0 && at >= from_ms && at <= to_ms + 1 {
         let bits = INJ_BITS[slot].load(Relaxed);
-        timeline.injected_input.push(InjectedEvent {
-          at,
-          keyboard: bits & INJECTED_KEYBOARD != 0,
-          tag: INJ_TAG[slot].load(Relaxed),
-          lower_integrity: bits & INJECTED_LOWER_INTEGRITY != 0,
-          key: (bits & INJECTED_KEYBOARD != 0)
-            .then(|| (KEY_KINDS[(bits >> KEY_KIND_SHIFT & KEY_KIND_MASK) as usize], bits & INJECTED_KEY_UP != 0)),
-        });
+        timeline.injected_input.push(InjectedEvent::from_bits(at, INJ_TAG[slot].load(Relaxed), bits));
       }
       let input = DISCRETE[slot].load(Relaxed);
       if input != 0 && input + USER_CAUSE_BEFORE_MS >= from_ms && input <= to_ms + USER_CAUSE_AFTER_MS {
@@ -508,6 +520,20 @@ impl Drop for DesktopWatch {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE;
+
+  #[test]
+  fn injected_mouse_messages_preserve_native_kind_without_keyboard_data() {
+    note_injected(None, Some(WM_MOUSEMOVE), 42, true);
+    let slot = (INJ_NEXT.load(Relaxed) - 1) % RING;
+    let event = InjectedEvent::from_bits(INJ_TIME[slot].load(Relaxed), INJ_TAG[slot].load(Relaxed), INJ_BITS[slot].load(Relaxed));
+    assert_eq!(event.mouse_message, Some(WM_MOUSEMOVE));
+    assert!(!event.keyboard);
+    assert!(event.key.is_none());
+    assert_eq!(event.tag, 42);
+    assert!(event.lower_integrity);
+    assert_ne!(event.at, 0);
+  }
 
   fn at(taken_ms: u64) -> Snapshot {
     Snapshot {

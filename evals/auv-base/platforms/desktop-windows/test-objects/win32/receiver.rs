@@ -76,14 +76,14 @@ mod native {
   use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
   use windows::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
-    ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP,
-    WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetParent,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_BOTTOM, IsIconic, MSG, MoveWindow, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SMTO_ABORTIFHUNG, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+    WM_SETFOCUS, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_VSCROLL, WNDCLASSEXW, WNDPROC, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
   };
   use windows::core::{HSTRING, PCWSTR, w};
 
@@ -185,6 +185,9 @@ mod native {
     edit_hwheel: AtomicU64,
     edit_move: AtomicU64,
     frame_down: AtomicU64,
+    frame_move: AtomicU64,
+    frame_move_at: std::sync::Mutex<Option<[i32; 2]>>,
+    frame_up: AtomicU64,
     activated: AtomicU64,
     mouse_activate: AtomicU64,
     focus_set: AtomicU64,
@@ -207,6 +210,9 @@ mod native {
     edit_hwheel: AtomicU64::new(0),
     edit_move: AtomicU64::new(0),
     frame_down: AtomicU64::new(0),
+    frame_move: AtomicU64::new(0),
+    frame_move_at: std::sync::Mutex::new(None),
+    frame_up: AtomicU64::new(0),
     activated: AtomicU64::new(0),
     mouse_activate: AtomicU64::new(0),
     focus_set: AtomicU64::new(0),
@@ -538,7 +544,7 @@ mod native {
     }
   }
 
-  fn apply_recipient_fault(child: HWND, kind: &str, target: isize) -> Value {
+  fn apply_recipient_fault(child: HWND, kind: &str, target: isize, return_from_target: bool) -> Value {
     // The caller supplied another owned fixture. No input is synthesized here: this models
     // an application changing foreground after it has processed the first key or button release.
     // SAFETY: child is the control handling this callback on its owning GUI thread.
@@ -552,7 +558,18 @@ mod native {
       let returned = match kind {
         "aba" => {
           std::thread::sleep(std::time::Duration::from_millis(50));
-          SetForegroundWindow(owner).as_bool() && GetForegroundWindow() == owner
+          if return_from_target {
+            // NOTICE: owned drag cleanup can deliver up to B while A is in
+            // this callback, so A no longer owns the last input. Have current
+            // foreground B hand back A, rather than relying on A's privilege.
+            // No fixture mutex spans this reentrant, bounded native request.
+            // Validated at `actions/runs/41212119240/job/124569099799`;
+            // retain until the drag fault uses an equivalent owned handoff.
+            SendMessageTimeoutW(target, WM_YIELD_FOREGROUND, WPARAM(owner.0 as usize), LPARAM(0), SMTO_ABORTIFHUNG, 1000, None).0 != 0
+              && GetForegroundWindow() == owner
+          } else {
+            SetForegroundWindow(owner).as_bool() && GetForegroundWindow() == owner
+          }
         }
         "minimize" => {
           let _ = ShowWindow(owner, SW_SHOWMINNOACTIVE);
@@ -566,7 +583,12 @@ mod native {
       };
       (reached, returned)
     };
-    json!({"kind": kind, "reached_target": reached_target, "returned_owner": returned_owner})
+    // NOTICE: cross-queue foreground activation finishes asynchronously. The
+    // owned recipient is still inside this callback, so finalize the handback
+    // only from its later readback after the GUI queue resumes. See
+    // `https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745`.
+    json!({"kind": kind, "reached_target": reached_target, "returned_owner": returned_owner,
+      "return_pending": return_from_target && kind == "aba" && reached_target && !returned_owner})
   }
 
   extern "system" fn typing_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -586,7 +608,7 @@ mod native {
     if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
       let fault = KEYBOARD_FAULT.lock().ok().and_then(|mut fault| fault.take());
       if let Some((kind, target)) = fault {
-        let outcome = apply_recipient_fault(hwnd, &kind, target);
+        let outcome = apply_recipient_fault(hwnd, &kind, target, false);
         if let Ok(mut receipt) = KEYBOARD_FAULT_RECEIPT.lock() {
           *receipt = Some(outcome);
         }
@@ -710,8 +732,16 @@ mod native {
         None
       }
     });
-    if let Some((kind, target, _)) = fault {
-      let outcome = apply_recipient_fault(child, &kind, target);
+    if let Some((kind, target, trigger)) = fault {
+      // Retain the last application-processed position before foreground loss.
+      // Release PAD before the potentially reentrant native fault calls.
+      let pad = PAD.lock().ok().and_then(|pad| pad.clone());
+      let mut cursor = POINT::default();
+      // SAFETY: a read-only desktop query with a writable local POINT.
+      let cursor = unsafe { GetCursorPos(&mut cursor) }.ok().map(|_| [cursor.x, cursor.y]);
+      let mut outcome = apply_recipient_fault(child, &kind, target, trigger == WM_MOUSEMOVE);
+      outcome["pad_at_fault"] = json!(pad);
+      outcome["cursor_at_fault"] = json!(cursor);
       if let Ok(mut receipt) = MOUSE_FAULT_RECEIPT.lock() {
         *receipt = Some(outcome);
       }
@@ -882,7 +912,22 @@ mod native {
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
       WM_MOUSEMOVE | WM_LBUTTONUP if FOREGROUND_INPUT.load(Relaxed) => {
+        if message == WM_LBUTTONUP {
+          count(&COUNTERS.frame_up);
+        } else if wparam.0 & MK_LBUTTON != 0 {
+          count(&COUNTERS.frame_move);
+          let point = screen_point(hwnd, lparam);
+          *COUNTERS.frame_move_at.lock().unwrap() = Some([point.x, point.y]);
+        }
         pad_message(hwnd, message, wparam, lparam);
+        if message == WM_MOUSEMOVE && wparam.0 & MK_LBUTTON != 0 {
+          // Fault only after a real held move reached the pad. Hover and
+          // controller requests cannot trigger the drag interruption.
+          let dragging = PAD.lock().ok().is_some_and(|pad| pad.as_ref().is_some_and(|pad| pad["moves"].as_u64().unwrap_or(0) > 0));
+          if dragging {
+            apply_armed_mouse_fault(handle(&BUTTON), message);
+          }
+        }
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
       }
       WM_REQUEST => {
@@ -1033,6 +1078,9 @@ mod native {
         "edit_hwheel": c.edit_hwheel.load(Relaxed),
         "edit_move": c.edit_move.load(Relaxed),
         "frame_down": c.frame_down.load(Relaxed),
+        "frame_move": c.frame_move.load(Relaxed),
+        "frame_move_at": c.frame_move_at.lock().ok().and_then(|point| *point),
+        "frame_up": c.frame_up.load(Relaxed),
       },
       "activated": c.activated.load(Relaxed),
       "mouse_activate": c.mouse_activate.load(Relaxed),
@@ -1146,7 +1194,7 @@ mod native {
             // A batch task calls this only after the application acknowledges
             // a completed sample. It can expose loss between sample admissions.
             *MOUSE_FAULT.lock().unwrap() = None;
-            let receipt = apply_recipient_fault(handle(&BUTTON), kind, target);
+            let receipt = apply_recipient_fault(handle(&BUTTON), kind, target, false);
             *MOUSE_FAULT_RECEIPT.lock().unwrap() = Some(receipt.clone());
             return json!({"ok": true, "cmd": command, "applied": true, "receipt": receipt});
           }
@@ -1154,7 +1202,8 @@ mod native {
             let trigger = match request["trigger"].as_str() {
               None | Some("click") => WM_LBUTTONUP,
               Some("wheel") => WM_MOUSEWHEEL,
-              _ => return json!({"ok": false, "error": "mouse fault trigger must be click or wheel"}),
+              Some("drag") => WM_MOUSEMOVE,
+              _ => return json!({"ok": false, "error": "mouse fault trigger must be click, wheel or drag"}),
             };
             *MOUSE_FAULT.lock().unwrap() = Some((kind.into(), target, trigger));
             *MOUSE_FAULT_RECEIPT.lock().unwrap() = None;
@@ -1168,7 +1217,21 @@ mod native {
         }
       }
       Some("keyboard_fault_receipt") => json!({"receipt": KEYBOARD_FAULT_RECEIPT.lock().ok().and_then(|value| value.clone())}),
-      Some("mouse_fault_receipt") => json!({"receipt": MOUSE_FAULT_RECEIPT.lock().ok().and_then(|value| value.clone())}),
+      Some("mouse_fault_receipt") => {
+        // The query runs on the owning GUI thread after its fault callback.
+        // SAFETY: read-only foreground query; no synthetic input or retry.
+        let returned = unsafe { GetForegroundWindow() } == hwnd;
+        let mut receipt = MOUSE_FAULT_RECEIPT.lock().unwrap();
+        if let Some(value) = receipt.as_mut()
+          && value["return_pending"] == true
+          && returned
+        {
+          value["returned_owner"] = json!(true);
+          value["return_pending"] = json!(false);
+          value["return_confirmed_by_gui_readback"] = json!(true);
+        }
+        json!({"receipt": *receipt})
+      }
       Some("reject_typing_focus") if FOREGROUND_INPUT.load(Relaxed) => {
         if let Some(enabled) = request["enabled"].as_bool() {
           REJECT_TYPING_FOCUS.store(enabled, Relaxed);
