@@ -1,7 +1,7 @@
 # Windows application workflow acceptance
 
-Status: controls inventory accepted; Edge and ISE have scoped edit/save acceptance.
-Qt cleanup and recording corrections, plus visible VS Code readiness, await replay.
+Status: all four controlled apps have scoped local-Invoke edit/save acceptance.
+Full application workflows, scaled-DPI behavior, and cross-frontend parity remain open.
 
 The owner goal names Edge, Electron, Qt, and WPF application validation.
 The prepared cohort is Edge, VS Code 1.144.0, NotepadNext 0.15 with Qt 6.5.3,
@@ -158,4 +158,23 @@ Three Edge and three ISE captures from earlier acceptance, plus the new VS Code/
 The last replay did not exercise the optional VS Code stale-focus reacquisition branch; its eligibility has pure coverage only.
 The local-output regression failed before the fix (zero artifacts instead of one) and passed after it.
 The complete Invoke unit suite passed 167 tests with one ignored test; six evaluation discovery/readiness/reacquisition tests passed.
-Native replay of the recording, pointer teardown, modifier readback, and visible-readiness changes is pending.
+The [corrected four-app replay](https://github.com/moeru-ai/auv/actions/runs/41184343474), source
+`2cdffd1e5b4a0d7d02357c8f75bf4b1b9cac60e1`, passed all four independent Windows tasks.
+Its [acceptance manifest](evidence/2026-10-31-windows-application-editor/acceptance.json)
+retains program metadata, saved-file hashes, capture hashes, and archive digests.
+
+| Application | Saved bytes | Actual command completions | Verified input-result bodies | Reviewed captures |
+|---|---:|---:|---:|---:|
+| Edge | 43 | 5 | 4 | 3 |
+| VS Code | 45 | 6 | 5 | 4 |
+| NotepadNext | 50 | 5 | 4 | 3 |
+| PowerShell ISE | 53 | 5 | 4 | 3 |
+
+Independent readback verified all four saved files, 21 actual command completions,
+and 17 input-result bodies against their stored hashes and byte lengths.
+All 13 captures were reviewed. VS Code's extra command dismissed onboarding through AUV;
+its readiness and final captures show the exposed editor and expected saved text.
+Qt's OCR click now retains its typed delivery artifact. Its separately recorded controller move restored the pointer.
+Every case verified foreground/pointer restoration, released modifiers, zero physical input, and complete owned-job cleanup.
+The optional stale-focus reacquisition branch was not exercised in this successful run.
+These receipts accept this edit/save slice only; every summary still records `workflow_accepted=false`.

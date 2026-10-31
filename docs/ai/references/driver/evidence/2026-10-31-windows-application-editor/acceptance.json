@@ -1,0 +1,280 @@
+{
+  "evidence_level": "isolated native controlled application edit/save",
+  "source_commit": "2cdffd1e5b4a0d7d02357c8f75bf4b1b9cac60e1",
+  "workflow_commit": "fc2eb85523abf31edeffe826d6ce5a0f569b22cf",
+  "workflow_run": "https://github.com/moeru-ai/auv/actions/runs/41184343474",
+  "route": "local Invoke CLI",
+  "cases": [
+    {
+      "application": "edge",
+      "program": {
+        "file_version": "155.0.4283.62",
+        "product_version": "155.0.4283.62",
+        "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "sha256": "c2451a012ff88e82449834de5b526ebb42b5a3fc25958d795910d2b172c975b6",
+        "present": true
+      },
+      "strategy": "semantic_focus",
+      "saved_file": {
+        "name": "auv-editor-1793435415-4940.txt",
+        "byte_length": 43,
+        "sha256": "10f5fa157f8ea63744aec869910124291ebd061ba6f57195fa0e10a3fa7f9012",
+        "expected_text": "# AUV saved edge auv-editor-1793435415-4940",
+        "independently_verified": true
+      },
+      "actual_command_completions": 5,
+      "input_result_bodies_verified": 4,
+      "captures": [
+        {
+          "path": "window.png",
+          "sha256": "943973788521a8682714ec36cc006a8beb237b2a35f00e6f7f551273f568a26a",
+          "byte_length": 32650,
+          "visually_reviewed": true
+        },
+        {
+          "path": "focused/window.png",
+          "sha256": "63480e00b0aeae62e254fe04c6e5f6ea6f177f3a7c6994b251620944bdf589f5",
+          "byte_length": 33600,
+          "visually_reviewed": true
+        },
+        {
+          "path": "after/window.png",
+          "sha256": "faf122d1d9b047a54a39de3ce24ef46cc8fb082059706864e7b0bfb17cad40be",
+          "byte_length": 63821,
+          "visually_reviewed": true
+        }
+      ],
+      "foreground_restored": true,
+      "pointer_restored": true,
+      "modifiers_released": true,
+      "physical_keys": 0,
+      "physical_mouse": 0,
+      "cleanup": {
+        "active_processes": 0,
+        "roots_exited": true,
+        "terminate_error": null
+      },
+      "controller_pointer_restoration_used": false,
+      "focus_reacquired": false,
+      "edit_save_accepted": true,
+      "workflow_accepted": false
+    },
+    {
+      "application": "vscode",
+      "program": {
+        "id": "vscode",
+        "version": "1.144.0",
+        "toolkit": "Electron",
+        "url": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/2c33b50b16c472efe58357d1d2a8a5414bc23fbf/VSCode-win32-x64-1.144.0.zip",
+        "archive_sha256": "055722269e3c9531af0c50a8b757c14e8062a0d02fc973b038863d9732c567ea",
+        "digest_verified": true,
+        "executable": "D:\\a\\_temp\\auv-portable-apps\\vscode\\Code.exe",
+        "file_version": "1.144.0",
+        "executable_sha256": "9f33ede68f3317402280fa997bc8963f93e67f2905e416d6bb092c03d60a37eb",
+        "bundled_qt_version": null,
+        "launched": false
+      },
+      "strategy": "semantic_focus",
+      "saved_file": {
+        "name": "auv-editor-1793435442-9552.txt",
+        "byte_length": 45,
+        "sha256": "b0515606018f22ff45012a189730e5a2e47a79607e14ab216db76007b1673055",
+        "expected_text": "# AUV saved vscode auv-editor-1793435442-9552",
+        "independently_verified": true
+      },
+      "actual_command_completions": 6,
+      "input_result_bodies_verified": 5,
+      "captures": [
+        {
+          "path": "window.png",
+          "sha256": "3a63d7c906bcbbc4aa25df9a558fe00d04d6511259f3060657e37bb08b3eb186",
+          "byte_length": 124389,
+          "visually_reviewed": true
+        },
+        {
+          "path": "ready/window.png",
+          "sha256": "5212c4567f5c74a1667d1c2363f4cc72ae0465c81f3ab2dca9b421bba7439f07",
+          "byte_length": 90945,
+          "visually_reviewed": true
+        },
+        {
+          "path": "focused/window.png",
+          "sha256": "0ff1cbee8a0b2619fccb02a56a92f39f9ba69d6d8b970146867bf722e6d8ee56",
+          "byte_length": 90059,
+          "visually_reviewed": true
+        },
+        {
+          "path": "after/window.png",
+          "sha256": "261c8d229c0e0c41540ceeba2bdcd06a0e12a72157c52158b149121c13232b66",
+          "byte_length": 90252,
+          "visually_reviewed": true
+        }
+      ],
+      "foreground_restored": true,
+      "pointer_restored": true,
+      "modifiers_released": true,
+      "physical_keys": 0,
+      "physical_mouse": 0,
+      "cleanup": {
+        "active_processes": 0,
+        "roots_exited": true,
+        "terminate_error": null
+      },
+      "controller_pointer_restoration_used": false,
+      "focus_reacquired": false,
+      "edit_save_accepted": true,
+      "workflow_accepted": false
+    },
+    {
+      "application": "notepadnext",
+      "program": {
+        "id": "notepadnext",
+        "version": "0.15",
+        "toolkit": "Qt",
+        "url": "https://github.com/dail8859/NotepadNext/releases/download/v0.15/NotepadNext-v0.15-win64.zip",
+        "archive_sha256": "148aa88d706bb67a7c1f3727953ed686204be52876336971634b0223e6ed2148",
+        "digest_verified": true,
+        "executable": "D:\\a\\_temp\\auv-portable-apps\\notepadnext\\NotepadNext.exe",
+        "file_version": "0.15",
+        "executable_sha256": "7a835158d78780751805bca22239eef6dbb3022febf9126325f3cc229cf4ec1f",
+        "bundled_qt_version": "6.5.3.0",
+        "launched": false
+      },
+      "strategy": "planned_ocr_click",
+      "saved_file": {
+        "name": "auv-editor-1793435427-7500.txt",
+        "byte_length": 50,
+        "sha256": "7eb50c16095089f7ae47a4a51c358931503e01cb25ba6ea92f369bd21a29bdaa",
+        "expected_text": "# AUV saved notepadnext auv-editor-1793435427-7500",
+        "independently_verified": true
+      },
+      "actual_command_completions": 5,
+      "input_result_bodies_verified": 4,
+      "captures": [
+        {
+          "path": "window.png",
+          "sha256": "569394f8caaf2401e8b887b760c4a337357f0eea4047b2b7ccad1423c835daeb",
+          "byte_length": 54389,
+          "visually_reviewed": true
+        },
+        {
+          "path": "focused/window.png",
+          "sha256": "e7aa363602e975d4db144fb61652fe37ad87471f5ab02253f2617570342ea67f",
+          "byte_length": 54603,
+          "visually_reviewed": true
+        },
+        {
+          "path": "after/window.png",
+          "sha256": "f649dd14669f629ce12742a1f9adf8a974b7f5d9a920ebae87d69b4ff7c92648",
+          "byte_length": 54649,
+          "visually_reviewed": true
+        }
+      ],
+      "foreground_restored": true,
+      "pointer_restored": true,
+      "modifiers_released": true,
+      "physical_keys": 0,
+      "physical_mouse": 0,
+      "cleanup": {
+        "active_processes": 0,
+        "roots_exited": true,
+        "terminate_error": null
+      },
+      "controller_pointer_restoration_used": true,
+      "focus_reacquired": false,
+      "edit_save_accepted": true,
+      "workflow_accepted": false
+    },
+    {
+      "application": "powershell-ise",
+      "program": {
+        "file_version": "10.0.26100.33158 (WinBuild.160101.0800)",
+        "present": true,
+        "path": "C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe",
+        "sha256": "b77f34d426eb778b32c4408f565d3e74ad0e29d276462661ccf652d06e959648",
+        "product_version": "10.0.26100.33158"
+      },
+      "strategy": "semantic_focus",
+      "saved_file": {
+        "name": "auv-editor-1793435422-2116.ps1",
+        "byte_length": 53,
+        "sha256": "fe087362f8867f7ad9f243d068baf06eac37e741d56793fb9cfbcc97589501f0",
+        "expected_text": "# AUV saved powershell-ise auv-editor-1793435422-2116",
+        "independently_verified": true
+      },
+      "actual_command_completions": 5,
+      "input_result_bodies_verified": 4,
+      "captures": [
+        {
+          "path": "window.png",
+          "sha256": "c7751ba85903ec07a562c4ffd390ee1d03cef3abb348db49f674faf534fa651c",
+          "byte_length": 51212,
+          "visually_reviewed": true
+        },
+        {
+          "path": "focused/window.png",
+          "sha256": "c7751ba85903ec07a562c4ffd390ee1d03cef3abb348db49f674faf534fa651c",
+          "byte_length": 51212,
+          "visually_reviewed": true
+        },
+        {
+          "path": "after/window.png",
+          "sha256": "722e73b89634604f3429154c3998a5dd6c606559242306e8b1c764915847c5f1",
+          "byte_length": 51548,
+          "visually_reviewed": true
+        }
+      ],
+      "foreground_restored": true,
+      "pointer_restored": true,
+      "modifiers_released": true,
+      "physical_keys": 0,
+      "physical_mouse": 0,
+      "cleanup": {
+        "active_processes": 0,
+        "roots_exited": true,
+        "terminate_error": null
+      },
+      "controller_pointer_restoration_used": false,
+      "focus_reacquired": false,
+      "edit_save_accepted": true,
+      "workflow_accepted": false
+    }
+  ],
+  "remaining_gates": [
+    "scrolling and owned file dialogs",
+    "real application target loss",
+    "125% and 150% display scaling",
+    "Driver / Invoke / selected Runner / MCP workflow parity",
+    "app-specific skill"
+  ],
+  "stale_focus_reacquisition_native_branch_exercised": false,
+  "archive_artifacts": [
+    {
+      "id": 13036876231,
+      "name": "windows-app-editor-powershell-ise-2cdffd1e",
+      "digest": "sha256:ca78ca6a67040df61cf4bfe5887b1e838bf493121ab7d7b6fcf401a1fd0c2558",
+      "size_in_bytes": 159503
+    },
+    {
+      "id": 13036552543,
+      "name": "windows-app-editor-notepadnext-2cdffd1e",
+      "digest": "sha256:ec6994772f8b1591dcf3da0f115c8cb391b6b4a446023d3b68d984a075bd960e",
+      "size_in_bytes": 163472
+    },
+    {
+      "id": 13036102015,
+      "name": "windows-app-editor-vscode-2cdffd1e",
+      "digest": "sha256:507a2ce68dc007fe390f746febdbacecf50d2a29638641ceff49c0725d5485ff",
+      "size_in_bytes": 428982
+    },
+    {
+      "id": 13035912377,
+      "name": "windows-app-editor-edge-2cdffd1e",
+      "digest": "sha256:2ea24f2afe7c8a0744134cfd5aa339dbeb01e4647da35612eed2470b7fc70c36",
+      "size_in_bytes": 143422
+    }
+  ],
+  "actual_command_completions": 21,
+  "input_result_bodies_verified": 17,
+  "captures_visually_reviewed": 13
+}
