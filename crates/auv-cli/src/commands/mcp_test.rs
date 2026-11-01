@@ -1060,10 +1060,14 @@ fn op_run_server() -> (McpServer, Arc<FakeOperationExecutor>) {
 }
 
 fn op_run_request(operation: &str, mode: ExecutionModeArg) -> OpRunToolRequest {
+  let fixture = match operation {
+    "example.prepare_fast" => "example-prepare-fast.json",
+    _ => "example-prepare.json",
+  };
   OpRunToolRequest {
     operation: operation.to_string(),
     mode,
-    file: None,
+    file: crate::commands::op::tests::example_operation_file(fixture),
   }
 }
 
@@ -1086,7 +1090,7 @@ fn op_run_tool_schema_requires_an_explicit_mode_without_default() {
   let required = schema["required"].as_array().expect("required list").iter().filter_map(|name| name.as_str()).collect::<Vec<_>>();
   assert!(required.contains(&"operation"));
   assert!(required.contains(&"mode"), "mode must be required in the schema: {schema}");
-  assert!(!required.contains(&"file"));
+  assert!(required.contains(&"file"), "file must be required: auv-cli ships no built-in operations: {schema}");
   assert_eq!(schema["additionalProperties"], false);
 
   // rmcp emits draft-07, so the enum lives behind a `$ref` into `definitions`.
@@ -1101,7 +1105,7 @@ fn op_run_tool_schema_requires_an_explicit_mode_without_default() {
 async fn execute_op_run_fast_succeeds_without_confirmation() {
   let (server, fake) = op_run_server();
 
-  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback_fast", ExecutionModeArg::Fast)).await.unwrap();
+  let result = server.execute_op_run(op_run_request("example.prepare_fast", ExecutionModeArg::Fast)).await.unwrap();
 
   assert_eq!(result.is_error, Some(false));
   let output = result.structured_content.expect("structured op_run output");
@@ -1116,7 +1120,7 @@ async fn execute_op_run_fast_succeeds_without_confirmation() {
 async fn execute_op_run_verified_is_confirmed_when_the_gate_passes() {
   let (server, _fake) = op_run_server();
 
-  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Verified)).await.unwrap();
+  let result = server.execute_op_run(op_run_request("example.prepare", ExecutionModeArg::Verified)).await.unwrap();
 
   assert_eq!(result.is_error, Some(false));
   let output = result.structured_content.expect("structured op_run output");
@@ -1131,7 +1135,7 @@ async fn execute_op_run_verified_gate_failure_is_an_unconfirmed_tool_error() {
   let (server, fake) = op_run_server();
   fake.set_verified_should_pass(false);
 
-  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Verified)).await.unwrap();
+  let result = server.execute_op_run(op_run_request("example.prepare", ExecutionModeArg::Verified)).await.unwrap();
 
   assert_eq!(result.is_error, Some(true));
   let output = result.structured_content.expect("structured op_run output");
@@ -1144,8 +1148,8 @@ async fn execute_op_run_verified_gate_failure_is_an_unconfirmed_tool_error() {
 async fn execute_op_run_mode_mismatch_is_rejected_with_zero_driver_calls() {
   let (server, fake) = op_run_server();
 
-  // qqmusic.prepare_playback is Verified-only, so requesting Fast must be refused before the executor runs.
-  let result = server.execute_op_run(op_run_request("qqmusic.prepare_playback", ExecutionModeArg::Fast)).await.unwrap();
+  // example.prepare is Verified-only, so requesting Fast must be refused before the executor runs.
+  let result = server.execute_op_run(op_run_request("example.prepare", ExecutionModeArg::Fast)).await.unwrap();
 
   assert_eq!(result.is_error, Some(true));
   let output = result.structured_content.expect("structured op_run output");
@@ -1159,8 +1163,8 @@ async fn execute_op_run_mode_mismatch_is_rejected_with_zero_driver_calls() {
 async fn execute_op_run_unreadable_custom_file_is_invalid_params() {
   let (server, fake) = op_run_server();
   let request = OpRunToolRequest {
-    file: Some(std::path::PathBuf::from("does-not-exist.operation.json")),
-    ..op_run_request("qqmusic.prepare_playback_fast", ExecutionModeArg::Fast)
+    file: std::path::PathBuf::from("does-not-exist.operation.json"),
+    ..op_run_request("example.prepare_fast", ExecutionModeArg::Fast)
   };
 
   let error = server.execute_op_run(request).await.expect_err("an unreadable file must fail the call");
@@ -1172,7 +1176,7 @@ async fn execute_op_run_unreadable_custom_file_is_invalid_params() {
 // Drives the request through the real MCP transport and tool router, so argument deserialization
 // is the code under test rather than a hand-built `OpRunToolRequest`.
 #[tokio::test]
-async fn op_run_over_mcp_rejects_a_missing_or_invalid_mode_before_scheduling() {
+async fn op_run_over_mcp_rejects_a_missing_mode_or_file_before_scheduling() {
   let (server, fake) = op_run_server();
   let (server_transport, client_transport) = tokio::io::duplex(16_384);
   let server_handle = tokio::spawn(async move {
@@ -1185,11 +1189,13 @@ async fn op_run_over_mcp_rejects_a_missing_or_invalid_mode_before_scheduling() {
   let listed = client.list_all_tools().await.unwrap();
   assert!(listed.iter().any(|tool| tool.name == "op_run"), "tools/list must include op_run");
 
+  let file = crate::commands::op::tests::example_operation_file("example-prepare-fast.json");
   let bad_arguments = [
-    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast" }),
-    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": null }),
-    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "turbo" }),
-    serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "fast", "unexpected": true }),
+    serde_json::json!({ "operation": "example.prepare_fast", "file": file }),
+    serde_json::json!({ "operation": "example.prepare_fast", "mode": null, "file": file }),
+    serde_json::json!({ "operation": "example.prepare_fast", "mode": "turbo", "file": file }),
+    serde_json::json!({ "operation": "example.prepare_fast", "mode": "fast", "file": file, "unexpected": true }),
+    serde_json::json!({ "operation": "example.prepare_fast", "mode": "fast" }),
   ];
   for arguments in bad_arguments {
     let outcome = client
@@ -1210,7 +1216,7 @@ async fn op_run_over_mcp_rejects_a_missing_or_invalid_mode_before_scheduling() {
   let accepted = client
     .call_tool(CallToolRequestParam {
       name: "op_run".into(),
-      arguments: serde_json::json!({ "operation": "qqmusic.prepare_playback_fast", "mode": "fast" }).as_object().cloned(),
+      arguments: serde_json::json!({ "operation": "example.prepare_fast", "mode": "fast", "file": file }).as_object().cloned(),
     })
     .await
     .unwrap();
