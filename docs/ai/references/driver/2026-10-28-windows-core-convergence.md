@@ -286,6 +286,22 @@ The source's [Check run](https://github.com/moeru-ai/auv/actions/runs/4069968774
 and [JavaScript run](https://github.com/moeru-ai/auv/actions/runs/40699687353) passed.
 Post-delivery refusal remains unit and transport evidence until a separate native fault scenario validates it.
 
+## Phase 2: native focus refusal scenario (pending)
+
+Classification: test-only, scoped to the owner's failure-recovery acceptance.
+The existing semantic workflow now arms its receiver to redirect text-box focus to its own button.
+The receiver counts received and redirected focus on its GUI thread and reports its final `GetFocus` state.
+After the single focus call fails, the evaluator requires an unverified `submitted` receipt with a `backend` failure and one successful AxFocus attempt.
+It also requires unchanged text, keys, clicks, pointer position, and injected mouse/key counts.
+An explicit zero-delivery receipt or uncertain progress fails this check because the receiver has independently confirmed a focus side effect.
+The scenario adds no fallback, input retry, Driver branch, RPC, or command flag.
+On failure paths, disarming is always attempted, backed by receiver process lifecycle teardown (close / drop) as ultimate cleanup.
+
+The receiver and evaluation binaries pass all-target compilation.
+All no-desktop workflow regression tests pass; formatting and whitespace checks pass.
+Native acceptance is pending in an isolated Windows session.
+The scenario does not reproduce a blocked UIA provider or an in-flight cancellation.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.

@@ -88,7 +88,11 @@ that text again. Its records hold only whether the clipboard came back, never wh
 It first requires a missing query to return `not_found` with zero input.
 Then the receiver's own UI thread must confirm focus on its text field.
 The driver must also report focus readback, with no pointer movement or injected mouse or keyboard input during that step.
-The rest of the record-entry workflow and its independent checks remain the same.
+After the record-entry workflow, the receiver deliberately redirects text-box focus to its own button.
+The failed operation must retain one unverified `submitted` AxFocus attempt with a `backend` failure.
+The receiver must confirm that it received and redirected focus; its text, keys, and clicks must remain unchanged.
+A `not_delivered` receipt or verified success fails this negative control.
+No pointer or keyboard fallback is used.
 This option conflicts with `--observe-only` and needs an isolated interactive desktop for functional acceptance.
 
 `--routes rust,invoke,runner` is the default.
