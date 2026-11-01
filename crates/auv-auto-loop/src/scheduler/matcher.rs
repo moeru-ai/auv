@@ -260,6 +260,147 @@ impl<'a> FastLoopScheduler<'a> {
       message: "All candidates intercepted by strict preconditions; escalated to VLM.".to_string(),
     }
   }
+
+  /// Schedules an operation for an explicit exact operation name request.
+  ///
+  /// Bypasses canonical key synthesis and embedding-based fallback:
+  /// - Queries `catalog.is_isolated(operation_name)` fail-closed (returns `EscalateToVlm`).
+  /// - Queries `catalog.get_active(operation_name)` directly.
+  /// - If not found in catalog, fails closed with `SchedulerMissEscalateVlm` (zero embedding calls).
+  /// - Enforces mandatory `requested_mode` declaration: if `None`, rejects with `RejectModeUndeclared`.
+  /// - Enforces execution mode compatibility (returns `ModeMismatchEscalateVlm`).
+  /// - Evaluates strict preconditions (returns `ExactKeyMatch` if passed, `PreconditionMismatch` if failed).
+  pub fn schedule_exact(&self, operation_name: &str, request: &TaskRequest, catalog: &OperationCatalog) -> SchedulingOutcome {
+    let task_id = &request.task_name;
+
+    // Check if operation is explicitly isolated
+    if catalog.is_isolated(operation_name) {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Escalated,
+        ReasonCode::EscalateToVlm,
+        task_id,
+        Some(operation_name.to_string()),
+        format!("Operation '{}' is isolated. Bypassing fast loop and routing to VLM slow loop.", operation_name),
+        serde_json::json!({ "isolated": true }),
+      );
+
+      return SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::EscalateToVlm,
+        message: format!("Operation '{}' is isolated; routed directly to VLM.", operation_name),
+      };
+    }
+
+    // Exact name lookup in active catalog
+    let Some(op) = catalog.get_active(operation_name) else {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Escalated,
+        ReasonCode::SchedulerMissEscalateVlm,
+        task_id,
+        Some(operation_name.to_string()),
+        format!("Operation '{}' not found in active catalog; escalating to VLM slow loop.", operation_name),
+        serde_json::json!({ "embedding_called": false, "exact_lookup_miss": true }),
+      );
+
+      return SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::SchedulerMissEscalateVlm,
+        message: format!("Operation '{}' not found in active catalog.", operation_name),
+      };
+    };
+
+    // Explicit execution requires a declared execution mode (fail-closed)
+    let Some(req_mode) = request.requested_mode else {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Intercepted,
+        ReasonCode::RejectModeUndeclared,
+        task_id,
+        Some(op.name.clone()),
+        format!("Operation '{}' requested without explicit execution_mode (fail-closed).", operation_name),
+        serde_json::json!({ "mode_undeclared": true }),
+      );
+
+      return SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::RejectModeUndeclared,
+        message: format!("Execution mode must be explicitly declared for exact operation '{}' (fail-closed)", operation_name),
+      };
+    };
+
+    // Check execution mode compatibility
+    if req_mode != op.execution_mode {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Escalated,
+        ReasonCode::ModeMismatchEscalateVlm,
+        task_id,
+        Some(op.name.clone()),
+        format!(
+          "Mode mismatch for '{}': requested {:?} mode, but operation requires {:?} mode. Rejecting incompatible execution and escalating to VLM (zero side-effects).",
+          operation_name, req_mode, op.execution_mode
+        ),
+        serde_json::json!({
+          "op_mode": op.execution_mode.as_str(),
+          "requested_mode": req_mode.as_str(),
+          "zero_side_effects": true
+        }),
+      );
+
+      return SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::ModeMismatchEscalateVlm,
+        message: format!(
+          "Mode mismatch: operation '{}' requires {:?} mode, cannot satisfy requested {:?} mode (zero side effects)",
+          operation_name, op.execution_mode, req_mode
+        ),
+      };
+    }
+
+    // Evaluate strict preconditions
+    let pre_check = evaluate_preconditions(&op.preconditions, &request.current_context);
+    if pre_check.passed {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::ExactHit,
+        ReasonCode::ExactKeyMatch,
+        task_id,
+        Some(op.name.clone()),
+        format!("Exact key match hit for '{}' with 0 embedding calls. Preconditions verified.", operation_name),
+        serde_json::json!({ "embedding_called": false, "key": operation_name }),
+      );
+
+      SchedulingOutcome {
+        selected_operation: Some(op.clone()),
+        embedding_called: false,
+        reason_code: ReasonCode::ExactKeyMatch,
+        message: format!("Exact key match hit for '{}'", operation_name),
+      }
+    } else {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Intercepted,
+        ReasonCode::PreconditionMismatch,
+        task_id,
+        Some(op.name.clone()),
+        format!("Exact key candidate '{}' failed precondition: {}", op.name, pre_check.failure_reason),
+        serde_json::json!({ "failure": pre_check.failure_reason }),
+      );
+
+      SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::PreconditionMismatch,
+        message: format!("Exact operation '{}' failed precondition: {}", op.name, pre_check.failure_reason),
+      }
+    }
+  }
 }
 
 pub fn format_canonical_key(app_name: &str, task_name: &str) -> String {
@@ -362,5 +503,156 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     0.0
   } else {
     dot / (norm_a * norm_b)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::{
+    CompilationMetadata, ManualReviewItem, OPERATION_SCHEMA_VERSION, OperationStepDef, TargetMetadata, VerificationGateDef,
+  };
+
+  fn test_op(name: &str, mode: ExecutionMode) -> OperationDef {
+    OperationDef {
+      schema_version: OPERATION_SCHEMA_VERSION.to_string(),
+      name: name.to_string(),
+      description: "Test operation".to_string(),
+      execution_mode: mode,
+      compilation_metadata: CompilationMetadata {
+        compiler: "test".to_string(),
+        source_record: "none".to_string(),
+        date: "2026-11-01".to_string(),
+        crux_goal: "test".to_string(),
+      },
+      target: TargetMetadata {
+        app_name: "Example.exe".to_string(),
+        backend: "test".to_string(),
+      },
+      preconditions: vec![],
+      parameters: vec![],
+      steps: vec![OperationStepDef {
+        id: "step_1".to_string(),
+        name: "Noop".to_string(),
+        description: "Noop".to_string(),
+        action: serde_json::json!({ "type": "noop" }),
+        verification_gate: VerificationGateDef::CustomAssertion {
+          expression: "true".to_string(),
+          timeout_ms: 100,
+          escalate_on_mismatch: "none".to_string(),
+        },
+        is_unverified: false,
+      }],
+      tags: vec![],
+    }
+  }
+
+  #[test]
+  fn test_schedule_exact_success_exact_hit() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    let op = test_op("custom.prepare", ExecutionMode::Verified);
+    catalog.register_active(op).unwrap();
+
+    let req = TaskRequest {
+      app_name: "Example.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_some());
+    assert_eq!(outcome.selected_operation.unwrap().name, "custom.prepare");
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::ExactKeyMatch);
+  }
+
+  #[test]
+  fn test_schedule_exact_isolated_operation_escalates_to_vlm() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    let op = test_op("custom.prepare", ExecutionMode::Verified);
+    catalog.register_active(op).unwrap();
+
+    // Manually isolate it
+    catalog.isolate(
+      "custom.prepare",
+      ManualReviewItem {
+        id: "item_1".to_string(),
+        task_name: "custom.prepare".to_string(),
+        reason_code: ReasonCode::AutoIsolatedConsecutiveFailures,
+        reason_description: "Failed twice".to_string(),
+        execution_mode: Some(ExecutionMode::Verified),
+        source_trajectory: None,
+        isolated_operation: None,
+        created_at: "2026-11-01".to_string(),
+      },
+    );
+
+    let req = TaskRequest {
+      app_name: "Example.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_none());
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::EscalateToVlm);
+  }
+
+  #[test]
+  fn test_schedule_exact_missing_requested_mode_fails_closed() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    let op = test_op("custom.prepare", ExecutionMode::Verified);
+    catalog.register_active(op).unwrap();
+
+    let req = TaskRequest {
+      app_name: "Example.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: None, // Missing!
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_none());
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::RejectModeUndeclared);
+  }
+
+  #[test]
+  fn test_schedule_exact_not_found_fails_closed_zero_embedding_fallback() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    // Catalog has "other.op", but caller requests "custom.prepare"
+    let op = test_op("other.op", ExecutionMode::Verified);
+    catalog.register_active(op).unwrap();
+
+    let req = TaskRequest {
+      app_name: "Example.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_none());
+    assert!(!outcome.embedding_called, "Exact lookup must NEVER fall back to embedding");
+    assert_eq!(outcome.reason_code, ReasonCode::SchedulerMissEscalateVlm);
   }
 }

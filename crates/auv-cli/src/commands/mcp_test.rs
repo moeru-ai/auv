@@ -1173,6 +1173,22 @@ async fn execute_op_run_unreadable_custom_file_is_invalid_params() {
   assert_eq!(fake.calls_count(), 0);
 }
 
+#[tokio::test]
+async fn execute_op_run_operation_name_mismatch_is_invalid_params() {
+  let (server, fake) = op_run_server();
+  let request = OpRunToolRequest {
+    operation: "unrelated.task".to_string(),
+    ..op_run_request("example.prepare_fast", ExecutionModeArg::Fast)
+  };
+
+  let error = server.execute_op_run(request).await.expect_err("operation name mismatch must fail as invalid_params");
+
+  assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+  assert!(error.message.contains("unrelated.task") && error.message.contains("example.prepare_fast"));
+  assert_eq!(fake.calls_count(), 0);
+}
+
+
 // Drives the request through the real MCP transport and tool router, so argument deserialization
 // is the code under test rather than a hand-built `OpRunToolRequest`.
 #[tokio::test]
