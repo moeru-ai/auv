@@ -8,9 +8,7 @@ import {
   deviceServiceGetDevice,
   deviceServiceListDevices,
 } from '@auv-js/api-client'
-import { fromBinary } from '@bufbuild/protobuf'
-import { BinaryReader, WireType } from '@bufbuild/protobuf/wire'
-import { AnySchema, anyUnpack } from '@bufbuild/protobuf/wkt'
+import { anyUnpack } from '@bufbuild/protobuf/wkt'
 
 import {
   DeviceEntryEffectKind,
@@ -32,6 +30,7 @@ import {
   UserSessionLockState as ProtoUserSessionLockState,
 } from '../../gen/auv/api/daemon/v1/device_pb'
 import { AuvConfigurationError, AuvProtocolError, AuvRemoteError, AuvRpcError } from '../../transport/errors'
+import { decodeRpcStatus } from '../../transport/rpc-status'
 import { unknownEnum } from './wire'
 
 /** One Device visible to the connected AUV caller. */
@@ -279,20 +278,14 @@ async function entryCall<T>(call: Promise<T>): Promise<T> {
 
 /**
  * Reads the `DeviceEntryError` packed in a serialized `google.rpc.Status`.
- * NOTICE(device-entry-status-decode): the SDK does not generate
- * `google.rpc.Status`, so this walks its `details` field (number 3, repeated
- * `Any`) directly. Unknown or malformed details yield `undefined`.
+ * Unknown or malformed details yield `undefined`. The shared transport reader
+ * owns the standard envelope; this module owns the Device-entry reason.
  */
 function entryReason(details: Uint8Array): ProtoDeviceEntryErrorReason | undefined {
   try {
-    const reader = new BinaryReader(details)
-    while (reader.pos < reader.len) {
-      const [field, wireType] = reader.tag()
-      if (field !== 3 || wireType !== WireType.LengthDelimited) {
-        reader.skip(wireType)
-        continue
-      }
-      const error = anyUnpack(fromBinary(AnySchema, reader.bytes()), DeviceEntryErrorSchema)
+    const status = decodeRpcStatus(details)
+    for (const detail of status?.details ?? []) {
+      const error = anyUnpack(detail, DeviceEntryErrorSchema)
       if (error !== undefined && error.reason !== ProtoDeviceEntryErrorReason.UNSPECIFIED) {
         return error.reason
       }

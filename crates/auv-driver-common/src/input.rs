@@ -658,6 +658,42 @@ impl InputActionResult {
   }
 }
 
+/// Progress of one failed native input action. Submission never proves that
+/// the target consumed the action. Inspect current state before another action.
+///
+/// NOTICE: absent progress is unknown, never `NotDelivered`. This receipt is
+/// distinct from the completed-action/repetition counts in keyboard batches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum InputActionProgress {
+  /// The operation refused before calling its native input boundary.
+  NotDelivered,
+  /// A native call failed and may already have changed application state.
+  DeliveryUncertain { action: InputActionResult },
+  /// The native call accepted input, but the requested effect is unverified.
+  Submitted { action: InputActionResult },
+}
+
+impl InputActionProgress {
+  /// Rejects contradictory failure receipts before transport or recording.
+  pub fn validate(&self) -> Result<(), String> {
+    let (action, submitted) = match self {
+      Self::NotDelivered => return Ok(()),
+      Self::DeliveryUncertain { action } => (action, false),
+      Self::Submitted { action } => (action, true),
+    };
+    action.validate()?;
+    if action.verified || matches!(action.selected_path, InputDeliveryPath::Noop | InputDeliveryPath::Unsupported) {
+      return Err("failed input progress requires an unverified native delivery path".into());
+    }
+    let last = action.attempts.last().ok_or("failed input progress requires a native attempt")?;
+    if last.path != action.selected_path || last.succeeded != submitted {
+      return Err("failed input progress contradicts its final native attempt".into());
+    }
+    Ok(())
+  }
+}
+
 #[cfg(test)]
 #[path = "input_test.rs"]
 mod tests;

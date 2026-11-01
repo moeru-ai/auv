@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn input_action_failure_roundtrip_preserves_progress_and_original_category() {
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let mut uncertain = action.clone();
+  uncertain.attempts[0].succeeded = false;
+  for expected in [
+    auv_driver::InputActionProgress::NotDelivered,
+    auv_driver::InputActionProgress::DeliveryUncertain { action: uncertain },
+    auv_driver::InputActionProgress::Submitted { action },
+  ] {
+    let wire = input_action_progress_to_proto(expected.clone()).unwrap();
+    let status = auv_api_proto::input_action_failure::status(&tonic::Status::permission_denied("UIA denied"), wire);
+    let error = capability_status(status);
+    assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Unauthorized));
+    let CapabilityError::InputAction { source, progress } = error else {
+      panic!("typed progress was lost")
+    };
+    assert_eq!(progress, expected);
+    assert!(source.to_string().contains("UIA denied"));
+  }
+}
+
+#[test]
+fn invalid_or_legacy_input_error_metadata_remains_unknown() {
+  let cause = tonic::Status::permission_denied("UIA denied");
+  assert!(matches!(capability_status(cause.clone()), CapabilityError::Client(_)));
+  let mut action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  action.verified = true;
+  let wire = proto::InputActionFailure {
+    progress: Some(proto::input_action_failure::Progress::Submitted(input_action_result_to_proto(action).unwrap())),
+  };
+  let error = capability_status(auv_api_proto::input_action_failure::status(&cause, wire));
+  assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Unauthorized));
+  assert!(matches!(error, CapabilityError::Client(_)), "invalid evidence must not become zero delivery");
+}
+
 #[derive(Debug)]
 struct LargeCaptureService;
 

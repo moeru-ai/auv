@@ -220,7 +220,6 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       .and_then(|probe| crate::commands::app::permission_probe_output(&probe).map_err(Into::into)),
     "input.focusText" | "input.axFocusText" => {
       let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
-      let expected_role = input.inputs.get("expected_role").cloned().filter(|role| !role.trim().is_empty());
       let selector = if candidate.trim().is_empty() {
         auv_driver::AxTextSelector::Query(input.inputs.get("query").cloned().unwrap_or_default())
       } else {
@@ -231,7 +230,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         .focus_text(auv_driver::FocusTextOptions {
           app: input.application_target()?.expect("validated target").to_string(),
           selector,
-          expected_role,
+          expected_role: None,
         })
         .await
         .map_err(|error| step_failure("AccessibilityService/FocusText", error))
@@ -501,7 +500,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         let matches = recognized.matches;
         let capture = recognized.capture;
         let matched = crate::commands::window::selected_window_text_match(&matches, &query, selected_index)?;
-        let window_point = matched_window_point(&resolved_window, matched)?;
+        let window_point = crate::commands::window::matched_window_point(&resolved_window, matched)?;
         let options = selected_click_options(&input)?;
         let response =
           resolved.click(window_point, options.clone()).await.map_err(|error| step_failure("InputService/ClickPoint", error))?;
@@ -801,8 +800,6 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
     modifiers: crate::commands::input::parse_click_modifiers(input.inputs.get("modifiers").map(String::as_str))?,
   })
 }
-
-pub(crate) use crate::commands::window::matched_window_point;
 
 fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::WindowSelector {
   let app = input

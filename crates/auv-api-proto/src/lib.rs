@@ -181,6 +181,7 @@ pub mod google {
 }
 
 pub mod device_entry;
+pub mod input_action_failure;
 
 /// Short compatibility imports used by the existing Rust frontends.
 pub mod v1 {

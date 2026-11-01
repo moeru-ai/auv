@@ -9,6 +9,9 @@ import "auv/api/driver/v1/input.proto";
 // Exposes typed accessibility focus. The Driver reports whether focus was read
 // back. Unsupported platforms refuse the operation without pointer fallback.
 service AccessibilityService {
+  // Windows failures carry InputActionFailure rich-error details when native
+  // progress is known. Missing details are unknown, not zero input. Never
+  // retry uncertain or submitted input without inspecting current state.
   rpc FocusText(FocusTextRequest) returns (FocusTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;

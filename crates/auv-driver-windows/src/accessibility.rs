@@ -69,17 +69,28 @@ pub fn snapshot_window(window: &Window) -> DriverResult<AxTreeSnapshot> {
 /// Resolves a text query, rechecks its live identity, and reads back focus.
 /// This operation never falls back to pointer input or text writes.
 pub fn focus_text(options: FocusTextOptions) -> DriverResult<AxFocusResult> {
-  options.validate()?;
-  // TODO(windows-focus-reference): raw child paths cannot identify the same
-  // control across calls. Enable path delivery only with a typed identity
-  // receipt; see 2026-10-28-windows-core-convergence.md.
-  if matches!(options.selector, AxTextSelector::Path(_)) {
-    return Err(auv_driver_common::DriverError::unsupported("accessibility.focus_text with an unbound UIA path"));
-  }
-  let window = crate::window::resolve_window(
-    &auv_driver_common::selector::Window::main_visible().owned_by(auv_driver_common::selector::App::id(options.app.trim())),
-  )?;
-  native::focus_text(&window, &options)
+  let result = (|| {
+    options.validate()?;
+    // TODO(windows-focus-reference): raw child paths cannot identify the same
+    // control across calls. Enable path delivery only with a typed identity
+    // receipt; see 2026-10-28-windows-core-convergence.md.
+    if matches!(options.selector, AxTextSelector::Path(_)) {
+      return Err(auv_driver_common::DriverError::unsupported("accessibility.focus_text with an unbound UIA path"));
+    }
+    let window = crate::window::resolve_window(
+      &auv_driver_common::selector::Window::main_visible().owned_by(auv_driver_common::selector::App::id(options.app.trim())),
+    )?;
+    native::focus_text(&window, &options)
+  })();
+  result.map_err(|cause| match cause {
+    // Native focus stamps every error after SetFocus. An outer preflight
+    // boundary must preserve those facts instead of claiming zero delivery.
+    cause @ auv_driver_common::DriverError::InputAction { .. } => cause,
+    cause => auv_driver_common::DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::NotDelivered,
+    },
+  })
 }
 
 /// Moves keyboard focus to a node from a fresh [`AxTreeSnapshot`].
@@ -89,6 +100,9 @@ pub fn focus_text(options: FocusTextOptions) -> DriverResult<AxFocusResult> {
 /// refresh the snapshot and retry when the tree changes between observation
 /// and action.
 pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+  // NOTICE: failure progress belongs to query focus in this slice. This
+  // legacy Apple Music path remains delivery-only; migrate it only with an
+  // owner-named consumer. See the Windows core convergence record.
   let indices = child_indices(node_path)?;
   native::focus_node(window, &indices)?;
   Ok(InputActionResult {
@@ -287,59 +301,40 @@ fn focus_selected(
   if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
     return Err(invalid_input("UIA focus cancelled before delivery"));
   }
-  focus()?;
-  // TODO(windows-focus-progress): Phase 2 owns structured post-delivery
-  // failure metadata. Keep existing error categories here and never retry;
-  // see `2026-10-28-windows-core-convergence.md`.
+  let mut action = InputActionResult::single_success(InputDeliveryPath::AxFocus);
+  action.focus_disturbance = DisturbanceLevel::Foreground;
+  focus().map_err(|cause| {
+    let mut uncertain = action.clone();
+    uncertain.attempts[0].succeeded = false;
+    uncertain.focus_disturbance = DisturbanceLevel::Unknown;
+    auv_driver_common::DriverError::InputAction {
+      cause: Box::new(cause),
+      progress: auv_driver_common::InputActionProgress::DeliveryUncertain { action: uncertain },
+    }
+  })?;
+  // Every error beyond this boundary follows accepted native submission.
+  // Preserve that receipt even when the provider refuses the readback.
   // The native read closure has already compared the retained control's
   // identity with the live element and (when focused) GetFocusedElement.
   // Focus can legitimately change bounds, value, name, or other UIA facts.
   // Requiring the whole pre-action snapshot to remain equal is not evidence
   // of focus and can turn a successful SetFocus into a false failure.
-  let current = read_current().map_err(mark_focus_delivery_uncertain)?;
+  let current = read_current().map_err(|cause| auv_driver_common::DriverError::InputAction {
+    cause: Box::new(cause),
+    progress: auv_driver_common::InputActionProgress::Submitted {
+      action: action.clone(),
+    },
+  })?;
   if !current.focused {
-    return Err(crate::error::backend(
-      "UIA SetFocus returned, but focus readback did not confirm the selected control; inspect state before retrying",
-    ));
+    return Err(auv_driver_common::DriverError::InputAction {
+      cause: Box::new(crate::error::backend(
+        "UIA SetFocus returned, but focus readback did not confirm the selected control; inspect state before retrying",
+      )),
+      progress: auv_driver_common::InputActionProgress::Submitted { action },
+    });
   }
-  Ok(InputActionResult {
-    selected_path: InputDeliveryPath::AxFocus,
-    attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-    verified: true,
-    mouse_disturbance: DisturbanceLevel::None,
-    focus_disturbance: DisturbanceLevel::Foreground,
-    clipboard_disturbance: DisturbanceLevel::None,
-  })
-}
-
-fn mark_focus_delivery_uncertain(error: auv_driver_common::DriverError) -> auv_driver_common::DriverError {
-  use auv_driver_common::DriverError;
-
-  const MESSAGE: &str = "Focus delivery was attempted. The final state is uncertain.";
-  const RECOVERY: &str = "Inspect focus before retrying";
-  match error {
-    DriverError::StaleUiReference { message, .. } => DriverError::StaleUiReference {
-      message: format!("{MESSAGE} {message}"),
-      recovery: Some(RECOVERY.into()),
-    },
-    DriverError::RoleMismatch { message, .. } => DriverError::RoleMismatch {
-      message: format!("{MESSAGE} {message}"),
-      recovery: Some(RECOVERY.into()),
-    },
-    DriverError::PermissionDenied {
-      permission,
-      message,
-      ..
-    } => DriverError::PermissionDenied {
-      permission,
-      message: Some(format!("{MESSAGE} {}", message.unwrap_or_default())),
-      recovery: Some(RECOVERY.into()),
-    },
-    DriverError::Backend { message } => DriverError::Backend {
-      message: format!("{MESSAGE} {message}"),
-    },
-    other => other,
-  }
+  action.verified = true;
+  Ok(action)
 }
 
 /// Builds a screen-space rectangle from UIA bounding-rectangle edges.
@@ -425,15 +420,13 @@ mod native {
   }
 
   pub(super) fn focus_text(window: &Window, options: &FocusTextOptions) -> DriverResult<AxFocusResult> {
-    if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
-      return Err(crate::error::invalid_input("UIA focus cancelled before delivery"));
-    }
     // TODO(windows-uia-deadline): synchronous provider calls cannot be
     // interrupted here. Cancellation refuses delivery when the provider
     // returns; a bounded provider deadline remains in Phase 2. Callers must
     // not retry an uncertain delivery. See the Windows convergence record.
-    // Serialize with this process's other AUV input. This does not lock out the user
-    // or make the final identity check and SetFocus atomic.
+    if auv_driver_common::input_cancellation::current_input_cancellation().is_some_and(|signal| signal.is_cancelled()) {
+      return Err(crate::error::invalid_input("UIA focus cancelled before delivery"));
+    }
     let hwnd = window_handle(window)?;
     let initial = crate::window::probe_window(hwnd.0 as isize);
     let check_window = || {
@@ -486,8 +479,8 @@ mod native {
       .map(|(_, element)| element)
       .ok_or_else(|| backend("UIA snapshot lost the selected native element"))?;
     let indices = child_indices(&selected.path)?;
-    // The read-only scan must not reserve desktop input. The admission
-    // covers the final live identity check, SetFocus, and focus readback.
+    // Serialize with this process's other AUV input. This does not lock out the user
+    // or make the final identity check and SetFocus atomic.
     let _input = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let action = focus_selected(
       selected,
@@ -512,8 +505,10 @@ mod native {
           return Err(error);
         }
         // SAFETY: GetFocusedElement returns an owned COM interface in the
-        // same apartment. Confirmation checks the actual focused element
-        // rather than trusting the mutable CurrentHasKeyboardFocus property.
+        // same apartment. Confirmation checks the actual focused element.
+        // Do not gate this verification on CurrentHasKeyboardFocus: that
+        // property can lag behind the real focus state and cause false
+        // negatives when the element has actually received focus.
         let focused = unsafe { automation.GetFocusedElement() }.map_err(|error| focus_error("read focused control", error))?;
         node.focused = unsafe { automation.CompareElements(original, &focused) }
           .map_err(|error| focus_error("confirm focused control", error))?
@@ -618,41 +613,6 @@ mod native {
     }
   }
 
-  /// Depth-first traversal that appends each visited element, then descends
-  /// through its control-view children. Traversal stops widening once the node
-  /// budget is exhausted and stops descending past the depth limit.
-  fn walk(walker: &IUIAutomationTreeWalker, element: &IUIAutomationElement, depth: usize, path: String, capture: &mut TreeCapture) {
-    if capture.nodes.len() >= MAX_NODES {
-      capture.truncated = true;
-      return;
-    }
-    let (node, failure) = node_from_element(element, depth, path.clone());
-    if let Some(error) = failure {
-      capture.truncated = true;
-      capture.failure.get_or_insert(error);
-    }
-    capture.nodes.push(node);
-    // Retain the provider identity beside each bounded snapshot node. A later
-    // path lookup must compare elements, not only role/name/geometry.
-    capture.elements.push(element.clone());
-    let mut next = traversal_element(walker, element, true, capture);
-    if depth >= MAX_DEPTH {
-      capture.truncated |= next.is_some();
-      return;
-    }
-
-    let mut index = 0usize;
-    while let Some(child) = next {
-      if capture.nodes.len() >= MAX_NODES {
-        capture.truncated = true;
-        break;
-      }
-      walk(walker, &child, depth + 1, format!("{path}/{index}"), capture);
-      next = traversal_element(walker, &child, false, capture);
-      index += 1;
-    }
-  }
-
   /// Distinguishes a successful end-of-list from a failed provider call.
   /// Reads the raw tree-walker HRESULT to distinguish S_OK + null (no child)
   /// from a genuine provider error, including E_POINTER. The generated
@@ -687,6 +647,41 @@ mod native {
     // SAFETY: this is an owned element pointer returned by a successful
     // IUIAutomationTreeWalker vtable call; from_raw consumes the reference.
     Ok(Some(unsafe { IUIAutomationElement::from_raw(raw) }))
+  }
+
+  /// Depth-first traversal that appends each visited element, then descends
+  /// through its control-view children. Traversal stops widening once the node
+  /// budget is exhausted and stops descending past the depth limit.
+  fn walk(walker: &IUIAutomationTreeWalker, element: &IUIAutomationElement, depth: usize, path: String, capture: &mut TreeCapture) {
+    if capture.nodes.len() >= MAX_NODES {
+      capture.truncated = true;
+      return;
+    }
+    let (node, failure) = node_from_element(element, depth, path.clone());
+    if let Some(error) = failure {
+      capture.truncated = true;
+      capture.failure.get_or_insert(error);
+    }
+    capture.nodes.push(node);
+    // Retain the provider identity beside each bounded snapshot node. A later
+    // path lookup must compare elements, not only role/name/geometry.
+    capture.elements.push(element.clone());
+    let mut next = traversal_element(walker, element, true, capture);
+    if depth >= MAX_DEPTH {
+      capture.truncated |= next.is_some();
+      return;
+    }
+
+    let mut index = 0usize;
+    while let Some(child) = next {
+      if capture.nodes.len() >= MAX_NODES {
+        capture.truncated = true;
+        break;
+      }
+      walk(walker, &child, depth + 1, format!("{path}/{index}"), capture);
+      next = traversal_element(walker, &child, false, capture);
+      index += 1;
+    }
   }
 
   fn traversal_element(
@@ -853,14 +848,6 @@ mod native {
     use super::*;
 
     #[test]
-    fn empty_tree_step_is_not_a_provider_pointer_error() {
-      let empty = tree_step_result(windows::core::HRESULT(0), std::ptr::null_mut()).expect("S_OK + null is end-of-list");
-      assert!(empty.is_none());
-      let error = tree_step_result(windows::Win32::Foundation::E_POINTER, std::ptr::null_mut()).err().expect("real E_POINTER must fail");
-      assert_eq!(error.code(), windows::Win32::Foundation::E_POINTER);
-    }
-
-    #[test]
     fn failed_property_reads_preserve_the_first_native_failure() {
       let mut failure = None;
       let value = read_property::<bool>(
@@ -885,6 +872,14 @@ mod native {
       let mut failure = None;
       assert_eq!(read_property(Ok(String::new()), "read name", &mut failure, "fallback".into()), "");
       assert!(failure.is_none());
+    }
+
+    #[test]
+    fn empty_tree_step_is_not_a_provider_pointer_error() {
+      let empty = tree_step_result(windows::core::HRESULT(0), std::ptr::null_mut()).expect("S_OK + null is end-of-list");
+      assert!(empty.is_none());
+      let error = tree_step_result(windows::Win32::Foundation::E_POINTER, std::ptr::null_mut()).err().expect("real E_POINTER must fail");
+      assert_eq!(error.code(), windows::Win32::Foundation::E_POINTER);
     }
   }
 }

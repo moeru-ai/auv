@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use auv_driver_common::accessibility::{AxTextSelector, FocusTextOptions};
 use auv_driver_common::error::DriverError;
-use auv_driver_common::input::InputDeliveryPath;
+use auv_driver_common::input::{InputActionProgress, InputDeliveryPath};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -290,7 +290,16 @@ fn win32_semantic_focus_acceptance_with_dynamic_property_changes() {
     selector: AxTextSelector::Query("Nonexistent Absent Control 9999".into()),
     expected_role: None,
   });
-  assert!(matches!(missing_result, Err(DriverError::NotFound { .. })), "Unmatched query must return NotFound: {missing_result:?}");
+  assert!(
+    matches!(
+      &missing_result,
+      Err(DriverError::InputAction {
+        cause,
+        progress: InputActionProgress::NotDelivered,
+      }) if matches!(cause.as_ref(), DriverError::NotFound { .. })
+    ),
+    "Unmatched query must preserve NotFound and NotDelivered: {missing_result:?}"
+  );
   let state_after_missing = app.query_state();
   assert_eq!(state_after_missing.focused_hwnd, app.edit_dummy.0 as isize, "Missing query must not alter keyboard focus");
   assert_eq!(WM_SETFOCUS_COUNT.load(Ordering::SeqCst), 0);
@@ -304,8 +313,14 @@ fn win32_semantic_focus_acceptance_with_dynamic_property_changes() {
     expected_role: Some("Button".into()),
   });
   assert!(
-    matches!(role_mismatch_result, Err(DriverError::NotFound { .. })),
-    "Role mismatch must refuse match without fallback: {role_mismatch_result:?}"
+    matches!(
+      &role_mismatch_result,
+      Err(DriverError::InputAction {
+        cause,
+        progress: InputActionProgress::NotDelivered,
+      }) if matches!(cause.as_ref(), DriverError::NotFound { .. })
+    ),
+    "Role mismatch must preserve NotFound and NotDelivered: {role_mismatch_result:?}"
   );
   let state_after_mismatch = app.query_state();
   assert_eq!(state_after_mismatch.focused_hwnd, app.edit_dummy.0 as isize, "Role mismatch must not alter keyboard focus");
