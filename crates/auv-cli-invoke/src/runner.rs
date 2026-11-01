@@ -500,7 +500,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         let matches = recognized.matches;
         let capture = recognized.capture;
         let matched = crate::commands::window::selected_window_text_match(&matches, &query, selected_index)?;
-        let window_point = matched_window_point(&resolved_window, matched)?;
+        let window_point = crate::commands::window::matched_window_point(&resolved_window, matched)?;
         let options = selected_click_options(&input)?;
         let response =
           resolved.click(window_point, options.clone()).await.map_err(|error| step_failure("InputService/ClickPoint", error))?;
@@ -799,16 +799,6 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
     modifiers: crate::commands::input::parse_click_modifiers(input.inputs.get("modifiers").map(String::as_str))?,
   })
-}
-
-fn matched_window_point(window: &auv_driver::Window, matched: &auv_driver::OcrMatch) -> Result<auv_driver::WindowPoint, String> {
-  let screen_point = matched.action_point();
-  let point = auv_driver::WindowPoint::new(screen_point.x - window.frame.origin.x, screen_point.y - window.frame.origin.y);
-  let point_value = point.point();
-  if !(0.0..=window.frame.size.width).contains(&point_value.x) || !(0.0..=window.frame.size.height).contains(&point_value.y) {
-    return Err(format!("recognized text point {},{} is outside resolved window bounds", screen_point.x, screen_point.y));
-  }
-  Ok(point)
 }
 
 fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::WindowSelector {

@@ -402,7 +402,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
     confidence: 0.9,
     bounds: auv_driver::Rect::new(140.0, 250.0, 80.0, 20.0),
   };
-  assert_eq!(matched_window_point(&window, &matched).unwrap(), auv_driver::WindowPoint::new(80.0, 60.0));
+  assert_eq!(crate::commands::window::matched_window_point(&window, &matched).unwrap(), auv_driver::WindowPoint::new(80.0, 60.0));
 
   let mut inputs = std::collections::BTreeMap::new();
   inputs.insert("input-policy".to_string(), "foreground-preferred".to_string());

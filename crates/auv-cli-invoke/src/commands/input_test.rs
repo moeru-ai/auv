@@ -1330,3 +1330,105 @@ fn scroll_until_plan_rejects_invalid_requests_before_io() {
   let error = crate::command::decode_args::<ScrollUntilArgs>(&input).unwrap().plan(None).unwrap_err();
   assert_eq!(error, "input.scrollUntil requires --target app: or window:");
 }
+
+#[tokio::test]
+async fn move_mouse_rejects_non_finite_coordinates_before_delivery() {
+  let command = move_mouse_invoke_command();
+
+  // Test NaN X coordinate
+  let err_nan_x = command
+    .invoke(InvokeCommandInput {
+      command_id: command.id.into(),
+      target: None,
+      inputs: [("x".into(), "NaN".into()), ("y".into(), "100.0".into())].into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert!(err_nan_x.message.contains("finite coordinates"), "{:?}", err_nan_x.message);
+
+  // Test Infinite Y coordinate
+  let err_inf_y = command
+    .invoke(InvokeCommandInput {
+      command_id: command.id.into(),
+      target: None,
+      inputs: [("x".into(), "100.0".into()), ("y".into(), "inf".into())].into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert!(err_inf_y.message.contains("finite coordinates"), "{:?}", err_inf_y.message);
+}
+
+#[test]
+fn click_point_coordinate_validation_rejects_invalid_inputs_before_delivery() {
+  // 1. Non-finite coordinates must fail immediately
+  let nan_args = ClickPointArgs {
+    button: "left".into(),
+    x: f64::NAN,
+    y: 100.0,
+    relative_to: None,
+    normalized: false,
+    title: None,
+    input_policy: None,
+    click_count: None,
+    click_interval_ms: None,
+    modifiers: vec![],
+  };
+  assert_eq!(nan_args.basis(None).unwrap_err(), "input.clickPoint requires finite coordinates");
+
+  // 2. Normalized coordinates out of [0, 1] range must fail immediately
+  let overflow_args = ClickPointArgs {
+    button: "left".into(),
+    x: 1.0001,
+    y: 0.5,
+    relative_to: Some(RelativeToArg::Window),
+    normalized: true,
+    title: None,
+    input_policy: None,
+    click_count: None,
+    click_interval_ms: None,
+    modifiers: vec![],
+  };
+  let window_target = crate::ExecutionTarget::Window { id: "w-1".into() };
+  assert_eq!(overflow_args.basis(Some(&window_target)).unwrap_err(), "input.clickPoint --normalized coordinates must be within 0..=1");
+
+  let underflow_args = ClickPointArgs {
+    button: "left".into(),
+    x: 0.5,
+    y: -0.0001,
+    relative_to: Some(RelativeToArg::Window),
+    normalized: true,
+    title: None,
+    input_policy: None,
+    click_count: None,
+    click_interval_ms: None,
+    modifiers: vec![],
+  };
+  assert_eq!(underflow_args.basis(Some(&window_target)).unwrap_err(), "input.clickPoint --normalized coordinates must be within 0..=1");
+}
+
+#[test]
+fn resolve_local_point_boundary_conditions_and_rejections() {
+  let size = auv_driver::Size::new(1280.0, 720.0);
+
+  // Origin is inside the basis
+  assert_eq!(resolve_local_point("test", 0.0, 0.0, false, size, "window").unwrap(), auv_driver::Point::new(0.0, 0.0));
+
+  // Interior point is inside the basis.
+  // NOTE: On main, resolve_local_point uses a closed interval (0.0..=width) that accepts
+  // x == width, which maps to the first pixel outside the window perimeter during delivery.
+  // We intentionally test an interior point (640, 360) and reject out-of-bounds (> 1280),
+  // without asserting x == width as an intended contract.
+  assert_eq!(resolve_local_point("test", 640.0, 360.0, false, size, "window").unwrap(), auv_driver::Point::new(640.0, 360.0));
+
+  // Boundary out-of-bounds rejections
+  assert!(resolve_local_point("test", -0.01, 100.0, false, size, "window").is_err());
+  assert!(resolve_local_point("test", 100.0, -0.01, false, size, "window").is_err());
+  assert!(resolve_local_point("test", 1280.01, 100.0, false, size, "window").is_err());
+  assert!(resolve_local_point("test", 100.0, 720.01, false, size, "window").is_err());
+}

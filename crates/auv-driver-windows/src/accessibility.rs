@@ -594,15 +594,59 @@ mod native {
     child_indices: &[usize],
   ) -> DriverResult<IUIAutomationElement> {
     for index in child_indices {
-      // SAFETY: element and walker are live interfaces in the same apartment.
-      let mut child = unsafe { walker.GetFirstChildElement(&element) }.map_err(|error| focus_error("resolve UIA child 0", error))?;
+      let mut child =
+        tree_step(walker, &element, true).map_err(|error| focus_error("resolve UIA child 0", error))?.ok_or_else(stale_focus_path)?;
       for sibling_index in 0..*index {
-        child = unsafe { walker.GetNextSiblingElement(&child) }
-          .map_err(|error| focus_error(&format!("resolve UIA child {}", sibling_index + 1), error))?;
+        child = tree_step(walker, &child, false)
+          .map_err(|error| focus_error(&format!("resolve UIA child {}", sibling_index + 1), error))?
+          .ok_or_else(stale_focus_path)?;
       }
       element = child;
     }
     Ok(element)
+  }
+
+  fn stale_focus_path() -> auv_driver_common::DriverError {
+    auv_driver_common::DriverError::StaleUiReference {
+      message: "UIA focus path no longer identifies a control".into(),
+      recovery: Some("read a new UIA tree before focusing".into()),
+    }
+  }
+
+  /// Distinguishes a successful end-of-list from a failed provider call.
+  /// Reads the raw tree-walker HRESULT to distinguish S_OK + null (no child)
+  /// from a genuine provider error, including E_POINTER. The generated
+  /// windows 0.58 wrapper conflates these cases.
+  fn tree_step(
+    walker: &IUIAutomationTreeWalker,
+    element: &IUIAutomationElement,
+    first_child: bool,
+  ) -> WindowsResult<Option<IUIAutomationElement>> {
+    let mut raw = std::ptr::null_mut();
+    // SAFETY: both COM interfaces are alive in this apartment, and raw is a
+    // writable out-pointer. Successful non-null results transfer ownership.
+    let status = unsafe {
+      let table = walker.vtable();
+      let step = if first_child {
+        table.GetFirstChildElement
+      } else {
+        table.GetNextSiblingElement
+      };
+      step(walker.as_raw(), element.as_raw(), &mut raw)
+    };
+    tree_step_result(status, raw)
+  }
+
+  fn tree_step_result(status: windows::core::HRESULT, raw: *mut std::ffi::c_void) -> WindowsResult<Option<IUIAutomationElement>> {
+    if status.is_err() {
+      return Err(windows::core::Error::from_hresult(status));
+    }
+    if raw.is_null() {
+      return Ok(None);
+    }
+    // SAFETY: this is an owned element pointer returned by a successful
+    // IUIAutomationTreeWalker vtable call; from_raw consumes the reference.
+    Ok(Some(unsafe { IUIAutomationElement::from_raw(raw) }))
   }
 
   /// Depth-first traversal that appends each visited element, then descends
@@ -640,40 +684,20 @@ mod native {
     }
   }
 
-  /// Distinguishes a successful end-of-list from a failed provider call.
   fn traversal_element(
     walker: &IUIAutomationTreeWalker,
     element: &IUIAutomationElement,
     first_child: bool,
     capture: &mut TreeCapture,
   ) -> Option<IUIAutomationElement> {
-    let mut raw = std::ptr::null_mut();
-    // NOTICE: windows-0.58.0's generated TreeWalker methods convert a null
-    // successful result to E_POINTER. Use their vtable so a genuine provider
-    // E_POINTER error cannot masquerade as a complete tree. See
-    // `windows-0.58.0/src/Windows/Win32/UI/Accessibility/mod.rs`.
-    // SAFETY: walker and element are live, apartment-local COM interfaces.
-    // The initialized out-pointer is valid for this synchronous call.
-    let status = unsafe {
-      let table = walker.vtable();
-      let step = if first_child {
-        table.GetFirstChildElement
-      } else {
-        table.GetNextSiblingElement
-      };
-      step(walker.as_raw(), element.as_raw(), &mut raw)
-    };
-    if status.is_err() {
-      capture.truncated = true;
-      capture.failure.get_or_insert_with(|| focus_error("walk UIA control tree", windows::core::Error::from_hresult(status)));
-      return None;
+    match tree_step(walker, element, first_child) {
+      Ok(next) => next,
+      Err(error) => {
+        capture.truncated = true;
+        capture.failure.get_or_insert_with(|| focus_error("walk UIA control tree", error));
+        None
+      }
     }
-    if raw.is_null() {
-      return None;
-    }
-    // SAFETY: a successful non-null COM out-pointer transfers one owned
-    // IUIAutomationElement reference; from_raw consumes that reference.
-    Some(unsafe { IUIAutomationElement::from_raw(raw) })
   }
 
   fn node_from_element(element: &IUIAutomationElement, depth: usize, path: String) -> (AxNode, Option<auv_driver_common::DriverError>) {
@@ -848,6 +872,14 @@ mod native {
       let mut failure = None;
       assert_eq!(read_property(Ok(String::new()), "read name", &mut failure, "fallback".into()), "");
       assert!(failure.is_none());
+    }
+
+    #[test]
+    fn empty_tree_step_is_not_a_provider_pointer_error() {
+      let empty = tree_step_result(windows::core::HRESULT(0), std::ptr::null_mut()).expect("S_OK + null is end-of-list");
+      assert!(empty.is_none());
+      let error = tree_step_result(windows::Win32::Foundation::E_POINTER, std::ptr::null_mut()).err().expect("real E_POINTER must fail");
+      assert_eq!(error.code(), windows::Win32::Foundation::E_POINTER);
     }
   }
 }
