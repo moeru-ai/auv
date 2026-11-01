@@ -413,12 +413,16 @@ fn native_identity_failure_refuses_focus_without_delivery() {
       Ok(())
     },
   );
-  assert!(matches!(&result, Err(DriverError::StaleUiReference { .. })));
-  let error = result.unwrap_err().to_string();
-  assert!(!error.contains("Focus delivery was attempted"), "{error}");
+  assert!(matches!(result, Err(DriverError::StaleUiReference { .. })));
   assert_eq!(delivered.get(), 0);
 }
 
+// ROOT CAUSE:
+//
+// If SetFocus succeeded and the element actually received focus, but its name,
+// value, or bounds changed due to focus-related UI updates, requiring the whole
+// pre-action snapshot to remain equal turned a successful delivery into a false
+// failure. The fix checks only `current.focused` after identity is confirmed.
 #[test]
 fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
   let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
@@ -457,38 +461,6 @@ fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
 }
 
 #[test]
-fn post_focus_native_identity_failure_is_not_accepted_or_retried() {
-  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
-  let reads = std::cell::Cell::new(0);
-  let delivered = std::cell::Cell::new(0);
-  let result = focus_selected(
-    &selected,
-    || {
-      let previous = reads.replace(reads.get() + 1);
-      if previous == 0 {
-        Ok(selected.clone())
-      } else {
-        // Native CompareElements rejected a replacement at the same path.
-        Err(DriverError::StaleUiReference {
-          message: "UIA focus path now identifies a different control".into(),
-          recovery: None,
-        })
-      }
-    },
-    || {
-      delivered.set(delivered.get() + 1);
-      Ok(())
-    },
-  );
-  assert!(matches!(result, Err(DriverError::StaleUiReference { .. })));
-  let error = result.unwrap_err().to_string();
-  assert!(error.contains("Focus delivery was attempted. The final state is uncertain."), "{error}");
-  assert!(error.contains("Inspect focus before retrying"), "{error}");
-  assert_eq!(reads.get(), 2);
-  assert_eq!(delivered.get(), 1);
-}
-
-#[test]
 fn setfocus_success_without_focus_readback_is_not_verified_or_retried() {
   let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
   let delivered = std::cell::Cell::new(0);
@@ -500,8 +472,18 @@ fn setfocus_success_without_focus_readback_is_not_verified_or_retried() {
       Ok(())
     },
   );
-  assert!(matches!(result, Err(DriverError::Backend { .. })));
   assert_eq!(delivered.get(), 1);
+  let error = result.expect_err("unconfirmed focus is a failure");
+  let DriverError::InputAction { cause, progress } = error else {
+    panic!("the failed readback lost submitted input progress: {error}");
+  };
+  assert!(matches!(*cause, DriverError::Backend { .. }));
+  progress.validate().expect("consistent failure progress");
+  let auv_driver_common::InputActionProgress::Submitted { action } = progress else {
+    panic!("SetFocus succeeded, so this is submitted input");
+  };
+  assert!(!action.verified);
+  assert_eq!(action.attempts, vec![InputAttempt::success(InputDeliveryPath::AxFocus)]);
 }
 
 #[test]
@@ -524,9 +506,66 @@ fn focus_delivery_error_preserves_the_category_without_retry() {
       })
     },
   );
-  assert!(matches!(result, Err(DriverError::PermissionDenied { .. })));
   assert_eq!(delivered.get(), 1);
   assert_eq!(reads.get(), 1);
+  let error = result.expect_err("native focus failed");
+  let DriverError::InputAction { cause, progress } = error else {
+    panic!("the native call lost uncertain input progress: {error}");
+  };
+  assert!(matches!(*cause, DriverError::PermissionDenied { .. }));
+  progress.validate().expect("consistent failure progress");
+  let auv_driver_common::InputActionProgress::DeliveryUncertain { action } = progress else {
+    panic!("a failed native call cannot prove zero input");
+  };
+  assert!(!action.verified);
+  assert_eq!(action.attempts.len(), 1);
+  assert_eq!(action.attempts[0].path, InputDeliveryPath::AxFocus);
+  assert!(!action.attempts[0].succeeded);
+}
+
+// ROOT CAUSE:
+//
+// If a provider failed after SetFocus returned S_OK, the same permission error
+// described both a refused native call and a failed post-delivery readback.
+// Before the fix, callers could not distinguish those effects from the error.
+// The fix retains the original cause and records submitted, unverified input.
+#[test]
+fn failed_focus_readback_preserves_the_cause_and_submitted_progress() {
+  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let reads = std::cell::Cell::new(0);
+  let delivered = std::cell::Cell::new(0);
+  let result = focus_selected(
+    &selected,
+    || {
+      reads.set(reads.get() + 1);
+      if reads.get() == 1 {
+        Ok(selected.clone())
+      } else {
+        Err(DriverError::PermissionDenied {
+          permission: "UI Automation",
+          message: Some("readback denied".into()),
+          recovery: None,
+        })
+      }
+    },
+    || {
+      delivered.set(delivered.get() + 1);
+      Ok(())
+    },
+  );
+  assert_eq!(reads.get(), 2);
+  assert_eq!(delivered.get(), 1);
+  let error = result.expect_err("failed readback is not verified focus");
+  let DriverError::InputAction { cause, progress } = error else {
+    panic!("readback error lost submitted input progress: {error}");
+  };
+  assert!(matches!(*cause, DriverError::PermissionDenied { .. }));
+  progress.validate().expect("consistent failure progress");
+  let auv_driver_common::InputActionProgress::Submitted { action } = progress else {
+    panic!("readback followed a successful native submission");
+  };
+  assert!(!action.verified);
+  assert_eq!(action.attempts, vec![InputAttempt::success(InputDeliveryPath::AxFocus)]);
 }
 
 #[test]
@@ -562,7 +601,12 @@ fn raw_candidate_paths_are_refused_before_any_native_window_lookup() {
     selector: AxTextSelector::Path("0/0".into()),
     expected_role: None,
   });
-  assert!(matches!(result, Err(DriverError::Unsupported { .. })));
+  let error = result.expect_err("unbound paths cannot be delivered");
+  let DriverError::InputAction { cause, progress } = error else {
+    panic!("path refusal lost zero-delivery progress: {error}");
+  };
+  assert!(matches!(*cause, DriverError::Unsupported { .. }));
+  assert_eq!(progress, auv_driver_common::InputActionProgress::NotDelivered);
 }
 
 #[test]

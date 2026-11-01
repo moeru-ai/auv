@@ -290,7 +290,14 @@ struct LocalAccessibilityService {
 #[tonic::async_trait]
 impl AccessibilityService for LocalAccessibilityService {
   async fn focus_text(&self, request: Request<proto::FocusTextRequest>) -> Result<Response<proto::FocusTextResponse>, Status> {
-    let options = focus_text_options_from_proto(request.into_inner())?;
+    let options = focus_text_options_from_proto(request.into_inner()).map_err(|status| {
+      auv_api_proto::input_action_failure::status(
+        &status,
+        proto::InputActionFailure {
+          progress: Some(proto::input_action_failure::Progress::NotDelivered(())),
+        },
+      )
+    })?;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
       #[cfg(target_os = "windows")]
@@ -2671,15 +2678,22 @@ fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFr
 }
 
 fn driver_status(error: auv_driver::DriverError) -> Status {
+  let message = error.to_string();
   match error {
-    auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(error.to_string()),
-    auv_driver::DriverError::NotFound { .. } => Status::not_found(error.to_string()),
-    auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(error.to_string()),
-    auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(error.to_string()),
-    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => {
-      Status::failed_precondition(error.to_string())
+    auv_driver::DriverError::InputAction { cause, progress } => {
+      let cause = driver_status(*cause);
+      let cause = Status::new(cause.code(), message);
+      match auv::client::runner::input_action_progress_to_proto(progress) {
+        Ok(failure) => auv_api_proto::input_action_failure::status(&cause, failure),
+        Err(_) => cause,
+      }
     }
-    auv_driver::DriverError::Backend { .. } => Status::unavailable(error.to_string()),
+    auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(message),
+    auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
+    auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
+    auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
+    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),
+    auv_driver::DriverError::Backend { .. } => Status::unavailable(message),
   }
 }
 

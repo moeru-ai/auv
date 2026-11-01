@@ -636,18 +636,37 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
   let state_before = target.request(json!({"cmd": "state"}))?;
   let before = scenario.watch.snapshot();
   reject_user_input(entry.start, &before)?;
-  let refused = if entry.route == "rust" {
-    matches!(
-      entry.driver.accessibility().focus_text(auv_driver_common::FocusTextOptions {
-        app: app.into(),
-        selector: auv_driver_common::AxTextSelector::Query(query.into()),
-        expected_role: None,
-      }),
-      Err(auv_driver_common::DriverError::NotFound { .. })
-    )
+  let (refused, failure_response) = if entry.route == "rust" {
+    let result = entry.driver.accessibility().focus_text(auv_driver_common::FocusTextOptions {
+      app: app.into(),
+      selector: auv_driver_common::AxTextSelector::Query(query.into()),
+      expected_role: None,
+    });
+    let response = match &result {
+      Ok(result) => json!({"unexpected_success": result}),
+      Err(error) => {
+        let progress = match error {
+          auv_driver_common::DriverError::InputAction { progress, .. } => Some(progress),
+          _ => None,
+        };
+        json!({"message": error.to_string(), "input_progress": progress})
+      }
+    };
+    let refused = matches!(
+      result,
+      Err(auv_driver_common::DriverError::InputAction {
+        cause,
+        progress: auv_driver_common::InputActionProgress::NotDelivered,
+      }) if matches!(*cause, auv_driver_common::DriverError::NotFound { .. })
+    );
+    (refused, Some(response))
   } else {
     let result = entry.call("input.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
-    result.exit != Some(0) && result.json.as_ref().is_some_and(|value| value["failure_details"]["code"] == "not_found")
+    let refused = result.exit != Some(0)
+      && result.json.as_ref().is_some_and(|value| {
+        value["failure_details"]["code"] == "not_found" && value["failure_details"]["input_progress"]["state"] == "not_delivered"
+      });
+    (refused, result.json)
   };
   let after = scenario.watch.snapshot();
   reject_user_input(entry.start, &after)?;
@@ -662,6 +681,8 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
     "missing_focus_query",
     json!({
       "failure_code": if refused { Some("not_found") } else { None },
+      "input_progress": if refused { Some("not_delivered") } else { None },
+        "failure_response": failure_response,
       "receiver_unchanged": state_before["typing"] == state_after["typing"],
       "foreground_unchanged": before.foreground == after.foreground, "pointer_unchanged": before.cursor == after.cursor,
       "no_injected_mouse": before.injected_mouse == after.injected_mouse,

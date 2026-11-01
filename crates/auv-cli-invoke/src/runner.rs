@@ -220,7 +220,6 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       .and_then(|probe| crate::commands::app::permission_probe_output(&probe).map_err(Into::into)),
     "input.focusText" | "input.axFocusText" => {
       let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
-      let expected_role = input.inputs.get("expected_role").cloned().filter(|role| !role.trim().is_empty());
       let selector = if candidate.trim().is_empty() {
         auv_driver::AxTextSelector::Query(input.inputs.get("query").cloned().unwrap_or_default())
       } else {
@@ -231,7 +230,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         .focus_text(auv_driver::FocusTextOptions {
           app: input.application_target()?.expect("validated target").to_string(),
           selector,
-          expected_role,
+          expected_role: None,
         })
         .await
         .map_err(|error| step_failure("AccessibilityService/FocusText", error))
@@ -802,7 +801,15 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
   })
 }
 
-pub(crate) use crate::commands::window::matched_window_point;
+fn matched_window_point(window: &auv_driver::Window, matched: &auv_driver::OcrMatch) -> Result<auv_driver::WindowPoint, String> {
+  let screen_point = matched.action_point();
+  let point = auv_driver::WindowPoint::new(screen_point.x - window.frame.origin.x, screen_point.y - window.frame.origin.y);
+  let point_value = point.point();
+  if !(0.0..=window.frame.size.width).contains(&point_value.x) || !(0.0..=window.frame.size.height).contains(&point_value.y) {
+    return Err(format!("recognized text point {},{} is outside resolved window bounds", screen_point.x, screen_point.y));
+  }
+  Ok(point)
+}
 
 fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::WindowSelector {
   let app = input

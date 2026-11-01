@@ -10,6 +10,7 @@ import "auv/api/driver/v1/text_recognition.proto";
 import "auv/api/driver/v1/window.proto";
 import "auv/api/image/v1/region.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
 
 service InputService {
   // Reads the OS pointer in logical screen coordinates. The pointer is the
@@ -407,6 +408,20 @@ message InputActionResult {
   // A post-action readback confirmed this action's requested effect. Dispatch
   // success alone must leave this false. This does not verify a whole workflow.
   bool verified = 6;
+}
+
+// One failed native input action, packed in google.rpc.Status.details as Any.
+// The status retains the underlying failure category. An absent or unknown
+// progress case is unknown delivery, never proof that no input was delivered.
+message InputActionFailure {
+  oneof progress {
+    // The operation refused before invoking its native input boundary.
+    google.protobuf.Empty not_delivered = 1;
+    // A native call failed and may already have affected the target.
+    InputActionResult delivery_uncertain = 2;
+    // Native submission succeeded, but the requested effect is unverified.
+    InputActionResult submitted = 3;
+  }
 }
 
 message ClickPointRequest {

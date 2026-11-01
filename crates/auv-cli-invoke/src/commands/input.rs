@@ -257,10 +257,6 @@ struct FocusTextArgs {
   #[arg(long, value_name = "PATH")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate: Option<String>,
-  /// Programmatic accessibility role used to disambiguate equal query matches.
-  #[arg(long, value_name = "ROLE")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  expected_role: Option<String>,
 }
 
 #[invoke_command(
@@ -283,17 +279,12 @@ async fn focus_text_input(input: InvokeCommandInput, args: FocusTextArgs) -> cra
   }
   let app = input.application_target()?.ok_or_else(|| "input.focusText requires --target app:".to_string())?.to_string();
   let candidate = args.candidate.unwrap_or_default();
-  let result = focus_text(app, args.query, candidate.clone(), args.expected_role).await?;
+  let result = focus_text(app, args.query, candidate.clone()).await?;
   emit_input_action_result(&result.input_action_result);
   Ok(focus_text_output(&result, &candidate)?)
 }
 
-pub async fn focus_text(
-  app: String,
-  query: String,
-  candidate: String,
-  expected_role: Option<String>,
-) -> Result<auv_driver::AxFocusResult, crate::InvokeFailure> {
+pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, crate::InvokeFailure> {
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv::local::open()?;
@@ -305,7 +296,7 @@ pub async fn focus_text(
     Ok(session.accessibility().focus_text(auv_driver::FocusTextOptions {
       app,
       selector,
-      expected_role,
+      expected_role: None,
     })?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -325,10 +316,6 @@ struct AxFocusTextArgs {
   #[arg(long, value_name = "PATH")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate: Option<String>,
-  /// Programmatic accessibility role used to disambiguate equal query matches.
-  #[arg(long, value_name = "ROLE")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  expected_role: Option<String>,
 }
 
 // NOTICE(input-ax-focus-text-alias): this command is a compatibility alias for
@@ -356,7 +343,7 @@ async fn ax_focus_text_input(input: InvokeCommandInput, args: AxFocusTextArgs) -
   }
   let app = input.application_target()?.ok_or_else(|| "input.axFocusText requires --target app:".to_string())?.to_string();
   let candidate = args.candidate.unwrap_or_default();
-  let result = focus_text(app, args.query, candidate.clone(), args.expected_role).await?;
+  let result = focus_text(app, args.query, candidate.clone()).await?;
   emit_input_action_result(&result.input_action_result);
   Ok(focus_text_output(&result, &candidate)?)
 }

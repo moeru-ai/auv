@@ -204,6 +204,8 @@ pub struct InvokeFailure {
   pub message: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub keyboard_progress: Option<auv_driver::KeyboardInputProgress>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub input_progress: Option<auv_driver::InputActionProgress>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -226,6 +228,7 @@ impl InvokeFailure {
       code,
       message: message.into(),
       keyboard_progress: None,
+      input_progress: None,
     }
   }
 }
@@ -241,7 +244,16 @@ impl From<String> for InvokeFailure {
 impl From<auv_driver::DriverError> for InvokeFailure {
   fn from(error: auv_driver::DriverError) -> Self {
     use auv_driver::DriverError;
-    let code = match &error {
+    let message = error.to_string();
+    let code = match error {
+      DriverError::InputAction { cause, progress } => {
+        let mut failure = Self::from(*cause);
+        failure.message = message;
+        if progress.validate().is_ok() {
+          failure.input_progress = Some(progress);
+        }
+        return failure;
+      }
       DriverError::Unsupported { .. } => FailureCode::Unsupported,
       DriverError::NotFound { .. } => FailureCode::NotFound,
       DriverError::PermissionDenied { .. } => FailureCode::PermissionDenied,
@@ -250,7 +262,7 @@ impl From<auv_driver::DriverError> for InvokeFailure {
       DriverError::RoleMismatch { .. } => FailureCode::RoleMismatch,
       DriverError::Backend { .. } => FailureCode::Backend,
     };
-    Self::new(code, error.to_string())
+    Self::new(code, message)
   }
 }
 
@@ -282,8 +294,14 @@ fn client_failure_code(kind: Option<auv::error::ClientErrorKind>) -> FailureCode
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
     let mut failure = Self::new(client_failure_code(error.client_kind()), error.to_string());
-    if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {
-      failure.keyboard_progress = Some(progress);
+    match error {
+      auv::client::runner::CapabilityError::KeyboardInput { progress, .. } => failure.keyboard_progress = Some(progress),
+      auv::client::runner::CapabilityError::InputAction { progress, .. } => {
+        if progress.validate().is_ok() {
+          failure.input_progress = Some(progress);
+        }
+      }
+      _ => {}
     }
     failure
   }

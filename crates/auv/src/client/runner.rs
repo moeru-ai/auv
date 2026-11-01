@@ -36,6 +36,12 @@ pub enum CapabilityError {
     source: ClientError,
     progress: auv_driver::KeyboardInputProgress,
   },
+  /// A failed native action retained its delivery boundary and original cause.
+  #[error("{source}")]
+  InputAction {
+    source: ClientError,
+    progress: auv_driver::InputActionProgress,
+  },
   /// A domain input cannot be represented by the capability request.
   #[error("Runner request is invalid: {0}")]
   InvalidArgument(String),
@@ -48,7 +54,14 @@ pub enum CapabilityError {
 }
 
 fn capability_status(status: tonic::Status) -> CapabilityError {
-  ClientError::from_status("Runner capability RPC", status).into()
+  let progress = auv_api_proto::input_action_failure::failure(&status).and_then(|failure| input_action_progress_from_proto(failure).ok());
+  let source = ClientError::from_status("Runner capability RPC", status);
+  match progress {
+    Some(progress) => CapabilityError::InputAction { source, progress },
+    // Missing or invalid evidence is unknown. Keep the original category;
+    // never synthesize a zero-delivery receipt for an older Runner.
+    None => CapabilityError::Client(source),
+  }
 }
 
 impl CapabilityError {
@@ -58,6 +71,7 @@ impl CapabilityError {
     match self {
       Self::Client(error) => Some(error.kind()),
       Self::KeyboardInput { source, .. } => Some(source.kind()),
+      Self::InputAction { source, .. } => Some(source.kind()),
       Self::NotFound(_) => Some(crate::error::ClientErrorKind::NotFound),
       Self::InvalidArgument(_) | Self::InvalidResponse(_) => None,
     }
@@ -1302,6 +1316,38 @@ fn ax_focus_result_from_proto(response: proto::FocusTextResponse) -> Result<auv_
     value: result.value,
     query: result.query,
     input_action_result: input_action_result_from_proto(required(result.action, "FocusText response omitted InputActionResult")?)?,
+  })
+}
+
+/// Reads one failed native action and validates its delivery progress.
+fn input_action_progress_from_proto(failure: proto::InputActionFailure) -> Result<auv_driver::InputActionProgress, CapabilityError> {
+  use auv_driver::InputActionProgress;
+  use proto::input_action_failure::Progress;
+  let progress = match required(failure.progress, "InputActionFailure omitted progress")? {
+    Progress::NotDelivered(()) => InputActionProgress::NotDelivered,
+    Progress::DeliveryUncertain(action) => InputActionProgress::DeliveryUncertain {
+      action: input_action_result_from_proto(action)?,
+    },
+    Progress::Submitted(action) => InputActionProgress::Submitted {
+      action: input_action_result_from_proto(action)?,
+    },
+  };
+  progress.validate().map_err(CapabilityError::InvalidResponse)?;
+  Ok(progress)
+}
+
+/// Projects known failed-action progress for the Runner's rich-error envelope.
+pub fn input_action_progress_to_proto(progress: auv_driver::InputActionProgress) -> Result<proto::InputActionFailure, String> {
+  use auv_driver::InputActionProgress;
+  use proto::input_action_failure::Progress;
+  progress.validate()?;
+  let progress = match progress {
+    InputActionProgress::NotDelivered => Progress::NotDelivered(()),
+    InputActionProgress::DeliveryUncertain { action } => Progress::DeliveryUncertain(input_action_result_to_proto(action)?),
+    InputActionProgress::Submitted { action } => Progress::Submitted(input_action_result_to_proto(action)?),
+  };
+  Ok(proto::InputActionFailure {
+    progress: Some(progress),
   })
 }
 
