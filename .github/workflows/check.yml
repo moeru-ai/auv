@@ -84,6 +84,22 @@ jobs:
       - run: cargo run --quiet -- invoke --help
       - run: git diff --check
 
+  # Packages and verifies every publishable crate the way the release does, so
+  # a crate that reads files outside its package fails here instead of at
+  # release time. 0.0.32 through 0.0.40 never reached crates.io because
+  # `auv-cli` `include_str!`ed docs outside the crate (#456).
+  crate-packages:
+    name: crates.io package verification
+    # Same runner and command as "Publish crates.io packages" in
+    # release-npm-package.yml, plus --dry-run.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --workspace --locked --dry-run
+
   proto-vendor:
     name: verify vendored Protobuf ${{ matrix.os }}
     strategy:
