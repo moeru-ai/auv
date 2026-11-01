@@ -176,6 +176,34 @@ Exact full-frame comparison can refuse unchanged intended controls because other
 The final native capture and OS input call are not atomic.
 Phase 2 must preserve these limits and must never retry a refused guard through ordinary clicking.
 
+## Phase 2: focus cancellation boundary
+
+The first follow-up binds Windows Runner `FocusText` to the existing `run_input_blocking` boundary.
+The scope is intentionally narrow: this protects the Windows Runner `FocusText` RPC route, without extending cancellation contracts to other direct native entry points (such as `focus_node()` or `select_node()`).
+The RPC thread remains available while UIA calls run on one COM-initialized worker.
+Dropping the RPC sets that worker's existing input-cancellation signal.
+The worker retains its native input reservation until it exits.
+
+Focus admission checks cancellation early at entry and before UIA tree walking, before the final identity read, and immediately before `SetFocus`.
+A cancellation during that read must refuse delivery.
+Two deterministic regressions failed before this change: an already-cancelled request still read the target, and cancellation during readback still delivered once.
+After the change, all 32 focus tests pass (with dynamic property shift tolerance on focus covered alongside uncancelled signals).
+The Runner boundary tests pass, verifying cancellation signaling before worker release and ensuring native execution and owned resources are retained until worker completion.
+Affected CLI and Windows Driver targets compile.
+
+This is cancellation admission, not an interruption guarantee for synchronous providers.
+A provider call already in progress can still block until it returns; synchronous COM/OS calls cannot be forcibly aborted via Tokio timeouts.
+Cancellation after the last check can race with `SetFocus`, and delivery errors still lack structured progress.
+At the protocol boundary, cancellation occurs when the outer RPC future is dropped/aborted; because the transport response stream is already terminated, no artificial gRPC `CANCELLED` status mapping is exposed in `driver_status` (avoiding fragile string matching across error boundaries).
+Dedicated end-to-end cancellation categorization remains deferred to a future cross-platform error contract slice.
+Similarly, test evidence verifies in-process worker task drop and cancellation propagation; it does not simulate a full live network RPC disconnect against an active provider.
+Those Phase 2 gaps remain marked at the call sites.
+No cancellation result authorizes a retry of an uncertain action.
+The macOS native thread contract remains unchanged.
+
+The Phase 1 native receipts above predate this worker change and reflect historical HEADs.
+New native acceptance is required for the changed Windows Runner path.
+
 ## Remaining acceptance
 
 Phase 1 has isolated receiver evidence for all three selected routes.

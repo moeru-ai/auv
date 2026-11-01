@@ -1893,6 +1893,29 @@ async fn slow_feedback_does_not_block_native_motion_or_completion() {
 }
 
 #[tokio::test]
+async fn dropped_blocking_input_signals_cancellation_before_worker_release() {
+  let (started, started_rx) = tokio::sync::oneshot::channel();
+  let (release, release_rx) = std::sync::mpsc::channel();
+  let (finished, mut finished_rx) = tokio::sync::oneshot::channel();
+  let operation = tokio::spawn(run_input_blocking(move || {
+    let cancellation = auv_driver::input_cancellation::current_input_cancellation().expect("worker cancellation context");
+    assert!(started.send(cancellation.clone()).is_ok());
+    // This gate models one in-flight native provider read. Aborting the RPC
+    // cannot interrupt it, so the worker must retain its owned state.
+    release_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("release native read");
+    finished.send(cancellation.is_cancelled()).unwrap();
+    Ok(())
+  }));
+  let cancellation = tokio::time::timeout(std::time::Duration::from_secs(5), started_rx).await.unwrap().unwrap();
+  operation.abort();
+  assert!(operation.await.unwrap_err().is_cancelled());
+  assert!(cancellation.is_cancelled());
+  assert!(matches!(finished_rx.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+  release.send(()).unwrap();
+  assert!(tokio::time::timeout(std::time::Duration::from_secs(5), finished_rx).await.unwrap().unwrap());
+}
+
+#[tokio::test]
 async fn dropped_feedback_relay_wakes_and_releases_native_hold() {
   struct Receiver {
     pressed: tokio::sync::Notify,

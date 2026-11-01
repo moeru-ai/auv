@@ -293,6 +293,16 @@ impl AccessibilityService for LocalAccessibilityService {
     let options = focus_text_options_from_proto(request.into_inner())?;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+      #[cfg(target_os = "windows")]
+      let result = {
+        let session = self.session.clone();
+        // UIA remains on one COM-initialized worker. Its input reservation
+        // outlives a dropped RPC until the native call returns.
+        run_input_blocking(move || session.accessibility().focus_text(options)).await?
+      };
+      // NOTICE: macOS retains its existing native thread contract. Moving
+      // that backend requires a separately validated execution boundary.
+      #[cfg(target_os = "macos")]
       let result = self.session.accessibility().focus_text(options).map_err(driver_status)?;
       Ok(Response::new(proto::FocusTextResponse {
         result: Some(ax_focus_result_to_proto(result)?),
@@ -2841,7 +2851,7 @@ fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position
 #[path = "local_driver_test.rs"]
 mod tests;
 
-/// A dropped RPC cancels queued/native pointer work. A successful primitive
+/// A dropped RPC cancels queued/native input work. A successful primitive
 /// down disarms this guard and remains held until up or its bounded deadline.
 async fn run_input_blocking<T: Send + 'static>(
   operation: impl FnOnce() -> auv_driver::DriverResult<T> + Send + 'static,

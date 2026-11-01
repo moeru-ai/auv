@@ -319,6 +319,65 @@ fn disabled_nonfocusable_and_offscreen_nodes_are_not_selected() {
   }
 }
 
+// ROOT CAUSE:
+//
+// If a focus request was cancelled, SetFocus could still run because only
+// desktop admission checked cancellation, before the UIA provider reads.
+// Before the fix, the focus policy ignored the transport's cancellation.
+// The fix refuses delivery before and after the final identity read.
+#[test]
+fn cancelled_focus_refuses_before_identity_read() {
+  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let cancelled = std::sync::Arc::new(auv_driver_common::input_cancellation::InputCancellation::default());
+  cancelled.cancel();
+  let reads = std::cell::Cell::new(0);
+  let delivered = std::cell::Cell::new(0);
+  let result = auv_driver_common::input_cancellation::with_input_cancellation(cancelled, || {
+    focus_selected(
+      &selected,
+      || {
+        reads.set(reads.get() + 1);
+        Ok(selected.clone())
+      },
+      || {
+        delivered.set(delivered.get() + 1);
+        Ok(())
+      },
+    )
+  });
+  assert_eq!(reads.get(), 0);
+  assert_eq!(delivered.get(), 0);
+  assert!(matches!(result, Err(DriverError::InvalidInput { message }) if message.contains("cancelled")));
+}
+
+#[test]
+fn cancelled_focus_after_identity_read_delivers_nothing() {
+  let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let cancelled = std::sync::Arc::new(auv_driver_common::input_cancellation::InputCancellation::default());
+  let reads = std::cell::Cell::new(0);
+  let delivered = std::cell::Cell::new(0);
+  let result = auv_driver_common::input_cancellation::with_input_cancellation(cancelled.clone(), || {
+    focus_selected(
+      &selected,
+      || {
+        reads.set(reads.get() + 1);
+        cancelled.cancel();
+        Ok(AxNode {
+          focused: delivered.get() > 0,
+          ..selected.clone()
+        })
+      },
+      || {
+        delivered.set(delivered.get() + 1);
+        Ok(())
+      },
+    )
+  });
+  assert_eq!(delivered.get(), 0);
+  assert_eq!(reads.get(), 1);
+  assert!(matches!(result, Err(DriverError::InvalidInput { message }) if message.contains("cancelled")));
+}
+
 #[test]
 fn changed_target_refuses_focus_without_delivery() {
   let selected = fixture_node("0/0", 1, "Edit", "Search", None, "original");
@@ -363,6 +422,7 @@ fn native_identity_failure_refuses_focus_without_delivery() {
 #[test]
 fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
   let selected = fixture_node("0/0", 1, "Edit", "Search", None, "field");
+  let cancellation = std::sync::Arc::new(auv_driver_common::input_cancellation::InputCancellation::default());
   let mut after = selected.clone();
   after.focused = true;
   after.name = "Search results".into();
@@ -372,25 +432,28 @@ fn focus_readback_accepts_mutable_ui_properties_when_identity_and_focus_hold() {
   let delivered = std::cell::Cell::new(0);
   // Both reads model a native callback that has already confirmed the same
   // UIA element identity. Only presentation attributes change after SetFocus.
-  let result = focus_selected(
-    &selected,
-    || {
-      let previous = reads.replace(reads.get() + 1);
-      Ok(if previous == 0 {
-        selected.clone()
-      } else {
-        after.clone()
-      })
-    },
-    || {
-      delivered.set(delivered.get() + 1);
-      Ok(())
-    },
-  )
+  let result = auv_driver_common::input_cancellation::with_input_cancellation(cancellation.clone(), || {
+    focus_selected(
+      &selected,
+      || {
+        let previous = reads.replace(reads.get() + 1);
+        Ok(if previous == 0 {
+          selected.clone()
+        } else {
+          after.clone()
+        })
+      },
+      || {
+        delivered.set(delivered.get() + 1);
+        Ok(())
+      },
+    )
+  })
   .expect("focus readback must not require frozen presentation attributes");
   assert!(result.verified);
   assert_eq!(reads.get(), 2);
   assert_eq!(delivered.get(), 1);
+  assert!(!cancellation.is_cancelled());
 }
 
 #[test]
