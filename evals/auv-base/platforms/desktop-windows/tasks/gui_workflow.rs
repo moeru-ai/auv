@@ -12,6 +12,7 @@ use auv_driver_common::window::Window;
 use auv_driver_common::{Click, MouseButton};
 use auv_driver_windows::WindowsDriverSession;
 
+use super::super::background::error_kind;
 use super::super::watch::{Snapshot, Verdict};
 use super::*;
 
@@ -629,14 +630,10 @@ fn focus_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Recei
   keys_may_go(scenario, entry, target)
 }
 
-/// Exercises a real missing-query refusal and judges zero input independently.
-fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
-  let query = "AUV absent semantic control 2b9dbd58";
+/// Invokes focus once and retains the actual failure facts for either route.
+fn attempt_focus(entry: &Entry<'_>, query: &str) -> Result<(bool, Value)> {
   let app = entry.window.app_name.as_deref().context("receiver window omitted its executable name")?;
-  let state_before = target.request(json!({"cmd": "state"}))?;
-  let before = scenario.watch.snapshot();
-  reject_user_input(entry.start, &before)?;
-  let (refused, failure_response) = if entry.route == "rust" {
+  if entry.route == "rust" {
     let result = entry.driver.accessibility().focus_text(auv_driver_common::FocusTextOptions {
       app: app.into(),
       selector: auv_driver_common::AxTextSelector::Query(query.into()),
@@ -649,25 +646,29 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
           auv_driver_common::DriverError::InputAction { progress, .. } => Some(progress),
           _ => None,
         };
-        json!({"message": error.to_string(), "input_progress": progress})
+        json!({"code": error_kind(error), "message": error.to_string(), "input_progress": progress})
       }
     };
-    let refused = matches!(
-      result,
-      Err(auv_driver_common::DriverError::InputAction {
-        cause,
-        progress: auv_driver_common::InputActionProgress::NotDelivered,
-      }) if matches!(*cause, auv_driver_common::DriverError::NotFound { .. })
-    );
-    (refused, Some(response))
+    Ok((result.is_err(), response))
   } else {
     let result = entry.call("input.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
-    let refused = result.exit != Some(0)
-      && result.json.as_ref().is_some_and(|value| {
-        value["failure_details"]["code"] == "not_found" && value["failure_details"]["input_progress"]["state"] == "not_delivered"
-      });
-    (refused, result.json)
+    Ok((result.exit != Some(0), result.json.unwrap_or(Value::Null)))
+  }
+}
+
+/// Exercises a real missing-query refusal and judges zero input independently.
+fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver) -> Result<()> {
+  let query = "AUV absent semantic control 2b9dbd58";
+  let state_before = target.request(json!({"cmd": "state"}))?;
+  let before = scenario.watch.snapshot();
+  reject_user_input(entry.start, &before)?;
+  let (failed, failure_response) = attempt_focus(entry, query)?;
+  let details = if entry.route == "rust" {
+    &failure_response
+  } else {
+    &failure_response["failure_details"]
   };
+  let refused = failed && details["code"] == "not_found" && details["input_progress"]["state"] == "not_delivered";
   let after = scenario.watch.snapshot();
   reject_user_input(entry.start, &after)?;
   let state_after = target.request(json!({"cmd": "state"}))?;
@@ -682,7 +683,7 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
     json!({
       "failure_code": if refused { Some("not_found") } else { None },
       "input_progress": if refused { Some("not_delivered") } else { None },
-        "failure_response": failure_response,
+      "failure_response": failure_response,
       "receiver_unchanged": state_before["typing"] == state_after["typing"],
       "foreground_unchanged": before.foreground == after.foreground, "pointer_unchanged": before.cursor == after.cursor,
       "no_injected_mouse": before.injected_mouse == after.injected_mouse,
@@ -691,6 +692,133 @@ fn missing_focus_query(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &
   )?;
   if !verified {
     bail!("missing UIA query did not refuse with zero input; no retry");
+  }
+  Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct FocusRejectionReceipt {
+  receipt: bool,
+  focus_received_counts: [Option<u64>; 2],
+  focus_rejected_counts: [Option<u64>; 2],
+  focus_received: bool,
+  focus_rejected: bool,
+  unchanged: bool,
+  receiver_typing_focused: Option<bool>,
+  receiver_button_focused: Option<bool>,
+  verified: bool,
+}
+
+fn check_unverified_focus_receipt(route: &str, response: &Value, state_before: &Value, state_after: &Value) -> FocusRejectionReceipt {
+  let details = if route == "rust" {
+    response
+  } else {
+    &response["failure_details"]
+  };
+  let progress = &details["input_progress"];
+  let submitted = progress["state"] == "submitted";
+  let action = &progress["action"];
+  let receipt = details["code"] == "backend"
+    && submitted
+    && action["verified"] == false
+    && action["selected_path"] == "ax_focus"
+    && action["attempts"]
+      .as_array()
+      .is_some_and(|attempts| attempts.len() == 1 && attempts[0]["path"] == "ax_focus" && attempts[0]["succeeded"] == true);
+
+  let recv_before = state_before["typing"]["focus_received"].as_u64();
+  let recv_after = state_after["typing"]["focus_received"].as_u64();
+  let focus_received = match (recv_before, recv_after) {
+    (Some(b), Some(a)) => b.checked_add(1) == Some(a),
+    _ => false,
+  };
+
+  let rej_before = state_before["typing"]["focus_rejected"].as_u64();
+  let rej_after = state_after["typing"]["focus_rejected"].as_u64();
+  let focus_rejected = match (rej_before, rej_after) {
+    (Some(b), Some(a)) => b.checked_add(1) == Some(a),
+    _ => false,
+  };
+
+  let text_unchanged = match (state_before["typing"]["text"].as_str(), state_after["typing"]["text"].as_str()) {
+    (Some(b), Some(a)) => b == a,
+    _ => false,
+  };
+  let keys_unchanged = match (state_before["typing"]["keys"].as_array(), state_after["typing"]["keys"].as_array()) {
+    (Some(b), Some(a)) => b == a,
+    _ => false,
+  };
+  let clicks_unchanged = match (state_before["clicks"].as_u64(), state_after["clicks"].as_u64()) {
+    (Some(b), Some(a)) => b == a,
+    _ => false,
+  };
+  let unchanged = text_unchanged && keys_unchanged && clicks_unchanged;
+
+  let receiver_typing_focused = state_after["typing"]["focused"].as_bool();
+  let receiver_button_focused = state_after["button_focused"].as_bool();
+
+  let verified = receipt
+    && focus_received
+    && focus_rejected
+    && unchanged
+    && receiver_typing_focused == Some(false)
+    && receiver_button_focused == Some(true);
+
+  FocusRejectionReceipt {
+    receipt,
+    focus_received_counts: [recv_before, recv_after],
+    focus_rejected_counts: [rej_before, rej_after],
+    focus_received,
+    focus_rejected,
+    unchanged,
+    receiver_typing_focused,
+    receiver_button_focused,
+    verified,
+  }
+}
+
+/// The receiver receives native focus, then redirects it to its own button.
+/// This proves side effects occurred even though the focus operation failed.
+fn unverified_focus(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Receiver, query: &str) -> Result<()> {
+  let armed = target.request(json!({"cmd": "reject_typing_focus", "enabled": true}))?;
+  if armed["enabled"] != true {
+    bail!("receiver did not arm focus rejection");
+  }
+  let body_result = (|| -> Result<(Value, Snapshot, bool, Value, Snapshot, Value)> {
+    let state_before = target.request(json!({"cmd": "state"}))?;
+    let before = scenario.watch.snapshot();
+    reject_user_input(entry.start, &before)?;
+    let (failed, response) = attempt_focus(entry, query)?;
+    let after = scenario.watch.snapshot();
+    let state_after = target.request(json!({"cmd": "state"}))?;
+    Ok((state_before, before, failed, response, after, state_after))
+  })();
+  // On both success and failure paths, always attempt to disarm the rejection mode.
+  // Ultimate cleanup is backed by receiver process lifecycle teardown (close / drop).
+  let disarm_result = target.request(json!({"cmd": "reject_typing_focus", "enabled": false}));
+  let (state_before, before, failed, response, after, state_after) = body_result?;
+  disarm_result?;
+  let check = check_unverified_focus_receipt(entry.route, &response, &state_before, &state_after);
+  let no_pointer_or_keys =
+    before.cursor == after.cursor && before.injected_mouse == after.injected_mouse && before.injected_keys == after.injected_keys;
+  let verified = failed && no_pointer_or_keys && check.verified;
+  scenario.records.write(
+    "focus_rejection_verification",
+    json!({
+      "failure_response": response,
+      "focus_received_counts": check.focus_received_counts,
+      "focus_rejected_counts": check.focus_rejected_counts,
+      "focus_received": check.focus_received,
+      "focus_rejected": check.focus_rejected,
+      "receiver_typing_focused": check.receiver_typing_focused,
+      "receiver_button_focused": check.receiver_button_focused,
+      "text_keys_clicks_unchanged": check.unchanged,
+      "pointer_keys_unchanged": no_pointer_or_keys,
+      "verified": verified,
+    }),
+  )?;
+  if !verified {
+    bail!("received-then-rejected focus did not retain unverified delivery progress; no retry or fallback");
   }
   Ok(())
 }
@@ -1171,6 +1299,10 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
       bail!("the application did not submit the typed record exactly once");
     }
     capture(&mut scenario, &entry, &mut target, false)?;
+
+    if options.semantic_focus {
+      unverified_focus(&mut scenario, &entry, &mut target, &text)?;
+    }
 
     // The submit button now has the focus. Test the guard before calling any key dispatch path.
     let before_guard = target.request(json!({"cmd": "state"}))?;
@@ -1673,5 +1805,142 @@ mod tests {
     assert_eq!(summary["cleanup"]["receiver"]["state"], json!("not_created"));
     assert_eq!(summary["cleanup"]["foreground_restore"]["state"], json!("not_attempted"));
     assert_eq!(summary["cleanup"]["capture_store"]["state"], json!("verified"));
+  }
+
+  /// Verifies payload parsing rules, raw count extraction, and strict refusal assertion criteria
+  /// across Rust, Invoke, and Runner payload formats.
+  /// (End-to-end execution of the complete OS GUI workflow is verified in the live workflow runner.)
+  #[test]
+  fn focus_refusal_receipt_and_counts_are_strictly_verified() {
+    let state_before = json!({
+      "clicks": 14,
+      "typing": {
+        "text": "Write Cedar Meadow",
+        "keys": [],
+        "focused": true,
+        "focus_received": 1,
+        "focus_rejected": 0
+      },
+      "button_focused": false
+    });
+    let state_after = json!({
+      "clicks": 14,
+      "typing": {
+        "text": "Write Cedar Meadow",
+        "keys": [],
+        "focused": false,
+        "focus_received": 2,
+        "focus_rejected": 1
+      },
+      "button_focused": true
+    });
+
+    let rust_response = json!({
+      "code": "backend",
+      "message": "UIA SetFocus returned, but focus readback did not confirm the selected control",
+      "input_progress": {
+        "state": "submitted",
+        "action": {
+          "selected_path": "ax_focus",
+          "verified": false,
+          "attempts": [
+            { "path": "ax_focus", "succeeded": true }
+          ]
+        }
+      }
+    });
+
+    let invoke_response = json!({
+      "status": "failed",
+      "failure_details": rust_response
+    });
+
+    // Valid cases for rust, invoke, and runner formats
+    let rust_check = check_unverified_focus_receipt("rust", &rust_response, &state_before, &state_after);
+    assert_eq!(rust_check.focus_received_counts, [Some(1), Some(2)]);
+    assert_eq!(rust_check.focus_rejected_counts, [Some(0), Some(1)]);
+    assert!(rust_check.focus_received);
+    assert!(rust_check.focus_rejected);
+    assert!(rust_check.unchanged);
+    assert_eq!(rust_check.receiver_typing_focused, Some(false));
+    assert_eq!(rust_check.receiver_button_focused, Some(true));
+    assert!(rust_check.verified);
+
+    let invoke_check = check_unverified_focus_receipt("invoke", &invoke_response, &state_before, &state_after);
+    assert_eq!(invoke_check.focus_received_counts, [Some(1), Some(2)]);
+    assert_eq!(invoke_check.focus_rejected_counts, [Some(0), Some(1)]);
+    assert!(invoke_check.verified);
+
+    let runner_check = check_unverified_focus_receipt("runner", &invoke_response, &state_before, &state_after);
+    assert_eq!(runner_check.focus_received_counts, [Some(1), Some(2)]);
+    assert_eq!(runner_check.focus_rejected_counts, [Some(0), Some(1)]);
+    assert!(runner_check.verified);
+
+    // Reject missing application state (text, keys, clicks, focused)
+    let missing_before = json!({
+      "typing": {
+        "focus_received": 0,
+        "focus_rejected": 0
+      }
+    });
+    let missing_after = json!({
+      "typing": {
+        "focus_received": 1,
+        "focus_rejected": 1
+      },
+      "button_focused": true
+    });
+    let missing_check = check_unverified_focus_receipt("rust", &rust_response, &missing_before, &missing_after);
+    assert!(!missing_check.unchanged);
+    assert_eq!(missing_check.receiver_typing_focused, None);
+    assert!(!missing_check.verified);
+
+    // Reject unparsed or missing count in before defaulting to 0
+    let mut missing_recv_before = state_before.clone();
+    missing_recv_before["typing"].as_object_mut().unwrap().remove("focus_received");
+    let mut missing_recv_after = state_after.clone();
+    missing_recv_after["typing"]["focus_received"] = json!(1);
+    let missing_recv_check = check_unverified_focus_receipt("rust", &rust_response, &missing_recv_before, &missing_recv_after);
+    assert_eq!(missing_recv_check.focus_received_counts, [None, Some(1)]);
+    assert!(!missing_recv_check.focus_received);
+    assert!(!missing_recv_check.verified);
+
+    // Reject delivery_uncertain
+    let mut uncertain = rust_response.clone();
+    uncertain["input_progress"]["state"] = json!("delivery_uncertain");
+    assert!(!check_unverified_focus_receipt("rust", &uncertain, &state_before, &state_after).verified);
+
+    // Reject non-backend error code
+    let mut not_found = rust_response.clone();
+    not_found["code"] = json!("not_found");
+    assert!(!check_unverified_focus_receipt("rust", &not_found, &state_before, &state_after).verified);
+
+    // Reject multiple attempts
+    let mut multiple_attempts = rust_response.clone();
+    multiple_attempts["input_progress"]["action"]["attempts"] = json!([
+      { "path": "ax_focus", "succeeded": true },
+      { "path": "ax_focus", "succeeded": true }
+    ]);
+    assert!(!check_unverified_focus_receipt("rust", &multiple_attempts, &state_before, &state_after).verified);
+
+    // Reject incorrect focus count increment (!= 1)
+    let mut bad_received_count = state_after.clone();
+    bad_received_count["typing"]["focus_received"] = json!(3);
+    let bad_recv_check = check_unverified_focus_receipt("rust", &rust_response, &state_before, &bad_received_count);
+    assert_eq!(bad_recv_check.focus_received_counts, [Some(1), Some(3)]);
+    assert!(!bad_recv_check.focus_received);
+    assert!(!bad_recv_check.verified);
+
+    let mut bad_rejected_count = state_after.clone();
+    bad_rejected_count["typing"]["focus_rejected"] = json!(2);
+    let bad_rej_check = check_unverified_focus_receipt("rust", &rust_response, &state_before, &bad_rejected_count);
+    assert_eq!(bad_rej_check.focus_rejected_counts, [Some(0), Some(2)]);
+    assert!(!bad_rej_check.focus_rejected);
+    assert!(!bad_rej_check.verified);
+
+    // Reject when button was not focused
+    let mut button_not_focused = state_after.clone();
+    button_not_focused["button_focused"] = json!(false);
+    assert!(!check_unverified_focus_receipt("rust", &rust_response, &state_before, &button_not_focused).verified);
   }
 }
