@@ -37,7 +37,7 @@ webgpu = ["runtime", "ort/webgpu"]
 xnnpack = ["runtime", "ort/xnnpack"]
 
 [dependencies]
-auv-inference-common = { version = "0.0.39", path = "../auv-inference-common" }
+auv-inference-common = { version = "0.0.40", path = "../auv-inference-common" }
 ndarray = "0.17"
 # NOTICE: `ort` is pinned because Cargo resolves a `2.0.0-rc.N` requirement to
 # any later release candidate, and later candidates break the API. rc.14 changed

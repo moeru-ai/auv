@@ -33,7 +33,7 @@ name = "release_pipewire_probe"
 path = "examples/release_pipewire_probe.rs"
 
 [dependencies]
-auv-driver-common = { version = "0.0.39", path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.40", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
