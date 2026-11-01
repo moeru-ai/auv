@@ -27,6 +27,11 @@ fn auv(args: &[&str]) -> std::process::Output {
   Command::new(env!("CARGO_BIN_EXE_auv")).args(args).output().expect("run auv binary")
 }
 
+/// App-neutral operation fixture; `auv-cli` ships no built-in operations.
+fn fixture(name: &str) -> String {
+  std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("operations").join(name).display().to_string()
+}
+
 fn stdout_json(output: &std::process::Output) -> serde_json::Value {
   let stdout = String::from_utf8_lossy(&output.stdout);
   serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("stdout must be JSON (got {stdout:?}): {err}"))
@@ -38,9 +43,11 @@ fn op_run_fast_mode_binary_entry_succeeds_unconfirmed() {
     "op",
     "run",
     "--operation",
-    "qqmusic.prepare_playback_fast",
+    "example.prepare_fast",
     "--mode",
     "fast",
+    "--file",
+    &fixture("example-prepare-fast.json"),
     "--json",
   ]);
   assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -58,9 +65,11 @@ fn op_run_verified_mode_binary_entry_succeeds_confirmed() {
     "op",
     "run",
     "--operation",
-    "qqmusic.prepare_playback",
+    "example.prepare",
     "--mode",
     "verified",
+    "--file",
+    &fixture("example-prepare.json"),
     "--json",
   ]);
   assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -74,15 +83,17 @@ fn op_run_verified_mode_binary_entry_succeeds_confirmed() {
 
 #[test]
 fn op_run_mode_mismatch_binary_entry_fails_closed() {
-  // qqmusic.prepare_playback is Verified-only; requesting Fast must be
+  // example.prepare is Verified-only; requesting Fast must be
   // rejected before any driver side effect.
   let output = auv(&[
     "op",
     "run",
     "--operation",
-    "qqmusic.prepare_playback",
+    "example.prepare",
     "--mode",
     "fast",
+    "--file",
+    &fixture("example-prepare.json"),
     "--json",
   ]);
   assert!(!output.status.success(), "mode conflict must fail the process");
@@ -95,9 +106,33 @@ fn op_run_mode_mismatch_binary_entry_fails_closed() {
 
 #[test]
 fn op_run_missing_mode_binary_entry_fails_closed() {
-  let output = auv(&["op", "run", "--operation", "qqmusic.prepare_playback_fast"]);
+  let file = fixture("example-prepare-fast.json");
+  let output = auv(&[
+    "op",
+    "run",
+    "--operation",
+    "example.prepare_fast",
+    "--file",
+    &file,
+  ]);
   assert!(!output.status.success(), "missing --mode must fail the process");
 
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert!(stderr.contains("--mode"), "stderr must name the missing required flag: {stderr}");
+}
+
+#[test]
+fn op_run_missing_file_binary_entry_fails_closed() {
+  let output = auv(&[
+    "op",
+    "run",
+    "--operation",
+    "example.prepare_fast",
+    "--mode",
+    "fast",
+  ]);
+  assert!(!output.status.success(), "missing --file must fail the process");
+
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("--file"), "stderr must name the missing required flag: {stderr}");
 }
