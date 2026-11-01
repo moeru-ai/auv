@@ -1165,19 +1165,24 @@ mod tests {
     }
   }
 
+  // TODO(repo-split): this test reads the QQ Music operations from
+  // `supported/apps/auv-qqmusic`, so `crates/` still reaches into `supported/`
+  // in tests. Move the test next to the operations when `supported/` splits
+  // out of this repository.
   #[test]
-  fn test_classify_step_builtin_operations_all_recognized() {
-    // All steps in the built-in verified operation must be recognized
-    let raw_verified: OperationDef = serde_json::from_str(include_str!("../../../docs/ai/references/driver/qqmusic-prepared-playback.json"))
-      .expect("builtin verified op json must parse");
+  fn test_classify_step_qqmusic_operations_all_recognized() {
+    // All steps in the QQ Music verified operation must be recognized
+    let raw_verified: OperationDef =
+      serde_json::from_str(include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json"))
+        .expect("qqmusic verified op json must parse");
     for step in &raw_verified.steps {
       classify_step(step).unwrap_or_else(|e| panic!("step {} in verified op must be recognized: {e}", step.id));
     }
 
-    // All steps in the built-in fast operation must be recognized
+    // All steps in the QQ Music fast operation must be recognized
     let raw_fast: OperationDef =
-      serde_json::from_str(include_str!("../../../docs/ai/references/driver/qqmusic-prepared-playback-fast.json"))
-        .expect("builtin fast op json must parse");
+      serde_json::from_str(include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback-fast.json"))
+        .expect("qqmusic fast op json must parse");
     for step in &raw_fast.steps {
       classify_step(step).unwrap_or_else(|e| panic!("step {} in fast op must be recognized: {e}", step.id));
     }

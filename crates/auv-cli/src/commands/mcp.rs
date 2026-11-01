@@ -698,7 +698,6 @@ mod frontend {
     /// This is deliberately thin: scheduling, mode-conflict rejection, gate handling and output
     /// construction (including "fast is never confirmed") all stay in `run_with_executor_inner`.
     async fn execute_op_run(&self, req: OpRunToolRequest) -> Result<CallToolResult, McpError> {
-      let has_custom_file = req.file.is_some();
       let args = OpRunArgs {
         operation: req.operation,
         mode: req.mode,
@@ -721,10 +720,9 @@ mod frontend {
             CallToolResult::structured_error(value)
           })
         }
-        // `Err` is raised only while building the catalog: reading/admitting the caller's `file`, or
-        // the compiled-in built-ins. Scheduler, mode and gate failures are `Ok` with a reason_code.
-        Err(message) if has_custom_file => Err(invalid_params(message)),
-        Err(message) => Err(McpError::internal_error(message, None)),
+        // `Err` is raised only while reading/admitting the caller's `file`. Scheduler, mode and gate
+        // failures are `Ok` with a reason_code.
+        Err(message) => Err(invalid_params(message)),
       }
     }
   }
@@ -1060,13 +1058,14 @@ mod frontend {
   #[derive(Debug, Deserialize, JsonSchema)]
   #[serde(deny_unknown_fields)]
   struct OpRunToolRequest {
-    /// Operation name, e.g. qqmusic.prepare_playback or qqmusic.prepare_playback_fast.
+    /// Operation name, as declared by `file` (e.g. qqmusic.prepare_playback).
     operation: String,
     /// Execution mode. Required: there is no default, and a request without it is rejected before
     /// scheduling. Must match the mode the operation declares.
     mode: ExecutionModeArg,
-    /// Optional path to a custom compiled operation JSON file, admitted alongside the built-ins.
-    file: Option<PathBuf>,
+    /// Path to the compiled operation JSON file that declares `operation`. Required: AUV ships no
+    /// built-in operations.
+    file: PathBuf,
   }
 
   #[derive(Debug, Deserialize, JsonSchema)]

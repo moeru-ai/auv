@@ -33,7 +33,7 @@ Crux: validate AUV's thesis that repeated executions approach zero reasoning-tok
   - Total tokens: 3,372 (`cl100k`) / 3,334 (`o200k`)
 
 ### 2. Compile (human-compiled, honestly annotated)
-- Authored declarative operation files: `qqmusic-prepared-playback.yaml` & `qqmusic-prepared-playback.json`.
+- Authored declarative operation files: `qqmusic-prepared-playback.yaml` & `qqmusic-prepared-playback.json`, now in `supported/apps/auv-qqmusic/operations/` (with the `-fast` variants). Run them with `auv op run --operation qqmusic.prepare_playback --mode verified --file supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json`; `auv-cli` no longer builds them in.
 - Explicit notice: **Manually compiled by human engineer**. Validates execution viability of declarative operation artifacts, not automated program synthesis.
 - 4 deterministic steps with verification gates:
   1. `step_1_query_state`: SMTC metadata query -> gate: session present.
