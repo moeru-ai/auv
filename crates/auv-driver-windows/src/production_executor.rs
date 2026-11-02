@@ -50,13 +50,80 @@ pub struct WindowsOperationContext {
   pub timings: DiscoveryTimings,
 }
 
+/// Strips `.exe` suffix if present (case-insensitively).
+pub(crate) fn without_exe_suffix(value: &str) -> &str {
+  match value.len().checked_sub(4) {
+    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
+    _ => value,
+  }
+}
+
+/// Matches a window's application name against the expected process name.
+///
+/// Rejects substring false positives (e.g. `NotQQMusic.exe` when expecting `QQMusic.exe`).
+pub(crate) fn matches_target_window_app(window: &Window, expected_app_process: &str) -> bool {
+  let Some(app_name) = window.app_name.as_deref() else {
+    return false;
+  };
+  let expected_trim = expected_app_process.trim();
+  let app_trim = app_name.trim();
+  if expected_trim.is_empty() || app_trim.is_empty() {
+    return false;
+  }
+  let expected_stem = without_exe_suffix(expected_trim);
+  let app_stem = without_exe_suffix(app_trim);
+  app_trim.eq_ignore_ascii_case(expected_trim) || app_stem.eq_ignore_ascii_case(expected_stem)
+}
+
+/// Selects the target window for an application process from enumerated windows.
+///
+/// Enforces:
+/// - Exact identity matching (no loose substring authorization)
+/// - Ambiguity handling: if multiple candidate windows match, distinguishes single visible/main
+///   or returns an error for ambiguous matches.
+pub(crate) fn select_target_window(windows: &[Window], app_process: &str) -> DriverResult<Window> {
+  let matches: Vec<&Window> = windows.iter().filter(|w| matches_target_window_app(w, app_process)).collect();
+
+  match matches.len() {
+    0 => Err(DriverError::NotFound {
+      target: format!("{app_process} window"),
+    }),
+    1 => Ok(matches[0].clone()),
+    _ => {
+      // Multiple windows match the process name.
+      // 1. Try narrowing to visible windows.
+      let visible: Vec<&Window> = matches.iter().copied().filter(|w| w.is_visible).collect();
+      if visible.len() == 1 {
+        return Ok(visible[0].clone());
+      }
+
+      // 2. If multiple visible windows, try narrowing to main window.
+      if visible.len() > 1 {
+        let mains: Vec<&Window> = visible.iter().copied().filter(|w| w.is_main).collect();
+        if mains.len() == 1 {
+          return Ok(mains[0].clone());
+        }
+      }
+
+      let count = if visible.is_empty() {
+        matches.len()
+      } else {
+        visible.len()
+      };
+      Err(DriverError::InvalidInput {
+        message: format!("Ambiguous match: multiple windows (count: {count}) matched target '{app_process}'"),
+      })
+    }
+  }
+}
+
 impl WindowsOperationContext {
   /// Resolves the context targeting QQ Music, optionally utilizing a cached CoreAudio endpoint ID.
   pub fn resolve(cached_endpoint_id: Option<&str>) -> DriverResult<Self> {
-    Self::resolve_for_target("qqmusic", "QQMusic.exe", cached_endpoint_id)
+    Self::resolve_for_target("QQMusic.exe", "QQMusic.exe", cached_endpoint_id)
   }
 
-  /// Resolves context for a given SMTC app substring and process executable name.
+  /// Resolves context for a given SMTC target app and process executable name.
   pub fn resolve_for_target(smtc_filter: &str, app_process: &str, cached_endpoint_id: Option<&str>) -> DriverResult<Self> {
     let t_mgr = Instant::now();
     let manager = SmtcMediaManager::new()?;
@@ -70,17 +137,7 @@ impl WindowsOperationContext {
 
     let t_win = Instant::now();
     let windows = list_windows()?;
-    let window = windows
-      .into_iter()
-      .find(|w| {
-        w.app_name
-          .as_deref()
-          .map(|n| n.eq_ignore_ascii_case(app_process) || n.to_ascii_lowercase().contains(&smtc_filter.to_ascii_lowercase()))
-          .unwrap_or(false)
-      })
-      .ok_or_else(|| DriverError::NotFound {
-        target: format!("{app_process} window"),
-      })?;
+    let window = select_target_window(&windows, app_process)?;
     let window_discovery_ms = t_win.elapsed().as_secs_f64() * 1000.0;
 
     let pid = window.process_id.unwrap_or(0);
@@ -1757,5 +1814,67 @@ mod tests {
     req.app_name = "QQMUSIC.EXE".to_string();
 
     assert!(validate_supported_target(&op, &req).is_ok());
+  }
+
+  fn test_window(id: &str, app: Option<&str>, is_visible: bool, is_main: bool) -> Window {
+    Window {
+      reference: auv_driver_common::window::WindowRef { id: id.to_string() },
+      title: Some("Test Window".to_string()),
+      app_name: app.map(str::to_string),
+      application_id: None,
+      process_id: Some(1234),
+      frame: auv_driver_common::geometry::Rect::new(0.0, 0.0, 800.0, 600.0),
+      coordinate_space: auv_driver_common::geometry::CoordinateSpace::Screen,
+      is_main,
+      is_visible,
+    }
+  }
+
+  #[test]
+  fn test_select_target_window_resolution_and_ambiguity() {
+    // 1. Positive exact / case-insensitive / stem matches
+    let win_exact = test_window("1", Some("QQMusic.exe"), true, true);
+    assert_eq!(select_target_window(&[win_exact], "QQMusic.exe").unwrap().reference.id, "1");
+
+    let win_lower = test_window("2", Some("qqmusic.exe"), true, true);
+    assert_eq!(select_target_window(&[win_lower], "QQMusic.exe").unwrap().reference.id, "2");
+
+    let win_stem = test_window("3", Some("QQMusic"), true, true);
+    assert_eq!(select_target_window(&[win_stem], "QQMusic.exe").unwrap().reference.id, "3");
+
+    // 2. Strict negative matches: substring false positives are NOT authorized
+    let win_not = test_window("4", Some("NotQQMusic.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_not], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    let win_helper = test_window("5", Some("QQMusic_Helper.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_helper], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    let win_other = test_window("6", Some("Spotify.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_other], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    // 3. Target missing (empty list)
+    assert!(matches!(select_target_window(&[], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    // 4. Ambiguity: multiple visible windows without a single main window rejected
+    let win_a = test_window("a", Some("QQMusic.exe"), true, false);
+    let win_b = test_window("b", Some("QQMusic.exe"), true, false);
+    let ambig_err = select_target_window(&[win_a.clone(), win_b.clone()], "QQMusic.exe").unwrap_err();
+    match ambig_err {
+      DriverError::InvalidInput { message } => {
+        assert!(message.contains("Ambiguous match"), "{message}");
+        assert!(message.contains("count: 2"), "{message}");
+      }
+      other => panic!("expected InvalidInput for ambiguous windows, got {other:?}"),
+    }
+
+    // 5. Disambiguation: if one is main, it is selected
+    let win_main = test_window("c", Some("QQMusic.exe"), true, true);
+    let resolved = select_target_window(&[win_a.clone(), win_main.clone()], "QQMusic.exe").unwrap();
+    assert_eq!(resolved.reference.id, "c");
+
+    // 6. Disambiguation: if one is visible and one is invisible, visible is selected
+    let win_invis = test_window("d", Some("QQMusic.exe"), false, false);
+    let resolved_vis = select_target_window(&[win_invis, win_a], "QQMusic.exe").unwrap();
+    assert_eq!(resolved_vis.reference.id, "a");
   }
 }

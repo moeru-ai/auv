@@ -64,6 +64,66 @@ pub struct AudioLookupStats {
   pub session_count: usize,
 }
 
+/// Strips `.exe` suffix if present (case-insensitively).
+pub(crate) fn without_exe_suffix(value: &str) -> &str {
+  match value.len().checked_sub(4) {
+    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
+    _ => value,
+  }
+}
+
+/// Matches an SMTC session's `SourceAppUserModelId` against an expected process name or ID.
+///
+/// Ensures exact identity matching without loose substring authorization:
+/// - Direct case-insensitive match (e.g. `"QQMusic.exe"` or `"QQMusic"`)
+/// - Windows path ending match (e.g. `r"C:\Program Files\Tencent\QQMusic\QQMusic.exe"`)
+/// - Rejects false positives like `"NotQQMusic.exe"`, `"foo_qqmusic_bar.exe"`.
+pub(crate) fn matches_smtc_app_id(session_app_id: &str, expected: &str) -> bool {
+  let expected_trim = expected.trim();
+  let session_trim = session_app_id.trim();
+  if expected_trim.is_empty() || session_trim.is_empty() {
+    return false;
+  }
+
+  let expected_stem = without_exe_suffix(expected_trim);
+
+  // 1. Direct match on full ID or stem
+  if session_trim.eq_ignore_ascii_case(expected_trim) || session_trim.eq_ignore_ascii_case(expected_stem) {
+    return true;
+  }
+
+  // 2. Trailing executable name if session_app_id is a file path
+  if let Some(file_name) = session_trim.rsplit(&['\\', '/'][..]).next() {
+    if !file_name.is_empty()
+      && (file_name.eq_ignore_ascii_case(expected_trim) || without_exe_suffix(file_name).eq_ignore_ascii_case(expected_stem))
+    {
+      return true;
+    }
+  }
+
+  false
+}
+
+/// Pure helper to select a single matching SMTC session from a collection of candidate session app_ids.
+///
+/// Returns:
+/// - `Ok(item)` if exactly one session matches
+/// - `Err(NotFound)` if 0 sessions match
+/// - `Err(InvalidInput)` if multiple sessions match (ambiguous)
+pub(crate) fn select_target_session_id<'a>(candidates: &[&'a str], expected: &str) -> DriverResult<&'a str> {
+  let matches: Vec<&'a str> = candidates.iter().copied().filter(|id| matches_smtc_app_id(id, expected)).collect();
+
+  match matches.as_slice() {
+    [single] => Ok(*single),
+    [] => Err(auv_driver_common::error::DriverError::NotFound {
+      target: format!("{expected} SMTC session"),
+    }),
+    multiple => Err(auv_driver_common::error::DriverError::InvalidInput {
+      message: format!("Ambiguous match: multiple SMTC sessions (count: {}) matched target '{expected}'", multiple.len()),
+    }),
+  }
+}
+
 #[cfg(target_os = "windows")]
 mod native {
   use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
@@ -278,19 +338,16 @@ mod native {
     }
 
     pub fn find_session(&self, query: &str) -> DriverResult<Option<SmtcSession>> {
-      let lower = query.to_lowercase();
-      if let Ok(Some(current)) = self.current_session()
-        && current.app_id().to_lowercase().contains(&lower)
-      {
-        return Ok(Some(current));
-      }
       let sessions = self.list_sessions()?;
-      for s in sessions {
-        if s.app_id().to_lowercase().contains(&lower) {
-          return Ok(Some(s));
-        }
+      let matching: Vec<SmtcSession> = sessions.into_iter().filter(|s| super::matches_smtc_app_id(s.app_id(), query)).collect();
+
+      match matching.len() {
+        0 => Ok(None),
+        1 => Ok(matching.into_iter().next()),
+        count => Err(auv_driver_common::error::DriverError::InvalidInput {
+          message: format!("Ambiguous match: multiple SMTC sessions (count: {count}) matched target '{query}'"),
+        }),
       }
-      Ok(None)
     }
 
     pub fn now_playing(&self) -> DriverResult<Option<NowPlayingState>> {
