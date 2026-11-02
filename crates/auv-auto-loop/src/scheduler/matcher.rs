@@ -314,9 +314,7 @@ impl<'a> FastLoopScheduler<'a> {
     };
 
     // Target app consistency check (fail-closed if request specifies an incompatible app)
-    let clean_req = request.app_name.to_lowercase().replace(".exe", "").replace(' ', "_");
-    let clean_target = op.target.app_name.to_lowercase().replace(".exe", "").replace(' ', "_");
-    if !clean_req.is_empty() && clean_req != clean_target {
+    if !request.app_name.is_empty() && !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
       self.logger.log(
         DecisionCategory::Scheduling,
         DecisionAction::Intercepted,
