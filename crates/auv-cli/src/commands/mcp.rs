@@ -720,8 +720,9 @@ mod frontend {
             CallToolResult::structured_error(value)
           })
         }
-        // `Err` is raised only while reading/admitting the caller's `file`. Scheduler, mode and gate
-        // failures are `Ok` with a reason_code.
+        // `Err` is raised when reading/admitting the caller's `file` or when the requested operation
+        // name does not match the file's declared operation. Scheduler, mode and gate failures are `Ok`
+        // with a reason_code.
         Err(message) => Err(invalid_params(message)),
       }
     }

@@ -313,6 +313,37 @@ impl<'a> FastLoopScheduler<'a> {
       };
     };
 
+    // Target app consistency check (fail-closed if request specifies an incompatible app)
+    let clean_req = request.app_name.to_lowercase().replace(".exe", "").replace(' ', "_");
+    let clean_target = op.target.app_name.to_lowercase().replace(".exe", "").replace(' ', "_");
+    if !clean_req.is_empty() && clean_req != clean_target {
+      self.logger.log(
+        DecisionCategory::Scheduling,
+        DecisionAction::Intercepted,
+        ReasonCode::PreconditionMismatch,
+        task_id,
+        Some(op.name.clone()),
+        format!(
+          "Target app mismatch for '{}': request specifies '{}', but operation targets '{}'",
+          operation_name, request.app_name, op.target.app_name
+        ),
+        serde_json::json!({
+          "request_app": request.app_name,
+          "target_app": op.target.app_name,
+        }),
+      );
+
+      return SchedulingOutcome {
+        selected_operation: None,
+        embedding_called: false,
+        reason_code: ReasonCode::PreconditionMismatch,
+        message: format!(
+          "Target app mismatch: request specifies '{}', but operation '{}' targets '{}'",
+          request.app_name, operation_name, op.target.app_name
+        ),
+      };
+    }
+
     // Explicit execution requires a declared execution mode (fail-closed)
     let Some(req_mode) = request.requested_mode else {
       self.logger.log(
@@ -654,5 +685,31 @@ mod tests {
     assert!(outcome.selected_operation.is_none());
     assert!(!outcome.embedding_called, "Exact lookup must NEVER fall back to embedding");
     assert_eq!(outcome.reason_code, ReasonCode::SchedulerMissEscalateVlm);
+  }
+
+  #[test]
+  fn test_schedule_exact_target_app_mismatch_intercepted() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    // Operation targets "Example.exe"
+    let op = test_op("custom.prepare", ExecutionMode::Verified);
+    catalog.register_active(op).unwrap();
+
+    // Request specifies incompatible "Notepad.exe"
+    let req = TaskRequest {
+      app_name: "Notepad.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_none(), "Target app mismatch must intercept");
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::PreconditionMismatch);
+    assert!(outcome.message.contains("Target app mismatch"));
   }
 }
