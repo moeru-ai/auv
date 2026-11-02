@@ -314,7 +314,7 @@ impl<'a> FastLoopScheduler<'a> {
     };
 
     // Target app consistency check (fail-closed if request specifies an incompatible app)
-    if !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
+    if request.app_name.is_empty() || op.target.app_name.is_empty() || !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
       self.logger.log(
         DecisionCategory::Scheduling,
         DecisionAction::Intercepted,
@@ -731,6 +731,32 @@ mod tests {
 
     let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
     assert!(outcome.selected_operation.is_none(), "Empty request app must be intercepted");
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::PreconditionMismatch);
+    assert!(outcome.message.contains("Target app mismatch"));
+  }
+
+  #[test]
+  fn test_schedule_exact_both_target_apps_empty_intercepted() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    let mut op = test_op("custom.prepare", ExecutionMode::Verified);
+    op.target.app_name = "".to_string();
+    catalog.register_active(op).unwrap();
+
+    // Request specifies empty app_name, op also has empty target.app_name
+    let req = TaskRequest {
+      app_name: "".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_none(), "Both target apps empty must be intercepted");
     assert!(!outcome.embedding_called);
     assert_eq!(outcome.reason_code, ReasonCode::PreconditionMismatch);
     assert!(outcome.message.contains("Target app mismatch"));
