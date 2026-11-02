@@ -761,4 +761,29 @@ mod tests {
     assert_eq!(outcome.reason_code, ReasonCode::PreconditionMismatch);
     assert!(outcome.message.contains("Target app mismatch"));
   }
+
+  #[test]
+  fn test_schedule_exact_nonstandard_prefix_targeting_qqmusic_succeeds() {
+    let logger = DecisionLogger::new();
+    let scheduler = FastLoopScheduler::new(&logger);
+    let mut catalog = OperationCatalog::new();
+    let mut op = test_op("custom_prefix.prepare", ExecutionMode::Verified);
+    op.target.app_name = "QQMusic.exe".to_string();
+    catalog.register_active(op).unwrap();
+
+    let req = TaskRequest {
+      app_name: "QQMusic.exe".to_string(),
+      task_name: "prepare".to_string(),
+      instruction: "Run custom_prefix.prepare".to_string(),
+      requested_mode: Some(ExecutionMode::Verified),
+      current_context: HashMap::new(),
+      embedding_vector: None,
+    };
+
+    let outcome = scheduler.schedule_exact("custom_prefix.prepare", &req, &catalog);
+    assert!(outcome.selected_operation.is_some(), "Exact matching with custom prefix on QQMusic.exe must succeed");
+    assert_eq!(outcome.selected_operation.unwrap().name, "custom_prefix.prepare");
+    assert!(!outcome.embedding_called);
+    assert_eq!(outcome.reason_code, ReasonCode::ExactKeyMatch);
+  }
 }

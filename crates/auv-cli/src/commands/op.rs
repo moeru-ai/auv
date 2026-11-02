@@ -588,6 +588,62 @@ pub(crate) mod tests {
   }
 
   #[test]
+  fn test_run_single_file_custom_prefix_targeting_qqmusic_exact_match_success() {
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("qqmusic-custom-prefix.json");
+
+    // File declares nonstandard prefix 'custom_prefix.prepare', but target is 'QQMusic.exe'
+    let custom_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "custom_prefix.prepare",
+      "description": "Custom prefix op targeting QQMusic.exe",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-02",
+        "crux_goal": "test nonstandard prefix compatible with QQMusic target"
+      },
+      "target": {
+        "app_name": "QQMusic.exe",
+        "backend": "windows.smtc+coreaudio+wgc"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&custom_op).unwrap()).unwrap();
+
+    let args = OpRunArgs {
+      operation: "custom_prefix.prepare".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path,
+      json: true,
+    };
+
+    let (exit_code, output) =
+      run_with_executor_inner(&args, &fake_executor).expect("single file exact match with QQMusic target must succeed");
+    assert_eq!(exit_code, 0);
+    assert_eq!(output.status, "success");
+    assert_eq!(output.execution_mode, "verified");
+    assert_eq!(output.reason_code, "GATE_PASSED");
+    assert!(output.confirmed);
+    assert_eq!(fake_executor.calls_count(), 1, "FakeExecutor must be called exactly once");
+  }
+
+  #[test]
   fn test_run_precondition_mismatch_returns_failure_and_zero_executor_calls() {
     let fake_executor = FakeOperationExecutor::new();
     let temp_dir = tempfile::tempdir().unwrap();
