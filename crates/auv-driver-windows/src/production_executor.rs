@@ -415,9 +415,8 @@ fn evaluate_step_track_change(gate: &VerificationGateDef, previous: &TrackIdenti
 /// - Any step declares an `app_id` that is not a string or does not match operation target application
 fn validate_supported_target(op: &OperationDef, request: &TaskRequest) -> Result<(), (String, String)> {
   if !op.target.app_name.eq_ignore_ascii_case("QQMusic.exe") {
-    let step_id = op.steps.first().map(|s| s.id.clone()).unwrap_or_else(|| "target_validation".to_string());
     return Err((
-      step_id,
+      "target_validation".to_string(),
       format!(
         "Unsupported operation target app '{}'; only 'QQMusic.exe' is currently supported by WindowsProductionExecutor",
         op.target.app_name
@@ -425,15 +424,16 @@ fn validate_supported_target(op: &OperationDef, request: &TaskRequest) -> Result
     ));
   }
 
-  if !request.app_name.is_empty() && !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
-    let step_id = op.steps.first().map(|s| s.id.clone()).unwrap_or_else(|| "target_validation".to_string());
-    return Err((step_id, format!("Request app '{}' does not match operation target app '{}'", request.app_name, op.target.app_name)));
+  if request.app_name.is_empty() || !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
+    return Err((
+      "target_validation".to_string(),
+      format!("Request app '{}' does not match operation target app '{}'", request.app_name, op.target.app_name),
+    ));
   }
 
   if op.target.backend != "windows.smtc+coreaudio+wgc" {
-    let step_id = op.steps.first().map(|s| s.id.clone()).unwrap_or_else(|| "target_validation".to_string());
     return Err((
-      step_id,
+      "target_validation".to_string(),
       format!("Unsupported operation target backend '{}'; only 'windows.smtc+coreaudio+wgc' is supported", op.target.backend),
     ));
   }
@@ -1251,6 +1251,13 @@ mod tests {
     for step in &raw_fast.steps {
       classify_step(step).unwrap_or_else(|e| panic!("step {} in fast op must be recognized: {e}", step.id));
     }
+
+    // Both operations must pass target validation
+    let req_ver = dummy_request(Some(ExecutionMode::Verified));
+    validate_supported_target(&raw_verified, &req_ver).expect("qqmusic verified operation must pass target validation");
+
+    let req_fast = dummy_request(Some(ExecutionMode::Fast));
+    validate_supported_target(&raw_fast, &req_fast).expect("qqmusic fast operation must pass target validation");
   }
 
   #[test]
@@ -1589,7 +1596,7 @@ mod tests {
         message,
         consecutive_failures,
       } => {
-        assert_eq!(step_id, "step_smtc_query");
+        assert_eq!(step_id, "target_validation");
         assert_eq!(consecutive_failures, 1);
         assert!(message.contains("Unsupported operation target app 'Other.exe'"), "{message}");
       }
@@ -1612,11 +1619,34 @@ mod tests {
         message,
         consecutive_failures,
       } => {
-        assert_eq!(step_id, "step_smtc_query");
+        assert_eq!(step_id, "target_validation");
         assert_eq!(consecutive_failures, 1);
         assert!(message.contains("Request app 'Notepad.exe' does not match operation target app 'QQMusic.exe'"), "{message}");
       }
       other => panic!("expected GateFailed for request/target mismatch, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_empty_request_app() {
+    let executor = WindowsProductionExecutor::default();
+    let op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "".to_string();
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "target_validation");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("Request app '' does not match operation target app 'QQMusic.exe'"), "{message}");
+      }
+      other => panic!("expected GateFailed for empty request app, got {other:?}"),
     }
   }
 
@@ -1635,7 +1665,7 @@ mod tests {
         message,
         consecutive_failures,
       } => {
-        assert_eq!(step_id, "step_smtc_query");
+        assert_eq!(step_id, "target_validation");
         assert_eq!(consecutive_failures, 1);
         assert!(message.contains("Unsupported operation target backend 'linux.pipewire'"), "{message}");
       }
