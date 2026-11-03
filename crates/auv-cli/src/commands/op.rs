@@ -588,12 +588,17 @@ pub(crate) mod tests {
   }
 
   #[test]
-  fn test_run_single_file_custom_prefix_targeting_qqmusic_exact_match_success() {
+  fn test_run_single_file_custom_prefix_targeting_qqmusic_scheduling_exact_match_success() {
+    // Note: This test explicitly validates the CLI and scheduler layer resolution
+    // of nonstandard operation prefixes declaring QQMusic targets. It verifies that
+    // schedule_exact matches by explicit operation name without prefix normalization
+    // and invokes the executor. It does NOT assert end-to-end Windows production
+    // driver step execution (which requires supported action types like smtc_query/wgc_capture).
     let fake_executor = FakeOperationExecutor::new();
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("qqmusic-custom-prefix.json");
 
-    // File declares nonstandard prefix 'custom_prefix.prepare', but target is 'QQMusic.exe'
+    // File declares nonstandard prefix 'custom_prefix.prepare', with target 'QQMusic.exe'
     let custom_op = serde_json::json!({
       "schema_version": "auv.operation.v2",
       "name": "custom_prefix.prepare",
@@ -603,7 +608,7 @@ pub(crate) mod tests {
         "compiler": "test",
         "source_record": "none",
         "date": "2026-11-02",
-        "crux_goal": "test nonstandard prefix compatible with QQMusic target"
+        "crux_goal": "test nonstandard prefix scheduling resolution with QQMusic target"
       },
       "target": {
         "app_name": "QQMusic.exe",
@@ -634,7 +639,7 @@ pub(crate) mod tests {
     };
 
     let (exit_code, output) =
-      run_with_executor_inner(&args, &fake_executor).expect("single file exact match with QQMusic target must succeed");
+      run_with_executor_inner(&args, &fake_executor).expect("single file exact match scheduling resolution must succeed");
     assert_eq!(exit_code, 0);
     assert_eq!(output.status, "success");
     assert_eq!(output.execution_mode, "verified");
