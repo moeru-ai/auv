@@ -16,6 +16,8 @@ export {
   WindowClickStrategy,
 } from '../../gen/auv/api/driver/v1/input_pb'
 export { BuiltInCursor, Easing } from '../../gen/auv/api/driver/v1/overlay_pb'
+export { WindowStateTarget } from '../../gen/auv/api/driver/v1/window_pb'
+export { WindowMutationPath } from '../../gen/auv/api/driver/v1/window_service_pb'
 export { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 export { createAuv } from './client'
 
@@ -39,6 +41,7 @@ export type {
   CaptureTarget,
   FindDisplayTextOptions,
   FindWindowTextOptions,
+  ListWindowsOptions,
   PointTarget,
   PressKeyOptions,
   RecognitionSource,
@@ -51,6 +54,7 @@ export type {
   ScrollUntilOptions,
   ScrollWithStep,
   WindowClient,
+  WindowFrameInit,
   WindowPasteTextOptions,
   WindowPressKeysOptions,
   WindowQuery,

@@ -30,3 +30,8 @@
 # keep the old scroll motion and scroll-until RPCs apart from ScrollWindow.
 - included_paths: ["auv/api/driver/v1/window_service.proto"]
   disabled_rules: ["core::0136::prepositions"]
+# SetWindowFrame and SetWindowState are the approved window mutation names
+# (Tauri setPosition/setSize, BiDi setClientWindowState); they change one
+# aspect of a window the Runner does not own, not an AIP resource Update.
+- included_paths: ["auv/api/driver/v1/window_service.proto"]
+  disabled_rules: ["core::0134::synonyms"]

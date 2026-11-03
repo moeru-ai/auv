@@ -587,7 +587,8 @@ Research notes for a future contributor (2026-11-03, not a plan):
 The driver contract and the three platform `WindowApi`s are in place. The
 Runner, the Rust client, invoke, MCP and the JS SDK do not expose the new
 calls yet; existing callers (`ListWindows`, `window.list`, `resolve_window_ref`)
-keep working with the new `Window` shape. Notes for the frontend slice:
+keep working with the new `Window` shape. The frontend slice is in
+[Implementation notes (API)](#implementation-notes-api-2026-11-04). Driver notes:
 
 - `auv-driver-common`: `Window.state: WindowState` (all facts `Option`),
   `WindowDesktop`, `WindowStateTarget { Normal, Minimized, Maximized }`,
@@ -624,6 +625,38 @@ keep working with the new `Window` shape. Notes for the frontend slice:
 - Linux: `get` is implemented; `set_frame`, `set_state` and `focus` return
   `Unsupported` with the pull-requests-welcome recovery. `is_focused` comes
   from the AT-SPI `ACTIVE` state.
+
+## Implementation notes (API, 2026-11-04)
+
+Mutations are wired end to end: `GetWindow`, `SetWindowFrame`,
+`SetWindowState`, `FocusWindow` in `window_service.proto`; shared mapping in
+`crates/auv/src/protocol/window.rs`; Runner `LocalWindowService`; Rust
+`WindowClient::{refresh, set_frame, set_state, focus}` and
+`WindowsClient::list_with`; invoke/MCP `window.get`, `window.setFrame`,
+`window.setState`, `window.focus` (plus `window.list --exclude-minimized
+--exclude-other-desktops`); JS `WindowClient` methods. Deviations and notes:
+
+- `Window.state` is a nested `WindowState` message (all `optional`), reused
+  by `WindowMutationResult.before_state`/`after_state`.
+- The mutation messages live in `window_service.proto`, not `window.proto`:
+  they carry `DisturbanceLevel` from `input.proto`, which imports
+  `window.proto` (`NOTICE(window-mutation-messages)`). Sizes use a new
+  `geometry.proto` `LogicalSize`.
+- `SetWindowFrame`/`SetWindowState` keep `Set`: `proto/api-linter.yaml`
+  disables `core::0134::synonyms` for `window_service.proto` with a reason.
+- `WindowMutationOptions` are not on the wire; the Runner uses the driver
+  defaults (`TODO(window-mutation-options)`).
+- `window.setFrame` in invoke fills an omitted `--x`/`--y` (or
+  `--width`/`--height`) from the current frame; the wire keeps origin and size
+  as whole optional components.
+- JS `unminimize()` restores the state recorded by the last `minimize()`
+  through the same Runner client (maximized or normal), else `NORMAL`.
+- Linux invoke cells are `Unsupported`, so a selected Linux Runner refuses
+  before the RPC; the RPC itself answers `UNIMPLEMENTED` with the PR-welcome
+  message.
+- Scenario evidence:
+  [`2026-11-03-window-management-v1-evidence.md`](2026-11-03-window-management-v1-evidence.md).
+  Eval cases: `evals/auv-base` window-management tasks.
 
 ## Deferred
 

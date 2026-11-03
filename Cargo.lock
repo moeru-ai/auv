@@ -495,6 +495,7 @@ version = "0.0.40"
 dependencies = [
  "anyhow",
  "auv-driver-common",
+ "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
  "axum",

@@ -18,8 +18,10 @@ platforms/
     cases/                Rust scenarios, assertions, and AppKit evaluation
   desktop-windows/        Background-session evaluations: native Win32 receiver, desktop watch,
                           Rust runner (see its README)
-  desktop-linux/          Reserved; no implemented evaluations yet
-tasks/                    Shared Rust process IO and HTTP receipt protocol
+  desktop-linux/
+    cases/                Rust window management refusal check
+tasks/                    Shared Rust process IO, HTTP receipt protocol, and the
+                          window management scenario shared by macOS and Windows
 justfile                  Build, check, and run recipes exposed as just eval
 results/                  Ignored local output
 ```
@@ -120,6 +122,13 @@ just eval focus \
   --mode no_raise_key --restore records --require-success --repetitions 3
 
 just eval appkit
+
+# Window management: set_frame within 2 px, minimize -> FailedPrecondition on
+# set_frame -> normal, maximize -> normal restores the frame, focus.
+just eval appkit-window
+just eval windows window-management
+# Linux: every mutation is refused as Unsupported with the PR-welcome recovery.
+just eval linux-window
 
 # Windows: the driver operating windows the user is not looking at.
 just eval windows five --output evals/auv-base/results/windows-five

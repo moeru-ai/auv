@@ -9,9 +9,11 @@ import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSch
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, PerformKeyboardInputsRequestSchema, PerformKeyboardInputsResponseSchema, ScrollDeliveryCandidate, ScrollUntilStopReason, ScrollWindowRequestSchema, ScrollWindowResponseSchema, ScrollWindowUntilRequestSchema, ScrollWindowUntilResponseSchema, ScrollWindowWithMotionRequestSchema, ScrollWindowWithMotionResponseSchema, StandardMotionTimingFunction, StreamWindowScrollRequestSchema, StreamWindowScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
-import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import { GetWindowRequestSchema, GetWindowResponseSchema, ListWindowsRequestSchema, ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema, WindowStateTarget } from '../../gen/auv/api/driver/v1/window_pb'
+import { FocusWindowResponseSchema, SetWindowFrameRequestSchema, SetWindowFrameResponseSchema, SetWindowStateRequestSchema, SetWindowStateResponseSchema, WindowMutationPath } from '../../gen/auv/api/driver/v1/window_service_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { connect } from '../../node/index'
+import { AuvRpcError } from '../../transport/errors'
 import { createAuv } from './client'
 import { splitKeyCombination } from './driver'
 
@@ -559,7 +561,7 @@ describe('runner Driver control surface', () => {
     })
 
     expect(window.id).toBe('window-42')
-    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'pasteText', 'pressKeys', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith', 'typeText', 'window'])
+    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'maximize', 'minimize', 'pasteText', 'pressKeys', 'refresh', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith', 'setFocus', 'setFrame', 'setPosition', 'setSize', 'setState', 'typeText', 'unmaximize', 'unminimize', 'window'])
 
     const capture = await window.capture()
     expect(capture.window?.frame?.width).toBe(1280)
@@ -769,8 +771,12 @@ describe('windows.get', () => {
         async duplex() { throw new Error('unexpected duplex call') },
         async unary(call) {
           calls.push(call)
-          return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
-            windows: [{ frame: { height: 1, width: 1, x: 300, y: 0 }, ref: { windowId: 'w-2' }, title: 'Moved' }],
+          expect(call.method).toBe('/auv.api.driver.v1.WindowService/GetWindow')
+          const id = fromBinary(GetWindowRequestSchema, call.body).window?.windowId
+          if (id !== 'w-2')
+            throw new AuvRpcError(5, `window:${id} was not found`)
+          return toBinary(GetWindowResponseSchema, create(GetWindowResponseSchema, {
+            window: { frame: { height: 1, width: 1, x: 300, y: 0 }, ref: { windowId: 'w-2' }, title: 'Moved' },
           }))
         },
       },
@@ -797,6 +803,14 @@ describe('window keyboard', () => {
           switch (call.method) {
             case '/auv.api.driver.v1.InputService/PerformKeyboardInputs':
               return toBinary(PerformKeyboardInputsResponseSchema, create(PerformKeyboardInputsResponseSchema, { actions: [{ attempts: [{ succeeded: true }] }] }))
+            case '/auv.api.driver.v1.WindowService/GetWindow': {
+              const id = fromBinary(GetWindowRequestSchema, call.body).window?.windowId
+              if (id !== 'w-7')
+                throw new AuvRpcError(5, `window:${id} was not found`)
+              return toBinary(GetWindowResponseSchema, create(GetWindowResponseSchema, {
+                window: { processId: 4242, ref: { windowId: 'w-7' }, title: 'Search' },
+              }))
+            }
             case '/auv.api.driver.v1.WindowService/ListWindows':
               return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
                 windows: [{ processId: 4242, ref: { windowId: 'w-7' }, title: 'Search' }],
@@ -814,7 +828,7 @@ describe('window keyboard', () => {
   // The SDK only wrapped TypeText/PressKey, which name no recipient, so a REPL
   // script's typing went to its own browser.
   //
-  // The fix sends PerformKeyboardInputs to the window, foreground-first by default.
+  // The fix sends InputKeyboard to the window, foreground-first by default.
   it('types, presses and pastes into the window as the recipient, foreground first by default', async () => {
     const calls: UnaryCall[] = []
     const connection = await keyboardConnection(calls)
@@ -846,11 +860,103 @@ describe('window keyboard', () => {
 
     await runner.windows.from('w-7').typeText('Reply', { policy: InputPolicy.BACKGROUND_PREFERRED })
 
-    expect(calls.map(call => call.method.split('/').pop())).toEqual(['ListWindows', 'PerformKeyboardInputs'])
+    expect(calls.map(call => call.method.split('/').pop())).toEqual(['GetWindow', 'PerformKeyboardInputs'])
     const request = fromBinary(PerformKeyboardInputsRequestSchema, calls[1]!.body)
     expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242 }) })
     expect(request.inputs[0]!.action).toMatchObject({ case: 'typeText', value: { options: { policy: InputPolicy.BACKGROUND_PREFERRED } } })
     await expect(runner.windows.from('w-9').pressKeys(['return'])).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })
+    await connection.close()
+  })
+})
+
+describe('window management', () => {
+  function mutation(before: { isMaximized?: boolean, isMinimized?: boolean }, after: { isMaximized?: boolean, isMinimized?: boolean }) {
+    return {
+      afterState: after,
+      beforeState: before,
+      focusDisturbance: DisturbanceLevel.NONE,
+      mouseDisturbance: DisturbanceLevel.NONE,
+      selectedPath: WindowMutationPath.PLATFORM_NATIVE,
+    }
+  }
+
+  // A fake window: SetWindowState moves it, every response reports the state
+  // before and after, as the Runner does.
+  async function managedConnection(calls: UnaryCall[]) {
+    let state = { isMaximized: true, isMinimized: false }
+    return await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.WindowService/FocusWindow':
+              return toBinary(FocusWindowResponseSchema, create(FocusWindowResponseSchema, {
+                result: { ...mutation(state, state), afterState: { ...state, isFocused: true }, focusDisturbance: DisturbanceLevel.FOREGROUND },
+              }))
+            case '/auv.api.driver.v1.WindowService/GetWindow':
+              return toBinary(GetWindowResponseSchema, create(GetWindowResponseSchema, { window: { ref: { windowId: 'w-3' }, state } }))
+            case '/auv.api.driver.v1.WindowService/ListWindows':
+              return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
+                windows: [{ ref: { windowId: 'w-3' }, state }],
+              }))
+            case '/auv.api.driver.v1.WindowService/SetWindowFrame':
+              return toBinary(SetWindowFrameResponseSchema, create(SetWindowFrameResponseSchema, { result: { ...mutation(state, state), adjustedByApp: true } }))
+            case '/auv.api.driver.v1.WindowService/SetWindowState': {
+              const target = fromBinary(SetWindowStateRequestSchema, call.body).state
+              const before = state
+              state = { isMaximized: target === WindowStateTarget.MAXIMIZED, isMinimized: target === WindowStateTarget.MINIMIZED }
+              return toBinary(SetWindowStateResponseSchema, create(SetWindowStateResponseSchema, { result: mutation(before, state) }))
+            }
+            default:
+              throw new Error(`unexpected unary call: ${call.method}`)
+          }
+        },
+      },
+    })
+  }
+
+  it('sends list filters and frame changes with only the given components', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await managedConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+
+    const [window] = await runner.windows.list({ excludeMinimized: true })
+    expect(fromBinary(ListWindowsRequestSchema, calls[0]!.body)).toMatchObject({ excludeMinimized: true, excludeOtherDesktops: false })
+    expect(window!.window.state?.isMaximized).toBe(true)
+
+    expect((await window!.setPosition({ x: -120, y: 40 })).adjustedByApp).toBe(true)
+    await window!.setSize({ height: 300, width: 400 })
+    const [moved, resized] = calls.slice(1).map(call => fromBinary(SetWindowFrameRequestSchema, call.body))
+    expect(moved).toMatchObject({ origin: { x: -120, y: 40 }, window: { windowId: 'w-3' } })
+    expect(moved!.size).toBeUndefined()
+    expect(resized!.origin).toBeUndefined()
+    expect(resized!.size).toMatchObject({ height: 300, width: 400 })
+    await expect(window!.setFrame({})).rejects.toThrow(TypeError)
+
+    expect((await window!.setFocus()).afterState?.isFocused).toBe(true)
+    expect((await window!.refresh()).ref?.windowId).toBe('w-3')
+    await connection.close()
+  })
+
+  it('unminimize returns to the state before minimize, else to normal', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await managedConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const targets = () => calls
+      .filter(call => call.method.endsWith('/SetWindowState'))
+      .map(call => fromBinary(SetWindowStateRequestSchema, call.body).state)
+
+    // The fake window starts maximized.
+    await runner.windows.from('w-3').minimize()
+    // Another client for the same window on the same Runner client remembers it.
+    expect((await runner.windows.from('w-3').unminimize()).afterState?.isMaximized).toBe(true)
+    await runner.windows.from('w-3').unminimize()
+    await runner.windows.from('w-3').unmaximize()
+    expect(targets()).toEqual([WindowStateTarget.MINIMIZED, WindowStateTarget.MAXIMIZED, WindowStateTarget.NORMAL, WindowStateTarget.NORMAL])
     await connection.close()
   })
 })

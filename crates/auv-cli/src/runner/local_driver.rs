@@ -2230,9 +2230,66 @@ pub(super) fn display_selector_from_proto(selector: Option<proto::DisplaySelecto
 
 #[tonic::async_trait]
 impl WindowService for LocalWindowService {
-  async fn list_windows(&self, _request: Request<proto::ListWindowsRequest>) -> Result<Response<proto::ListWindowsResponse>, Status> {
-    let windows = self.session.window().list().map_err(driver_status)?.into_iter().map(window_to_proto).collect();
+  async fn list_windows(&self, request: Request<proto::ListWindowsRequest>) -> Result<Response<proto::ListWindowsResponse>, Status> {
+    let request = request.into_inner();
+    let filter = auv_driver::WindowListFilter {
+      exclude_minimized: request.exclude_minimized,
+      exclude_other_desktops: request.exclude_other_desktops,
+    };
+    let windows =
+      self.session.window().list().map_err(driver_status)?.into_iter().filter(|window| filter.keeps(window)).map(window_to_proto).collect();
     Ok(Response::new(proto::ListWindowsResponse { windows }))
+  }
+
+  async fn get_window(&self, request: Request<proto::GetWindowRequest>) -> Result<Response<proto::GetWindowResponse>, Status> {
+    let window =
+      resolve_window_ref(&self.session, request.into_inner().window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    Ok(Response::new(proto::GetWindowResponse {
+      window: Some(window_to_proto(window)),
+    }))
+  }
+
+  async fn set_window_frame(
+    &self,
+    request: Request<proto::SetWindowFrameRequest>,
+  ) -> Result<Response<proto::SetWindowFrameResponse>, Status> {
+    let request = request.into_inner();
+    let origin = request.origin.map(|origin| auv_driver::Point::new(origin.x, origin.y));
+    let size = request.size.map(|size| auv_driver::Size::new(size.width, size.height));
+    if origin.is_none() && size.is_none() {
+      return Err(Status::invalid_argument("SetWindowFrame needs an origin, a size, or both"));
+    }
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().set_frame(&window, origin, size, Default::default())).await?;
+    Ok(Response::new(proto::SetWindowFrameResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
+  }
+
+  async fn set_window_state(
+    &self,
+    request: Request<proto::SetWindowStateRequest>,
+  ) -> Result<Response<proto::SetWindowStateResponse>, Status> {
+    let request = request.into_inner();
+    let state = auv::protocol::window::decode_state_target(request.state)
+      .ok_or_else(|| Status::invalid_argument("state must be NORMAL, MINIMIZED or MAXIMIZED"))?;
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().set_state(&window, state, Default::default())).await?;
+    Ok(Response::new(proto::SetWindowStateResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
+  }
+
+  async fn focus_window(&self, request: Request<proto::FocusWindowRequest>) -> Result<Response<proto::FocusWindowResponse>, Status> {
+    let window =
+      resolve_window_ref(&self.session, request.into_inner().window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().focus(&window, Default::default())).await?;
+    Ok(Response::new(proto::FocusWindowResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
   }
 
   async fn resolve_window(&self, request: Request<proto::ResolveWindowRequest>) -> Result<Response<proto::ResolveWindowResponse>, Status> {
@@ -2467,23 +2524,7 @@ fn selector_from_proto(selector: proto::WindowSelector) -> Result<auv_driver::Wi
 }
 
 fn window_to_proto(window: auv_driver::Window) -> proto::Window {
-  proto::Window {
-    r#ref: Some(proto::WindowRef {
-      window_id: window.reference.id,
-    }),
-    title: window.title,
-    application_name: window.app_name,
-    application_id: window.application_id,
-    process_id: window.process_id,
-    frame: Some(proto::ScreenRect {
-      x: window.frame.origin.x,
-      y: window.frame.origin.y,
-      width: window.frame.size.width,
-      height: window.frame.size.height,
-    }),
-    is_main: window.is_main,
-    is_visible: window.is_visible,
-  }
+  auv::protocol::window::encode(window)
 }
 
 fn display_to_proto(display: auv_driver::Display) -> proto::Display {

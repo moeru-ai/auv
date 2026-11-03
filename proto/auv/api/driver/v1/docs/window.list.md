@@ -2,7 +2,19 @@
 
 Lists the windows the Runner can see right now, front to back. Each window
 carries its reference (`ref.windowId`), application name and application ID,
-process ID, title and frame.
+process ID, title, frame and `state`.
+
+## Listing scope and state
+
+By default the listing has every window a user could switch to: minimized
+windows and windows on other virtual desktops are included. Set
+`excludeMinimized` or `excludeOtherDesktops` to leave them out; a window whose
+desktop the platform cannot tell is always kept.
+
+`state` reports `isMinimized`, `isMaximized`, `isFullscreen`, `isVisible`,
+`isFocused`, `isAlwaysOnTop`, `stackIndex` and `desktop`. An unset field
+means the platform cannot tell, never `false`. Read one window fresh with
+`window.get`.
 
 ## Coordinates
 
