@@ -138,6 +138,8 @@ witness runs do not prove it from the desktop side.
 
 - Display scaling other than 100%. The crop assumes the process sees physical pixels;
   `TODO(windows-window-capture-dpi)` stays at the capture code.
+  Update (2026-11-03): the driver is now per-monitor DPI aware and the TODO is removed; see
+  [Windows DPI awareness](../driver/2026-11-03-windows-dpi-awareness.md) (issue #460).
 - More than one display, windows that span displays, virtual desktops, remote or locked sessions.
 - Applications other than the harness receiver. `PrintWindow` with `PW_RENDERFULLCONTENT` is the
   capture backend, and whether it returns the content of GPU-drawn windows (browsers, XAML) is the

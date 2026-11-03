@@ -363,3 +363,42 @@ fn test_wgc_worker_concurrent_with_capture_wgc_no_deadlock() {
   }
   clear_health_cache();
 }
+
+// https://github.com/moeru-ai/auv/issues/460
+//
+// ROOT CAUSE:
+//
+// If the display is scaled (150%, 200%) and the process is not per-monitor DPI aware, a
+// `PrintWindow` capture came back blank and cropped to a corner, because the bitmap was sized from
+// the DPI-virtualized `GetWindowRect` while the crop used the physical DWM frame bounds.
+//
+// Before the fix, a 1858x1364 Notepad frame at 200% gave a blank 486x446 capture.
+// The fix keeps the driver's process per-monitor aware (`auv_driver_windows::dpi`), so the capture
+// covers the whole visible frame in physical pixels at any scale. At 100% this test passes either
+// way; it guards the fix only on a scaled display.
+#[test]
+fn issue_460_window_capture_covers_visible_frame_on_scaled_display() {
+  use windows::Win32::Foundation::RECT;
+  use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let session = WindowsDriver::default().open_local().expect("failed to open driver session");
+  // Blue=0xFF, Green=0x80, Red=0x40 -> in Win32 COLORREF (0x00BBGGRR): 0x00FF8040
+  let (test_win, driver_win) = create_test_window("AUV DPI Capture Test", w!("AuvDpiCaptureTest"), 200, 200, 480, 360, 0x00FF_8040);
+
+  let capture = session.window().capture(&driver_win).expect("GDI PrintWindow capture failed");
+
+  // The DWM frame is physical whatever the caller's DPI awareness: the ground truth.
+  let mut frame = RECT::default();
+  unsafe {
+    DwmGetWindowAttribute(test_win.hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut frame as *mut RECT as *mut _, std::mem::size_of::<RECT>() as u32)
+  }
+  .expect("DWM extended frame bounds");
+  let expected =
+    Rect::new(f64::from(frame.left), f64::from(frame.top), f64::from(frame.right - frame.left), f64::from(frame.bottom - frame.top));
+  assert_eq!(capture.bounds, expected, "capture bounds are the visible frame in physical pixels");
+  assert_eq!((capture.image.width(), capture.image.height()), (expected.size.width as u32, expected.size.height as u32));
+  assert_eq!(capture.scale_factor, 1.0);
+  let center = capture.image.get_pixel(capture.image.width() / 2, capture.image.height() / 2);
+  assert_eq!((center[0], center[1], center[2]), (0x40, 0x80, 0xFF), "the capture shows the window's client color");
+}

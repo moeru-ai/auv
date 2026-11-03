@@ -31,12 +31,12 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-input-target-lease)` | `src/input.rs` | Typed input lease matching the macOS slice |
 | `TODO(windows-window-mutation-fallback)` | `src/mutation.rs` | Foreground/SendInput fallback for mutation when the Win32 API is blocked |
 | `TODO(windows-window-zoom-verification)` | `src/mutation.rs` | Zoom/maximize state verification after mutation |
-| `TODO(windows-window-capture-dpi)` | `src/capture.rs` | Tighter DPI/border mapping for window capture |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-focus-reference)` | `src/accessibility.rs` | Cross-call focus by a typed element identity; raw child paths are refused |
 | `TODO(windows-uia-cancellation)` | `src/accessibility.rs` | Bounded or cancelable synchronous UIA provider calls |
 | `TODO(windows-focus-progress)` | `src/accessibility.rs` | Shared structured metadata for a readback failure after focus delivery |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
+| `TODO(windows-overlay-dpi)` | `crates/auv-driver-overlay-windows/src/window.rs` | Overlay art and labels are not scaled by the monitor DPI |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |

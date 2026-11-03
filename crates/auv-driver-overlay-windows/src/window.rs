@@ -44,6 +44,11 @@ mod native {
 
   /// Label sizes match the macOS renderer (`Overlay.swift`): 11 pt cursor and outline
   /// labels, 12 pt status text, as device pixels at 96 DPI.
+  // TODO(windows-overlay-dpi): the host process is per-monitor aware
+  // (`auv_driver_windows::dpi`), so positions are physical pixels and line up, but cursor art,
+  // labels and ripples keep their 96 DPI pixel sizes and look smaller on a scaled display. Scaling
+  // them by the monitor DPI is a visual change not evidenced yet; reopen when the overlay is
+  // checked above 100%.
   const LABEL_FONT_SIZE: f32 = 11.0;
   const STATUS_FONT_SIZE: f32 = 12.0;
 
