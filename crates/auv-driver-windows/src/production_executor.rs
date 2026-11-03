@@ -1836,4 +1836,85 @@ mod tests {
       other => panic!("expected InvalidInput for ambiguous windows, got {other:?}"),
     }
   }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  #[ignore = "live Windows execution against running QQMusic: run explicitly with -- --ignored --nocapture"]
+  fn live_windows_production_executor_qqmusic_verification() {
+    let executor = WindowsProductionExecutor::default();
+
+    // 1. Target validation gate rejects unsupported/mismatched targets before COM calls
+    let mut bad_req_op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+    bad_req_op.target.app_name = "QQMusic.exe".to_string();
+    bad_req_op.target.backend = "windows.smtc+coreaudio+wgc".to_string();
+    let mut bad_req = dummy_request(Some(ExecutionMode::Verified));
+    bad_req.app_name = "Spotify.exe".to_string();
+    let res = executor.execute(&bad_req_op, &bad_req);
+    assert!(matches!(res, ExecutionResult::GateFailed { ref step_id, .. } if step_id == "target_validation"));
+
+    // 2. Resolve live WindowsOperationContext
+    let ctx = WindowsOperationContext::resolve(None).expect("live WindowsOperationContext::resolve should succeed with QQMusic running");
+    assert!(ctx.window.app_name.as_deref().unwrap_or("").eq_ignore_ascii_case("QQMusic.exe"));
+    assert!(ctx.audio.is_some(), "CoreAudio session should be resolved for QQMusic PID");
+    println!(
+      "Live discovery verified: Window HWND={:?}, PID={:?}, App={:?}, Title={:?}, AudioResolved={}",
+      ctx.window.reference.id,
+      ctx.window.process_id,
+      ctx.window.app_name,
+      ctx.window.title,
+      ctx.audio.is_some(),
+    );
+
+    // 3. Load actual operations and execute live
+    let op_json = include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json");
+    let op: OperationDef = serde_json::from_str(op_json).expect("parse verified operation");
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "QQMusic.exe".to_string();
+
+    let res = executor.execute(&op, &req);
+    println!("live verified execute result: {:?}", res);
+    match res {
+      ExecutionResult::Success {
+        steps_executed,
+        execution_mode,
+        confirmed,
+      } => {
+        assert_eq!(execution_mode, ExecutionMode::Verified);
+        assert_eq!(steps_executed, 4);
+        assert!(confirmed, "verified execution with title change and WGC must be confirmed");
+      }
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        panic!("live execution failed at gate '{step_id}': {message}");
+      }
+      other => panic!("unexpected execution result: {other:?}"),
+    }
+
+    // 4. Load actual Fast operation and execute live
+    let fast_op_json = include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback-fast.json");
+    let fast_op: OperationDef = serde_json::from_str(fast_op_json).expect("parse fast operation");
+    let mut fast_req = dummy_request(Some(ExecutionMode::Fast));
+    fast_req.app_name = "QQMusic.exe".to_string();
+
+    let fast_res = executor.execute(&fast_op, &fast_req);
+    println!("live fast execute result: {:?}", fast_res);
+    match fast_res {
+      ExecutionResult::Success {
+        steps_executed,
+        execution_mode,
+        confirmed,
+      } => {
+        assert_eq!(execution_mode, ExecutionMode::Fast);
+        assert_eq!(steps_executed, 4);
+        assert!(!confirmed, "fast mode must never report confirmed: true");
+      }
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        panic!("live fast execution failed at gate '{step_id}': {message}");
+      }
+      other => panic!("unexpected execution result: {other:?}"),
+    }
+  }
 }
