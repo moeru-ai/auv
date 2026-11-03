@@ -338,9 +338,7 @@ fn windows_not_found_media_session_maps_to_not_found() {
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_unsupported_media_backend_maps_to_unimplemented() {
-  let status = windows_media_control_status(auv_driver::DriverError::Unsupported {
-    operation: "media controls",
-  });
+  let status = windows_media_control_status(auv_driver::DriverError::unsupported("media controls"));
   assert_eq!(status.code(), tonic::Code::Unimplemented);
 }
 
