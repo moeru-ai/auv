@@ -253,16 +253,10 @@ impl WindowApi<'_> {
     // RemoteDesktop portal delivery; revisit if a compositor or portal exposes
     // verified window-targeted pointer delivery.
     let _ = options.window_strategy;
-    let focus_attempts = match focus_node(window, "0") {
-      Ok(result) => result.attempts,
-      Err(error) => vec![InputAttempt::failure(
-        InputDeliveryPath::AxFocus,
-        format!("AT-SPI could not foreground the target window before pointer delivery: {error}"),
-      )],
-    };
+    let focus = focus_node(window, "0");
     let screen_point = self.to_screen_point(window, point)?.point();
     let mut result = self.session.input().click_at(screen_point, options.button, options.click, options.modifiers)?;
-    result.attempts.splice(0..0, focus_attempts);
+    record_focus_preparation(&mut result, focus);
     add_foreground_window_fallback_reason(
       &mut result,
       InputDeliveryPath::WindowTargetedMouse,
@@ -327,16 +321,10 @@ impl WindowInput for WindowApi<'_> {
     if matches!(policy, InputPolicy::BackgroundOnly) {
       return Err(invalid_input("linux window.drag cannot use background_only input policy"));
     }
-    let focus_attempts = match focus_node(window, "0") {
-      Ok(result) => result.attempts,
-      Err(error) => vec![InputAttempt::failure(
-        InputDeliveryPath::AxFocus,
-        format!("AT-SPI could not foreground the target window before pointer delivery: {error}"),
-      )],
-    };
+    let focus = focus_node(window, "0");
     movement.target = Some(auv_driver_common::InputTarget::Foreground);
     let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
-    result.attempts.splice(0..0, focus_attempts);
+    record_focus_preparation(&mut result, focus);
     add_foreground_window_fallback_reason(
       &mut result,
       InputDeliveryPath::WindowTargetedMouse,
@@ -344,6 +332,33 @@ impl WindowInput for WindowApi<'_> {
     );
     Ok((point, result))
   }
+}
+
+/// Folds the AT-SPI window focus that precedes foreground pointer delivery
+/// into the delivery result.
+///
+/// NOTICE: focusing the window is input preparation, not a delivery attempt.
+/// `attempts` lists delivery paths, and `InputActionResult::validate` allows a
+/// successful attempt only on `selected_path`. A successful focus therefore
+/// shows only as a foreground `focus_disturbance`. Failed focus steps stay as
+/// failed `AxFocus` attempts, so they remain visible as fallback reasons.
+///
+/// TODO(input-preparation-record): `InputActionResult` has no field for
+/// preparation steps (see "Prepare For Input Options" in
+/// `docs/TERMS_AND_CONCEPTS.md`). Add one in `auv-driver-common` for every
+/// platform when an owner-approved slice defines it.
+fn record_focus_preparation(result: &mut InputActionResult, focus: DriverResult<InputActionResult>) {
+  let failed_focus = match focus {
+    Ok(focus) => {
+      result.focus_disturbance = focus.focus_disturbance;
+      focus.attempts.into_iter().filter(|attempt| !attempt.succeeded).collect()
+    }
+    Err(error) => vec![InputAttempt::failure(
+      InputDeliveryPath::AxFocus,
+      format!("AT-SPI could not foreground the target window before pointer delivery: {error}"),
+    )],
+  };
+  result.attempts.splice(0..0, failed_focus);
 }
 
 pub(crate) fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
