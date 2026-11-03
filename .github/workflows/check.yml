@@ -63,10 +63,25 @@ jobs:
           - windows-2025
     runs-on: ${{ matrix.os }}
     name: rust checks ${{ matrix.os }}
+    env:
+      # NOTICE(ci-disk): since the Rust cache (#467) restores `target/` before
+      # a full workspace test build, the Ubuntu runner ran out of disk ("No
+      # space left on device"). Line tables keep file:line in panics and
+      # backtraces but shrink debug info, the bulk of `target/`.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+      # NOTICE(ci-disk): the hosted Ubuntu image ships toolchains this job
+      # never uses; removing them frees about 20 GB for the build and cache.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
