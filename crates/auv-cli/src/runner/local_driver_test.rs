@@ -1,5 +1,39 @@
 use super::*;
 
+#[test]
+fn input_action_status_preserves_original_category_and_native_progress() {
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let status = driver_status(auv_driver::DriverError::InputAction {
+    cause: Box::new(auv_driver::DriverError::PermissionDenied {
+      permission: "UI Automation",
+      message: Some("readback denied".into()),
+      recovery: None,
+    }),
+    progress: auv_driver::InputActionProgress::Submitted { action },
+  });
+  assert_eq!(status.code(), tonic::Code::PermissionDenied);
+  assert!(status.message().contains("readback denied"));
+  let failure = auv_api_proto::input_action_failure::failure(&status).expect("rich failure receipt");
+  let Some(proto::input_action_failure::Progress::Submitted(action)) = failure.progress else {
+    panic!("submitted progress was lost");
+  };
+  assert!(!action.verified);
+  assert!(action.attempts[0].succeeded);
+}
+
+#[tokio::test]
+async fn malformed_focus_rpc_returns_explicit_zero_delivery_progress() {
+  let service = LocalAccessibilityService {
+    session: auv::local::open().expect("local session without input"),
+  };
+  let status = service.focus_text(Request::new(proto::FocusTextRequest::default())).await.expect_err("missing selector");
+  assert_eq!(status.code(), tonic::Code::InvalidArgument);
+  assert!(matches!(
+    auv_api_proto::input_action_failure::failure(&status).unwrap().progress,
+    Some(proto::input_action_failure::Progress::NotDelivered(()))
+  ));
+}
+
 fn test_capture_store() -> CaptureStore {
   CaptureStore::new(CaptureStoreOptions::default())
 }
@@ -143,26 +177,66 @@ fn application_request_validation_rejects_blank_application_id_and_invalid_durat
 #[test]
 fn accessibility_request_validation_rejects_malformed_selector_before_native_capture() {
   for request in [
-    macos_proto::FocusTextRequest::default(),
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest::default(),
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Query("".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Query("".to_string())),
       ..Default::default()
     },
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Path("  ".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Path("  ".to_string())),
       ..Default::default()
     },
-    macos_proto::FocusTextRequest {
+    proto::FocusTextRequest {
       application: "com.example.Editor".to_string(),
-      selector: Some(macos_proto::focus_text_request::Selector::Query("Search".to_string())),
+      selector: Some(proto::focus_text_request::Selector::Query("Search".to_string())),
       expected_role: Some("".to_string()),
       ..Default::default()
     },
   ] {
     assert_eq!(focus_text_options_from_proto(request).expect_err("malformed focus request").code(), tonic::Code::InvalidArgument);
   }
+}
+
+// ROOT CAUSE:
+//
+// A Driver could confirm focus readback, but InputActionResult's wire shape
+// omitted verified and the client restored false. The selected Runner then
+// disagreed with the same direct operation about its verification evidence.
+#[test]
+fn input_action_wire_preserves_confirmed_readback() {
+  let mut expected = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  expected.verified = true;
+  let wire = input_action_to_proto(expected.clone()).expect("encode confirmed action");
+  let actual = auv::client::runner::input_action_result_from_proto(wire).expect("decode confirmed action");
+  assert_eq!(actual, expected);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn shared_accessibility_service_preserves_windows_missing_app_and_path_refusals() {
+  let service = LocalAccessibilityService {
+    session: auv::local::open().expect("local session without input"),
+  };
+  let error = service
+    .focus_text(Request::new(proto::FocusTextRequest {
+      application: "auv-nonexistent-focus-fixture-a7b74d5a.exe".into(),
+      selector: Some(proto::focus_text_request::Selector::Query("Search".into())),
+      expected_role: None,
+    }))
+    .await
+    .expect_err("missing application cannot receive input");
+  assert_eq!(error.code(), tonic::Code::NotFound);
+  let error = service
+    .focus_text(Request::new(proto::FocusTextRequest {
+      application: "auv-nonexistent-focus-fixture-a7b74d5a.exe".into(),
+      selector: Some(proto::focus_text_request::Selector::Path("0/0".into())),
+      expected_role: None,
+    }))
+    .await
+    .expect_err("raw child path cannot receive input");
+  assert_eq!(error.code(), tonic::Code::Unimplemented);
 }
 
 #[test]
@@ -1850,6 +1924,29 @@ async fn slow_feedback_does_not_block_native_motion_or_completion() {
   allow_feedback.notify_one();
   relay.await.unwrap();
   assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+}
+
+#[tokio::test]
+async fn dropped_blocking_input_signals_cancellation_before_worker_release() {
+  let (started, started_rx) = tokio::sync::oneshot::channel();
+  let (release, release_rx) = std::sync::mpsc::channel();
+  let (finished, mut finished_rx) = tokio::sync::oneshot::channel();
+  let operation = tokio::spawn(run_input_blocking(move || {
+    let cancellation = auv_driver::input_cancellation::current_input_cancellation().expect("worker cancellation context");
+    assert!(started.send(cancellation.clone()).is_ok());
+    // This gate models one in-flight native provider read. Aborting the RPC
+    // cannot interrupt it, so the worker must retain its owned state.
+    release_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("release native read");
+    finished.send(cancellation.is_cancelled()).unwrap();
+    Ok(())
+  }));
+  let cancellation = tokio::time::timeout(std::time::Duration::from_secs(5), started_rx).await.unwrap().unwrap();
+  operation.abort();
+  assert!(operation.await.unwrap_err().is_cancelled());
+  assert!(cancellation.is_cancelled());
+  assert!(matches!(finished_rx.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+  release.send(()).unwrap();
+  assert!(tokio::time::timeout(std::time::Duration::from_secs(5), finished_rx).await.unwrap().unwrap());
 }
 
 #[tokio::test]

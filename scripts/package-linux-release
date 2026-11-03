@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Packages a glibc Linux `auv` as the self-contained release archive.
+#
+# Usage: scripts/package-linux-release <auv-binary> <archive>
+#
+# Run on the Debian 12 build host: the bundled libraries, PipeWire client files
+# and tessdata are copied from its packages.
+
+set -euo pipefail
+
+binary="${1:?usage: scripts/package-linux-release <auv-binary> <archive>}"
+archive="${2:?missing archive path}"
+repository_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+work_root="$(mktemp -d)"
+trap 'rm -rf "$work_root"' EXIT
+# The archive root is the install directory, so it gets 0755 rather than
+# `mktemp -d`'s 0700.
+package_root="$work_root/package"
+mkdir -m 0755 "$package_root"
+mkdir -p "$package_root/lib/auv/pipewire-0.3" "$package_root/lib/auv/spa-0.2" \
+  "$package_root/share/auv/pipewire" "$package_root/share/auv/tessdata" \
+  "$package_root/licenses/auv" "$package_root/licenses/system"
+install -m 0755 "$binary" "$package_root/auv"
+install -m 0644 "$repository_root/LICENSE" "$package_root/licenses/auv/LICENSE"
+
+# Copies the Debian copyright file of the package that installed a file.
+copy_license_for() {
+  local package
+  package="$(dpkg-query -S "$1" | head -n 1)"
+  package="${package%%:*}"
+  install -m 0644 "/usr/share/doc/$package/copyright" "$package_root/licenses/system/$package.copyright"
+}
+
+# Copies the shared-library closure of one ELF file into lib/auv, leaving out
+# glibc and the loader, which are the host ABI boundary.
+# NOTICE: this uses glibc's `ldd`, not `lddtree`. Debian 12 ships `lddtree` in
+# `pax-utils` as a Python script. `ldd` runs the loader on the file, which is
+# fine for our own build and Debian's packages.
+bundle_dependencies() {
+  local output line path name
+  output="$(ldd "$1")"
+  while read -r line; do
+    case "$line" in
+      *'=> not found'*) echo "$1 has an unresolved dependency: $line" >&2; exit 1 ;;
+      *' => /'*) path="${line#* => }"; path="${path% (0x*}" ;;
+      *) continue ;;
+    esac
+    name="$(basename "$path")"
+    case "$name" in
+      ld-linux*.so*|libanl.so*|libc.so*|libdl.so*|libm.so*|libnss_*.so*|libpthread.so*|libresolv.so*|librt.so*|libthread_db.so*|libutil.so*) continue ;;
+    esac
+    # A PipeWire module that links another module finds it beside itself.
+    case "$path" in */pipewire-0.3/libpipewire-module-*.so) continue ;; esac
+    test -e "$package_root/lib/auv/$name" && continue
+    install -m 0644 "$(readlink -f "$path")" "$package_root/lib/auv/$name"
+    copy_license_for "$(readlink -f "$path")" 2>/dev/null || copy_license_for "$path"
+  done <<< "$output"
+}
+bundle_dependencies "$binary"
+
+# NOTICE(linux-bundled-pipewire): the bundled libpipewire loads client modules,
+# SPA plugins and client.conf at runtime. Host files built for a newer
+# PipeWire need symbols it lacks (Debian 13 PipeWire 1.4 and Ubuntu 26.04
+# PipeWire 1.6 fail with `undefined symbol: pw_log_topic_register`), so ship
+# the matching client files and let `auv_driver_linux::bundle` point
+# libpipewire at them. The bundle still talks to the host daemon through its
+# socket protocol, as Flatpak runtimes do.
+pipewire_lib_dir="$(dirname "$(readlink -f "$(ldd "$binary" | awk '/libpipewire-0\.3\.so\.0 => / { print $3; exit }')")")"
+client_conf=/usr/share/pipewire/client.conf
+install -m 0644 "$client_conf" "$package_root/share/auv/pipewire/client.conf"
+copy_license_for "$client_conf"
+active_client_conf="$(sed 's/#.*//' "$client_conf")"
+while read -r module; do
+  install -m 0644 "$pipewire_lib_dir/pipewire-0.3/$module.so" "$package_root/lib/auv/pipewire-0.3/"
+  copy_license_for "$pipewire_lib_dir/pipewire-0.3/$module.so"
+done < <(grep -oE 'libpipewire-module-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
+while read -r plugin; do
+  install -D -m 0644 "$pipewire_lib_dir/spa-0.2/$plugin.so" "$package_root/lib/auv/spa-0.2/$plugin.so"
+  copy_license_for "$pipewire_lib_dir/spa-0.2/$plugin.so"
+done < <(grep -oE '[a-z0-9-]+/libspa-[a-z0-9-]+' <<< "$active_client_conf" | sort -u)
+while IFS= read -r -d '' client_file; do
+  bundle_dependencies "$client_file"
+done < <(find "$package_root/lib/auv/pipewire-0.3" "$package_root/lib/auv/spa-0.2" -type f -print0)
+
+eng_model="$(dpkg-query -L tesseract-ocr-eng | grep '/eng\.traineddata$' | head -n 1)"
+install -m 0644 "$eng_model" "$package_root/share/auv/tessdata/eng.traineddata"
+copy_license_for "$eng_model"
+
+# Keep the dynamic-loader token literal; the shell must not expand it.
+# shellcheck disable=SC2016
+patchelf --set-rpath '$ORIGIN/lib/auv' "$package_root/auv"
+# Shared libraries sit directly in lib/auv; PipeWire modules one level and SPA
+# plugins two levels below it. Modules also find the modules they link.
+# shellcheck disable=SC2016
+find "$package_root/lib/auv" -maxdepth 1 -type f -exec patchelf --set-rpath '$ORIGIN' {} +
+# shellcheck disable=SC2016
+find "$package_root/lib/auv/pipewire-0.3" -type f -exec patchelf --set-rpath '$ORIGIN:$ORIGIN/..' {} +
+# shellcheck disable=SC2016
+find "$package_root/lib/auv/spa-0.2" -mindepth 2 -type f -exec patchelf --set-rpath '$ORIGIN/../..' {} +
+
+# TODO(linux-minimal-artifact): keep the default archive self-contained; add a
+# separate auv-minimal artifact only after its distro dependency contract and
+# package-manager documentation are owner-approved.
+mkdir -p "$(dirname "$archive")"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -czf "$archive" -C "$package_root" .

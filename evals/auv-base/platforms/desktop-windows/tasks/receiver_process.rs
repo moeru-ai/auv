@@ -129,6 +129,10 @@ pub struct Layout {
   pub label_rect: [i32; 4],
   #[serde(default)]
   pub edit_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_rect: [i32; 4],
+  #[serde(default)]
+  pub typing_center: [i32; 2],
 }
 
 /// A process the harness started detached and holds by handle.
@@ -290,6 +294,12 @@ impl Receiver {
       .spawn()
       .with_context(|| format!("launch {}", binary.display()))?;
     let stdin = child.stdin.take();
+    // NOTICE: the same early-failure window `spawn_detached_with` had remains here — after
+    // `spawn()` succeeds, a failing stdout take or ready handshake leaves only `Child::drop`,
+    // which closes the handles but does not terminate the receiver's process. Deferred: the
+    // piped receiver is the `single --piped` control path, not the workflow harness's, so a
+    // terminate-on-early-return fix here is its own slice. Trigger: owner approval or a
+    // harness that starts piped receivers.
     let lines = forward_lines(BufReader::new(child.stdout.take().context("receiver stdout unavailable")?));
     let layout = ready_layout(&lines)?;
     Ok(Self {
@@ -320,6 +330,8 @@ impl Receiver {
     }
     let process = create_with_shell_parent(&command_line)?;
 
+    // From here until the Receiver owns `process`, an early return would only drop the handle
+    // and leave the receiver's process running, so every failure path terminates it first.
     let started = Instant::now();
     let stream = loop {
       match listener.accept() {
@@ -334,13 +346,31 @@ impl Receiver {
           }
           std::thread::sleep(Duration::from_millis(10));
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+          process.terminate();
+          return Err(error.into());
+        }
       }
     };
-    stream.set_nonblocking(false)?;
+    if let Err(error) = stream.set_nonblocking(false) {
+      process.terminate();
+      return Err(error.into());
+    }
     let _ = stream.set_nodelay(true);
-    let lines = forward_lines(BufReader::new(stream.try_clone()?));
-    let layout = ready_layout(&lines)?;
+    let lines = match stream.try_clone() {
+      Ok(clone) => forward_lines(BufReader::new(clone)),
+      Err(error) => {
+        process.terminate();
+        return Err(error.into());
+      }
+    };
+    let layout = match ready_layout(&lines) {
+      Ok(layout) => layout,
+      Err(error) => {
+        process.terminate();
+        return Err(error.into());
+      }
+    };
     Ok(Self {
       spec: spec.clone(),
       layout,
@@ -441,6 +471,9 @@ impl Receiver {
       std::thread::sleep(Duration::from_millis(20));
     }
     self.kill();
+    if !self.exited() {
+      bail!("the receiver process did not exit after forced termination");
+    }
     Ok(())
   }
 }
@@ -456,5 +489,62 @@ impl Drop for Receiver {
       std::thread::sleep(Duration::from_millis(20));
     }
     self.kill();
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use windows::Win32::System::Threading::PROCESS_SYNCHRONIZE;
+
+  #[test]
+  fn close_does_not_report_success_when_termination_is_denied() {
+    // ROOT CAUSE:
+    //
+    // If forced termination failed, close still returned Ok because it never
+    // checked the process after kill. Setup cleanup then reported a verified
+    // receiver even though the process was still alive.
+    // SAFETY: this opens the current process only for synchronization. It has
+    // no terminate right, and OwnedProcess closes the returned handle once.
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, std::process::id()) }.expect("open wait-only process handle");
+    let (_sender, lines) = mpsc::channel();
+    let mut receiver = Receiver {
+      spec: ReceiverSpec {
+        index: 0,
+        title: String::new(),
+        left: 0,
+        top: 0,
+        width: 1,
+        height: 1,
+        color: String::new(),
+        sink: false,
+      },
+      layout: Layout {
+        hwnd: "0".into(),
+        strip: Strip {
+          origin: [0, 0],
+          cell: [1, 1],
+          cells: 1,
+        },
+        pid: std::process::id(),
+        button_hwnd: "0".into(),
+        edit_hwnd: "0".into(),
+        window_rect: [0, 0, 1, 1],
+        button_center: [0, 0],
+        edit_center: [0, 0],
+        button_rect: [0, 0, 1, 1],
+        label_rect: [0, 0, 1, 1],
+        edit_rect: [0, 0, 1, 1],
+        typing_rect: [0, 0, 1, 1],
+        typing_center: [0, 0],
+      },
+      link: Link::Detached {
+        process: OwnedProcess(handle),
+        stream: None,
+      },
+      lines,
+    };
+    let result = receiver.close();
+    assert!(result.is_err(), "a running process with no terminate right must not be reported closed");
   }
 }

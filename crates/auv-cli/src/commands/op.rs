@@ -24,10 +24,6 @@ use auv_auto_loop::runtime::FakeOperationExecutor;
 #[cfg(target_os = "windows")]
 use auv_driver_windows::WindowsProductionExecutor;
 
-const BUILTIN_QQMUSIC_PREPARED_PLAYBACK: &str = include_str!("../../../../docs/ai/references/driver/qqmusic-prepared-playback.json");
-const BUILTIN_QQMUSIC_PREPARED_PLAYBACK_FAST: &str =
-  include_str!("../../../../docs/ai/references/driver/qqmusic-prepared-playback-fast.json");
-
 #[derive(Clone, Debug, Args)]
 pub struct OpArgs {
   #[command(subcommand)]
@@ -42,7 +38,7 @@ pub enum OpCommand {
 
 #[derive(Clone, Debug, Args)]
 pub struct OpRunArgs {
-  /// Operation name (e.g. qqmusic.prepare_playback)
+  /// Operation name, as declared by the operation file (e.g. qqmusic.prepare_playback)
   #[arg(long)]
   pub operation: String,
 
@@ -50,9 +46,9 @@ pub struct OpRunArgs {
   #[arg(long, value_enum)]
   pub mode: ExecutionModeArg,
 
-  /// Optional path to custom compiled operation JSON file
+  /// Path to the compiled operation JSON file that declares the operation
   #[arg(long)]
-  pub file: Option<PathBuf>,
+  pub file: PathBuf,
 
   /// Output JSON format
   #[arg(long)]
@@ -177,19 +173,15 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
   let logger = DecisionLogger::new();
   let mut catalog = OperationCatalog::new();
 
-  // 1. Register built-in operations
-  load_builtin_operations(&mut catalog)?;
+  // 1. Admit the operation file. `auv-cli` ships no app operations: app
+  // workflows such as QQ Music live with their app under `supported/`.
+  let file_path = &args.file;
+  let content = std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read operation file '{}': {}", file_path.display(), e))?;
+  catalog
+    .admit_operation_json(&content, &file_path.display().to_string())
+    .map_err(|e| format!("Failed to admit operation from '{}': [{}]: {}", file_path.display(), e.reason_code.as_str(), e.message))?;
 
-  // 2. If args.file is provided, read and call catalog.admit_operation_json
-  if let Some(ref file_path) = args.file {
-    let content =
-      std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read operation file '{}': {}", file_path.display(), e))?;
-    catalog
-      .admit_operation_json(&content, &file_path.display().to_string())
-      .map_err(|e| format!("Failed to admit operation from '{}': [{}]: {}", file_path.display(), e.reason_code.as_str(), e.message))?;
-  }
-
-  // 3. Build TaskRequest with target app and context
+  // 2. Build TaskRequest with target app and context
   let (app_name, task_name) = parse_operation_target(&args.operation, &catalog);
   let mut current_context = HashMap::new();
   current_context.insert("App.ProcessName".to_string(), serde_json::json!(app_name));
@@ -203,7 +195,7 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
     embedding_vector: None,
   };
 
-  // 4. Fast loop scheduler routing
+  // 3. Fast loop scheduler routing
   let scheduler = FastLoopScheduler::new(&logger);
   let outcome = scheduler.schedule(&req, &catalog);
 
@@ -295,22 +287,11 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
   }
 }
 
-/// Registers the built-in operations into the catalog fail-closed.
-pub fn load_builtin_operations(catalog: &mut OperationCatalog) -> Result<(), String> {
-  // 1. qqmusic.prepare_playback (verified)
-  catalog
-    .admit_operation_json(BUILTIN_QQMUSIC_PREPARED_PLAYBACK, "builtin:qqmusic.prepare_playback")
-    .map_err(|e| format!("Failed to admit builtin qqmusic.prepare_playback: {}", e.message))?;
-
-  // 2. qqmusic.prepare_playback_fast (fast)
-  catalog
-    .admit_operation_json(BUILTIN_QQMUSIC_PREPARED_PLAYBACK_FAST, "builtin:qqmusic.prepare_playback_fast")
-    .map_err(|e| format!("Failed to admit builtin qqmusic.prepare_playback_fast: {}", e.message))?;
-
-  Ok(())
-}
-
 /// Parses an operation name like `qqmusic.prepare_playback` into `(app_name, task_name)`.
+// TODO(op-app-neutral): the fallback for operations missing from the catalog
+// still maps `qqmusic` to `QQMusic.exe`. It is out of scope for moving the QQ
+// Music operation files out of `auv-cli`; drop it with an owner-approved
+// cleanup of `auv op`.
 pub fn parse_operation_target(operation: &str, catalog: &OperationCatalog) -> (String, String) {
   if let Some(op) = catalog.get_active(operation) {
     let task = if let Some((_, task_part)) = operation.split_once('.') {
@@ -336,10 +317,15 @@ pub fn parse_operation_target(operation: &str, catalog: &OperationCatalog) -> (S
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
   use super::*;
   use auv_auto_loop::runtime::FakeOperationExecutor;
   use clap::Parser;
+
+  /// Path to an app-neutral operation fixture under `tests/fixtures/operations`.
+  pub(crate) fn example_operation_file(name: &str) -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("operations").join(name)
+  }
 
   #[derive(Parser, Debug)]
   struct TestCli {
@@ -359,18 +345,20 @@ mod tests {
       "op",
       "run",
       "--operation",
-      "qqmusic.prepare_playback_fast",
+      "example.prepare_fast",
       "--mode",
       "fast",
+      "--file",
+      "example-prepare-fast.json",
     ])
     .expect("parsing valid op run command must succeed");
 
     match parsed.command {
       TestRootCommand::Op(op_args) => match op_args.command {
         OpCommand::Run(run_args) => {
-          assert_eq!(run_args.operation, "qqmusic.prepare_playback_fast");
+          assert_eq!(run_args.operation, "example.prepare_fast");
           assert_eq!(run_args.mode, ExecutionModeArg::Fast);
-          assert_eq!(run_args.file, None);
+          assert_eq!(run_args.file, PathBuf::from("example-prepare-fast.json"));
           assert!(!run_args.json);
         }
       },
@@ -384,7 +372,7 @@ mod tests {
       "op",
       "run",
       "--operation",
-      "qqmusic.prepare_playback",
+      "example.prepare",
       "--mode",
       "verified",
       "--file",
@@ -396,9 +384,9 @@ mod tests {
     match parsed.command {
       TestRootCommand::Op(op_args) => match op_args.command {
         OpCommand::Run(run_args) => {
-          assert_eq!(run_args.operation, "qqmusic.prepare_playback");
+          assert_eq!(run_args.operation, "example.prepare");
           assert_eq!(run_args.mode, ExecutionModeArg::Verified);
-          assert_eq!(run_args.file, Some(PathBuf::from("custom_op.json")));
+          assert_eq!(run_args.file, PathBuf::from("custom_op.json"));
           assert!(run_args.json);
         }
       },
@@ -412,7 +400,9 @@ mod tests {
       "op",
       "run",
       "--operation",
-      "qqmusic.prepare_playback",
+      "example.prepare",
+      "--file",
+      "example-prepare.json",
     ])
     .expect_err("missing --mode must fail-closed at CLI parse boundary");
 
@@ -420,26 +410,28 @@ mod tests {
   }
 
   #[test]
-  fn test_builtin_operations_catalog_admission() {
-    let mut catalog = OperationCatalog::new();
-    load_builtin_operations(&mut catalog).expect("built-in operations must admit without error");
+  fn test_op_cli_parsing_missing_file_fails_closed() {
+    let err = TestCli::try_parse_from([
+      "auv",
+      "op",
+      "run",
+      "--operation",
+      "example.prepare",
+      "--mode",
+      "verified",
+    ])
+    .expect_err("missing --file must fail-closed at CLI parse boundary: auv-cli ships no built-in operations");
 
-    let verified_op = catalog.get_active("qqmusic.prepare_playback").expect("qqmusic.prepare_playback must be present");
-    assert_eq!(verified_op.execution_mode, ExecutionMode::Verified);
-    assert_eq!(verified_op.target.app_name, "QQMusic.exe");
-
-    let fast_op = catalog.get_active("qqmusic.prepare_playback_fast").expect("qqmusic.prepare_playback_fast must be present");
-    assert_eq!(fast_op.execution_mode, ExecutionMode::Fast);
-    assert_eq!(fast_op.target.app_name, "QQMusic.exe");
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
   }
 
   #[test]
   fn test_run_fast_mode_dispatch_success_unconfirmed() {
     let fake_executor = FakeOperationExecutor::new();
     let args = OpRunArgs {
-      operation: "qqmusic.prepare_playback_fast".to_string(),
+      operation: "example.prepare_fast".to_string(),
       mode: ExecutionModeArg::Fast,
-      file: None,
+      file: example_operation_file("example-prepare-fast.json"),
       json: true,
     };
 
@@ -456,9 +448,9 @@ mod tests {
   fn test_run_verified_mode_dispatch_success_confirmed() {
     let fake_executor = FakeOperationExecutor::new();
     let args = OpRunArgs {
-      operation: "qqmusic.prepare_playback".to_string(),
+      operation: "example.prepare".to_string(),
       mode: ExecutionModeArg::Verified,
-      file: None,
+      file: example_operation_file("example-prepare.json"),
       json: true,
     };
 
@@ -474,11 +466,11 @@ mod tests {
   #[test]
   fn test_run_mode_mismatch_intercepted_zero_driver_calls() {
     let fake_executor = FakeOperationExecutor::new();
-    // qqmusic.prepare_playback requires Verified, but Fast requested
+    // example.prepare requires Verified, but Fast requested
     let args = OpRunArgs {
-      operation: "qqmusic.prepare_playback".to_string(),
+      operation: "example.prepare".to_string(),
       mode: ExecutionModeArg::Fast,
-      file: None,
+      file: example_operation_file("example-prepare.json"),
       json: true,
     };
 
@@ -495,9 +487,9 @@ mod tests {
     fake_executor.set_verified_should_pass(false);
 
     let args = OpRunArgs {
-      operation: "qqmusic.prepare_playback".to_string(),
+      operation: "example.prepare".to_string(),
       mode: ExecutionModeArg::Verified,
-      file: None,
+      file: example_operation_file("example-prepare.json"),
       json: false,
     };
 

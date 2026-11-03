@@ -169,3 +169,39 @@ fn keyboard_input_failures_preserve_partial_progress() {
   assert!(failure.message.starts_with("keyboard action 2 failed after 0 complete actions and 3 presses: "));
   assert!(failure.message.ends_with("type_text is not supported by this driver"));
 }
+
+#[test]
+fn failed_native_input_retains_its_category_and_progress_in_json() {
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let error = auv_driver::DriverError::InputAction {
+    cause: Box::new(auv_driver::DriverError::PermissionDenied {
+      permission: "UI Automation",
+      message: Some("readback denied".into()),
+      recovery: None,
+    }),
+    progress: auv_driver::InputActionProgress::Submitted { action },
+  };
+  let failure = InvokeFailure::from(error);
+  assert_eq!(failure.code, FailureCode::PermissionDenied);
+  let json = serde_json::to_value(failure).unwrap();
+  assert_eq!(json["input_progress"]["state"], "submitted");
+  assert_eq!(json["input_progress"]["action"]["selected_path"], "ax_focus");
+  assert_eq!(json["input_progress"]["action"]["verified"], false);
+  assert_eq!(json["input_progress"]["action"]["attempts"][0]["succeeded"], true);
+  assert!(json["message"].as_str().unwrap().contains("readback denied"));
+}
+
+#[test]
+fn invalid_native_progress_stays_unknown_without_changing_the_failure_code() {
+  let mut action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  action.verified = true;
+  let failure = InvokeFailure::from(auv_driver::DriverError::InputAction {
+    cause: Box::new(auv_driver::DriverError::NotFound {
+      target: "readback element".into(),
+    }),
+    progress: auv_driver::InputActionProgress::Submitted { action },
+  });
+  assert_eq!(failure.code, FailureCode::NotFound);
+  assert!(failure.input_progress.is_none());
+  assert!(serde_json::to_value(failure).unwrap().get("input_progress").is_none());
+}

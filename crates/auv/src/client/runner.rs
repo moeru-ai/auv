@@ -36,6 +36,12 @@ pub enum CapabilityError {
     source: ClientError,
     progress: auv_driver::KeyboardInputProgress,
   },
+  /// A failed native action retained its delivery boundary and original cause.
+  #[error("{source}")]
+  InputAction {
+    source: ClientError,
+    progress: auv_driver::InputActionProgress,
+  },
   /// A domain input cannot be represented by the capability request.
   #[error("Runner request is invalid: {0}")]
   InvalidArgument(String),
@@ -48,7 +54,14 @@ pub enum CapabilityError {
 }
 
 fn capability_status(status: tonic::Status) -> CapabilityError {
-  ClientError::from_status("Runner capability RPC", status).into()
+  let progress = auv_api_proto::input_action_failure::failure(&status).and_then(|failure| input_action_progress_from_proto(failure).ok());
+  let source = ClientError::from_status("Runner capability RPC", status);
+  match progress {
+    Some(progress) => CapabilityError::InputAction { source, progress },
+    // Missing or invalid evidence is unknown. Keep the original category;
+    // never synthesize a zero-delivery receipt for an older Runner.
+    None => CapabilityError::Client(source),
+  }
 }
 
 impl CapabilityError {
@@ -58,6 +71,7 @@ impl CapabilityError {
     match self {
       Self::Client(error) => Some(error.kind()),
       Self::KeyboardInput { source, .. } => Some(source.kind()),
+      Self::InputAction { source, .. } => Some(source.kind()),
       Self::NotFound(_) => Some(crate::error::ClientErrorKind::NotFound),
       Self::InvalidArgument(_) | Self::InvalidResponse(_) => None,
     }
@@ -491,6 +505,13 @@ impl RunnerClient {
   /// Returns macOS-specific capabilities.
   pub fn macos(&self) -> MacosClient {
     MacosClient {
+      runner: self.clone(),
+    }
+  }
+
+  /// Returns platform accessibility focus operations.
+  pub fn accessibility(&self) -> AccessibilityClient {
+    AccessibilityClient {
       runner: self.clone(),
     }
   }
@@ -1234,13 +1255,6 @@ impl MacosClient {
       runner: self.runner.clone(),
     }
   }
-
-  /// Returns accessibility operations.
-  pub fn accessibility(&self) -> AccessibilityClient {
-    AccessibilityClient {
-      runner: self.runner.clone(),
-    }
-  }
 }
 
 /// macOS permission inspection operations.
@@ -1262,7 +1276,7 @@ pub struct ApplicationClient {
   runner: RunnerClient,
 }
 
-/// macOS accessibility operations.
+/// Platform accessibility focus operations.
 #[derive(Clone, Debug)]
 pub struct AccessibilityClient {
   runner: RunnerClient,
@@ -1272,11 +1286,11 @@ impl AccessibilityClient {
   /// Focuses a text element using typed accessibility selection.
   pub async fn focus_text(&self, options: auv_driver::FocusTextOptions) -> Result<auv_driver::AxFocusResult, CapabilityError> {
     let selector = match options.selector {
-      auv_driver::AxTextSelector::Query(query) => macos_proto::focus_text_request::Selector::Query(query),
-      auv_driver::AxTextSelector::Path(path) => macos_proto::focus_text_request::Selector::Path(path),
+      auv_driver::AxTextSelector::Query(query) => proto::focus_text_request::Selector::Query(query),
+      auv_driver::AxTextSelector::Path(path) => proto::focus_text_request::Selector::Path(path),
     };
-    let response = macos_proto::accessibility_service_client::AccessibilityServiceClient::new(self.runner.transport()?)
-      .focus_text(macos_proto::FocusTextRequest {
+    let response = proto::accessibility_service_client::AccessibilityServiceClient::new(self.runner.transport()?)
+      .focus_text(proto::FocusTextRequest {
         application: options.app,
         selector: Some(selector),
         expected_role: options.expected_role,
@@ -1288,7 +1302,7 @@ impl AccessibilityClient {
   }
 }
 
-fn ax_focus_result_from_proto(response: macos_proto::FocusTextResponse) -> Result<auv_driver::AxFocusResult, CapabilityError> {
+fn ax_focus_result_from_proto(response: proto::FocusTextResponse) -> Result<auv_driver::AxFocusResult, CapabilityError> {
   let result = required(response.result, "FocusText response omitted AxFocusResult")?;
   if result.app.trim().is_empty() || result.path.trim().is_empty() || result.role.trim().is_empty() {
     return Err(CapabilityError::InvalidResponse("FocusText response omitted resolved AX identity".to_string()));
@@ -1302,6 +1316,38 @@ fn ax_focus_result_from_proto(response: macos_proto::FocusTextResponse) -> Resul
     value: result.value,
     query: result.query,
     input_action_result: input_action_result_from_proto(required(result.action, "FocusText response omitted InputActionResult")?)?,
+  })
+}
+
+/// Reads one failed native action and validates its delivery progress.
+fn input_action_progress_from_proto(failure: proto::InputActionFailure) -> Result<auv_driver::InputActionProgress, CapabilityError> {
+  use auv_driver::InputActionProgress;
+  use proto::input_action_failure::Progress;
+  let progress = match required(failure.progress, "InputActionFailure omitted progress")? {
+    Progress::NotDelivered(()) => InputActionProgress::NotDelivered,
+    Progress::DeliveryUncertain(action) => InputActionProgress::DeliveryUncertain {
+      action: input_action_result_from_proto(action)?,
+    },
+    Progress::Submitted(action) => InputActionProgress::Submitted {
+      action: input_action_result_from_proto(action)?,
+    },
+  };
+  progress.validate().map_err(CapabilityError::InvalidResponse)?;
+  Ok(progress)
+}
+
+/// Projects known failed-action progress for the Runner's rich-error envelope.
+pub fn input_action_progress_to_proto(progress: auv_driver::InputActionProgress) -> Result<proto::InputActionFailure, String> {
+  use auv_driver::InputActionProgress;
+  use proto::input_action_failure::Progress;
+  progress.validate()?;
+  let progress = match progress {
+    InputActionProgress::NotDelivered => Progress::NotDelivered(()),
+    InputActionProgress::DeliveryUncertain { action } => Progress::DeliveryUncertain(input_action_result_to_proto(action)?),
+    InputActionProgress::Submitted { action } => Progress::Submitted(input_action_result_to_proto(action)?),
+  };
+  Ok(proto::InputActionFailure {
+    progress: Some(progress),
   })
 }
 
@@ -1350,10 +1396,7 @@ pub fn input_action_result_from_proto(action: proto::InputActionResult) -> Resul
         })
       })
       .collect::<Result<Vec<_>, CapabilityError>>()?,
-    // TODO(input-action-result-wire-verification): the current protobuf shape
-    // cannot carry semantic verification. Keep remote projections false until
-    // an owner-approved producer/reader schema slice adds that evidence.
-    verified: false,
+    verified: action.verified,
     mouse_disturbance: disturbance(action.mouse_disturbance)?,
     focus_disturbance: disturbance(action.focus_disturbance)?,
     clipboard_disturbance: disturbance(action.clipboard_disturbance)?,
@@ -1405,6 +1448,7 @@ pub fn input_action_result_to_proto(action: auv_driver::InputActionResult) -> Re
     mouse_disturbance: disturbance(action.mouse_disturbance) as i32,
     focus_disturbance: disturbance(action.focus_disturbance) as i32,
     clipboard_disturbance: disturbance(action.clipboard_disturbance) as i32,
+    verified: action.verified,
   })
 }
 

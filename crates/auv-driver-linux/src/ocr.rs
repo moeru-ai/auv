@@ -6,6 +6,8 @@
 //! `vision` module.
 
 use std::fmt;
+#[cfg(any(target_os = "linux", test))]
+use std::path::{Path, PathBuf};
 
 use auv_driver_common::geometry::Rect;
 use auv_driver_common::vision::{OcrMatches, RecognizedText, RecognizedWord, TextRecognition, TextRecognitionOptions, match_word_spans};
@@ -106,11 +108,17 @@ fn tesseract_tsv_from_rgba(rgba: &[u8], width: u32, height: u32, options: &TextR
   .map_err(|error| OcrError::Runtime(format!("failed to encode RGBA image as PNG: {error}")))?;
 
   let language = tesseract_language(options);
+  let executable = std::env::current_exe().map_err(|error| OcrError::Runtime(format!("failed to locate the AUV executable: {error}")))?;
+  let tessdata = resolve_tessdata_path(&executable, std::env::var_os("TESSDATA_PREFIX"), &language, Path::is_file);
+  let tessdata = tessdata
+    .as_deref()
+    .map(|path| path.to_str().ok_or_else(|| OcrError::Runtime(format!("Tesseract data path is not valid UTF-8: {}", path.display()))))
+    .transpose()?;
   // TODO(linux-tesseract-session-reuse): cache language-keyed engines only
   // after the Driver owns their thread/concurrency lifecycle; current profiling
   // shows image scope and remote frame transport dominate engine initialization.
   let mut tess =
-    leptess::LepTess::new(None, &language).map_err(|error| OcrError::Runtime(format!("failed to initialize Tesseract: {error}")))?;
+    leptess::LepTess::new(tessdata, &language).map_err(|error| OcrError::Runtime(format!("failed to initialize Tesseract: {error}")))?;
 
   // NOTICE(linux-tesseract-custom-words): leptess exposes Tesseract variables
   // but not a stable cross-version user-word injection surface. Custom word
@@ -119,6 +127,23 @@ fn tesseract_tsv_from_rgba(rgba: &[u8], width: u32, height: u32, options: &TextR
   tess.set_source_resolution(144);
   let tsv = tess.get_tsv_text(0).map_err(|error| OcrError::Runtime(format!("failed to read Tesseract TSV: {error}")))?;
   Ok((tsv, if upscale { 0.5 } else { 1.0 }))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn resolve_tessdata_path(
+  executable: &Path,
+  configured_prefix: Option<std::ffi::OsString>,
+  language: &str,
+  is_file: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+  if let Some(prefix) = configured_prefix.filter(|prefix| !prefix.is_empty()) {
+    return Some(PathBuf::from(prefix));
+  }
+
+  let bundled = executable.parent()?.join("share").join("auv").join("tessdata");
+  let has_all_models =
+    language.split('+').filter(|model| !model.is_empty()).all(|model| is_file(&bundled.join(format!("{model}.traineddata"))));
+  has_all_models.then_some(bundled)
 }
 
 #[cfg(not(target_os = "linux"))]

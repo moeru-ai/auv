@@ -39,7 +39,8 @@ export function createUnixSocketTransport(options: UnixSocketTransportOptions): 
   const path = options.path instanceof URL
     ? options.path.pathname
     : options.path.startsWith('unix://')
-      ? new URL(options.path).pathname
+      // Keep the raw path; URL parsing would percent-encode spaces.
+      ? options.path.slice('unix://'.length)
       : options.path
 
   return grpcTransport(`unix:${path}`, ChannelCredentials.createInsecure())

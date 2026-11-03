@@ -39,6 +39,13 @@ pub enum DriverError {
   Backend {
     message: String,
   },
+  /// One input operation failed with a known native delivery boundary.
+  /// The original error category remains in `cause`; never infer zero input
+  /// from errors that do not carry this receipt.
+  InputAction {
+    cause: Box<DriverError>,
+    progress: crate::InputActionProgress,
+  },
 }
 
 impl DriverError {
@@ -74,8 +81,27 @@ impl fmt::Display for DriverError {
         Ok(())
       }
       Self::InvalidInput { message } | Self::Backend { message } => f.write_str(message),
+      Self::InputAction { cause, progress } => {
+        match progress {
+          crate::InputActionProgress::NotDelivered => {}
+          crate::InputActionProgress::DeliveryUncertain { .. } => {
+            f.write_str("input delivery is uncertain; inspect state before retrying: ")?;
+          }
+          crate::InputActionProgress::Submitted { .. } => {
+            f.write_str("input was submitted but is unverified; inspect state before retrying: ")?;
+          }
+        }
+        cause.fmt(f)
+      }
     }
   }
 }
 
-impl Error for DriverError {}
+impl Error for DriverError {
+  fn source(&self) -> Option<&(dyn Error + 'static)> {
+    match self {
+      Self::InputAction { cause, .. } => Some(cause.as_ref()),
+      _ => None,
+    }
+  }
+}

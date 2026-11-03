@@ -19,7 +19,7 @@ pub struct FocusTextOptions {
 }
 
 impl FocusTextOptions {
-  /// Rejects malformed selectors before the macOS adapter captures an AX tree.
+  /// Rejects malformed selectors before the platform adapter captures a tree.
   pub fn validate(&self) -> DriverResult<()> {
     if self.app.trim().is_empty() {
       return Err(DriverError::InvalidInput {

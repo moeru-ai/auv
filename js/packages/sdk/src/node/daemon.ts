@@ -44,12 +44,12 @@ export interface AuvDaemon {
 /** Serializable defaults for connecting to the preferred bound endpoint. */
 export interface AuvDaemonConnectionOptions {
   /**
-   * Launcher token generated for this launch under the `launcher-only` and
-   * `launcher-and-paired` policies. The daemon rejects local callers without
-   * it, including other processes of the same OS user. Absent under
-   * `any-process-of-os-user`.
+   * Launcher token generated for this launch when the local listener allows
+   * `launcher-token` (the default). The daemon rejects local callers without
+   * it, including other processes of the same OS user. Absent otherwise.
    */
   readonly credential?: DeviceCredential
+  /** Listener URI (`unix://` or `npipe://`), usable as `AUV_ENDPOINT` too. */
   readonly endpoint: string
   readonly local: boolean
   readonly transport: 'http' | 'npipe' | 'unix'
@@ -442,11 +442,11 @@ function localEndpointUri(path: string): string {
   return pipe === null ? `unix://${path}` : `npipe://./pipe/${pipe[1]}`
 }
 
+// Keep the URI form: the same string works for `connect()`, `AUV_ENDPOINT`,
+// and the CLI's `--endpoint`.
 function ownerConnection(endpoint: string, credential: DeviceCredential | undefined): AuvDaemonConnectionOptions {
   const withCredential = credential === undefined ? {} : { credential }
-  if (endpoint.startsWith('npipe://'))
-    return { ...withCredential, endpoint, local: true, transport: 'npipe' }
-  return { ...withCredential, endpoint: endpoint.slice('unix://'.length), local: true, transport: 'unix' }
+  return { ...withCredential, endpoint, local: true, transport: endpoint.startsWith('npipe://') ? 'npipe' : 'unix' }
 }
 
 /**

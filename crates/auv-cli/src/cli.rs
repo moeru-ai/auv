@@ -57,7 +57,7 @@ struct RootArgs {
 
 #[derive(Debug, Subcommand)]
 enum RootCommand {
-  /// Inspect local automation permissions and environment readiness.
+  /// Inspect local desktop automation diagnostics.
   Doctor(DoctorArgs),
   /// Invoke one core computer-use capability and record its run.
   Invoke(InvokeArgs),

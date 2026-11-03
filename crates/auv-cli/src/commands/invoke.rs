@@ -80,11 +80,25 @@ async fn execute(
   // Use the command's shared keyboard contract so new commands cannot fall
   // through a second, frontend-only command-ID list.
   let selected_context = if !selection.is_empty() && (!request.dry_run || command.target == TargetPolicy::OptionalKeyboard) {
-    Some(crate::commands::plugin::resolve_invoke_context(selection).await?)
+    match crate::commands::plugin::resolve_invoke_context(selection).await {
+      Ok(selected) => Some(selected),
+      Err(failure) => {
+        // Preserve the legacy human stderr boundary. JSON requests use the
+        // normal invoke renderer so failure_details.code survives selection.
+        if !output.json {
+          return Err(failure.message);
+        }
+        let result = auv_cli_invoke::InvokeResult::from_command_result(auv_tracing::RunId::new(), &command, Err(failure));
+        return Ok(auv_cli_invoke::render_invoke_result(&result, output)?.exit_code);
+      }
+    }
   } else {
     None
   };
-  let remote_context = selected_context.as_ref().map(|resolved| resolved.context.clone());
+  let remote_daemon = selected_context.as_ref().map(|resolved| auv_cli_invoke::runner::SelectedDaemon {
+    context: resolved.context.clone(),
+    credential: resolved.credential.clone(),
+  });
   let input = auv_cli_invoke::InvokeCommandInput {
     command_id: request.command_id.clone(),
     target: request.target,
@@ -98,10 +112,10 @@ async fn execute(
   let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
   let future = root.in_scope(|| async move {
     auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-    match remote_context {
+    match remote_daemon {
       // The typed remote adapter contains the complete invoke command match.
       // Keep that large async state machine off the Windows main-thread stack.
-      Some(context) => Box::pin(auv_cli_invoke::runner::invoke(input, context)).await,
+      Some(daemon) => Box::pin(auv_cli_invoke::runner::invoke(input, daemon)).await,
       None => invoked_command.invoke(input).await,
     }
   });

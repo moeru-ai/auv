@@ -14,7 +14,11 @@
 
 <h1 align="center">AUV</h1>
 
-[![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
+[![github license](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
+[![crates.io version](https://badgen.net/crates/v/auv-cli)](https://crates.io/crates/auv-cli)
+[![crates.io downloads](https://badgen.net/crates/d/auv-cli)](https://crates.io/crates/auv-cli)
+[![npm version](https://badgen.net/npm/v/@auv-js/sdk)](https://npmx.dev/package/@auv-js/sdk)
+[![npm downloads](https://badgen.net/npm/dt/@auv-js/sdk)](https://npmx.dev/package/@auv-js/sdk)
 
 <p align="center">
   <a href="./README.md">English</a> | <b>简体中文</b>
@@ -75,6 +79,11 @@ auv --version
 > [!NOTE]
 >
 > 设置 `AUV_VERSION` 或 `AUV_INSTALL_DIR` 可以修改发行版本或安装目录（默认：`~/.local/bin`）。
+>
+> glibc 版的 Linux 发行包是完整包：自带 AUV 私有的原生库、这些库需要的 PipeWire
+> 客户端文件和英文 Tesseract 模型，需要 glibc 2.36 或更新的系统（例如 Debian 12
+> 或 Ubuntu 24.04）。其他 OCR 语言可以通过 `TESSDATA_PREFIX` 提供。目前不支持
+> Linux musl。
 
 #### Windows
 
@@ -247,6 +256,7 @@ brew uninstall auv
 
 ```sh
 rm "$HOME/.local/bin/auv"
+rm -rf "$HOME/.local/bin/.auv"
 ```
 
 #### Windows

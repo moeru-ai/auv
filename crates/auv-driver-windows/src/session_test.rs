@@ -98,6 +98,28 @@ fn screen_point_converts_to_window_point() {
 }
 
 #[test]
+fn coordinate_mapping_with_negative_and_nonzero_window_origins() {
+  // Case A: Secondary monitor positioned to the left of the primary monitor in Windows display settings.
+  // Secondary monitor origin is (-1920.0, 0.0), window on that monitor has negative origin.
+  let mut left_window = sample_window();
+  left_window.frame = Rect::new(-1500.0, 100.0, 1000.0, 800.0);
+
+  // Top-left of window maps to its negative screen frame origin
+  assert_eq!(screen_point_for_window_point(&left_window, WindowPoint::new(0.0, 0.0)), ScreenPoint::new(-1500.0, 100.0));
+  // Interior point
+  assert_eq!(screen_point_for_window_point(&left_window, WindowPoint::new(250.0, 300.0)), ScreenPoint::new(-1250.0, 400.0));
+  // Inverse mapping preserves negative coordinates
+  assert_eq!(window_point_for_screen_point(&left_window, ScreenPoint::new(-1250.0, 400.0)), WindowPoint::new(250.0, 300.0));
+
+  // Case B: Secondary monitor positioned above the primary monitor (negative Y).
+  let mut top_window = sample_window();
+  top_window.frame = Rect::new(200.0, -1080.0, 1920.0, 1080.0);
+
+  assert_eq!(screen_point_for_window_point(&top_window, WindowPoint::new(100.0, 80.0)), ScreenPoint::new(300.0, -1000.0));
+  assert_eq!(window_point_for_screen_point(&top_window, ScreenPoint::new(300.0, -1000.0)), WindowPoint::new(100.0, 80.0));
+}
+
+#[test]
 fn capture_rejects_region_option() {
   let options = CaptureOptions {
     region: Some(Rect::new(0.0, 0.0, 10.0, 10.0)),

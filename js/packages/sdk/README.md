@@ -128,7 +128,9 @@ cannot use the screen or input permissions granted to your app.
 `daemon.connectionOptions.credential` holds it for connections you open
 yourself. Hand it only to processes that should control this daemon, and never
 through argv or environment variables, which other processes of the same user
-can read.
+can read. To run the `auv` CLI against this daemon, set `AUV_ENDPOINT` to
+`daemon.connectionOptions.endpoint`, pass `--credential-stdin` before the
+subcommand, and write the token and a newline to the CLI's stdin.
 
 To let other apps on the machine use your daemon, allow
 `['launcher-token', 'paired-device']`. Issue each app a token with

@@ -1205,8 +1205,8 @@ pub(super) fn main() {
   });
 
   let default_op_path = match mode.as_str() {
-    "fast" => "docs/ai/references/driver/qqmusic-prepared-playback-fast.json",
-    "baseline" | "verified" => "docs/ai/references/driver/qqmusic-prepared-playback.json",
+    "fast" => "supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback-fast.json",
+    "baseline" | "verified" => "supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json",
     _ => unreachable!("CLI mode was validated above"),
   };
   let op_file_path = user_op_file.as_deref().unwrap_or(default_op_path);

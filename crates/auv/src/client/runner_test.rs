@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn input_action_failure_roundtrip_preserves_progress_and_original_category() {
+  let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  let mut uncertain = action.clone();
+  uncertain.attempts[0].succeeded = false;
+  for expected in [
+    auv_driver::InputActionProgress::NotDelivered,
+    auv_driver::InputActionProgress::DeliveryUncertain { action: uncertain },
+    auv_driver::InputActionProgress::Submitted { action },
+  ] {
+    let wire = input_action_progress_to_proto(expected.clone()).unwrap();
+    let status = auv_api_proto::input_action_failure::status(&tonic::Status::permission_denied("UIA denied"), wire);
+    let error = capability_status(status);
+    assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Unauthorized));
+    let CapabilityError::InputAction { source, progress } = error else {
+      panic!("typed progress was lost")
+    };
+    assert_eq!(progress, expected);
+    assert!(source.to_string().contains("UIA denied"));
+  }
+}
+
+#[test]
+fn invalid_or_legacy_input_error_metadata_remains_unknown() {
+  let cause = tonic::Status::permission_denied("UIA denied");
+  assert!(matches!(capability_status(cause.clone()), CapabilityError::Client(_)));
+  let mut action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
+  action.verified = true;
+  let wire = proto::InputActionFailure {
+    progress: Some(proto::input_action_failure::Progress::Submitted(input_action_result_to_proto(action).unwrap())),
+  };
+  let error = capability_status(auv_api_proto::input_action_failure::status(&cause, wire));
+  assert_eq!(error.client_kind(), Some(crate::error::ClientErrorKind::Unauthorized));
+  assert!(matches!(error, CapabilityError::Client(_)), "invalid evidence must not become zero delivery");
+}
+
 #[derive(Debug)]
 struct LargeCaptureService;
 
@@ -103,6 +139,7 @@ struct InputFixture {
 
 fn fixture_action(path: proto::InputDeliveryPath) -> proto::InputActionResult {
   proto::InputActionResult {
+    verified: false,
     selected_path: path as i32,
     attempts: vec![proto::InputAttempt {
       path: path as i32,
@@ -498,6 +535,7 @@ async fn runner_input_exposes_typed_mouse_motion() {
 #[test]
 fn input_action_projection_preserves_typed_delivery_evidence() {
   let action = input_action_result_from_proto(proto::InputActionResult {
+    verified: true,
     selected_path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
     attempts: vec![proto::InputAttempt {
       path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
@@ -518,6 +556,7 @@ fn input_action_projection_preserves_typed_delivery_evidence() {
     )]
   );
   assert_eq!(action.focus_disturbance, auv_driver::DisturbanceLevel::Foreground);
+  assert!(action.verified);
 }
 
 #[test]
@@ -619,8 +658,8 @@ fn permission_mapper_rejects_unspecified_and_unknown_wire_values() {
 
 #[test]
 fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
-  let result = ax_focus_result_from_proto(macos_proto::FocusTextResponse {
-    result: Some(macos_proto::AxFocusResult {
+  let result = ax_focus_result_from_proto(proto::FocusTextResponse {
+    result: Some(proto::AxFocusResult {
       app: "com.example.Editor".to_string(),
       pid: 42,
       path: "root/AXTextArea[0]".to_string(),
@@ -630,6 +669,7 @@ fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
       // Exact-path selection intentionally has no query in the owner result.
       query: String::new(),
       action: Some(proto::InputActionResult {
+        verified: false,
         selected_path: proto::InputDeliveryPath::AxFocus as i32,
         attempts: vec![proto::InputAttempt {
           path: proto::InputDeliveryPath::AxFocus as i32,
@@ -651,7 +691,7 @@ fn accessibility_mapper_preserves_ax_identity_and_delivery_evidence() {
 
 #[test]
 fn accessibility_mapper_rejects_missing_result_before_rendering() {
-  let error = ax_focus_result_from_proto(macos_proto::FocusTextResponse::default()).expect_err("missing focus result");
+  let error = ax_focus_result_from_proto(proto::FocusTextResponse::default()).expect_err("missing focus result");
   assert!(matches!(error, CapabilityError::InvalidResponse(_)));
 }
 

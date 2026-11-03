@@ -43,6 +43,9 @@
 //! request, a window that real input made the foreground window keeps the foreground: the
 //! evaluation hands it back itself when it is done. `--topmost` creates the window above ordinary
 //! windows, so its text can be read off the screen and real input aimed at it lands on it.
+//!
+//! An explicitly armed `reject_typing_focus` request redirects received text-box focus to this
+//! receiver's own button. Its counters and GetFocus state expose a real post-delivery refusal.
 
 #[cfg(not(windows))]
 fn main() {
@@ -70,7 +73,7 @@ mod native {
   use windows::Win32::System::LibraryLoader::GetModuleHandleW;
   use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
   use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
-  use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture};
+  use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
   use windows::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
     ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, GetClientRect, GetForegroundWindow, GetMessageW, GetParent, GetWindowRect,
@@ -100,7 +103,8 @@ mod native {
   const PAD_TOP: i32 = 206;
   /// `MK_LBUTTON` in a mouse message's `wparam`: the left button is down.
   const MK_LBUTTON: usize = 0x0001;
-  /// `EM_GETFIRSTVISIBLELINE` lives in the Controls module, which this crate does not enable.
+  /// Edit-control messages live in the Controls module, which this crate does not enable.
+  const EM_GETSEL: u32 = 0x00B0;
   const EM_GETFIRSTVISIBLELINE: u32 = 0x00CE;
   const LINE_COUNT: usize = 400;
   /// The state strip: sixteen cells of `STRIP_CELL_WIDTH` by `STRIP_CELL_HEIGHT`, `STRIP_LEFT` from the
@@ -131,6 +135,12 @@ mod native {
     /// Caption for the push button.
     #[arg(long, default_value = "Activate Target")]
     button_caption: String,
+    /// Initial text in the foreground-input text box, for OCR-driven workflow evaluations.
+    #[arg(long, default_value = "")]
+    input_caption: String,
+    /// Nonzero capture calibration before any input is sent; not a delivered click.
+    #[arg(long, default_value_t = 0)]
+    initial_clicks: u64,
     /// Shown in the edit text so each receiver's content differs.
     #[arg(long, default_value_t = 0)]
     index: u32,
@@ -182,6 +192,8 @@ mod native {
     foreground_yielded: AtomicU64,
     typing_chars: AtomicU64,
     typing_down: AtomicU64,
+    typing_focus: AtomicU64,
+    typing_focus_rejected: AtomicU64,
   }
 
   static COUNTERS: Counters = Counters {
@@ -202,6 +214,8 @@ mod native {
     foreground_yielded: AtomicU64::new(0),
     typing_chars: AtomicU64::new(0),
     typing_down: AtomicU64::new(0),
+    typing_focus: AtomicU64::new(0),
+    typing_focus_rejected: AtomicU64::new(0),
   };
 
   // The window thread is the only writer of these handles, set during `WM_CREATE`.
@@ -224,6 +238,8 @@ mod native {
   static KEEP_FOREGROUND: AtomicBool = AtomicBool::new(false);
   /// Started with `--keep-ime`: the text box keeps the thread's input method.
   static KEEP_IME: AtomicBool = AtomicBool::new(false);
+  /// Explicit fault injection only: reject text focus by focusing our own button.
+  static REJECT_TYPING_FOCUS: AtomicBool = AtomicBool::new(false);
   static TYPING: AtomicIsize = AtomicIsize::new(0);
   static TYPING_PROC: AtomicIsize = AtomicIsize::new(0);
   /// Key messages the text box received, oldest first, at most `KEY_LOG_LIMIT`. They can only be
@@ -234,6 +250,9 @@ mod native {
   static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
   static BASE_TITLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   static BUTTON_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  static INPUT_CAPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  /// Text the application submitted when its button actually received BN_CLICKED.
+  static SUBMITTED_TEXT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
   /// Where replies go: stdout, or the socket to the parent. Written from the window thread only.
   static OUT: std::sync::Mutex<Option<Box<dyn std::io::Write + Send>>> = std::sync::Mutex::new(None);
 
@@ -269,6 +288,7 @@ mod native {
       let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     INDEX.store(u64::from(options.index), Relaxed);
+    COUNTERS.clicks.store(options.initial_clicks, Relaxed);
     // SAFETY: a read-only query.
     HOME_FOREGROUND.store(unsafe { GetForegroundWindow() }.0 as isize, Relaxed);
     SINK.store(options.sink, Relaxed);
@@ -277,6 +297,7 @@ mod native {
     let _ = STARTED.set(std::time::Instant::now());
     let _ = BASE_TITLE.set(options.title.clone());
     let _ = BUTTON_CAPTION.set(options.button_caption.clone());
+    let _ = INPUT_CAPTION.set(options.input_caption.clone());
     let reader: Box<dyn BufRead + Send> = match &options.connect {
       Some(address) => {
         let stream = std::net::TcpStream::connect(address).expect("connect to the parent");
@@ -420,7 +441,8 @@ mod native {
     let button_caption = BUTTON_CAPTION.get().map(String::as_str).unwrap_or("Activate Target");
     let button_caption_hstring = HSTRING::from(button_caption);
     let button = child(w!("BUTTON"), PCWSTR(button_caption_hstring.as_ptr()), WINDOW_STYLE(BS_PUSHBUTTON as u32), ID_BUTTON);
-    let label = child(w!("STATIC"), w!("clicks 0"), WINDOW_STYLE(0), ID_LABEL);
+    let initial_label = HSTRING::from(format!("clicks {}", COUNTERS.clicks.load(Relaxed)));
+    let label = child(w!("STATIC"), PCWSTR(initial_label.as_ptr()), WINDOW_STYLE(0), ID_LABEL);
     let edit =
       child(w!("EDIT"), w!(""), WS_VSCROLL | WS_BORDER | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY) as u32), ID_EDIT);
 
@@ -440,6 +462,7 @@ mod native {
       // SAFETY: live control; its original procedure is kept for `call_original`. Associating no
       // input context turns the IME off for this control only.
       unsafe {
+        let _ = SetWindowTextW(typing, &HSTRING::from(INPUT_CAPTION.get().map(String::as_str).unwrap_or("")));
         TYPING_PROC.store(SetWindowLongPtrW(typing, GWLP_WNDPROC, typing_proc as *const () as usize as isize), Relaxed);
         if !KEEP_IME.load(Relaxed) {
           let _ = ImmAssociateContext(typing, HIMC::default());
@@ -515,11 +538,25 @@ mod native {
       WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => count(&COUNTERS.typing_down),
       WM_SETFOCUS => {
         count(&COUNTERS.focus_set);
+        count(&COUNTERS.typing_focus);
         publish_title(unsafe { GetParent(hwnd) }.unwrap_or_default());
       }
       _ => {}
     }
-    call_original(&TYPING_PROC, hwnd, message, wparam, lparam)
+    let result = call_original(&TYPING_PROC, hwnd, message, wparam, lparam);
+    if message == WM_SETFOCUS && REJECT_TYPING_FOCUS.load(Relaxed) {
+      let button = handle(&BUTTON);
+      // SAFETY: this request is armed after both controls are created. Both
+      // controls belong to this GUI thread; no mutex or mutable borrow spans
+      // the reentrant focus callbacks. Other processes' windows are untouched.
+      unsafe {
+        let _ = SetFocus(button);
+        if GetFocus() == button {
+          count(&COUNTERS.typing_focus_rejected);
+        }
+      }
+    }
+    result
   }
 
   /// Records a drag over the pad: where the button went down and up on the screen, and how many
@@ -698,6 +735,11 @@ mod native {
         let id = wparam.0 & 0xFFFF;
         if id == ID_BUTTON && notification == BN_CLICKED {
           let clicks = COUNTERS.clicks.fetch_add(1, Relaxed) + 1;
+          if FOREGROUND_INPUT.load(Relaxed)
+            && let Ok(mut submitted) = SUBMITTED_TEXT.lock()
+          {
+            *submitted = window_text(handle(&TYPING));
+          }
           // SAFETY: live label control.
           unsafe {
             let _ = SetWindowTextW(handle(&LABEL), &HSTRING::from(format!("clicks {clicks}")));
@@ -906,15 +948,31 @@ mod native {
       "foreground_yielded": c.foreground_yielded.load(Relaxed),
       "minimized": minimized,
       "foreground": foreground,
+      "button_focused": unsafe { GetFocus() } == handle(&BUTTON),
     });
     if FOREGROUND_INPUT.load(Relaxed) {
       let typing = handle(&TYPING);
+      let mut selection_start = 0_u32;
+      let mut selection_end = 0_u32;
+      // SAFETY: the edit belongs to this thread, and both DWORD outputs live through the call.
+      unsafe {
+        let _ = SendMessageW(
+          typing,
+          EM_GETSEL,
+          WPARAM((&mut selection_start as *mut u32) as usize),
+          LPARAM((&mut selection_end as *mut u32) as isize),
+        );
+      }
+      state["submitted_text"] = json!(SUBMITTED_TEXT.lock().map(|text| text.clone()).unwrap_or_default());
       state["typing"] = json!({
         "text": window_text(typing),
+        "selection": [selection_start, selection_end],
         // The request runs on the window's own thread, so this is the control focused in it.
         "focused": unsafe { GetFocus() } == typing,
         "chars": c.typing_chars.load(Relaxed),
         "button_down": c.typing_down.load(Relaxed),
+        "focus_received": c.typing_focus.load(Relaxed),
+        "focus_rejected": c.typing_focus_rejected.load(Relaxed),
         "keys": KEY_LOG.lock().map(|log| log.clone()).unwrap_or_default(),
       });
       state["pad"] = PAD.lock().ok().and_then(|pad| pad.clone()).unwrap_or(Value::Null);
@@ -974,6 +1032,14 @@ mod native {
       Some("keep_foreground") if FOREGROUND_INPUT.load(Relaxed) => {
         KEEP_FOREGROUND.store(true, Relaxed);
         json!({})
+      }
+      Some("reject_typing_focus") if FOREGROUND_INPUT.load(Relaxed) => {
+        if let Some(enabled) = request["enabled"].as_bool() {
+          REJECT_TYPING_FOCUS.store(enabled, Relaxed);
+          json!({"enabled": enabled})
+        } else {
+          json!({"ok": false, "error": "reject_typing_focus needs enabled"})
+        }
       }
       // Forgets the logged keys and the last drag, so the next step is read on its own.
       Some("reset_log") => {

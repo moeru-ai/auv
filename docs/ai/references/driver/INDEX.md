@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **81**
+Count: **83**
+
+- [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, capture guard review, semantic focus, cancellation, and shared failure progress with explicit evidence boundaries.
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -102,7 +104,11 @@ Count: **81**
 - [`2026-10-20-linux-live-desktop-matrix.md`](2026-10-20-linux-live-desktop-matrix.md): live Linux desktop evidence behind the matrix cells: window list/capture/findText, display capture fallback, PaperWM and occlusion boundaries.
 - [`2026-10-20-linux-window-text-ocr.md`](2026-10-20-linux-window-text-ocr.md): `window.findText` and `window.waitForText` wired on Linux through AT-SPI resolve, display crop, and Tesseract; visible-area and PaperWM boundaries, no support-matrix claim.
 - [`2026-10-20-windows-screen-clicktext.md`](2026-10-20-windows-screen-clicktext.md): Windows local screen OCR click, foreground boundary and owned-receiver evidence.
+- [`2026-10-24-windows-gui-workflow-evidence.md`](2026-10-24-windows-gui-workflow-evidence.md): current per-route Windows workflow evidence, exact OCR point binding, interruption and cleanup repairs, and the recorded initial-capture failure and retry limits.
 
+
+- [`2026-10-26-windows-input-desktop-lifetime.md`](2026-10-26-windows-input-desktop-lifetime.md): Input desktop ownership, pending close retries, native TLS destruction, attachment errors, and lifecycle test evidence.
+- [`2026-10-26-windows-operation-preflight.md`](2026-10-26-windows-operation-preflight.md): Explicit step admission, declared gate thresholds, title changes, timeout limits, and executor test evidence.
 
 ## Related
 

@@ -1078,11 +1078,19 @@ fn invoke_store_root_cannot_consume_the_next_flag() {
 // A CLI-only list of three command IDs let new keyboard dry-runs succeed
 // locally even when a Runner was explicitly selected. Driver validation must
 // use the selected Runner for every registered keyboard command.
+// https://github.com/moeru-ai/auv/pull/428
+// https://github.com/moeru-ai/auv/actions/runs/40325285278/job/121580283670
+// Preselection failures now use JSON stdout for --json. The old stderr
+// assertion failed even though selected Runner validation still refused
+// execution. Assert the structured failure on every local transport.
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(unix, windows))]
 fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
   let root = tempfile::tempdir().unwrap();
+  #[cfg(unix)]
   let endpoint = format!("unix://{}", root.path().join("missing-daemon.sock").display());
+  #[cfg(windows)]
+  let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
   for arguments in [
     vec!["input.key", "escape"],
     vec!["input.keys", "escape"],
@@ -1096,14 +1104,29 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
       .current_dir(root.path())
       .env_remove("AUV_CONTEXT")
       .env("AUV_ENDPOINT", &endpoint)
+      .env("AUV_DISCOVERY_FILE", root.path().join("missing-discovery.json"))
+      .env("AUV_CONFIG_PROFILES_FILE", root.path().join("profiles.json"))
       .args(["--device-id", &"0".repeat(64), "invoke"])
       .args(&arguments)
       .args(["--dry-run", "--json"])
       .output()
       .unwrap();
-    assert!(!output.status.success(), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
-    assert!(stderr(&output).contains("connect"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(1), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+      .unwrap_or_else(|error| panic!("{} must return JSON: {error}; stdout={} stderr={}", arguments[0], stdout(&output), stderr(&output)));
+    assert_eq!(response["status"], "failed", "{response}");
+    assert_eq!(response["command_id"], arguments[0], "{response}");
+    assert_eq!(response["failure_details"]["code"], "command_failed", "{response}");
+    assert!(response["failure_details"]["message"].as_str().unwrap().contains("connect"), "{response}");
+    assert_eq!(response["failure"], response["failure_details"]["message"], "{response}");
+    assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
+    assert!(response.get("artifacts").is_none(), "dry-run returned artifacts: {response}");
   }
+  assert_eq!(
+    std::fs::read_to_string(root.path().join(".auv").join("store").join("records.jsonl")).expect("preselection tracing store"),
+    "",
+    "unreachable selected Runner must not enter local command validation"
+  );
 }
 
 // https://github.com/moeru-ai/auv/pull/177
@@ -1156,4 +1179,112 @@ fn selected_global_text_dry_run_returns_validation_without_delivery() {
   let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(response["status"], "completed", "{response}");
   assert!(response["result"].is_null(), "dry-run returned delivery evidence: {response}");
+}
+
+// https://github.com/moeru-ai/auv/pull/428
+// ROOT CAUSE:
+//
+// If a selected Run was missing, preselection returned its error as text
+// before the JSON result renderer. The shared Runner mapping was bypassed.
+// The fix keeps the typed failure through preselection and JSON rendering.
+#[test]
+fn missing_selected_run_is_typed_in_cli_json_without_local_execution() {
+  let directory = tempfile::tempdir().unwrap();
+  let discovery = directory.path().join("missing-discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let selected_run = "0123456789abcdef0123456789abcdef";
+
+  let command = || {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_auv"));
+    cmd
+      .current_dir(directory.path())
+      .env_remove("AUV_CONTEXT")
+      .env_remove("AUV_ENDPOINT")
+      .env("AUV_DISCOVERY_FILE", &discovery)
+      .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+      .args(["--run", selected_run, "invoke", "display.list"]);
+    cmd
+  };
+
+  let json_output = command().args(["--json"]).output().expect("invoke JSON subprocess");
+  assert_eq!(json_output.status.code(), Some(1), "stderr={}", stderr(&json_output));
+  let body: serde_json::Value = serde_json::from_slice(&json_output.stdout).expect("failure must have JSON stdout");
+  assert_eq!(body["status"], "failed");
+  assert_eq!(body["command_id"], "display.list");
+  assert_eq!(body["failure_details"]["code"], "not_found");
+  assert!(body["failure_details"]["message"].as_str().unwrap().contains(selected_run));
+  assert_eq!(body["failure"], body["failure_details"]["message"]);
+  assert!(body["result"].is_null());
+  assert!(body.get("artifacts").is_none());
+
+  // Non-JSON callers retain the prior stderr message and exit code.
+  let human = command().output().expect("invoke human subprocess");
+  assert_eq!(human.status.code(), Some(1));
+  assert!(stderr(&human).contains(selected_run));
+  assert!(stderr(&human).contains(body["failure_details"]["message"].as_str().unwrap()));
+  assert!(stdout(&human).is_empty(), "human error output must remain on stderr");
+  assert_eq!(
+    std::fs::read_to_string(directory.path().join(".auv").join("store").join("records.jsonl")).expect("preselection tracing store"),
+    "",
+    "selection failure must not enter the local command or its tracing context"
+  );
+}
+
+// ROOT CAUSE:
+//
+// The Windows doctor report format was pinned only by unit tests over
+// injectable samples, so a future wiring mistake between the probe, the
+// report, and the serializer would not fail any test.
+//
+// Before this test, nothing executed `collect_windows_diagnostics` outside a
+// manual run. This smoke test drives the real CLI binary on Windows through
+// the live entry point. Its assertions stay inside the shared three-state
+// vocabulary: this host's actual elevation, UIAccess, and session state are
+// environment facts, not test expectations.
+#[cfg(windows)]
+#[test]
+fn windows_doctor_smoke_reports_live_process_diagnostics() {
+  let json = run(&["doctor", "--json"]);
+  assert_eq!(json.status.code(), Some(0), "stderr={}", stderr(&json));
+  let body: serde_json::Value = serde_json::from_str(&stdout(&json)).expect("doctor --json prints one JSON object");
+  assert_eq!(body["platform"], "windows");
+  assert!(body["process_id"].is_u64(), "{body}");
+  // The report contract keeps `executable` optional (`current_exe().ok()`),
+  // so the smoke test must accept both shapes instead of promising a string.
+  assert!(body["executable"].is_string() || body["executable"].is_null(), "{body}");
+  // elevated and ui_access carry the shared permission vocabulary;
+  // nonzero_session carries the boolean fact (true / false / null for an
+  // unanswered query).
+  for key in ["elevated", "ui_access"] {
+    let status = body[key].as_str().unwrap_or_else(|| panic!("{key} must be a status string: {body}"));
+    assert!(matches!(status, "granted" | "missing" | "unknown"), "{key} = {status}");
+  }
+  assert!(matches!(body["nonzero_session"], serde_json::Value::Bool(_) | serde_json::Value::Null), "{body}");
+  assert!(body.get("all_ok").is_none(), "no aggregate verdict may be implied: {body}");
+  assert!(body.get("interactive_session").is_none(), "{body}");
+  let notes = body["notes"].as_array().expect("notes array");
+  assert!(notes.iter().any(|note| note.as_str().unwrap().contains("selected Runner")), "{body}");
+  if body["nonzero_session"] == false {
+    assert!(notes.iter().any(|note| note.as_str().unwrap().contains("Session 0")), "{body}");
+  }
+
+  let human = run(&["doctor"]);
+  assert_eq!(human.status.code(), Some(0), "stderr={}", stderr(&human));
+  let text = stdout(&human);
+  assert!(text.contains("platform: windows"), "{text}");
+  assert!(!text.contains("interactive session"), "{text}");
+  assert!(!text.to_lowercase().contains("all ok"), "{text}");
+  // Human and JSON render one report: every JSON fact must appear on its
+  // human line. A failed nonzero_session query prints "unknown" where the
+  // JSON carries null.
+  for (label, json_key) in [("elevated", "elevated"), ("ui access", "ui_access")] {
+    let status = body[json_key].as_str().unwrap();
+    assert!(text.contains(&format!("{label}: {status}")), "{text}");
+  }
+  let session_word = match body["nonzero_session"] {
+    serde_json::Value::Bool(true) => "true",
+    serde_json::Value::Bool(false) => "false",
+    _ => "unknown",
+  };
+  assert!(text.contains(&format!("nonzero session: {session_word}")), "{text}");
 }

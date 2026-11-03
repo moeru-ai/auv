@@ -402,7 +402,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
     confidence: 0.9,
     bounds: auv_driver::Rect::new(140.0, 250.0, 80.0, 20.0),
   };
-  assert_eq!(matched_window_point(&window, &matched).unwrap(), auv_driver::WindowPoint::new(80.0, 60.0));
+  assert_eq!(crate::commands::window::matched_window_point(&window, &matched).unwrap(), auv_driver::WindowPoint::new(80.0, 60.0));
 
   let mut inputs = std::collections::BTreeMap::new();
   inputs.insert("input-policy".to_string(), "foreground-preferred".to_string());
@@ -506,21 +506,27 @@ async fn undeclared_input_keys_fail_before_daemon_resolution() {
   assert!(id_spelling.message.contains("does not accept input click_count"), "{}", id_spelling.message);
 }
 
-fn gate_context(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
-  auv::AuvContext {
-    device_platform: platform,
-    ..Default::default()
+fn gate_context(platform: Option<auv::devices::DevicePlatform>) -> SelectedDaemon {
+  SelectedDaemon {
+    context: auv::AuvContext {
+      device_platform: platform,
+      ..Default::default()
+    },
+    credential: None,
   }
 }
 
 // An endpoint that cannot parse fails placement deterministically and without
 // any network traffic, so a placement error from it proves the dispatch got
 // past the gate instead of connecting anywhere.
-fn gate_context_past_the_gate(platform: Option<auv::devices::DevicePlatform>) -> auv::AuvContext {
-  auv::AuvContext {
-    device_platform: platform,
-    daemon_endpoint: Some("not a valid endpoint".to_string()),
-    ..Default::default()
+fn gate_context_past_the_gate(platform: Option<auv::devices::DevicePlatform>) -> SelectedDaemon {
+  SelectedDaemon {
+    context: auv::AuvContext {
+      device_platform: platform,
+      daemon_endpoint: Some("not a valid endpoint".to_string()),
+      ..Default::default()
+    },
+    credential: None,
   }
 }
 
@@ -551,17 +557,15 @@ fn runner_platform_gate_refuses_only_explicitly_unsupported_cells() {
   let registry = crate::default_registry();
   use auv::devices::DevicePlatform;
 
-  // Explicit Cells: linux and windows unsupported, macOS supported.
+  // Linux has no backend; Windows query focus is partial; macOS is supported.
   let focus_text = registry.resolve("input.focusText").unwrap();
-  for (platform, label) in [
-    (DevicePlatform::Linux, "Linux"),
-    (DevicePlatform::Windows, "Windows"),
-  ] {
+  for (platform, label) in [(DevicePlatform::Linux, "Linux")] {
     let error = runner_platform_gate("input.focusText", focus_text, Some(platform)).unwrap_err();
     assert_eq!(error.code, crate::FailureCode::Unsupported);
     assert_eq!(error.message, format!("input.focusText has no {label} Runner path; the declared Runner support for {label} is unsupported"));
   }
   assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Macos)).is_ok());
+  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Windows)).is_ok());
 
   // Partial proceeds: nowPlaying is Partial on Windows.
   let now_playing = registry.resolve("mediaControl.nowPlaying").unwrap();

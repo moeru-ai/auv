@@ -2,10 +2,10 @@
 
 use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
-use auv_api_proto::auv::api::driver::macos::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::{MediaControlService, MediaControlServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::permission_service_server::{PermissionService, PermissionServiceServer};
 use auv_api_proto::auv::api::driver::v1 as proto;
+use auv_api_proto::auv::api::driver::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
 use auv_api_proto::auv::api::driver::v1::capture_service_server::{CaptureService, CaptureServiceServer};
 use auv_api_proto::auv::api::driver::v1::display_service_server::{DisplayService, DisplayServiceServer};
@@ -289,25 +289,42 @@ struct LocalAccessibilityService {
 
 #[tonic::async_trait]
 impl AccessibilityService for LocalAccessibilityService {
-  async fn focus_text(&self, request: Request<macos_proto::FocusTextRequest>) -> Result<Response<macos_proto::FocusTextResponse>, Status> {
-    let options = focus_text_options_from_proto(request.into_inner())?;
-    #[cfg(target_os = "macos")]
+  async fn focus_text(&self, request: Request<proto::FocusTextRequest>) -> Result<Response<proto::FocusTextResponse>, Status> {
+    let options = focus_text_options_from_proto(request.into_inner()).map_err(|status| {
+      auv_api_proto::input_action_failure::status(
+        &status,
+        proto::InputActionFailure {
+          progress: Some(proto::input_action_failure::Progress::NotDelivered(())),
+        },
+      )
+    })?;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+      #[cfg(target_os = "windows")]
+      let result = {
+        let session = self.session.clone();
+        // UIA remains on one COM-initialized worker. Its input reservation
+        // outlives a dropped RPC until the native call returns.
+        run_input_blocking(move || session.accessibility().focus_text(options)).await?
+      };
+      // NOTICE: macOS retains its existing native thread contract. Moving
+      // that backend requires a separately validated execution boundary.
+      #[cfg(target_os = "macos")]
       let result = self.session.accessibility().focus_text(options).map_err(driver_status)?;
-      Ok(Response::new(macos_proto::FocusTextResponse {
+      Ok(Response::new(proto::FocusTextResponse {
         result: Some(ax_focus_result_to_proto(result)?),
       }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
       let _ = (&self.session, options);
-      Err(Status::unimplemented("macOS AccessibilityService is unavailable on this local Driver platform"))
+      Err(Status::unimplemented("AccessibilityService has no backend on this local Driver platform"))
     }
   }
 }
 
-fn focus_text_options_from_proto(request: macos_proto::FocusTextRequest) -> Result<auv_driver::FocusTextOptions, Status> {
-  use macos_proto::focus_text_request::Selector;
+fn focus_text_options_from_proto(request: proto::FocusTextRequest) -> Result<auv_driver::FocusTextOptions, Status> {
+  use proto::focus_text_request::Selector;
 
   let selector = match request.selector {
     Some(Selector::Query(query)) if !query.trim().is_empty() => auv_driver::AxTextSelector::Query(query),
@@ -325,8 +342,8 @@ fn focus_text_options_from_proto(request: macos_proto::FocusTextRequest) -> Resu
   Ok(options)
 }
 
-fn ax_focus_result_to_proto(result: auv_driver::AxFocusResult) -> Result<macos_proto::AxFocusResult, Status> {
-  Ok(macos_proto::AxFocusResult {
+fn ax_focus_result_to_proto(result: auv_driver::AxFocusResult) -> Result<proto::AxFocusResult, Status> {
+  Ok(proto::AxFocusResult {
     app: result.app,
     pid: result.pid,
     path: result.path,
@@ -2661,15 +2678,22 @@ fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFr
 }
 
 fn driver_status(error: auv_driver::DriverError) -> Status {
+  let message = error.to_string();
   match error {
-    auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(error.to_string()),
-    auv_driver::DriverError::NotFound { .. } => Status::not_found(error.to_string()),
-    auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(error.to_string()),
-    auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(error.to_string()),
-    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => {
-      Status::failed_precondition(error.to_string())
+    auv_driver::DriverError::InputAction { cause, progress } => {
+      let cause = driver_status(*cause);
+      let cause = Status::new(cause.code(), message);
+      match auv::client::runner::input_action_progress_to_proto(progress) {
+        Ok(failure) => auv_api_proto::input_action_failure::status(&cause, failure),
+        Err(_) => cause,
+      }
     }
-    auv_driver::DriverError::Backend { .. } => Status::unavailable(error.to_string()),
+    auv_driver::DriverError::Unsupported { .. } => Status::unimplemented(message),
+    auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
+    auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
+    auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
+    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),
+    auv_driver::DriverError::Backend { .. } => Status::unavailable(message),
   }
 }
 
@@ -2755,7 +2779,6 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<ApplicationServiceServer<LocalApplicationService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<PermissionServiceServer<LocalPermissionService>>().await;
-  #[cfg(target_os = "macos")]
   health_reporter.set_serving::<AccessibilityServiceServer<LocalAccessibilityService>>().await;
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   health_reporter.set_serving::<MediaControlServiceServer<LocalMediaControlService>>().await;
@@ -2769,11 +2792,10 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     "auv.api.driver.v1.TextRecognitionService",
     "auv.api.driver.v1.InputService",
     "auv.api.driver.v1.ApplicationService",
+    "auv.api.driver.v1.AccessibilityService",
   ];
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.PermissionService");
-  #[cfg(target_os = "macos")]
-  served_services.push("auv.api.driver.macos.v1.AccessibilityService");
   #[cfg(any(target_os = "macos", target_os = "windows"))]
   served_services.push("auv.api.driver.macos.v1.MediaControlService");
   #[cfg(target_os = "macos")]
@@ -2843,7 +2865,7 @@ fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position
 #[path = "local_driver_test.rs"]
 mod tests;
 
-/// A dropped RPC cancels queued/native pointer work. A successful primitive
+/// A dropped RPC cancels queued/native input work. A successful primitive
 /// down disarms this guard and remains held until up or its bounded deadline.
 async fn run_input_blocking<T: Send + 'static>(
   operation: impl FnOnce() -> auv_driver::DriverResult<T> + Send + 'static,

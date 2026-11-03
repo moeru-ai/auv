@@ -620,7 +620,7 @@ pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,
   pub attempts: Vec<InputAttempt>,
-  /// Whether a post-action observation proved the requested semantic effect.
+  /// Whether a post-action readback proved the requested semantic effect.
   ///
   /// NOTICE(input-delivery-verification): A successful OS/driver dispatch is
   /// not consumption evidence. Raw CGEvent, SendInput, XTest, and AX action
@@ -653,6 +653,42 @@ impl InputActionResult {
   pub fn validate(&self) -> Result<(), String> {
     if self.attempts.iter().any(|attempt| attempt.succeeded && attempt.path != self.selected_path) {
       return Err("successful input attempt must match selected_path".to_string());
+    }
+    Ok(())
+  }
+}
+
+/// Progress of one failed native input action. Submission never proves that
+/// the target consumed the action. Inspect current state before another action.
+///
+/// NOTICE: absent progress is unknown, never `NotDelivered`. This receipt is
+/// distinct from the completed-action/repetition counts in keyboard batches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum InputActionProgress {
+  /// The operation refused before calling its native input boundary.
+  NotDelivered,
+  /// A native call failed and may already have changed application state.
+  DeliveryUncertain { action: InputActionResult },
+  /// The native call accepted input, but the requested effect is unverified.
+  Submitted { action: InputActionResult },
+}
+
+impl InputActionProgress {
+  /// Rejects contradictory failure receipts before transport or recording.
+  pub fn validate(&self) -> Result<(), String> {
+    let (action, submitted) = match self {
+      Self::NotDelivered => return Ok(()),
+      Self::DeliveryUncertain { action } => (action, false),
+      Self::Submitted { action } => (action, true),
+    };
+    action.validate()?;
+    if action.verified || matches!(action.selected_path, InputDeliveryPath::Noop | InputDeliveryPath::Unsupported) {
+      return Err("failed input progress requires an unverified native delivery path".into());
+    }
+    let last = action.attempts.last().ok_or("failed input progress requires a native attempt")?;
+    if last.path != action.selected_path || last.succeeded != submitted {
+      return Err("failed input progress contradicts its final native attempt".into());
     }
     Ok(())
   }

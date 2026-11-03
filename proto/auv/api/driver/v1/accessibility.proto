@@ -1,0 +1,56 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/input.proto";
+
+// Exposes typed accessibility focus. The Driver reports whether focus was read
+// back. Unsupported platforms refuse the operation without pointer fallback.
+service AccessibilityService {
+  // Windows failures carry InputActionFailure rich-error details when native
+  // progress is known. Missing details are unknown, not zero input. Never
+  // retry uncertain or submitted input without inspecting current state.
+  rpc FocusText(FocusTextRequest) returns (FocusTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "accessibility.focus_text"
+      title: "Focus a text field"
+      description: "Focuses a control in an application through accessibility, found by a text query or a platform-supported path. The result states whether focus readback confirmed delivery."
+    };
+  }
+}
+
+message FocusTextRequest {
+  reserved 1;
+  reserved "lease";
+  // Application selector accepted by the owning Driver, such as a macOS bundle
+  // identifier or Windows executable name.
+  string application = 2;
+  oneof selector {
+    string query = 3;
+    // Exact platform accessibility path. Windows rejects raw child paths
+    // because they cannot prove the same control's identity across calls.
+    string path = 4;
+  }
+  // Platform role: AX role on macOS; programmatic UIA role on Windows.
+  optional string expected_role = 5;
+}
+
+message FocusTextResponse {
+  AxFocusResult result = 1;
+}
+
+// Exact wire projection of auv_driver::AxFocusResult.
+message AxFocusResult {
+  string app = 1;
+  int32 pid = 2;
+  string path = 3;
+  string role = 4;
+  string title = 5;
+  string value = 6;
+  string query = 7;
+  auv.api.driver.v1.InputActionResult action = 8;
+}

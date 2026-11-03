@@ -33,10 +33,11 @@ pub use geometry::{
   ProjectionDerivationFamily, ProjectionSourceSpace, Rect, RelativeRect, ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
-  ActivationPolicy, Click, ClickModifiers, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError,
-  KeyboardInputProgress, MouseButton, PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll, ScrollDeliveryCandidate,
-  ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
+  ActivationPolicy, Click, ClickModifiers, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionProgress,
+  InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput,
+  KeyboardInputError, KeyboardInputProgress, MouseButton, PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll,
+  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  WindowInput,
 };
 pub use keyboard::{Key, Keysym, Modifier, is_terminal_emulator, split_key_combination};
 pub use keyboard_input::{

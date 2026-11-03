@@ -1,0 +1,32 @@
+{
+  "schema_version": "auv.operation.v2",
+  "name": "example.prepare_fast",
+  "description": "Fast-mode test operation",
+  "execution_mode": "fast",
+  "compilation_metadata": {
+    "compiler": "test-fixture",
+    "source_record": "none",
+    "date": "2026-11-01",
+    "crux_goal": "exercise auv op run without app data"
+  },
+  "target": {
+    "app_name": "Example.exe",
+    "backend": "test"
+  },
+  "steps": [
+    {
+      "id": "step_1_noop",
+      "name": "No-op",
+      "description": "Test step; FakeOperationExecutor does not interpret it",
+      "action": {
+        "type": "noop"
+      },
+      "verification_gate": {
+        "type": "custom_assertion",
+        "expression": "true",
+        "timeout_ms": 100,
+        "escalate_on_mismatch": "none"
+      }
+    }
+  ]
+}

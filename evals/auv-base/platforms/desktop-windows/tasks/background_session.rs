@@ -135,6 +135,30 @@ fn main() -> std::process::ExitCode {
       #[arg(long)]
       keep_ime: bool,
     },
+    /// Complete owned Win32 GUI workflows through direct Rust, local Invoke and a real Runner.
+    /// Uses the real pointer and keyboard; restores the desktop afterwards.
+    Workflow {
+      #[arg(long)]
+      output: PathBuf,
+      #[arg(long, default_value = "target/debug/auv.exe")]
+      auv: PathBuf,
+      #[arg(long, default_value_t = 2)]
+      rounds: u32,
+      /// Resolve, capture and OCR only. No input; does not accept the full workflow.
+      #[arg(long)]
+      observe_only: bool,
+      /// Focus the text field through UIA instead of clicking its OCR result.
+      #[arg(long, conflicts_with = "observe_only")]
+      semantic_focus: bool,
+      /// Execute only these routes; every selected route writes its own evidence.
+      #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        default_value = "rust,invoke,runner"
+      )]
+      routes: Vec<auv_base_evals::desktop_windows::foreground_commands::workflow::Route>,
+    },
     /// Phase 1: one background window.
     Single {
       /// Fresh output directory for the JSONL records and receiver logs.
@@ -229,6 +253,23 @@ fn main() -> std::process::ExitCode {
         output,
         auv,
         keep_ime,
+      },
+    ),
+    Scenario::Workflow {
+      output,
+      auv,
+      rounds,
+      observe_only,
+      semantic_focus,
+      routes,
+    } => auv_base_evals::desktop_windows::foreground_commands::workflow::run(
+      &auv_base_evals::desktop_windows::foreground_commands::workflow::Options {
+        output,
+        auv,
+        rounds,
+        observe_only,
+        semantic_focus,
+        routes,
       },
     ),
     Scenario::Single {
