@@ -125,7 +125,7 @@ Mode-aware operations on Windows (`production_executor.rs`) interact with three 
 
 Before acquiring COM or driver resources, `validate_supported_target` verifies:
 - `op.target.app_name` matches `QQMusic.exe` (case-insensitively).
-- `request.app_name` (if present) matches `op.target.app_name`.
+- `request.app_name` is non-empty and matches `op.target.app_name` (case-insensitively).
 - `op.target.backend` strictly equals `"windows.smtc+coreaudio+wgc"`.
 - Each step's `action["app_id"]` (if declared) is a string matching `op.target.app_name`.
 
@@ -140,5 +140,5 @@ If multiple windows match the target process, `select_target_window` returns `Dr
 
 ### Known design boundaries
 
-- **Name-level admission vs. cross-resource identity proof**: Resolution verifies that SMTC and Window each match `QQMusic.exe`, and CoreAudio attaches to the resolved window PID. This provides strict name-level gating preventing execution against unauthorized apps, but does not independently establish cryptographic or kernel-level mutual proof that SMTC and HWND belong to the same process instance.
+- **Name-level admission vs. cross-resource identity proof**: Resolution verifies that SMTC and Window each match `QQMusic.exe`, and CoreAudio attaches to the resolved window PID. This provides strict name-level gating rejecting unsupported or mismatched application names, but does not independently establish cryptographic or kernel-level mutual proof that SMTC and HWND belong to the same process instance.
 - **Multi-window and minimized window contract**: Multiple top-level windows trigger ambiguity rejection. Passing window discovery does not imply operation success; for example, a minimized window resolves cleanly in window discovery, but `wgc_capture` in Verified mode fails the window health gate (`is_still_minimized` with `allow_restore = false`).

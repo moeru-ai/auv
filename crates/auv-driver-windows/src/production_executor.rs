@@ -436,7 +436,7 @@ fn evaluate_step_track_change(gate: &VerificationGateDef, previous: &TrackIdenti
 ///
 /// Fails closed before any COM or Windows driver context resolution if:
 /// - Operation target application is not `QQMusic.exe` (case-insensitive)
-/// - Request application (if non-empty) does not match operation target application (case-insensitive)
+/// - Request application is empty or does not match operation target application (case-insensitive)
 /// - Target backend is not `windows.smtc+coreaudio+wgc` (exact match)
 /// - Any step declares an `app_id` that is not a string or does not match operation target application
 fn validate_supported_target(op: &OperationDef, request: &TaskRequest) -> Result<(), (String, String)> {
