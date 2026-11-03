@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **83**
+Count: **84**
+
+- [`2026-11-02-window-management-api-v1-design.md`](2026-11-02-window-management-api-v1-design.md): approved window management v1: read model (state, stacking, desktop), main window selection, `SetWindowFrame` / `SetWindowState` / `FocusWindow`, `WatchWindows` with resume tokens, Linux `Unsupported` for now.
 
 - [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, capture guard review, semantic focus, cancellation, and shared failure progress with explicit evidence boundaries.
 

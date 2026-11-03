@@ -18,8 +18,9 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **44**
+Count: **45**
 
+- [`2026-11-02-driver-api-naming-normalization.md`](2026-11-02-driver-api-naming-normalization.md) — approved breaking rename: AIP verb + noun RPC names, resource services, `auv.api.runtime.v1`, one operation id for presentation, invoke and MCP.
 - [`2026-10-26-daemon-delete-runner-race-fix.md`](2026-10-26-daemon-delete-runner-race-fix.md) — single-owner `DeleteRunner` deletion, tracked owners through shutdown and failure retention, Ready-gated lifecycle auto-stops, and gRPC `failed_precondition` conflicts; regression evidence, corrected Tokio broadcast semantics, and remaining lifecycle boundaries.
 - [`2026-10-11-device-entry-error-status.md`](2026-10-11-device-entry-error-status.md) — `DeviceService` session RPCs fail with a gRPC status (code per reason, `DeviceEntryError` in `google.rpc.Status` details) instead of an OK response with an in-body error; plain success fields with the old `error` field reserved, Rust and JS SDK decoding, and the upgrade-together compatibility rule.
 - [`2026-10-09-sdk-ergonomics-design.md`](2026-10-09-sdk-ergonomics-design.md) — shared ergonomic SDK API in Rust and JS (rectangle builders and `region()` with percentages, `windows.resolve` short form, `pressKeys('cmd+a')`, Rust `WindowClient` keyboard methods), then playground lineage by IDs and the `auv` global becoming the SDK client.
