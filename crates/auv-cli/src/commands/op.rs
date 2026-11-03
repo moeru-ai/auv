@@ -810,6 +810,16 @@ pub(crate) mod tests {
     let mut catalog = OperationCatalog::new();
     let raw_empty_json = serde_json::to_string(&empty_name_op).unwrap();
     let err_admit = catalog.admit_operation_json(&raw_empty_json, "test_file.json").unwrap_err();
+    assert_eq!(err_admit.reason_code, auv_auto_loop::models::ReasonCode::RejectInvalidOperationName);
     assert!(err_admit.message.contains("missing, empty, or whitespace-only"), "{}", err_admit.message);
+
+    // 4. Direct register_active with whitespace/empty name rejected with RejectInvalidOperationName
+    let mut catalog_direct = OperationCatalog::new();
+    let mut constructed_op: auv_auto_loop::models::OperationDef = serde_json::from_value(op).unwrap();
+    constructed_op.name = "   ".to_string();
+    let err_direct = catalog_direct.register_active(constructed_op).unwrap_err();
+    assert_eq!(err_direct.reason_code, auv_auto_loop::models::ReasonCode::RejectInvalidOperationName);
+    assert!(err_direct.message.contains("cannot be empty or whitespace-only"), "{}", err_direct.message);
+    assert_eq!(catalog_direct.active_operations().len(), 0, "No operation must be added to active catalog");
   }
 }

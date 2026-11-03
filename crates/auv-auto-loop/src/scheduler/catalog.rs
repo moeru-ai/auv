@@ -148,7 +148,7 @@ impl OperationCatalog {
       return Err(AdmissionFailure {
         operation_key: "unknown".to_string(),
         location: "register_active".to_string(),
-        reason_code: ReasonCode::RejectSchemaVersionMismatch,
+        reason_code: ReasonCode::RejectInvalidOperationName,
         message: "Operation rejected: required field 'name' cannot be empty or whitespace-only".to_string(),
       });
     }
@@ -292,7 +292,7 @@ pub fn validate_and_parse_operation(raw_json: &str, location: &str) -> Result<Op
       return Err(AdmissionFailure {
         operation_key: "unknown".to_string(),
         location: location.to_string(),
-        reason_code: ReasonCode::RejectSchemaVersionMismatch,
+        reason_code: ReasonCode::RejectInvalidOperationName,
         message: format!("Operation rejected at {}: required field 'name' is missing, empty, or whitespace-only", location),
       });
     }
