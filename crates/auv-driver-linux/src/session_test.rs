@@ -23,6 +23,7 @@ fn sample_window() -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
@@ -160,6 +161,26 @@ fn modified_background_click_is_rejected_before_portal_input() {
       )
       .unwrap_err();
     assert!(error.to_string().contains("linux window.click cannot use background_only"));
+  }
+}
+
+#[test]
+fn window_management_is_unsupported_with_a_pull_request_invitation() {
+  let driver = session();
+  let window = sample_window();
+  let api = driver.window();
+  let results = [
+    ("window.setFrame", api.set_frame(&window, Some(Point::new(0.0, 0.0)), None, WindowMutationOptions::default())),
+    ("window.setState", api.set_state(&window, WindowStateTarget::Minimized, WindowMutationOptions::default())),
+    ("window.focus", api.focus(&window, WindowMutationOptions::default())),
+  ];
+  for (expected, result) in results {
+    let error = result.unwrap_err();
+    assert!(matches!(error, DriverError::Unsupported { operation, .. } if operation == expected));
+    assert!(
+      error.to_string().contains("Linux support is not written yet; pull requests are welcome at https://github.com/moeru-ai/auv"),
+      "{error}"
+    );
   }
 }
 

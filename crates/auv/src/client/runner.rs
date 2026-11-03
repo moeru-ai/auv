@@ -2569,6 +2569,9 @@ fn window_from_proto(window: proto::Window) -> Result<auv_driver::Window, Capabi
     coordinate_space: auv_driver::CoordinateSpace::Screen,
     is_main: window.is_main,
     is_visible: window.is_visible,
+    // TODO(window-management-api): `proto.Window` carries no state facts yet;
+    // they arrive with the window management API slice of the design doc.
+    state: Default::default(),
   })
 }
 

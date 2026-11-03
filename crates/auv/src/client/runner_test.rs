@@ -428,6 +428,7 @@ async fn resolved_window_child_retains_the_exact_resource_reference() {
       coordinate_space: auv_driver::CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     },
     window_ref: proto::WindowRef {
       window_id: "window_test".to_string(),

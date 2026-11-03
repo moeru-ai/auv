@@ -1299,11 +1299,32 @@ commands agree about which window they are using. When the resolver cannot make
 a clear choice, it should return an ambiguity error that points users to the
 window-listing API instead of silently selecting an arbitrary candidate.
 
+## Window State
+
+Window state is what a platform reports about a window beyond its frame:
+minimized, maximized, full screen, visible, focused (has keyboard focus),
+always on top, stacking position, and virtual desktop. It travels as
+`Window.state` (`WindowState` in `auv-driver-common`). Every fact is optional:
+an unset fact means "this platform cannot tell", never "false". `is_focused`
+is distinct from `Window.is_main`, which keeps its selector meaning (the
+application's main window). `stack_index` is valid only inside the listing
+that carries it; it is not an identity. For a minimized window, `frame` is the
+frame it returns to.
+
+A driver window listing includes every window a user could switch to,
+minimized windows and windows on other desktops included; `WindowListFilter`
+(`exclude_minimized`, `exclude_other_desktops`) opts out, and a window whose
+desktop is unknown is kept.
+See [`2026-11-02-window-management-api-v1-design.md`](ai/references/driver/2026-11-02-window-management-api-v1-design.md).
+
 ## Window Mutation
 
-A window mutation changes a resolved window's geometry or coarse window state,
-such as moving, resizing, setting a frame, minimizing, restoring, or zooming a
-window.
+A window mutation changes a resolved window's frame, its state or its focus:
+`WindowApi::set_frame` (origin and/or size of a normal window),
+`WindowApi::set_state` (`Normal`, `Minimized`, `Maximized`) and
+`WindowApi::focus`. The result is a `WindowMutationResult` with the selected
+path, attempts, frame and window state before and after, `adjusted_by_app`,
+and the focus and mouse disturbance.
 
 Window mutation is a driver-level window management capability. It is not an
 input delivery result and should not be reported as `InputActionResult`.

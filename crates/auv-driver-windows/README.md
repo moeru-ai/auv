@@ -7,8 +7,8 @@ UIA, and `Windows.Media.Ocr`.
 ## Capabilities
 
 - Display list / capture / region capture
-- Window list, resolve, capture (`GDI PrintWindow`)
-- Window mutation: move, resize, set-frame, minimize, restore, zoom
+- Window list (front to back, with minimized windows at their restore frame and windows on other virtual desktops), get, resolve, capture (`GDI PrintWindow`). Each window carries `state`: minimized, maximized, best-effort full screen, focused, always on top, stacking index and virtual desktop
+- Window mutation: `set_frame` (visible frame, invisible resize border compensated), `set_state` (normal, minimized, maximized, verified with `IsIconic`/`IsZoomed`), `focus` ([design](../../docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md))
 - Window-targeted click/scroll: `ForegroundPreferred` uses `SendInput`; `BackgroundOnly`/`BackgroundPreferred` post `WM_LBUTTONDOWN`/`WM_LBUTTONUP`/`WM_LBUTTONDBLCLK`/`WM_MOUSEWHEEL` directly to the hit-tested control (`src/background_input.rs`), without raising or focusing the window — best-effort for classic Win32/MFC/WinForms controls, not for Chromium/Electron/WinUI surfaces
 - Global click, scroll, type text, press key, copy, paste (`SendInput`)
 - Clipboard snapshot / restore / set-text (text-only), plus rich (format-preserving) snapshot / restore covering every memory-backed clipboard format
@@ -43,7 +43,8 @@ window ([reference](../../docs/ai/references/driver/2026-11-03-windows-dpi-aware
 |---|---|---|
 | `TODO(windows-input-target-lease)` | `src/input.rs` | Typed input lease matching the macOS slice |
 | `TODO(windows-window-mutation-fallback)` | `src/mutation.rs` | Foreground/SendInput fallback for mutation when the Win32 API is blocked |
-| `TODO(windows-window-zoom-verification)` | `src/mutation.rs` | Zoom/maximize state verification after mutation |
+| `TODO(windows-window-select-other-desktop)` | `src/window.rs` | Selectors never pick a window on another virtual desktop; target it by id |
+| `TODO(windows-window-desktop-pinned)` | `src/window.rs` | Pinned (all-desktop) windows carry no desktop |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-focus-reference)` | `src/accessibility.rs` | Cross-call focus by a typed element identity; raw child paths are refused |
 | `TODO(windows-uia-cancellation)` | `src/accessibility.rs` | Bounded or cancelable synchronous UIA provider calls |

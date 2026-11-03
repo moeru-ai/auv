@@ -90,6 +90,18 @@ fn window_from_accessible_projects_linux_app_id() {
   assert_eq!(window.app_name.as_deref(), Some("gnome-control-center"));
   assert_eq!(window.application_id.as_deref(), Some("org.gnome.Settings"));
   assert!(window.reference.id.starts_with(WINDOW_REF_PREFIX));
+  assert_eq!(window.state.is_focused, Some(true));
+  assert_eq!(window.state.is_minimized, None);
+
+  let inactive = window_from_accessible(
+    &app,
+    &Accessible {
+      active: false,
+      ..accessible
+    },
+    false,
+  );
+  assert_eq!(inactive.state.is_focused, Some(false));
 }
 
 fn listed_window(app_name: &str, frame: Rect) -> Window {
@@ -105,6 +117,7 @@ fn listed_window(app_name: &str, frame: Rect) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: rect_has_area(frame),
+    state: Default::default(),
   }
 }
 

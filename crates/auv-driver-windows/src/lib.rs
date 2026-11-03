@@ -10,6 +10,8 @@ mod background_input;
 mod background_session;
 pub mod capture;
 pub mod clipboard;
+#[cfg(target_os = "windows")]
+mod com;
 mod descriptor;
 pub mod desktop;
 pub mod device_session;

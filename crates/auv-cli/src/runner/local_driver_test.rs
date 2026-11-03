@@ -978,6 +978,7 @@ fn window_scoped_positions_convert_with_the_current_window_frame() {
     coordinate_space: auv_driver::CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let no_display = |id: &str| -> Result<auv_driver::Point, Status> { panic!("unexpected display lookup for {id}") };
   let at = |x, y, coordinate_space| auv_driver::Position {

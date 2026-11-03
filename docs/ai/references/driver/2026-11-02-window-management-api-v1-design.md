@@ -582,6 +582,49 @@ Research notes for a future contributor (2026-11-03, not a plan):
 - `set_frame` on a maximized window un-maximizes it to the requested frame on
   macOS and Windows; minimized is refused.
 
+## Implementation notes (driver layer, 2026-11-03)
+
+The driver contract and the three platform `WindowApi`s are in place. The
+Runner, the Rust client, invoke, MCP and the JS SDK do not expose the new
+calls yet; existing callers (`ListWindows`, `window.list`, `resolve_window_ref`)
+keep working with the new `Window` shape. Notes for the frontend slice:
+
+- `auv-driver-common`: `Window.state: WindowState` (all facts `Option`),
+  `WindowDesktop`, `WindowStateTarget { Normal, Minimized, Maximized }`,
+  `WindowMutationKind::{SetFrame { origin, size }, SetState { state }}`,
+  `WindowMutationResult.adjusted_by_app`, `WindowListFilter`, and the
+  `select_main_window` cascade, which the macOS and Windows resolvers and the
+  Windows activation observation share.
+- `DriverError::FailedPrecondition` is new (for example `set_frame` on a
+  minimized window) and maps to invoke `failed_precondition` and Runner
+  `FAILED_PRECONDITION`. `DriverError::Unsupported` carries an optional
+  `recovery` (`DriverError::unsupported_with_recovery`).
+- The former `move_to` / `resize` / `minimize` / `restore` / `zoom` methods
+  are replaced by `set_frame`, `set_state` and `focus`.
+- `resolve_window_ref` (the Runner input hot path) now calls `WindowApi::get`.
+  Every platform's `get` is a full listing plus a lookup, so the cost is
+  unchanged: macOS release build, 89 windows, 20 runs each: list+find
+  26-27 ms, get 25-32 ms (noise). No cache (`TODO(window-list-cache)`).
+- macOS: every state step polls the WindowServer frame until two reads 50 ms
+  apart agree, for at most 1 s, because `after_frame` was read during the
+  deminiaturize animation before (`NOTICE(macos-window-state-animation)`).
+- macOS: `MAXIMIZED` used to press the green button, which enters full screen
+  on current macOS, and then performed `AXZoomWindow`. Both are gone: maximize
+  writes the visible frame (option A, see Decided) and keeps the restore
+  record in the driver session's memory.
+- macOS: the listing read the frontmost app from
+  `NSWorkspace.frontmostApplication`, which stays stale in a process that does
+  not pump the main run loop, so `focus` failed verification after a
+  successful activation. It now reads the system-wide AX focused application
+  (`NOTICE(macos-frontmost-stale)`).
+- Windows: `set_frame` compensates the invisible resize border so the visible
+  frame lands where requested; a maximized target is written with
+  `SetWindowPlacement`. A minimized window is listed at its restore frame
+  with `is_visible: false`. COM apartment setup is shared in `com.rs`.
+- Linux: `get` is implemented; `set_frame`, `set_state` and `focus` return
+  `Unsupported` with the pull-requests-welcome recovery. `is_focused` comes
+  from the AT-SPI `ACTIVE` state.
+
 ## Deferred
 
 - Set always-on-top, move to another desktop: the read side

@@ -57,6 +57,7 @@ fn listed_window(
     coordinate_space: auv_driver_common::geometry::CoordinateSpace::Screen,
     is_main,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
@@ -207,7 +208,7 @@ fn activation_window_observation_degrades_to_unknown_when_ownership_is_unreadabl
 }
 
 // The observation's main window is the resolver's main window: both read
-// the one shared rank, so they cannot disagree about which window of an
+// the one shared cascade, so they cannot disagree about which window of an
 // application is the main one (#418 review, P2).
 #[test]
 fn activation_window_observation_picks_the_window_the_resolver_ranks_first() {
@@ -218,11 +219,9 @@ fn activation_window_observation_picks_the_window_the_resolver_ranks_first() {
     listed_window("11", Some("Editor"), Some("editor.exe"), Rect::new(0.0, 0.0, 800.0, 600.0), true),
     listed_window("12", Some("Scratch"), Some("editor.exe"), Rect::new(0.0, 0.0, 900.0, 900.0), false),
   ];
-  let expected = listed
-    .iter()
-    .filter(|window| window.app_name.as_deref() == Some("editor.exe"))
-    .max_by_key(|window| crate::window::main_visible_rank(window))
-    .expect("a matching window");
+  let expected =
+    auv_driver_common::window::select_main_window(listed.iter().filter(|window| window.app_name.as_deref() == Some("editor.exe")))
+      .expect("a matching window");
   assert_eq!(
     activation_window_observation("editor.exe", &listed),
     ActivationWindowObservation::Present {

@@ -1,12 +1,13 @@
 // File: src/driver/macos/native/window.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse, NativeWindowListRequest, NativeWindowListResponse,
-  NativeWindowMutationKind, NativeWindowMutationRequest, NativeWindowMutationResponse, bundle_ids_by_pid as native_bundle_ids_by_pid,
-  list_displays, list_windows as native_list_windows, mutate_window as native_mutate_window,
+  NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse, NativeWindowFrameWriteRequest,
+  NativeWindowListRequest, NativeWindowListResponse, NativeWindowMutationKind, NativeWindowMutationRequest, NativeWindowMutationResponse,
+  bundle_ids_by_pid as native_bundle_ids_by_pid, list_displays, list_windows as native_list_windows, mutate_window as native_mutate_window,
 };
 use super::types::{
-  AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, ObservedWindowSnapshot, compute_combined_bounds,
+  AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ObservedWindowState,
+  compute_combined_bounds,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -24,6 +25,9 @@ pub fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
 pub struct ListWindowsOptions {
   pub limit: i64,
   pub scope: WindowListScope,
+  /// Also list minimized windows and read AX window state. Costs one AX round
+  /// trip per regular application, so selector resolution keeps it off.
+  pub include_offscreen: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +44,16 @@ impl ListWindowsOptions {
     Self {
       limit,
       scope: WindowListScope::AllVisible,
+      include_offscreen: false,
+    }
+  }
+
+  /// Every window a user could switch to on the current Space, including
+  /// minimized ones, with AX state.
+  pub fn all_windows(limit: i64) -> Self {
+    Self {
+      include_offscreen: true,
+      ..Self::all_visible(limit)
     }
   }
 
@@ -47,6 +61,17 @@ impl ListWindowsOptions {
     Self {
       limit,
       scope: WindowListScope::App(app.into()),
+      include_offscreen: false,
+    }
+  }
+
+  /// Every window of one application, minimized ones included, with AX state.
+  /// AX is asked only for the matching application, so this costs one AX
+  /// round trip instead of one per running application.
+  pub fn app_windows(limit: i64, app: impl Into<String>) -> Self {
+    Self {
+      include_offscreen: true,
+      ..Self::app(limit, app)
     }
   }
 }
@@ -56,6 +81,7 @@ pub fn list_windows(options: ListWindowsOptions) -> AuvResult<ObservedWindowSnap
   let response = native_list_windows(NativeWindowListRequest {
     limit: options.limit,
     app_filter: options.scope.app_filter(),
+    include_offscreen: options.include_offscreen,
   });
   decode_window_response(DecodedWindowListResponse::from(response))
 }
@@ -67,18 +93,11 @@ pub fn list_windows(_options: ListWindowsOptions) -> AuvResult<ObservedWindowSna
 
 #[cfg(target_os = "macos")]
 pub fn mutate_window(request: DecodedWindowMutationRequest) -> AuvResult<DecodedWindowMutationResponse> {
-  // TODO(window-management-api-task3): pointer or foreground fallback is deferred
-  // because Task 2 owns only the native AX bridge; add it when WindowApi dispatch
-  // chooses fallback policy.
   let response = native_mutate_window(NativeWindowMutationRequest {
     pid: request.pid,
     window_number: request.window_number,
     title: request.title,
     kind: NativeWindowMutationKind::from(request.kind),
-    x: request.x,
-    y: request.y,
-    width: request.width,
-    height: request.height,
   });
   decode_window_mutation_response(DecodedWindowMutationResponse::from(response))
 }
@@ -86,6 +105,47 @@ pub fn mutate_window(request: DecodedWindowMutationRequest) -> AuvResult<Decoded
 #[cfg(not(target_os = "macos"))]
 pub fn mutate_window(_request: DecodedWindowMutationRequest) -> AuvResult<DecodedWindowMutationResponse> {
   Err("macOS native window mutation is unsupported on this target".to_string())
+}
+
+/// One AX geometry pass: `AXPosition` when `origin` is set, then `AXSize` when
+/// `size` is set.
+pub fn write_window_frame(pid: i64, window_number: i64, origin: Option<(f64, f64)>, size: Option<(f64, f64)>) -> AuvResult<()> {
+  #[cfg(target_os = "macos")]
+  {
+    let (x, y) = origin.unwrap_or_default();
+    let (width, height) = size.unwrap_or_default();
+    let response = super::binding::ffi::write_window_frame(NativeWindowFrameWriteRequest {
+      pid,
+      window_number,
+      write_position: origin.is_some(),
+      x,
+      y,
+      write_size: size.is_some(),
+      width,
+      height,
+    });
+    super::input::action_result("write_window_frame", response)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (pid, window_number, origin, size);
+    Err("macOS native window mutation is unsupported on this target".to_string())
+  }
+}
+
+/// The WindowServer frame `(x, y, width, height)` of a window, or `None` when
+/// the window no longer exists.
+pub fn window_server_frame(window_number: i64) -> AuvResult<Option<(f64, f64, f64, f64)>> {
+  #[cfg(target_os = "macos")]
+  {
+    let response = super::binding::ffi::window_server_frame(window_number);
+    Ok(response.found.then_some((response.x, response.y, response.width, response.height)))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = window_number;
+    Err("macOS native window listing is unsupported on this target".to_string())
+  }
 }
 
 impl WindowListScope {
@@ -122,6 +182,9 @@ pub fn decode_display_response(response: DecodedDisplayListResponse) -> AuvResul
     return Err("native display response had mismatched vector lengths".to_string());
   }
 
+  // The primary display (first in `NSScreen.screens`) has its Cocoa origin
+  // at 0,0, so its height maps Cocoa y to global CG y.
+  let primary_height = response.bounds_height_values.first().copied().unwrap_or_default();
   let displays = (0..count)
     .map(|index| {
       let display_id = u32::try_from(response.ids[index])
@@ -130,18 +193,24 @@ pub fn decode_display_response(response: DecodedDisplayListResponse) -> AuvResul
         display_id,
         is_main: response.main_flags[index],
         is_built_in: response.built_in_flags[index],
-        bounds: ObservedRect {
-          x: response.bounds_x_values[index],
-          y: response.bounds_y_values[index],
-          width: response.bounds_width_values[index],
-          height: response.bounds_height_values[index],
-        },
-        visible_bounds: ObservedRect {
-          x: response.visible_x_values[index],
-          y: response.visible_y_values[index],
-          width: response.visible_width_values[index],
-          height: response.visible_height_values[index],
-        },
+        bounds: cocoa_to_global(
+          ObservedRect {
+            x: response.bounds_x_values[index],
+            y: response.bounds_y_values[index],
+            width: response.bounds_width_values[index],
+            height: response.bounds_height_values[index],
+          },
+          primary_height,
+        ),
+        visible_bounds: cocoa_to_global(
+          ObservedRect {
+            x: response.visible_x_values[index],
+            y: response.visible_y_values[index],
+            width: response.visible_width_values[index],
+            height: response.visible_height_values[index],
+          },
+          primary_height,
+        ),
         scale_factor: response.scale_factors[index],
         pixel_width: response.pixel_width_values[index],
         pixel_height: response.pixel_height_values[index],
@@ -160,6 +229,17 @@ pub fn decode_display_response(response: DecodedDisplayListResponse) -> AuvResul
   })
 }
 
+/// Converts a Cocoa screen rect (origin at the primary display's bottom-left,
+/// y up) to global CG coordinates (origin at its top-left, y down), the space
+/// of `Window.frame`. Only the primary display's height matters; `NSScreen.main`
+/// is the display with the key window and must not be the reference.
+fn cocoa_to_global(rect: ObservedRect, primary_height: i64) -> ObservedRect {
+  ObservedRect {
+    y: primary_height - rect.y - rect.height,
+    ..rect
+  }
+}
+
 pub fn decode_window_response(response: DecodedWindowListResponse) -> AuvResult<ObservedWindowSnapshot> {
   if response.error_message.is_some() {
     return super::error::native_result("list_windows", None, response.error_message, response.recovery_hint);
@@ -176,6 +256,11 @@ pub fn decode_window_response(response: DecodedWindowListResponse) -> AuvResult<
     response.y_values.len(),
     response.width_values.len(),
     response.height_values.len(),
+    response.on_screen_flags.len(),
+    response.ax_state_flags.len(),
+    response.minimized_flags.len(),
+    response.fullscreen_flags.len(),
+    response.focused_flags.len(),
   ];
   if lengths.iter().any(|length| *length != count) {
     return Err("native window response had mismatched vector lengths".to_string());
@@ -194,6 +279,12 @@ pub fn decode_window_response(response: DecodedWindowListResponse) -> AuvResult<
         y: response.y_values[index],
         width: response.width_values[index],
         height: response.height_values[index],
+      },
+      state: ObservedWindowState {
+        off_screen: !response.on_screen_flags[index],
+        minimized: response.ax_state_flags[index].then_some(response.minimized_flags[index]),
+        fullscreen: response.ax_state_flags[index].then_some(response.fullscreen_flags[index]),
+        focused: response.focus_known.then_some(response.focused_flags[index]),
       },
     })
     .collect();
@@ -284,6 +375,12 @@ pub struct DecodedWindowListResponse {
   pub y_values: Vec<i64>,
   pub width_values: Vec<i64>,
   pub height_values: Vec<i64>,
+  pub on_screen_flags: Vec<bool>,
+  pub ax_state_flags: Vec<bool>,
+  pub minimized_flags: Vec<bool>,
+  pub fullscreen_flags: Vec<bool>,
+  pub focused_flags: Vec<bool>,
+  pub focus_known: bool,
   pub error_message: Option<String>,
   pub recovery_hint: Option<String>,
 }
@@ -298,12 +395,10 @@ pub struct DecodedBundleIdsByPidResponse {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodedWindowMutationKind {
-  MoveTo,
-  Resize,
-  SetFrame,
   Minimize,
-  Restore,
-  Zoom,
+  Unminimize,
+  /// `kAXRaiseAction`.
+  Raise,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,26 +407,12 @@ pub struct DecodedWindowMutationRequest {
   pub window_number: i64,
   pub title: String,
   pub kind: DecodedWindowMutationKind,
-  pub x: i64,
-  pub y: i64,
-  pub width: i64,
-  pub height: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedWindowMutationResponse {
   pub performed_action: String,
   pub path: String,
-  pub before_x: i64,
-  pub before_y: i64,
-  pub before_width: i64,
-  pub before_height: i64,
-  pub after_x: i64,
-  pub after_y: i64,
-  pub after_width: i64,
-  pub after_height: i64,
-  pub was_minimized: bool,
-  pub is_minimized: bool,
   pub error_message: Option<String>,
   pub recovery_hint: Option<String>,
 }
@@ -340,12 +421,9 @@ pub struct DecodedWindowMutationResponse {
 impl From<DecodedWindowMutationKind> for NativeWindowMutationKind {
   fn from(value: DecodedWindowMutationKind) -> Self {
     match value {
-      DecodedWindowMutationKind::MoveTo => Self::MoveTo,
-      DecodedWindowMutationKind::Resize => Self::Resize,
-      DecodedWindowMutationKind::SetFrame => Self::SetFrame,
       DecodedWindowMutationKind::Minimize => Self::Minimize,
-      DecodedWindowMutationKind::Restore => Self::Restore,
-      DecodedWindowMutationKind::Zoom => Self::Zoom,
+      DecodedWindowMutationKind::Unminimize => Self::Unminimize,
+      DecodedWindowMutationKind::Raise => Self::Raise,
     }
   }
 }
@@ -393,6 +471,12 @@ impl From<NativeWindowListResponse> for DecodedWindowListResponse {
       y_values: value.y_values,
       width_values: value.width_values,
       height_values: value.height_values,
+      on_screen_flags: value.on_screen_flags,
+      ax_state_flags: value.ax_state_flags,
+      minimized_flags: value.minimized_flags,
+      fullscreen_flags: value.fullscreen_flags,
+      focused_flags: value.focused_flags,
+      focus_known: value.focus_known,
       error_message: value.error_message,
       recovery_hint: value.recovery_hint,
     }
@@ -417,16 +501,6 @@ impl From<NativeWindowMutationResponse> for DecodedWindowMutationResponse {
     Self {
       performed_action: value.performed_action,
       path: value.path,
-      before_x: value.before_x,
-      before_y: value.before_y,
-      before_width: value.before_width,
-      before_height: value.before_height,
-      after_x: value.after_x,
-      after_y: value.after_y,
-      after_width: value.after_width,
-      after_height: value.after_height,
-      was_minimized: value.was_minimized,
-      is_minimized: value.is_minimized,
       error_message: value.error_message,
       recovery_hint: value.recovery_hint,
     }

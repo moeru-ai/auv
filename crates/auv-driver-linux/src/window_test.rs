@@ -18,6 +18,7 @@ fn resolve_from_windows_matches_title_contains() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
 
   let resolved = resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("Text Editor")).expect("window resolves");
@@ -39,6 +40,7 @@ fn resolve_from_windows_matches_title_contains_case_insensitive() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
 
   let resolved = resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("settings")).expect("window resolves");
@@ -60,6 +62,7 @@ fn resolve_from_windows_matches_app_name_contains_case_insensitive() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
 
   let resolved = resolve_from_windows(
@@ -97,6 +100,7 @@ fn main_visible_prefers_application_window_over_desktop_shell_surface() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let application = Window {
     reference: WindowRef {
@@ -110,6 +114,7 @@ fn main_visible_prefers_application_window_over_desktop_shell_surface() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: true,
+    state: Default::default(),
   };
   let selector = WindowSelector {
     app: Some(AppSelector {
@@ -158,6 +163,7 @@ fn capture_target() -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
@@ -295,6 +301,7 @@ fn window_capture_rejects_nonexistent_reference_on_live_desktop() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: true,
+    state: Default::default(),
   };
   let session = crate::LinuxDriver::new().open_local().unwrap();
   let result = session.window().capture(&window);
@@ -359,6 +366,7 @@ fn an_unknown_application_id_lists_the_visible_applications() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let selector = SelectWindow::main_visible().owned_by(auv_driver_common::App::id("com.google.Chrome"));
   let error = resolve_from_windows(std::slice::from_ref(&editor), &selector).unwrap_err();
@@ -387,6 +395,7 @@ fn the_main_window_outranks_a_larger_frame() {
     coordinate_space: CoordinateSpace::Screen,
     is_main,
     is_visible: true,
+    state: Default::default(),
   };
   let windows = [
     window("1", "Untitled 1 — LibreOffice Writer", false, Rect::new(0.0, 32.0, 2560.0, 1408.0)),

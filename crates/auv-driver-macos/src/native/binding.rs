@@ -36,6 +36,9 @@ pub(crate) mod ffi {
     recovery_hint: Option<String>,
   }
 
+  // `bounds_*` and `visible_*` are Cocoa screen coordinates (bottom-left
+  // origin, y up) in `NSScreen.screens` order, primary display first.
+  // `decode_display_response` converts them to global CG coordinates.
   #[swift_bridge(swift_repr = "struct")]
   struct NativeDisplayListResponse {
     captured_at: String,
@@ -61,15 +64,39 @@ pub(crate) mod ffi {
   struct NativeWindowListRequest {
     limit: i64,
     app_filter: String,
+    // List off-screen windows that AX reports for a regular application
+    // (minimized windows) and read AX window state. False keeps the cheaper
+    // on-screen-only listing without AX reads.
+    include_offscreen: bool,
   }
 
   enum NativeWindowMutationKind {
-    MoveTo,
-    Resize,
-    SetFrame,
     Minimize,
-    Restore,
-    Zoom,
+    Unminimize,
+    Raise,
+  }
+
+  // One AX geometry write. `AXPosition` is written before `AXSize`.
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowFrameWriteRequest {
+    pid: i64,
+    window_number: i64,
+    write_position: bool,
+    x: f64,
+    y: f64,
+    write_size: bool,
+    width: f64,
+    height: f64,
+  }
+
+  // The WindowServer (`CGWindowList`) frame of one window.
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowServerFrameResponse {
+    found: bool,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
   }
 
   #[swift_bridge(swift_repr = "struct")]
@@ -78,26 +105,14 @@ pub(crate) mod ffi {
     window_number: i64,
     title: String,
     kind: NativeWindowMutationKind,
-    x: i64,
-    y: i64,
-    width: i64,
-    height: i64,
   }
 
   #[swift_bridge(swift_repr = "struct")]
   struct NativeWindowMutationResponse {
     performed_action: String,
+    // How the AX window was resolved, for attempt diagnostics. The caller
+    // reads the window state back through the listing.
     path: String,
-    before_x: i64,
-    before_y: i64,
-    before_width: i64,
-    before_height: i64,
-    after_x: i64,
-    after_y: i64,
-    after_width: i64,
-    after_height: i64,
-    was_minimized: bool,
-    is_minimized: bool,
     error_message: Option<String>,
     recovery_hint: Option<String>,
   }
@@ -118,6 +133,17 @@ pub(crate) mod ffi {
     y_values: Vec<i64>,
     width_values: Vec<i64>,
     height_values: Vec<i64>,
+    // False for windows listed only through `include_offscreen`.
+    on_screen_flags: Vec<bool>,
+    // True when the window was matched to an AX window, so the minimized and
+    // full-screen flags below are read values rather than defaults.
+    ax_state_flags: Vec<bool>,
+    minimized_flags: Vec<bool>,
+    fullscreen_flags: Vec<bool>,
+    focused_flags: Vec<bool>,
+    // True when `focused_flags` were read: Accessibility is trusted and the
+    // frontmost application is known.
+    focus_known: bool,
     error_message: Option<String>,
     recovery_hint: Option<String>,
   }
@@ -426,6 +452,8 @@ pub(crate) mod ffi {
     fn list_displays() -> NativeDisplayListResponse;
     fn list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse;
     fn mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse;
+    fn write_window_frame(request: NativeWindowFrameWriteRequest) -> NativeActionResponse;
+    fn window_server_frame(window_number: i64) -> NativeWindowServerFrameResponse;
     fn bundle_ids_by_pid(request: NativeBundleIdsByPidRequest) -> NativeBundleIdsByPidResponse;
     fn capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse;
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;

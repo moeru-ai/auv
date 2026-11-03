@@ -26,10 +26,11 @@
 //!   press <key>                    press a key/shortcut (e.g. "enter", "ctrl+a")
 //!   click <x> <y>                  left click at screen coordinates
 //!   scroll <x> <y> <delta_y>       scroll logical pixels at screen coordinates (positive = down)
-//!   move <substr> <x> <y>          move a window to a screen position
-//!   resize <substr> <w> <h>        resize a window
-//!   minimize <substr>              minimize a window
-//!   unminimize <substr>            restore a minimized window
+//!   get <window-id>                read one window, with its state
+//!   set-frame <substr> <x> <y> [<w> <h>]  move (and resize) a window's visible frame;
+//!                                  `-` keeps the origin: set-frame <substr> - - <w> <h>
+//!   set-state <substr> <normal|minimized|maximized>  change a window's state
+//!   focus <substr>                 raise a window and give it keyboard focus
 
 use std::error::Error;
 use std::thread::sleep;
@@ -37,9 +38,9 @@ use std::time::Duration;
 
 use auv_driver_common::Driver;
 use auv_driver_common::capture::CaptureOptions;
-use auv_driver_common::geometry::{Point, RelativeRect, WindowPoint};
+use auv_driver_common::geometry::{Point, RelativeRect, Size, WindowPoint};
 use auv_driver_common::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
-use auv_driver_common::window::{Window, WindowMutationOptions};
+use auv_driver_common::window::{Window, WindowMutationOptions, WindowStateTarget};
 use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
 
 type Run = Result<(), Box<dyn Error>>;
@@ -58,6 +59,12 @@ fn run() -> Run {
     return Ok(());
   };
 
+  // This example has no `auv.exe` manifest: opt in to per-monitor DPI awareness before the
+  // first window call so frames and points are physical pixels on a scaled display (#465).
+  #[cfg(target_os = "windows")]
+  if !auv_driver_windows::dpi::set_process_per_monitor_aware() {
+    eprintln!("warning: this process is not per-monitor DPI aware; frames are virtualized on a scaled display");
+  }
   let session = WindowsDriver::new().open_local()?;
   let rest = &args[1..];
 
@@ -76,10 +83,10 @@ fn run() -> Run {
     "press" => press(&session, arg(rest, 0, "key")?),
     "click" => click(&session, parse(rest, 0)?, parse(rest, 1)?),
     "scroll" => scroll(&session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
-    "move" => move_window(&session, arg(rest, 0, "substr")?, parse(rest, 1)?, parse(rest, 2)?),
-    "resize" => resize_window(&session, arg(rest, 0, "substr")?, parse(rest, 1)?, parse(rest, 2)?),
-    "minimize" => minimize(&session, arg(rest, 0, "substr")?),
-    "unminimize" => unminimize(&session, arg(rest, 0, "substr")?),
+    "get" => get(&session, arg(rest, 0, "window-id")?),
+    "set-frame" => set_frame(&session, arg(rest, 0, "substr")?, &rest[1..]),
+    "set-state" => set_state(&session, arg(rest, 0, "substr")?, arg(rest, 1, "state")?),
+    "focus" => focus(&session, arg(rest, 0, "substr")?),
     other => {
       eprintln!("unknown command: {other}\n");
       print_usage();
@@ -105,10 +112,16 @@ fn windows(session: &WindowsDriverSession) -> Run {
   println!("windows: {}", listed.len());
   for window in &listed {
     println!(
-      "  id={} title={:?} app={:?} main={} visible={} frame={:?}",
-      window.reference.id, window.title, window.app_name, window.is_main, window.is_visible, window.frame
+      "  id={} title={:?} app={:?} main={} visible={} frame={:?}\n    state={:?}",
+      window.reference.id, window.title, window.app_name, window.is_main, window.is_visible, window.frame, window.state
     );
   }
+  Ok(())
+}
+
+fn get(session: &WindowsDriverSession, id: &str) -> Run {
+  let window = session.window().get(id)?;
+  println!("window: id={} title={:?} frame={:?}\n  state={:?}", window.reference.id, window.title, window.frame, window.state);
   Ok(())
 }
 
@@ -234,31 +247,47 @@ fn scroll(session: &WindowsDriverSession, x: f64, y: f64, delta_y: f64) -> Run {
   Ok(())
 }
 
-fn move_window(session: &WindowsDriverSession, substr: &str, x: f64, y: f64) -> Run {
+/// Prints a mutation result: frames, state and disturbance, one fact per line.
+fn print_mutation(label: &str, result: &auv_driver_common::window::WindowMutationResult) {
+  println!("{label}: attempts={:?}", result.attempts);
+  println!("  before_frame={:?}\n  after_frame={:?}", result.before_frame, result.after_frame);
+  println!("  before_state={:?}\n  after_state={:?}", result.before_state, result.after_state);
+  println!("  adjusted_by_app={} focus_disturbance={:?}", result.adjusted_by_app, result.focus_disturbance);
+}
+
+fn set_frame(session: &WindowsDriverSession, substr: &str, rest: &[String]) -> Run {
   let window = find_window(session, substr)?;
-  let result = session.window().move_to(&window, Point::new(x, y), WindowMutationOptions::default())?;
-  println!("moved {:?} -> ({x}, {y}); result {:?}", window.title, result);
+  let origin = match (rest.first().map(String::as_str), rest.get(1).map(String::as_str)) {
+    (Some("-"), Some("-")) => None,
+    _ => Some(Point::new(parse(rest, 0)?, parse(rest, 1)?)),
+  };
+  let size = if rest.len() >= 4 {
+    Some(Size::new(parse(rest, 2)?, parse(rest, 3)?))
+  } else {
+    None
+  };
+  let result = session.window().set_frame(&window, origin, size, WindowMutationOptions::default())?;
+  print_mutation("set-frame", &result);
   Ok(())
 }
 
-fn resize_window(session: &WindowsDriverSession, substr: &str, w: f64, h: f64) -> Run {
+fn set_state(session: &WindowsDriverSession, substr: &str, state: &str) -> Run {
   let window = find_window(session, substr)?;
-  let result = session.window().resize(&window, auv_driver_common::geometry::Size::new(w, h), WindowMutationOptions::default())?;
-  println!("resized {:?} -> {w}x{h}; result {:?}", window.title, result);
+  let state = match state {
+    "normal" => WindowStateTarget::Normal,
+    "minimized" => WindowStateTarget::Minimized,
+    "maximized" => WindowStateTarget::Maximized,
+    other => return Err(format!("unknown state {other:?}; use normal, minimized or maximized").into()),
+  };
+  let result = session.window().set_state(&window, state, WindowMutationOptions::default())?;
+  print_mutation("set-state", &result);
   Ok(())
 }
 
-fn minimize(session: &WindowsDriverSession, substr: &str) -> Run {
+fn focus(session: &WindowsDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
-  let result = session.window().minimize(&window, WindowMutationOptions::default())?;
-  println!("minimized {:?}; result {:?}", window.title, result);
-  Ok(())
-}
-
-fn unminimize(session: &WindowsDriverSession, substr: &str) -> Run {
-  let window = find_window(session, substr)?;
-  let result = session.window().restore(&window, WindowMutationOptions::default())?;
-  println!("restored {:?}; result {:?}", window.title, result);
+  let result = session.window().focus(&window, WindowMutationOptions::default())?;
+  print_mutation("focus", &result);
   Ok(())
 }
 
@@ -308,7 +337,7 @@ fn print_usage() {
      \tcapture-screen [out.png] | capture-window <substr> [out.png] |\n\
      \tocr <substr> | ax <substr> | coords <substr> | clipboard |\n\
      \ttype <text> | press <key> | click <x> <y> | scroll <x> <y> <dy> |\n\
-     \tmove <substr> <x> <y> | resize <substr> <w> <h> |\n\
-     \tminimize <substr> | unminimize <substr>"
+     \tget <window-id> | set-frame <substr> <x|-> <y|-> [<w> <h>] |\n\
+     \tset-state <substr> <normal|minimized|maximized> | focus <substr>"
   );
 }

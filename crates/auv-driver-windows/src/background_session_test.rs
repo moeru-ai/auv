@@ -150,6 +150,7 @@ fn window(hwnd: isize, process_id: u32) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: true,
+    state: Default::default(),
   }
 }
 

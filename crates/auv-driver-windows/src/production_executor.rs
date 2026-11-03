@@ -1796,6 +1796,7 @@ mod tests {
       coordinate_space: auv_driver_common::geometry::CoordinateSpace::Screen,
       is_main,
       is_visible,
+      state: Default::default(),
     }
   }
 

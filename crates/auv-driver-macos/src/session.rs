@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -19,16 +20,17 @@ use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{
   Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
-  WindowMutationPolicy, WindowMutationResult, WindowMutationVerification, WindowRef, WindowState,
+  WindowMutationPolicy, WindowMutationResult, WindowMutationVerification, WindowRef, WindowState, WindowStateTarget, find_window,
+  select_main_window,
 };
 #[cfg(target_os = "macos")]
 use image::RgbaImage;
 
-use crate::driver::MacosDriverSession;
+use crate::driver::{MacosDriverSession, MaximizedFrames};
 use crate::native::ocr::NativeOcrTextCapture;
-use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
+use crate::native::types::{ObservedDisplay, ObservedRect, ObservedWindow, ObservedWindowSnapshot};
 use crate::native::window::ListWindowsOptions;
-use crate::support::{AppLiveness, app_resolution_message, build_window_candidates, parse_app_selector, resolve_app_ref};
+use crate::support::{AppLiveness, app_resolution_message, filter_windows_for_app, parse_app_selector, resolve_app_ref};
 use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
 
 #[cfg(feature = "overlay")]
@@ -247,19 +249,42 @@ impl WindowApi<'_> {
     if id.is_empty() || !position.point.x.is_finite() || !position.point.y.is_finite() {
       return Err(invalid_input("window.click_target requires a window id and finite coordinates"));
     }
-    let window = self.list()?.into_iter().find(|window| window.reference.id == id).ok_or_else(|| not_found(format!("window {id}")))?;
+    // A click needs only the current frame of an on-screen window, so the
+    // cheaper on-screen listing without AX state is enough.
+    let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
+    let window = snapshot
+      .windows
+      .iter()
+      .find(|window| window.window_number.to_string() == id)
+      .map(|window| window_from_observed(window, None))
+      .ok_or_else(|| not_found(format!("window {id}")))?;
     self.click(&window, WindowPoint::from(position.point), options)
   }
 
+  /// Every window on the current Space, including minimized windows, with
+  /// AX-backed `state`.
   pub fn list(&self) -> DriverResult<Vec<Window>> {
     let _ = self.session;
-    let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
-    Ok(snapshot.windows.iter().map(|window| window_from_observed(window, None)).collect())
+    let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_windows(256)).map_err(backend)?;
+    // Without displays `is_maximized` stays unknown rather than failing the listing.
+    let displays = crate::native::window::enumerate_displays().map(|snapshot| snapshot.displays).unwrap_or_default();
+    Ok(listed_windows(&snapshot, &displays, &self.maximized_windows()))
+  }
+
+  /// A fresh read of one window, or `NotFound` when it no longer exists.
+  pub fn get(&self, window_id: &str) -> DriverResult<Window> {
+    find_window(self.list()?, window_id)
   }
 
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
+    let frontmost = selector.app.as_ref().is_some_and(|app| app.frontmost);
+    if selector.main_visible && !frontmost {
+      return resolve_main_window(&selector);
+    }
+    // Lookups by title or application stay on the on-screen listing without
+    // AX reads: they never pick a minimized window.
     let mut snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
-    if selector.app.as_ref().is_some_and(|app| app.frontmost) {
+    if frontmost {
       let Some(window) = resolve_frontmost_window(&snapshot, &selector) else {
         return Err(not_found("frontmost window"));
       };
@@ -280,31 +305,14 @@ impl WindowApi<'_> {
           // an app-filtered query returns. Retry with the explicit app selector
           // before reporting target_window_not_found.
           let filtered_snapshot = crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector)).map_err(backend)?;
-          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(|_| {
-            // The snapshot cannot separate "not running" from "running without
-            // a visible window": both leave nothing to resolve. Ask the process
-            // list, which answers without needing a WindowServer window, so the
-            // caller learns whether to launch the application or bring back one
-            // of its windows.
-            let liveness = parsed_app_selector
-              .bundle_id
-              .as_deref()
-              .map(|bundle_id| AppLiveness::from_probe(crate::native::window::running_application_pid(bundle_id)))
-              .unwrap_or(AppLiveness::Unknown);
-            not_found(app_resolution_message(&app_selector, liveness, &snapshot))
-          })?;
+          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector)
+            .map_err(|_| app_not_resolved(&app_selector, &parsed_app_selector, &snapshot))?;
           snapshot = filtered_snapshot;
           resolved_app
         }
       };
-      let displays = Vec::new();
-      let candidate = if selector.main_visible && selector.title.is_none() {
-        let candidates = build_window_candidates(&snapshot, &resolved_app, &displays).map_err(backend)?.into_iter().collect::<Vec<_>>();
-        candidates.into_iter().find(|candidate| candidate.is_main_candidate)
-      } else {
-        let selection = window_selection_from_selector(&selector);
-        crate::support::resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection).ok()
-      };
+      let selection = window_selection_from_selector(&selector);
+      let candidate = crate::support::resolve_window_candidate(&snapshot, &resolved_app, &[], &selection).ok();
       let Some(candidate) = candidate else {
         return resolve_from_observed_windows(&snapshot, &selector);
       };
@@ -360,28 +368,204 @@ impl WindowApi<'_> {
     Ok(window_point_for_screen_point(window, point))
   }
 
-  pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::MoveTo { point }, options)
+  /// Moves and/or resizes a `Normal` window through AX and confirms the result
+  /// against the WindowServer frame. A window the application settled at
+  /// another frame succeeds with `adjusted_by_app`; a window that did not
+  /// change fails verification.
+  pub fn set_frame(
+    &self,
+    window: &Window,
+    origin: Option<Point>,
+    size: Option<Size>,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    validate_frame_request(origin, size)?;
+    let kind = WindowMutationKind::SetFrame { origin, size };
+    let path = window_mutation_path(select_window_mutation_candidate(kind, &options)?);
+    let tolerance = frame_tolerance(&options.verification)?;
+    let (pid, number) = mutation_target(window)?;
+    let before = self.get(&window.reference.id)?;
+    require_normal_window(&before.state, "set_frame")?;
+
+    let mut attempts = Vec::new();
+    if unsettled_frame_components(before.frame, origin, size, tolerance).is_settled() {
+      return Ok(window_mutation_result(path, attempts, &before, &before, DisturbanceLevel::None));
+    }
+    write_frame((pid, number), before.frame, origin, size, tolerance, path, &mut attempts)?;
+
+    if !options.settle.is_zero() {
+      thread::sleep(options.settle);
+    }
+    let after = self.get(&window.reference.id)?;
+    let adjusted_by_app = frame_adjusted_by_app(before.frame, after.frame, origin, size, tolerance, &attempts)?;
+    let mut result = window_mutation_result(path, attempts, &before, &after, DisturbanceLevel::None);
+    result.adjusted_by_app = adjusted_by_app;
+    Ok(result)
   }
 
-  pub fn resize(&self, window: &Window, size: Size, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::Resize { size }, options)
+  /// Moves a window to `Normal`, `Minimized` or `Maximized`. A window already
+  /// in the requested state succeeds without a native call.
+  ///
+  /// `Maximized` sets the frame to the visible frame of the window's display
+  /// (`NOTICE(macos-window-maximized)`) and records the frame it replaced.
+  /// `Normal` on a maximized window restores that recorded frame, or leaves
+  /// the frame as it is when none was recorded
+  /// (`NOTICE(macos-maximize-restore-frame)`). A minimized window is
+  /// unminimized first for both.
+  pub fn set_state(&self, window: &Window, state: WindowStateTarget, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    let kind = WindowMutationKind::SetState { state };
+    let path = window_mutation_path(select_window_mutation_candidate(kind, &options)?);
+    let tolerance = frame_tolerance(&options.verification)?;
+    let (pid, number) = mutation_target(window)?;
+    let window_id = &window.reference.id;
+    let before = self.get(window_id)?;
+    let step = window_state_step(&before.state, state)?;
+
+    let frontmost_before = frontmost_application_id();
+    let mut attempts = Vec::new();
+    let mut current = before.clone();
+    if let Some(step) = step {
+      let request = crate::native::window::DecodedWindowMutationRequest {
+        pid,
+        window_number: number,
+        title: before.title.clone().unwrap_or_default(),
+        kind: step,
+      };
+      match crate::native::window::mutate_window(request) {
+        Ok(response) => attempts.push(WindowMutationAttempt::success(path, format!("{} via {}", response.performed_action, response.path))),
+        Err(error) => {
+          attempts.push(WindowMutationAttempt::failure(path, error));
+          return Err(window_mutation_failure(attempts));
+        }
+      }
+      // Unminimize animates; the frame of a window that is still animating
+      // is not the frame to maximize from or to record.
+      if !options.settle.is_zero() {
+        thread::sleep(options.settle);
+      }
+      wait_for_stable_window_frame(number)?;
+      current = self.get(window_id)?;
+    }
+
+    let frame_target = match state {
+      WindowStateTarget::Minimized => None,
+      WindowStateTarget::Maximized if current.state.is_maximized == Some(true) => None,
+      WindowStateTarget::Maximized => {
+        let displays = crate::native::window::enumerate_displays().map_err(backend)?.displays;
+        Some(maximized_frame(current.frame, &displays).ok_or_else(|| DriverError::FailedPrecondition {
+          message: format!("window:{window_id} at {:?} is on no display", current.frame),
+          recovery: Some("move the window onto a display with set_frame first".to_string()),
+        })?)
+      }
+      WindowStateTarget::Normal => {
+        let recorded = self.maximized_windows().get(window_id).map(|frames| frames.normal);
+        match normal_frame(&current.state, recorded) {
+          NormalFrame::Keep => None,
+          NormalFrame::Restore(frame) => Some(frame),
+          NormalFrame::Unrecorded => {
+            attempts.push(WindowMutationAttempt::success(
+              path,
+              "frame left unchanged: no frame was recorded by set_state(Maximized) (maximized outside AUV, or before a Runner restart)",
+            ));
+            None
+          }
+        }
+      }
+    };
+    if let Some(target) = frame_target {
+      write_frame((pid, number), current.frame, Some(target.origin), Some(target.size), tolerance, path, &mut attempts)?;
+      if !options.settle.is_zero() {
+        thread::sleep(options.settle);
+      }
+    }
+    if attempts.is_empty() {
+      return Ok(window_mutation_result(path, attempts, &before, &before, DisturbanceLevel::None));
+    }
+
+    let mut after = self.get(window_id)?;
+    let focus_disturbance = focus_disturbance(frontmost_before, frontmost_application_id());
+    verify_window_state(state, &after.state)?;
+    let adjusted_by_app = match frame_target {
+      Some(target) => frame_adjusted_by_app(current.frame, after.frame, Some(target.origin), Some(target.size), tolerance, &attempts)?,
+      None => false,
+    };
+    match (state, frame_target) {
+      (WindowStateTarget::Maximized, Some(_)) => {
+        let frames = MaximizedFrames {
+          normal: current.frame,
+          maximized: after.frame,
+        };
+        self.maximized_windows().insert(window_id.clone(), frames);
+        // `after` was read before the record existed; with it, the settled
+        // frame reads as maximized, as every later read does.
+        after.state.is_maximized = Some(true);
+      }
+      (WindowStateTarget::Normal, Some(_)) => {
+        self.maximized_windows().remove(window_id);
+      }
+      _ => {}
+    }
+    let mut result = window_mutation_result(path, attempts, &before, &after, focus_disturbance);
+    result.adjusted_by_app = adjusted_by_app;
+    Ok(result)
   }
 
-  pub fn set_frame(&self, window: &Window, frame: Rect, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::SetFrame { frame }, options)
+  fn maximized_windows(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, MaximizedFrames>> {
+    // A panic while the lock was held cannot leave a half-written map entry.
+    self.session.maximized_windows.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
   }
 
-  pub fn minimize(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::Minimize, options)
-  }
+  /// Raises one window and makes its application frontmost, so the window
+  /// has keyboard focus. The result reports the focus disturbance and the
+  /// after-state `is_focused`.
+  pub fn focus(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    // NOTICE: focus is foreground by definition, so `options.policy` and
+    // `options.strategy` do not select a path; settle and verification apply.
+    let path = WindowMutationPath::AxWindowAction;
+    let (pid, number) = mutation_target(window)?;
+    let before = self.get(&window.reference.id)?;
+    if before.state.is_focused == Some(true) {
+      return Ok(window_mutation_result(path, Vec::new(), &before, &before, DisturbanceLevel::None));
+    }
+    if before.state.is_minimized == Some(true) {
+      return Err(DriverError::FailedPrecondition {
+        message: format!("window:{} is minimized; focus does not unminimize it", window.reference.id),
+        recovery: Some("call set_state(Normal) first".to_string()),
+      });
+    }
 
-  pub fn restore(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::Restore, options)
-  }
+    let frontmost_before = frontmost_application_id();
+    let mut attempts = Vec::new();
+    // Raise first so the target is the application's front window when the
+    // application is activated.
+    let raise = crate::native::window::DecodedWindowMutationRequest {
+      pid,
+      window_number: number,
+      title: before.title.clone().unwrap_or_default(),
+      kind: crate::native::window::DecodedWindowMutationKind::Raise,
+    };
+    match crate::native::window::mutate_window(raise) {
+      Ok(response) => attempts.push(WindowMutationAttempt::success(path, format!("{} via {}", response.performed_action, response.path))),
+      Err(error) => {
+        attempts.push(WindowMutationAttempt::failure(path, error));
+        return Err(window_mutation_failure(attempts));
+      }
+    }
+    if let Err(error) = activate_app_for_window(&before) {
+      attempts.push(WindowMutationAttempt::failure(WindowMutationPath::ForegroundSystemEvents, error.to_string()));
+      return Err(window_mutation_failure(attempts));
+    }
+    attempts.push(WindowMutationAttempt::success(WindowMutationPath::ForegroundSystemEvents, "System Events set frontmost"));
+    if !options.settle.is_zero() {
+      thread::sleep(options.settle);
+    }
 
-  pub fn zoom(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    self.mutate(window, WindowMutationKind::Zoom, options)
+    let after = self.get(&window.reference.id)?;
+    let focus_disturbance = focus_disturbance(frontmost_before, frontmost_application_id());
+    if options.verification != WindowMutationVerification::BestEffortState && after.state.is_focused == Some(false) {
+      return Err(backend(format!("window mutation verification failed: window:{} did not receive focus", window.reference.id)));
+    }
+    Ok(window_mutation_result(path, attempts, &before, &after, focus_disturbance))
   }
 
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
@@ -511,55 +695,6 @@ impl WindowApi<'_> {
     }
 
     Err(DriverError::unsupported("background_scroll"))
-  }
-
-  fn mutate(&self, window: &Window, kind: WindowMutationKind, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
-    validate_window_mutation_kind(kind)?;
-    let pid = window_pid(window)?;
-    let number = window_number(window)?;
-    let title = window.title.clone().unwrap_or_default();
-    let mut attempts = Vec::new();
-
-    for candidate in window_mutation_candidates(&options) {
-      let path = window_mutation_path(candidate);
-      if candidate == WindowMutationCandidate::ForegroundSystemEvents {
-        // TODO(window-management-foreground-fallback): pointer/system-events
-        // fallback is deferred because this slice wires only the native AX
-        // bridge; enable when the owner approves foreground repositioning.
-        let message = "foreground window mutation fallback is not implemented in this slice";
-        attempts.push(WindowMutationAttempt::failure(path, message));
-        continue;
-      }
-
-      if !candidate_supports_window_mutation(candidate, kind) {
-        let message = format!("{} does not support {}", window_mutation_candidate_name(candidate), window_mutation_kind_name(kind));
-        attempts.push(WindowMutationAttempt::failure(path, message.clone()));
-        continue;
-      }
-
-      let request = decoded_window_mutation_request(pid, number, title.clone(), kind)?;
-      match crate::native::window::mutate_window(request).map_err(backend) {
-        Ok(response) => {
-          attempts.push(WindowMutationAttempt::success(path, format!("{} via {}", response.performed_action, response.path)));
-          if !options.settle.is_zero() {
-            thread::sleep(options.settle);
-          }
-          let result = window_mutation_result(path, attempts, response);
-          verify_window_mutation(kind, &options.verification, &result)?;
-          return Ok(result);
-        }
-        Err(error) => {
-          let message = error.to_string();
-          attempts.push(WindowMutationAttempt::failure(path, message.clone()));
-          if options.policy == WindowMutationPolicy::NativeOnly {
-            break;
-          }
-        }
-      }
-    }
-
-    Err(window_mutation_failure(attempts))
   }
 
   /// Prepare the exact observed window through the shared input lifecycle.
@@ -695,7 +830,7 @@ impl InputApi<'_> {
     match target {
       None | Some(auv_driver_common::InputTarget::Foreground) => Ok(std::sync::Arc::new(PointerBackend)),
       Some(auv_driver_common::InputTarget::Window(window)) => Ok(std::sync::Arc::new(WindowPointerBackend {
-        session: *self.session,
+        session: self.session.clone(),
         window: window.clone(),
       })),
       Some(auv_driver_common::InputTarget::Application { .. }) => {
@@ -1066,26 +1201,133 @@ impl VisionApi<'_> {
   }
 }
 
+/// Resolves a `main_visible` selector with the shared main-window cascade.
+///
+/// The cascade prefers a shown window, so a minimized one can win only when
+/// the application shows no normal window. The on-screen listing without AX
+/// reads settles every other case; only then does this pay for a listing with
+/// AX `state` that includes minimized windows, scoped to the application so
+/// AX is asked of that application alone.
+///
+/// NOTICE(macos-main-window-focus): the on-screen listing carries no focus,
+/// so cascade step 4 (focused) does not narrow there and step 7 takes the
+/// frontmost normal window. On macOS the key window is the frontmost window
+/// of its level and `is_normal_window` keeps only the normal level, so the two
+/// agree; a sheet, or an app that keeps an unfocused window in front, differs.
+// NOTICE(macos-main-window-latency): measured on this Mac (debug build,
+// Ghostty with 6 windows): the on-screen path costs about 2 ms warm, the same
+// as before the cascade; the AX-backed app-scoped listing about 6-8 ms warm
+// and 40-50 ms in a fresh process, against 15-20 ms warm and 150-200 ms fresh
+// for the all-applications `window.list`.
+fn resolve_main_window(selector: &WindowSelector) -> DriverResult<Window> {
+  let list = |options| crate::native::window::list_windows(options).map_err(backend);
+  let app = selector.app.as_ref();
+  let pid = app.and_then(|app| app.process_id);
+  let app_selector = match app {
+    Some(app) if pid.is_none() => {
+      Some(app_selector_string(app).ok_or_else(|| invalid_input("window selector app must use bundle, name, pid, or frontmost"))?)
+    }
+    _ => None,
+  };
+  let parsed_app_selector = app_selector.as_deref().map(parse_app_selector).transpose().map_err(invalid_input)?;
+  let choose = |snapshot: &ObservedWindowSnapshot| match &parsed_app_selector {
+    // A bundle id or name resolves with the same heuristics as the other
+    // application lookups (case-insensitive bundle id, frontmost fallback).
+    Some(parsed) => {
+      let resolved_app = resolve_app_ref(snapshot, parsed).ok()?;
+      let owned =
+        filter_windows_for_app(&snapshot.windows, &resolved_app).into_iter().map(|window| window.window_number).collect::<HashSet<_>>();
+      main_window_from_listing(snapshot, selector, |window| owned.contains(&window.window_number))
+    }
+    None => main_window_from_listing(snapshot, selector, |window| owned_by_selector(window, selector)),
+  };
+
+  let on_screen = match &app_selector {
+    Some(app_selector) => ListWindowsOptions::app(256, app_selector),
+    None => ListWindowsOptions::all_visible(256),
+  };
+  if let Some(window) = choose(&list(on_screen)?).filter(is_normal_window) {
+    return Ok(window);
+  }
+
+  let with_state = match (&app_selector, pid) {
+    (Some(app_selector), _) => ListWindowsOptions::app_windows(256, app_selector),
+    // The listing filters by bundle id or name, so a pid is scoped through its
+    // bundle id; a process without one pays the full listing.
+    (None, Some(pid)) => match crate::native::window::bundle_ids_by_pid(&[pid].into()).ok().and_then(|ids| ids.get(&pid).cloned()) {
+      Some(bundle_id) if !bundle_id.is_empty() => ListWindowsOptions::app_windows(256, bundle_id),
+      _ => ListWindowsOptions::all_windows(256),
+    },
+    (None, None) => ListWindowsOptions::all_windows(256),
+  };
+  let snapshot = list(with_state)?;
+  if let Some(window) = choose(&snapshot) {
+    return Ok(window);
+  }
+  if let (Some(app_selector), Some(parsed)) = (&app_selector, &parsed_app_selector)
+    && resolve_app_ref(&snapshot, parsed).is_err()
+  {
+    // The scoped listing has no other applications to name in the hint.
+    return Err(app_not_resolved(app_selector, parsed, &list(ListWindowsOptions::all_visible(256))?));
+  }
+  Err(not_found("main visible window"))
+}
+
+/// The cascade's choice among the listed windows that `owned_by` accepts and
+/// the selector's title matches.
+fn main_window_from_listing(
+  snapshot: &ObservedWindowSnapshot,
+  selector: &WindowSelector,
+  owned_by: impl Fn(&ObservedWindow) -> bool,
+) -> Option<Window> {
+  let candidates = snapshot
+    .windows
+    .iter()
+    .zip(listed_windows(snapshot, &[], &std::collections::HashMap::new()))
+    .filter(|(observed, window)| owned_by(observed) && matches_title(window, selector))
+    .map(|(_, window)| window)
+    .collect::<Vec<_>>();
+  select_main_window(candidates.iter().filter(|window| is_normal_window(window))).or_else(|| select_main_window(&candidates)).cloned()
+}
+
+/// NOTICE(macos-main-window-prefilter): menu bar extras, panels and other
+/// surfaces above the normal window layer, and frames smaller than 160x120
+/// (the substantial-window rule of `build_window_candidates`), are never an
+/// application's main window. They are candidates only when the application
+/// has nothing else, as before the cascade.
+fn is_normal_window(window: &Window) -> bool {
+  window.state.is_always_on_top != Some(true) && window.frame.size.width >= 160.0 && window.frame.size.height >= 120.0
+}
+
+fn owned_by_selector(window: &ObservedWindow, selector: &WindowSelector) -> bool {
+  selector.app.as_ref().is_none_or(|app| matches_app_selector(&window_from_observed(window, None), app))
+}
+
+/// Why an application selector resolved no window. The snapshot cannot
+/// separate "not running" from "running without a visible window": both leave
+/// nothing to resolve. Ask the process list, which answers without needing a
+/// WindowServer window, so the caller learns whether to launch the application
+/// or bring back one of its windows.
+fn app_not_resolved(app_selector: &str, parsed: &crate::types::AppSelector, snapshot: &ObservedWindowSnapshot) -> DriverError {
+  let liveness = parsed
+    .bundle_id
+    .as_deref()
+    .map(|bundle_id| AppLiveness::from_probe(crate::native::window::running_application_pid(bundle_id)))
+    .unwrap_or(AppLiveness::Unknown);
+  not_found(app_resolution_message(app_selector, liveness, snapshot))
+}
+
 fn resolve_from_observed_windows(snapshot: &ObservedWindowSnapshot, selector: &WindowSelector) -> DriverResult<Window> {
-  let mut candidates = snapshot
+  if selector.main_visible {
+    return main_window_from_listing(snapshot, selector, |window| owned_by_selector(window, selector))
+      .ok_or_else(|| not_found("main visible window"));
+  }
+  let candidates = snapshot
     .windows
     .iter()
     .map(|window| window_from_observed(window, None))
     .filter(|window| matches_window_selector_except_main_visible(window, selector))
     .collect::<Vec<_>>();
-  if selector.main_visible {
-    candidates.sort_by_key(|window| {
-      std::cmp::Reverse((
-        window.is_main,
-        window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
-        (window.frame.size.width * window.frame.size.height).round() as i64,
-      ))
-    });
-    if let Some(window) = candidates.first() {
-      return Ok(window.clone());
-    }
-    return Err(not_found("main visible window"));
-  }
   match candidates.as_slice() {
     [window] => Ok(window.clone()),
     [] => Err(not_found("window selector")),
@@ -1104,21 +1346,11 @@ fn matches_window_selector(window: &Window, selector: &WindowSelector) -> bool {
 }
 
 fn matches_window_selector_except_main_visible(window: &Window, selector: &WindowSelector) -> bool {
-  if !window.is_visible {
-    return false;
-  }
-  if let Some(app) = &selector.app
-    && !matches_app_selector(window, app)
-  {
-    return false;
-  }
-  if let Some(title) = &selector.title {
-    let Some(window_title) = &window.title else {
-      return false;
-    };
-    return matches_text(window_title, title);
-  }
-  true
+  window.is_visible && selector.app.as_ref().is_none_or(|app| matches_app_selector(window, app)) && matches_title(window, selector)
+}
+
+fn matches_title(window: &Window, selector: &WindowSelector) -> bool {
+  selector.title.as_ref().is_none_or(|title| window.title.as_deref().is_some_and(|window_title| matches_text(window_title, title)))
 }
 
 fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
@@ -1157,6 +1389,9 @@ fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
 }
 
 fn window_from_observed(window: &ObservedWindow, is_main: Option<bool>) -> Window {
+  // WindowServer keeps a window on screen during the minimize animation, so
+  // AX minimized wins over the on-screen flag.
+  let is_visible = !window.state.off_screen && window.state.minimized != Some(true) && window.bounds.width > 0 && window.bounds.height > 0;
   Window {
     reference: WindowRef {
       id: window.window_number.to_string(),
@@ -1168,8 +1403,96 @@ fn window_from_observed(window: &ObservedWindow, is_main: Option<bool>) -> Windo
     frame: rect_from_observed(&window.bounds),
     coordinate_space: CoordinateSpace::Screen,
     is_main: is_main.unwrap_or(false),
-    is_visible: window.bounds.width > 0 && window.bounds.height > 0,
+    is_visible,
+    state: WindowState {
+      // An on-screen window is never minimized, so this holds without AX.
+      is_minimized: window.state.minimized.or((!window.state.off_screen).then_some(false)),
+      // Needs the display list; `listed_windows` fills it.
+      is_maximized: None,
+      is_fullscreen: window.state.fullscreen,
+      is_visible: Some(is_visible),
+      is_focused: window.state.focused,
+      is_always_on_top: Some(window.layer > 0),
+      // Valid only inside one listing; `listed_windows` fills it.
+      stack_index: None,
+      // TODO(macos-window-space): reading a window's Space needs the private
+      // CGS API; revisit only with an owner-approved need. Stage Manager
+      // grouping is not modeled either (TODO(macos-stage-manager)).
+      desktop: None,
+    },
   }
+}
+
+/// Windows of an all-windows listing with the facts that need the whole
+/// listing or the displays: front-to-back `stack_index` among visible
+/// windows, and the best-effort `is_maximized`.
+fn listed_windows(
+  snapshot: &ObservedWindowSnapshot,
+  displays: &[ObservedDisplay],
+  maximized_windows: &std::collections::HashMap<String, MaximizedFrames>,
+) -> Vec<Window> {
+  let mut next_stack_index = 0;
+  snapshot
+    .windows
+    .iter()
+    .map(|observed| {
+      let mut window = window_from_observed(observed, None);
+      if window.is_visible {
+        window.state.stack_index = Some(next_stack_index);
+        next_stack_index += 1;
+      }
+      if !displays.is_empty() {
+        let settled_by_auv = maximized_windows
+          .get(&window.reference.id)
+          .is_some_and(|frames| frames_close(window.frame, frames.maximized, MAXIMIZED_FRAME_TOLERANCE));
+        window.state.is_maximized =
+          Some(window.state.is_fullscreen != Some(true) && (settled_by_auv || fills_maximized_frame(window.frame, displays)));
+      }
+      window
+    })
+    .collect()
+}
+
+/// NOTICE(macos-window-maximized): macOS has no maximized state. The green
+/// button zooms to an app-defined standard frame that need not fill the
+/// screen (TextEdit on a display without a menu bar left a 30 pt gap), so AUV
+/// does not use it. `set_state(Maximized)` sets the frame to the visible frame
+/// (`NSScreen.visibleFrame`: the display minus menu bar and Dock) of the
+/// window's display, as Rectangle and Magnet do, and a window counts as
+/// maximized when its frame matches that frame within this tolerance, or
+/// matches the frame an AUV maximize settled at when the application
+/// constrained it (TextEdit keeps a 30 pt gap at the top of a display without
+/// a menu bar). A window the user zoomed with the green button can therefore
+/// read `false`, and a window the user sized to the visible frame reads `true`.
+const MAXIMIZED_FRAME_TOLERANCE: f64 = 2.0;
+
+/// The frame `set_state(Maximized)` gives a window at `frame`, or `None` when
+/// the window is on no display.
+fn maximized_frame(frame: Rect, displays: &[ObservedDisplay]) -> Option<Rect> {
+  display_for_frame(frame, displays).map(|display| rect_from_observed(&display.visible_bounds))
+}
+
+fn fills_maximized_frame(frame: Rect, displays: &[ObservedDisplay]) -> bool {
+  maximized_frame(frame, displays).is_some_and(|area| frames_close(frame, area, MAXIMIZED_FRAME_TOLERANCE))
+}
+
+/// The display a window is on: the one that contains the window's center, else
+/// the one with the largest overlap (a window whose center is off every
+/// display). A window that spans displays belongs to the display under its
+/// center. `NSWindow.screen` uses the largest overlap instead; the two can
+/// differ for a window split across displays of different sizes.
+fn display_for_frame(frame: Rect, displays: &[ObservedDisplay]) -> Option<&ObservedDisplay> {
+  let center = frame.center();
+  displays.iter().find(|display| rect_from_observed(&display.bounds).contains_point(center)).or_else(|| {
+    displays
+      .iter()
+      .filter_map(|display| {
+        let overlap = frame.intersect(rect_from_observed(&display.bounds))?;
+        Some((display, overlap.size.width * overlap.size.height))
+      })
+      .max_by(|left, right| left.1.total_cmp(&right.1))
+      .map(|(display, _)| display)
+  })
 }
 
 fn window_from_native_ref(window: &NativeWindowRef, is_main: Option<bool>) -> Window {
@@ -1185,6 +1508,14 @@ fn window_from_native_ref(window: &NativeWindowRef, is_main: Option<bool>) -> Wi
     coordinate_space: CoordinateSpace::Screen,
     is_main: is_main.unwrap_or(true),
     is_visible: window.bounds.width > 0 && window.bounds.height > 0,
+    // Selector resolution uses the on-screen listing without AX reads, so
+    // only the facts that listing proves are set.
+    state: WindowState {
+      is_minimized: Some(false),
+      is_visible: Some(window.bounds.width > 0 && window.bounds.height > 0),
+      is_always_on_top: Some(window.layer > 0),
+      ..WindowState::default()
+    },
   }
 }
 
@@ -1580,21 +1911,38 @@ fn window_mutation_candidates(options: &WindowMutationOptions) -> Vec<WindowMuta
     WindowMutationPolicy::ForegroundPreferred => {
       vec![WindowMutationCandidate::ForegroundSystemEvents]
     }
-    WindowMutationPolicy::NativeOnly | WindowMutationPolicy::NativePreferred => options.strategy.candidates.iter().copied().collect(),
+    WindowMutationPolicy::NativeOnly | WindowMutationPolicy::NativePreferred => options.strategy.candidates.to_vec(),
   }
 }
 
 fn candidate_supports_window_mutation(candidate: WindowMutationCandidate, kind: WindowMutationKind) -> bool {
   matches!(
     (candidate, kind),
-    (
-      WindowMutationCandidate::AxWindowAttribute | WindowMutationCandidate::PlatformNative,
-      WindowMutationKind::MoveTo { .. } | WindowMutationKind::Resize { .. } | WindowMutationKind::SetFrame { .. }
-    ) | (
-      WindowMutationCandidate::AxWindowAction | WindowMutationCandidate::PlatformNative,
-      WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom
-    )
+    (WindowMutationCandidate::AxWindowAttribute | WindowMutationCandidate::PlatformNative, WindowMutationKind::SetFrame { .. })
+      | (WindowMutationCandidate::AxWindowAction | WindowMutationCandidate::PlatformNative, WindowMutationKind::SetState { .. })
   )
+}
+
+/// The first strategy candidate that can perform `kind`, or a failure that
+/// lists why each candidate was skipped.
+fn select_window_mutation_candidate(kind: WindowMutationKind, options: &WindowMutationOptions) -> DriverResult<WindowMutationCandidate> {
+  let mut attempts = Vec::new();
+  for candidate in window_mutation_candidates(options) {
+    let path = window_mutation_path(candidate);
+    if candidate == WindowMutationCandidate::ForegroundSystemEvents {
+      // TODO(window-management-foreground-fallback): pointer/system-events
+      // fallback is deferred because this slice wires only the native AX
+      // bridge; enable when the owner approves foreground repositioning.
+      attempts.push(WindowMutationAttempt::failure(path, "foreground window mutation fallback is not implemented in this slice"));
+      continue;
+    }
+    if candidate_supports_window_mutation(candidate, kind) {
+      return Ok(candidate);
+    }
+    let message = format!("{} does not support {}", window_mutation_candidate_name(candidate), window_mutation_kind_name(kind));
+    attempts.push(WindowMutationAttempt::failure(path, message));
+  }
+  Err(window_mutation_failure(attempts))
 }
 
 fn window_mutation_path(candidate: WindowMutationCandidate) -> WindowMutationPath {
@@ -1617,206 +1965,293 @@ fn window_mutation_candidate_name(candidate: WindowMutationCandidate) -> &'stati
 
 fn window_mutation_kind_name(kind: WindowMutationKind) -> &'static str {
   match kind {
-    WindowMutationKind::MoveTo { .. } => "move_to",
-    WindowMutationKind::Resize { .. } => "resize",
     WindowMutationKind::SetFrame { .. } => "set_frame",
-    WindowMutationKind::Minimize => "minimize",
-    WindowMutationKind::Restore => "restore",
-    WindowMutationKind::Zoom => "zoom",
+    WindowMutationKind::SetState { .. } => "set_state",
   }
 }
 
-fn decoded_window_mutation_request(
-  pid: i64,
-  window_number: i64,
-  title: String,
-  kind: WindowMutationKind,
-) -> DriverResult<crate::native::window::DecodedWindowMutationRequest> {
-  let (native_kind, x, y, width, height) = match kind {
-    WindowMutationKind::MoveTo { point } => {
-      (crate::native::window::DecodedWindowMutationKind::MoveTo, rounded_i64(point.x, "point.x")?, rounded_i64(point.y, "point.y")?, 0, 0)
-    }
-    WindowMutationKind::Resize { size } => (
-      crate::native::window::DecodedWindowMutationKind::Resize,
-      0,
-      0,
-      rounded_positive_i64(size.width, "size.width")?,
-      rounded_positive_i64(size.height, "size.height")?,
-    ),
-    WindowMutationKind::SetFrame { frame } => (
-      crate::native::window::DecodedWindowMutationKind::SetFrame,
-      rounded_i64(frame.origin.x, "frame.origin.x")?,
-      rounded_i64(frame.origin.y, "frame.origin.y")?,
-      rounded_positive_i64(frame.size.width, "frame.size.width")?,
-      rounded_positive_i64(frame.size.height, "frame.size.height")?,
-    ),
-    WindowMutationKind::Minimize => (crate::native::window::DecodedWindowMutationKind::Minimize, 0, 0, 0, 0),
-    WindowMutationKind::Restore => (crate::native::window::DecodedWindowMutationKind::Restore, 0, 0, 0, 0),
-    WindowMutationKind::Zoom => (crate::native::window::DecodedWindowMutationKind::Zoom, 0, 0, 0, 0),
-  };
-
-  Ok(crate::native::window::DecodedWindowMutationRequest {
-    pid,
-    window_number,
-    title,
-    kind: native_kind,
-    x,
-    y,
-    width,
-    height,
-  })
+/// The owner pid and window number of a window that may be mutated.
+///
+/// NOTICE(macos-ax-self-deadlock): AX writes to windows of the calling process
+/// can deadlock, because the process would have to answer its own AX message.
+/// Windows of the Runner's own process are refused.
+fn mutation_target(window: &Window) -> DriverResult<(i64, i64)> {
+  let pid = window_pid(window)?;
+  let number = window_number(window)?;
+  if pid == i64::from(std::process::id()) {
+    return Err(invalid_input(format!(
+      "window:{} belongs to the AUV process itself; AX window mutation of the calling process is refused",
+      window.reference.id
+    )));
+  }
+  Ok((pid, number))
 }
 
-fn validate_window_mutation_kind(kind: WindowMutationKind) -> DriverResult<()> {
-  match kind {
-    WindowMutationKind::MoveTo { point } => {
-      let _ = rounded_i64(point.x, "point.x")?;
-      let _ = rounded_i64(point.y, "point.y")?;
-    }
-    WindowMutationKind::Resize { size } => {
-      let _ = rounded_positive_i64(size.width, "size.width")?;
-      let _ = rounded_positive_i64(size.height, "size.height")?;
-    }
-    WindowMutationKind::SetFrame { frame } => {
-      let _ = rounded_i64(frame.origin.x, "frame.origin.x")?;
-      let _ = rounded_i64(frame.origin.y, "frame.origin.y")?;
-      let _ = rounded_positive_i64(frame.size.width, "frame.size.width")?;
-      let _ = rounded_positive_i64(frame.size.height, "frame.size.height")?;
-    }
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
+fn validate_frame_request(origin: Option<Point>, size: Option<Size>) -> DriverResult<()> {
+  if origin.is_none() && size.is_none() {
+    return Err(invalid_input("set_frame needs an origin, a size, or both"));
+  }
+  if let Some(origin) = origin
+    && !(origin.x.is_finite() && origin.y.is_finite())
+  {
+    return Err(invalid_input("set_frame origin must be finite"));
+  }
+  if let Some(size) = size
+    && !(size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0)
+  {
+    return Err(invalid_input("set_frame size must be finite and greater than zero"));
   }
   Ok(())
 }
 
-fn rounded_i64(value: f64, field: &str) -> DriverResult<i64> {
-  if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
-    return Err(invalid_input(format!("{field} must be a finite i64-sized value")));
-  }
-  Ok(value.round() as i64)
+/// `set_frame` moves only a `Normal` window and never changes state on its own.
+/// A state the platform cannot tell (`None`) does not block the call.
+///
+/// NOTICE(macos-window-maximized): a maximized macOS window is only a frame,
+/// so `set_frame` moves it like a normal window instead of refusing it.
+/// Otherwise a window maximized by hand, which `set_state(Normal)` cannot
+/// restore, could not be moved at all.
+fn require_normal_window(state: &WindowState, operation: &str) -> DriverResult<()> {
+  let (blocking, recovery) = if state.is_fullscreen == Some(true) {
+    // TODO(window-fullscreen): `set_state` has no full-screen exit yet, so the
+    // recovery points at the application.
+    ("full screen", "exit full screen in the application first")
+  } else if state.is_minimized == Some(true) {
+    ("minimized", "call set_state(Normal) first")
+  } else {
+    return Ok(());
+  };
+  Err(DriverError::FailedPrecondition {
+    message: format!("{operation} needs a normal window, but the window is {blocking}"),
+    recovery: Some(recovery.to_string()),
+  })
 }
 
-fn rounded_positive_i64(value: f64, field: &str) -> DriverResult<i64> {
-  let rounded = rounded_i64(value, field)?;
-  if rounded <= 0 {
-    return Err(invalid_input(format!("{field} must be greater than zero")));
+/// NOTICE(macos-set-frame-passes): an app can apply an AXPosition or AXSize
+/// write partially or undo one with the other. Up to six passes rewrite only
+/// the component that has not settled, as trycua/cua
+/// `platform-macos/src/tools/set_window_frame.rs` does (checked 2026-11-03).
+const MAX_FRAME_PASSES: usize = 6;
+/// Time for the WindowServer frame to reflect one AX write before it is read.
+const FRAME_PASS_INTERVAL: Duration = Duration::from_millis(50);
+
+/// NOTICE(macos-window-state-animation): minimize and deminiaturize
+/// animate in the WindowServer for a few hundred milliseconds after the AX
+/// call returns, and `CGWindowList` reports the in-between frame (observed
+/// `4430,2628 252x25` 100 ms after unminimizing a TextEdit window). Polling
+/// until two consecutive reads agree, bounded by
+/// `STATE_FRAME_STABLE_TIMEOUT`, keeps `after_frame` from reporting an
+/// animation frame. A window still animating at the timeout is reported as
+/// read; the state check does not depend on the frame.
+const STATE_FRAME_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const STATE_FRAME_STABLE_TIMEOUT: Duration = Duration::from_secs(1);
+
+fn wait_for_stable_window_frame(window_number: i64) -> DriverResult<()> {
+  let deadline = std::time::Instant::now() + STATE_FRAME_STABLE_TIMEOUT;
+  let mut previous = crate::native::window::window_server_frame(window_number).map_err(backend)?;
+  while std::time::Instant::now() < deadline {
+    thread::sleep(STATE_FRAME_POLL_INTERVAL);
+    let current = crate::native::window::window_server_frame(window_number).map_err(backend)?;
+    if current == previous {
+      return Ok(());
+    }
+    previous = current;
   }
-  Ok(rounded)
+  Ok(())
+}
+
+/// The frame components that still differ from the requested origin or size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameComponents {
+  origin: bool,
+  size: bool,
+}
+
+impl FrameComponents {
+  fn is_settled(self) -> bool {
+    !self.origin && !self.size
+  }
+
+  fn describe(self) -> &'static str {
+    match (self.origin, self.size) {
+      (true, true) => "AXPosition then AXSize",
+      (true, false) => "AXPosition",
+      (false, true) => "AXSize",
+      (false, false) => "nothing",
+    }
+  }
+}
+
+fn unsettled_frame_components(current: Rect, origin: Option<Point>, size: Option<Size>, tolerance: f64) -> FrameComponents {
+  FrameComponents {
+    origin: origin.is_some_and(|origin| (current.origin.x - origin.x).abs() > tolerance || (current.origin.y - origin.y).abs() > tolerance),
+    size: size
+      .is_some_and(|size| (current.size.width - size.width).abs() > tolerance || (current.size.height - size.height).abs() > tolerance),
+  }
+}
+
+fn frames_close(left: Rect, right: Rect, tolerance: f64) -> bool {
+  unsettled_frame_components(left, Some(right.origin), Some(right.size), tolerance).is_settled()
+}
+
+fn frame_tolerance(verification: &WindowMutationVerification) -> DriverResult<f64> {
+  match *verification {
+    WindowMutationVerification::FrameTolerance { points } if points.is_finite() && points >= 0.0 => Ok(points),
+    WindowMutationVerification::FrameTolerance { .. } => {
+      Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"))
+    }
+    WindowMutationVerification::BestEffortState => Ok(2.0),
+  }
+}
+
+/// The AX minimize or unminimize call `target` needs, or `None` when the
+/// window is already (un)minimized. An unknown fact (`None`) counts as "not in
+/// the target state" because both writes are idempotent. Maximize and restore
+/// are frame writes that `set_state` makes after this step.
+fn window_state_step(
+  current: &WindowState,
+  target: WindowStateTarget,
+) -> DriverResult<Option<crate::native::window::DecodedWindowMutationKind>> {
+  use crate::native::window::DecodedWindowMutationKind::{Minimize, Unminimize};
+  if current.is_fullscreen == Some(true) {
+    // TODO(window-fullscreen): leaving full screen needs `AXFullScreen=false`
+    // and waiting for the Space animation; deferred with the full-screen target.
+    return Err(DriverError::unsupported_with_recovery(
+      "window.setState on a full-screen macOS window",
+      "exit full screen in the application first",
+    ));
+  }
+  Ok(match target {
+    WindowStateTarget::Minimized => (current.is_minimized != Some(true)).then_some(Minimize),
+    WindowStateTarget::Normal | WindowStateTarget::Maximized => (current.is_minimized != Some(false)).then_some(Unminimize),
+  })
+}
+
+/// What `set_state(Normal)` does to the frame of a window that is not minimized.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum NormalFrame {
+  /// The window is not maximized, so its frame already is its normal frame.
+  Keep,
+  /// Restore the frame recorded by `set_state(Maximized)`.
+  Restore(Rect),
+  /// Maximized, but no frame was recorded; the frame stays.
+  Unrecorded,
+}
+
+fn normal_frame(state: &WindowState, recorded: Option<Rect>) -> NormalFrame {
+  match (state.is_maximized, recorded) {
+    (Some(true), Some(frame)) => NormalFrame::Restore(frame),
+    (Some(true), None) => NormalFrame::Unrecorded,
+    _ => NormalFrame::Keep,
+  }
+}
+
+/// Writes the requested origin and/or size through AX, `AXPosition` before
+/// `AXSize`, and rereads the WindowServer frame after every pass. Each
+/// corrective pass rewrites only the component that has not settled
+/// (`NOTICE(macos-set-frame-passes)`).
+fn write_frame(
+  (pid, number): (i64, i64),
+  current: Rect,
+  origin: Option<Point>,
+  size: Option<Size>,
+  tolerance: f64,
+  path: WindowMutationPath,
+  attempts: &mut Vec<WindowMutationAttempt>,
+) -> DriverResult<()> {
+  let mut pending = unsettled_frame_components(current, origin, size, tolerance);
+  for pass in 1..=MAX_FRAME_PASSES {
+    if pending.is_settled() {
+      break;
+    }
+    let written_origin = origin.filter(|_| pending.origin).map(|origin| (origin.x, origin.y));
+    let written_size = size.filter(|_| pending.size).map(|size| (size.width, size.height));
+    if let Err(error) = crate::native::window::write_window_frame(pid, number, written_origin, written_size) {
+      attempts.push(WindowMutationAttempt::failure(path, format!("pass {pass}: {error}")));
+      return Err(window_mutation_failure(std::mem::take(attempts)));
+    }
+    attempts.push(WindowMutationAttempt::success(path, format!("pass {pass}: wrote {}", pending.describe())));
+    thread::sleep(FRAME_PASS_INTERVAL);
+    let Some((x, y, width, height)) = crate::native::window::window_server_frame(number).map_err(backend)? else {
+      return Err(not_found(format!("window:{number}")));
+    };
+    pending = unsettled_frame_components(Rect::new(x, y, width, height), origin, size, tolerance);
+  }
+  Ok(())
+}
+
+/// Checks the settled frame after `write_frame`: `false` when it matches the
+/// request, `true` when the application settled the window at another frame
+/// (`adjusted_by_app`), and an error when the window did not move.
+fn frame_adjusted_by_app(
+  before: Rect,
+  after: Rect,
+  origin: Option<Point>,
+  size: Option<Size>,
+  tolerance: f64,
+  attempts: &[WindowMutationAttempt],
+) -> DriverResult<bool> {
+  if unsettled_frame_components(after, origin, size, tolerance).is_settled() {
+    return Ok(false);
+  }
+  if frames_close(after, before, tolerance) {
+    let target = Rect {
+      origin: origin.unwrap_or(before.origin),
+      size: size.unwrap_or(before.size),
+    };
+    return Err(backend(format!(
+      "window mutation verification failed: window frame stayed at {after:?} instead of {target:?}; {}",
+      attempts.iter().filter_map(|attempt| attempt.message.as_deref()).collect::<Vec<_>>().join("; ")
+    )));
+  }
+  Ok(true)
+}
+
+/// Reads the target state back after settle: `Minimized` must be minimized,
+/// and `Normal` and `Maximized` must not be. The maximize and restore frames
+/// are checked by `frame_adjusted_by_app`; an app that keeps the window
+/// smaller than the visible frame is reported with `adjusted_by_app`, not as
+/// a failure.
+fn verify_window_state(target: WindowStateTarget, after: &WindowState) -> DriverResult<()> {
+  let failure = match target {
+    WindowStateTarget::Minimized if after.is_minimized != Some(true) => "window was not minimized",
+    WindowStateTarget::Normal | WindowStateTarget::Maximized if after.is_minimized == Some(true) => "window was still minimized",
+    _ => return Ok(()),
+  };
+  Err(backend(format!("window mutation verification failed: {failure}")))
+}
+
+/// The bundle id of the frontmost application, or `None` when it could not be read.
+fn frontmost_application_id() -> Option<String> {
+  crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).ok().map(|snapshot| snapshot.frontmost_app_bundle_id)
+}
+
+fn focus_disturbance(before: Option<String>, after: Option<String>) -> DisturbanceLevel {
+  match (before, after) {
+    (Some(before), Some(after)) if before == after => DisturbanceLevel::None,
+    (Some(_), Some(_)) => DisturbanceLevel::Foreground,
+    _ => DisturbanceLevel::Unknown,
+  }
 }
 
 fn window_mutation_result(
   selected_path: WindowMutationPath,
   attempts: Vec<WindowMutationAttempt>,
-  response: crate::native::window::DecodedWindowMutationResponse,
+  before: &Window,
+  after: &Window,
+  focus_disturbance: DisturbanceLevel,
 ) -> WindowMutationResult {
   WindowMutationResult {
     selected_path,
     attempts,
-    before_frame: Some(Rect::new(
-      response.before_x as f64,
-      response.before_y as f64,
-      response.before_width as f64,
-      response.before_height as f64,
-    )),
-    after_frame: Some(Rect::new(
-      response.after_x as f64,
-      response.after_y as f64,
-      response.after_width as f64,
-      response.after_height as f64,
-    )),
-    before_state: Some(WindowState {
-      is_minimized: Some(response.was_minimized),
-      is_visible: Some(!response.was_minimized),
-    }),
-    after_state: Some(WindowState {
-      is_minimized: Some(response.is_minimized),
-      is_visible: Some(!response.is_minimized),
-    }),
-    focus_disturbance: DisturbanceLevel::None,
+    before_frame: Some(before.frame),
+    after_frame: Some(after.frame),
+    before_state: Some(before.state.clone()),
+    after_state: Some(after.state.clone()),
+    adjusted_by_app: false,
+    focus_disturbance,
     mouse_disturbance: DisturbanceLevel::None,
   }
-}
-
-fn verify_window_mutation(
-  kind: WindowMutationKind,
-  verification: &WindowMutationVerification,
-  result: &WindowMutationResult,
-) -> DriverResult<()> {
-  match verification {
-    WindowMutationVerification::BestEffortState => verify_window_state(kind, result),
-    WindowMutationVerification::FrameTolerance { points } => {
-      verify_window_frame(kind, result, *points)?;
-      verify_window_state(kind, result)
-    }
-  }
-}
-
-fn verify_window_frame(kind: WindowMutationKind, result: &WindowMutationResult, tolerance: f64) -> DriverResult<()> {
-  if !tolerance.is_finite() || tolerance < 0.0 {
-    return Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"));
-  }
-  let Some(after_frame) = result.after_frame else {
-    return Err(backend("window mutation did not report an after frame"));
-  };
-  match kind {
-    WindowMutationKind::MoveTo { point } => {
-      verify_close(after_frame.origin.x, point.x, tolerance, "frame.origin.x")?;
-      verify_close(after_frame.origin.y, point.y, tolerance, "frame.origin.y")?;
-    }
-    WindowMutationKind::Resize { size } => {
-      verify_close(after_frame.size.width, size.width, tolerance, "frame.size.width")?;
-      verify_close(after_frame.size.height, size.height, tolerance, "frame.size.height")?;
-    }
-    WindowMutationKind::SetFrame { frame } => {
-      verify_close(after_frame.origin.x, frame.origin.x, tolerance, "frame.origin.x")?;
-      verify_close(after_frame.origin.y, frame.origin.y, tolerance, "frame.origin.y")?;
-      verify_close(after_frame.size.width, frame.size.width, tolerance, "frame.size.width")?;
-      verify_close(after_frame.size.height, frame.size.height, tolerance, "frame.size.height")?;
-    }
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
-  }
-  Ok(())
-}
-
-fn verify_window_state(kind: WindowMutationKind, result: &WindowMutationResult) -> DriverResult<()> {
-  match kind {
-    WindowMutationKind::Minimize => {
-      let minimized = result
-        .after_state
-        .as_ref()
-        .and_then(|state| state.is_minimized);
-      if minimized != Some(true) {
-        return Err(backend(
-          "window mutation verification failed: window was not minimized",
-        ));
-      }
-    }
-    WindowMutationKind::Restore => {
-      let minimized = result
-        .after_state
-        .as_ref()
-        .and_then(|state| state.is_minimized);
-      if minimized != Some(false) {
-        return Err(backend(
-          "window mutation verification failed: window was still minimized",
-        ));
-      }
-    }
-    WindowMutationKind::MoveTo { .. }
-    | WindowMutationKind::Resize { .. }
-    | WindowMutationKind::SetFrame { .. }
-    // TODO(window-zoom-verification): zoom state verification is deferred
-    // because apps expose zoom/full-screen state inconsistently through AX;
-    // add a stricter state check when an owner-approved cross-app signal exists.
-    | WindowMutationKind::Zoom => {}
-  }
-  Ok(())
-}
-
-fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> DriverResult<()> {
-  if (actual - expected).abs() <= tolerance {
-    return Ok(());
-  }
-  Err(backend(format!("window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}")))
 }
 
 fn window_mutation_failure(attempts: Vec<WindowMutationAttempt>) -> DriverError {

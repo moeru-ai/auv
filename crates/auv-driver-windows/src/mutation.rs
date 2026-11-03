@@ -1,108 +1,179 @@
-//! Window geometry and state mutation via Win32 `SetWindowPos`/`ShowWindow`.
+//! Window geometry, state and focus changes via Win32 `SetWindowPos`, `ShowWindow` and
+//! `SetForegroundWindow`.
 //!
-//! Mirrors the macOS driver's window mutation surface, producing the shared
-//! [`WindowMutationResult`]. Windows has a single native mutation path, so this
-//! module always reports [`WindowMutationPath::PlatformNative`]; the macOS
-//! AX-specific candidates in [`WindowMutationOptions::strategy`] do not apply
-//! here and are intentionally ignored.
+//! Produces the shared [`WindowMutationResult`]. Windows has a single native mutation path, so
+//! this module always reports [`WindowMutationPath::PlatformNative`]; the macOS AX-specific
+//! candidates in [`WindowMutationOptions::strategy`] and its `policy` do not apply here and are
+//! intentionally ignored. See
+//! `docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md` ("Mutation").
 // TODO(windows-window-mutation-fallback): a foreground/SendInput fallback is
 // reserved but unimplemented; the native SetWindowPos/ShowWindow path is the
 // only candidate this slice wires. Add a fallback only when an owner-approved
 // reliability gap appears for background repositioning.
+// Off Windows only the unit tests call the pure helpers below.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
-use auv_driver_common::error::DriverResult;
-use auv_driver_common::geometry::Rect;
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::geometry::{Point, Rect, Size};
 use auv_driver_common::input::DisturbanceLevel;
 use auv_driver_common::window::{
-  Window, WindowMutationAttempt, WindowMutationKind, WindowMutationOptions, WindowMutationPath, WindowMutationResult,
-  WindowMutationVerification, WindowState,
+  Window, WindowMutationAttempt, WindowMutationOptions, WindowMutationPath, WindowMutationResult, WindowMutationVerification, WindowState,
+  WindowStateTarget,
 };
 
 use crate::error::{backend, invalid_input};
+use crate::window::WindowReading;
 
-pub fn mutate_window(window: &Window, kind: WindowMutationKind, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-  validate_window_mutation_kind(kind)?;
-  let outcome = perform_native_mutation(window, kind, options.settle)?;
-  let result = window_mutation_result(kind, outcome);
-  verify_window_mutation(kind, &options.verification, &result)?;
-  Ok(result)
+/// How often a mutation reads the window back before it gives up waiting for it to settle.
+// NOTICE: 6 reads 40 ms apart (200 ms) follow trycua/cua `set_window_frame.rs`. `SetWindowPos` and
+// `ShowWindow` on another process's window return once the message is handled, so the first read
+// usually matches; the polls cover apps that adjust their frame asynchronously.
+const READBACK_ATTEMPTS: usize = 6;
+const READBACK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// Moves and/or resizes a window so its visible frame lands on the request. A missing origin keeps
+/// the position; a missing size keeps the size. A maximized window becomes a normal window at the
+/// requested frame, and its restore frame fills the missing parts.
+pub fn set_frame(
+  window: &Window,
+  origin: Option<Point>,
+  size: Option<Size>,
+  options: WindowMutationOptions,
+) -> DriverResult<WindowMutationResult> {
+  validate_frame_request(origin, size)?;
+  frame_tolerance(&options.verification)?;
+  native_set_frame(window, origin, size, &options)
 }
 
-/// Native before/after observation produced by the Win32 mutation path.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct NativeMutationOutcome {
-  before_frame: Rect,
-  after_frame: Rect,
-  before_minimized: bool,
-  after_minimized: bool,
-  before_visible: bool,
-  after_visible: bool,
+/// Moves a window to `state`. A window already in it succeeds without a call.
+pub fn set_state(window: &Window, state: WindowStateTarget, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  native_set_state(window, state, &options)
 }
 
-/// Focus impact of a mutation kind.
-///
-/// Geometry changes are issued with `SWP_NOACTIVATE`, so they do not move
-/// foreground focus. State changes (minimize/restore/zoom) activate or
-/// deactivate the window and therefore report a foreground disturbance.
-fn focus_disturbance_for(kind: WindowMutationKind) -> DisturbanceLevel {
-  match kind {
-    WindowMutationKind::MoveTo { .. } | WindowMutationKind::Resize { .. } | WindowMutationKind::SetFrame { .. } => DisturbanceLevel::None,
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => DisturbanceLevel::Foreground,
+/// Raises a window and gives it keyboard focus, restoring it first when it is minimized.
+pub fn focus(window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  native_focus(window, &options)
+}
+
+fn validate_frame_request(origin: Option<Point>, size: Option<Size>) -> DriverResult<()> {
+  if origin.is_none() && size.is_none() {
+    return Err(invalid_input("window.setFrame needs an origin, a size, or both"));
   }
-}
-
-fn window_mutation_result(kind: WindowMutationKind, outcome: NativeMutationOutcome) -> WindowMutationResult {
-  WindowMutationResult {
-    selected_path: WindowMutationPath::PlatformNative,
-    attempts: vec![WindowMutationAttempt::success(
-      WindowMutationPath::PlatformNative,
-      format!("{} via SetWindowPos/ShowWindow", window_mutation_kind_name(kind)),
-    )],
-    before_frame: Some(outcome.before_frame),
-    after_frame: Some(outcome.after_frame),
-    before_state: Some(WindowState {
-      is_minimized: Some(outcome.before_minimized),
-      is_visible: Some(outcome.before_visible),
-    }),
-    after_state: Some(WindowState {
-      is_minimized: Some(outcome.after_minimized),
-      is_visible: Some(outcome.after_visible),
-    }),
-    focus_disturbance: focus_disturbance_for(kind),
-    mouse_disturbance: DisturbanceLevel::None,
+  if let Some(origin) = origin {
+    rounded_i32(origin.x, "origin.x")?;
+    rounded_i32(origin.y, "origin.y")?;
   }
-}
-
-fn window_mutation_kind_name(kind: WindowMutationKind) -> &'static str {
-  match kind {
-    WindowMutationKind::MoveTo { .. } => "move_to",
-    WindowMutationKind::Resize { .. } => "resize",
-    WindowMutationKind::SetFrame { .. } => "set_frame",
-    WindowMutationKind::Minimize => "minimize",
-    WindowMutationKind::Restore => "restore",
-    WindowMutationKind::Zoom => "zoom",
-  }
-}
-
-fn validate_window_mutation_kind(kind: WindowMutationKind) -> DriverResult<()> {
-  match kind {
-    WindowMutationKind::MoveTo { point } => {
-      let _ = rounded_i32(point.x, "point.x")?;
-      let _ = rounded_i32(point.y, "point.y")?;
-    }
-    WindowMutationKind::Resize { size } => {
-      let _ = rounded_positive_i32(size.width, "size.width")?;
-      let _ = rounded_positive_i32(size.height, "size.height")?;
-    }
-    WindowMutationKind::SetFrame { frame } => {
-      let _ = rounded_i32(frame.origin.x, "frame.origin.x")?;
-      let _ = rounded_i32(frame.origin.y, "frame.origin.y")?;
-      let _ = rounded_positive_i32(frame.size.width, "frame.size.width")?;
-      let _ = rounded_positive_i32(frame.size.height, "frame.size.height")?;
-    }
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
+  if let Some(size) = size {
+    rounded_positive_i32(size.width, "size.width")?;
+    rounded_positive_i32(size.height, "size.height")?;
   }
   Ok(())
+}
+
+/// `set_frame` refuses a minimized window, which has no frame on screen to move, and a full-screen
+/// window. A maximized window is allowed: the frame request makes it normal (owner decision
+/// 2026-11-03, the same on macOS and Windows; see the design doc's "Decided" list).
+fn frame_precondition(state: &WindowState) -> DriverResult<()> {
+  let blocking = if state.is_minimized == Some(true) {
+    "minimized"
+  } else if state.is_fullscreen == Some(true) {
+    "full screen"
+  } else {
+    return Ok(());
+  };
+  Err(DriverError::FailedPrecondition {
+    message: format!("window.setFrame needs a normal window, but the window is {blocking}"),
+    recovery: Some("call set_state(Normal) first".into()),
+  })
+}
+
+/// The visible frame a request asks for: the current frame with the requested parts replaced.
+fn requested_frame(current: Rect, origin: Option<Point>, size: Option<Size>) -> Rect {
+  Rect {
+    origin: origin.unwrap_or(current.origin),
+    size: size.unwrap_or(current.size),
+  }
+}
+
+fn frame_tolerance(verification: &WindowMutationVerification) -> DriverResult<f64> {
+  match *verification {
+    WindowMutationVerification::FrameTolerance { points } if points.is_finite() && points >= 0.0 => Ok(points),
+    WindowMutationVerification::FrameTolerance { .. } => {
+      Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"))
+    }
+    // NOTICE: best effort still checks the frame with the default 2 px, because a frame request
+    // has no other evidence of its effect.
+    WindowMutationVerification::BestEffortState => Ok(2.0),
+  }
+}
+
+fn frames_close(a: Rect, b: Rect, tolerance: f64) -> bool {
+  (a.origin.x - b.origin.x).abs() <= tolerance
+    && (a.origin.y - b.origin.y).abs() <= tolerance
+    && (a.size.width - b.size.width).abs() <= tolerance
+    && (a.size.height - b.size.height).abs() <= tolerance
+}
+
+/// Judges a settled frame: `Ok(false)` when it matches the request, `Ok(true)` when the window
+/// changed but the app settled it elsewhere (minimum size, grid snapping, a DPI change), and an
+/// error only when the window did not change at all.
+fn judge_frame(before: Rect, after: Rect, requested: Rect, tolerance: f64) -> DriverResult<bool> {
+  if frames_close(after, requested, tolerance) {
+    return Ok(false);
+  }
+  if frames_close(after, before, tolerance) {
+    return Err(backend(format!("window mutation verification failed: the window stayed at {after:?} instead of moving to {requested:?}")));
+  }
+  Ok(true)
+}
+
+/// The state target a window is in now. A minimized window that restores to maximized counts as
+/// minimized.
+fn current_target(state: &WindowState) -> WindowStateTarget {
+  if state.is_minimized == Some(true) {
+    WindowStateTarget::Minimized
+  } else if state.is_maximized == Some(true) {
+    WindowStateTarget::Maximized
+  } else {
+    WindowStateTarget::Normal
+  }
+}
+
+fn target_name(target: WindowStateTarget) -> &'static str {
+  match target {
+    WindowStateTarget::Normal => "normal",
+    WindowStateTarget::Minimized => "minimized",
+    WindowStateTarget::Maximized => "maximized",
+  }
+}
+
+/// A foreground change is a focus disturbance; a mutation that left the same window in front
+/// did not disturb focus.
+fn focus_disturbance(before: &WindowReading, after: &WindowReading) -> DisturbanceLevel {
+  if before.foreground == after.foreground {
+    DisturbanceLevel::None
+  } else {
+    DisturbanceLevel::Foreground
+  }
+}
+
+fn mutation_result(
+  attempt: WindowMutationAttempt,
+  before: &WindowReading,
+  after: &WindowReading,
+  adjusted_by_app: bool,
+) -> WindowMutationResult {
+  WindowMutationResult {
+    selected_path: WindowMutationPath::PlatformNative,
+    attempts: vec![attempt],
+    before_frame: Some(before.frame),
+    after_frame: Some(after.frame),
+    before_state: Some(before.state.clone()),
+    after_state: Some(after.state.clone()),
+    adjusted_by_app,
+    focus_disturbance: focus_disturbance(before, after),
+    mouse_disturbance: DisturbanceLevel::None,
+  }
 }
 
 /// Rounds an `f64` coordinate into the `i32` range used by the Win32 window
@@ -122,206 +193,246 @@ fn rounded_positive_i32(value: f64, field: &str) -> DriverResult<i32> {
   Ok(rounded)
 }
 
-fn verify_window_mutation(
-  kind: WindowMutationKind,
-  verification: &WindowMutationVerification,
-  result: &WindowMutationResult,
-) -> DriverResult<()> {
-  match verification {
-    WindowMutationVerification::BestEffortState => verify_window_state(kind, result),
-    WindowMutationVerification::FrameTolerance { points } => {
-      verify_window_frame(kind, result, *points)?;
-      verify_window_state(kind, result)
-    }
-  }
-}
-
-fn verify_window_frame(kind: WindowMutationKind, result: &WindowMutationResult, tolerance: f64) -> DriverResult<()> {
-  if !tolerance.is_finite() || tolerance < 0.0 {
-    return Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"));
-  }
-  let Some(after_frame) = result.after_frame else {
-    return Err(backend("window mutation did not report an after frame"));
-  };
-  match kind {
-    WindowMutationKind::MoveTo { point } => {
-      verify_close(after_frame.origin.x, point.x, tolerance, "frame.origin.x")?;
-      verify_close(after_frame.origin.y, point.y, tolerance, "frame.origin.y")?;
-    }
-    WindowMutationKind::Resize { size } => {
-      verify_close(after_frame.size.width, size.width, tolerance, "frame.size.width")?;
-      verify_close(after_frame.size.height, size.height, tolerance, "frame.size.height")?;
-    }
-    WindowMutationKind::SetFrame { frame } => {
-      verify_close(after_frame.origin.x, frame.origin.x, tolerance, "frame.origin.x")?;
-      verify_close(after_frame.origin.y, frame.origin.y, tolerance, "frame.origin.y")?;
-      verify_close(after_frame.size.width, frame.size.width, tolerance, "frame.size.width")?;
-      verify_close(after_frame.size.height, frame.size.height, tolerance, "frame.size.height")?;
-    }
-    // State changes do not assert a frame; geometry after minimize/restore/zoom
-    // is window-manager defined.
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
-  }
-  Ok(())
-}
-
-fn verify_window_state(kind: WindowMutationKind, result: &WindowMutationResult) -> DriverResult<()> {
-  match kind {
-    WindowMutationKind::Minimize => {
-      if minimized_flag(result) != Some(true) {
-        return Err(backend(
-          "window mutation verification failed: window was not minimized",
-        ));
-      }
-    }
-    WindowMutationKind::Restore => {
-      if minimized_flag(result) != Some(false) {
-        return Err(backend(
-          "window mutation verification failed: window was still minimized",
-        ));
-      }
-    }
-    WindowMutationKind::MoveTo { .. }
-    | WindowMutationKind::Resize { .. }
-    | WindowMutationKind::SetFrame { .. }
-    // TODO(windows-window-zoom-verification): zoom/maximize state verification is
-    // deferred; reading a reliable maximized signal here needs an owner-approved
-    // cross-app check, so this slice trusts the ShowWindow call.
-    | WindowMutationKind::Zoom => {}
-  }
-  Ok(())
-}
-
-fn minimized_flag(result: &WindowMutationResult) -> Option<bool> {
-  result.after_state.as_ref().and_then(|state| state.is_minimized)
-}
-
-fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> DriverResult<()> {
-  if (actual - expected).abs() <= tolerance {
-    return Ok(());
-  }
-  Err(backend(format!("window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}")))
-}
-
-#[cfg(target_os = "windows")]
-fn perform_native_mutation(window: &Window, kind: WindowMutationKind, settle: std::time::Duration) -> DriverResult<NativeMutationOutcome> {
-  native::perform(window, kind, settle)
+#[cfg(not(target_os = "windows"))]
+fn native_set_frame(_: &Window, _: Option<Point>, _: Option<Size>, _: &WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  Err(DriverError::unsupported("window.setFrame"))
 }
 
 #[cfg(not(target_os = "windows"))]
-fn perform_native_mutation(
-  _window: &Window,
-  _kind: WindowMutationKind,
-  _settle: std::time::Duration,
-) -> DriverResult<NativeMutationOutcome> {
-  Err(auv_driver_common::error::DriverError::unsupported("window.mutate"))
+fn native_set_state(_: &Window, _: WindowStateTarget, _: &WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  Err(DriverError::unsupported("window.setState"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_focus(_: &Window, _: &WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  Err(DriverError::unsupported("window.focus"))
 }
 
 #[cfg(target_os = "windows")]
-mod native {
-  use std::ffi::c_void;
-  use std::mem::size_of;
-  use std::thread;
-  use std::time::Duration;
+fn native_set_frame(
+  window: &Window,
+  origin: Option<Point>,
+  size: Option<Size>,
+  options: &WindowMutationOptions,
+) -> DriverResult<WindowMutationResult> {
+  use windows::Win32::UI::WindowsAndMessaging::{SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos};
 
-  use auv_driver_common::error::DriverResult;
-  use auv_driver_common::geometry::Rect;
-  use auv_driver_common::window::{Window, WindowMutationKind};
-  use windows::Win32::Foundation::{HWND, RECT};
-  use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
-  use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsIconic, IsWindowVisible, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SetWindowPos, ShowWindow,
+  use crate::window::{invisible_border, outer_frame_for_visible, read_window, window_handle};
+
+  let tolerance = frame_tolerance(&options.verification)?;
+  let hwnd = window_handle(window)?;
+  // REVIEW(windows-window-dpi): the request is in the physical pixels `window.list` reports, and
+  // `SetWindowPos` takes them so in the per-monitor-aware process (`crate::dpi`). A move onto a
+  // display with another scale makes the target resize itself on `WM_DPICHANGED`; that lands as
+  // `adjusted_by_app`, not a failure. Only one 150% display has been measured.
+  let before = read_window(window)?;
+  frame_precondition(&before.state)?;
+  if before.state.is_maximized == Some(true) {
+    return set_frame_from_maximized(window, hwnd, &before, origin, size, tolerance);
+  }
+  let requested = requested_frame(before.frame, origin, size);
+  // NOTICE: `window.list` reports the visible frame (DWM extended frame bounds), but
+  // `SetWindowPos` sets the outer rectangle, which on Windows 10/11 includes an invisible resize
+  // border (11 px at 150%). Without this conversion a move landed 11 px right of the request
+  // and a resize 22 px narrower (luoling-windows-11, 2026-11-03).
+  let outer = outer_frame_for_visible(requested, invisible_border(before.outer, before.frame));
+  let x = rounded_i32(outer.origin.x, "origin.x")?;
+  let y = rounded_i32(outer.origin.y, "origin.y")?;
+  let width = rounded_positive_i32(outer.size.width, "size.width")?;
+  let height = rounded_positive_i32(outer.size.height, "size.height")?;
+  let mut flags: SET_WINDOW_POS_FLAGS = SWP_NOACTIVATE | SWP_NOZORDER;
+  if origin.is_none() {
+    flags |= SWP_NOMOVE;
+  }
+  if size.is_none() {
+    flags |= SWP_NOSIZE;
+  }
+  unsafe { SetWindowPos(hwnd, None, x, y, width, height, flags) }.map_err(|error| backend(format!("SetWindowPos failed: {error}")))?;
+  let after = poll(window, |reading| frames_close(reading.frame, requested, tolerance))?;
+  let adjusted_by_app = judge_frame(before.frame, after.frame, requested, tolerance)?;
+  let attempt = WindowMutationAttempt::success(
+    WindowMutationPath::PlatformNative,
+    format!("SetWindowPos to outer {x},{y} {width}x{height} for visible {requested:?}"),
+  );
+  Ok(mutation_result(attempt, &before, &after, adjusted_by_app))
+}
+
+/// `set_frame` on a maximized window: one `SetWindowPlacement` makes it normal at the requested
+/// frame without activating it. `SW_RESTORE` + `SetWindowPos` would first show it at its old
+/// restore frame and then move it.
+#[cfg(target_os = "windows")]
+fn set_frame_from_maximized(
+  window: &Window,
+  hwnd: windows::Win32::Foundation::HWND,
+  before: &WindowReading,
+  origin: Option<Point>,
+  size: Option<Size>,
+  tolerance: f64,
+) -> DriverResult<WindowMutationResult> {
+  use auv_driver_common::geometry::Insets;
+  use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos};
+
+  use crate::window::native::{place_normal, restore_rect};
+  use crate::window::{invisible_border, outer_frame_for_visible};
+
+  // NOTICE: a maximized window hangs past its work area on every side, and that overhang is not
+  // the invisible border it has once normal. luoling-windows-11 (150%, 2026-11-03): a per-monitor
+  // aware WinForms window hung 11 px past every side of `0,0 3840x2088` but had 9 px left, right
+  // and bottom and none on top once normal; a DPI-unaware one 12 px against 11 px. The placement
+  // uses the overhang without a top border.
+  // NOTICE: some apps put the window back at a restore frame of their own when it leaves
+  // maximized. A WinForms form showed the requested frame and 4 ms later its remembered restore
+  // bounds (fixture bounds log, same host and date). So when the window is normal but not at the
+  // request, one `SetWindowPos` with the border read from the normal window moves it there; it
+  // also corrects a wrong border guess. A window that still settles elsewhere is `adjusted_by_app`.
+  // The app's own frame shows for a few milliseconds; that jump is the app's, not this call's.
+  let overhang = invisible_border(before.outer, before.frame);
+  let guess = Insets {
+    top: 0.0,
+    ..overhang
   };
-
-  use super::{NativeMutationOutcome, rounded_i32, rounded_positive_i32};
-  use crate::error::backend;
-  use crate::window::window_handle;
-
-  pub(super) fn perform(window: &Window, kind: WindowMutationKind, settle: Duration) -> DriverResult<NativeMutationOutcome> {
-    let hwnd = window_handle(window)?;
-    let before = read_state(hwnd)?;
-    apply(hwnd, kind)?;
-    if !settle.is_zero() {
-      thread::sleep(settle);
+  let restore_outer = restore_rect(hwnd)?;
+  let mut requested = requested_frame(restore_outer.inset(guess), origin, size);
+  let outer = rounded_outer(outer_frame_for_visible(requested, guess))?;
+  place_normal(hwnd, outer)?;
+  let settled = |reading: &WindowReading, requested: Rect| {
+    reading.state.is_maximized == Some(false) && frames_close(reading.frame, requested, tolerance)
+  };
+  // Correct as soon as the window reads normal: an app's own restore frame stays on screen until
+  // then (about 360 ms when this waited for the full settle poll).
+  let mut after = poll(window, |reading| reading.state.is_maximized == Some(false))?;
+  let mut detail = format!("SetWindowPlacement(SW_SHOWNOACTIVATE) to outer {}", outer_text(outer));
+  if after.state.is_maximized == Some(false) && !frames_close(after.frame, requested, tolerance) {
+    detail.push_str(&format!(", normal at visible {:?}", after.frame));
+    let border = invisible_border(after.outer, after.frame);
+    requested = requested_frame(restore_outer.inset(border), origin, size);
+    let corrected = rounded_outer(outer_frame_for_visible(requested, border))?;
+    unsafe {
+      SetWindowPos(
+        hwnd,
+        None,
+        corrected.left,
+        corrected.top,
+        corrected.right - corrected.left,
+        corrected.bottom - corrected.top,
+        SWP_NOACTIVATE | SWP_NOZORDER,
+      )
     }
-    let after = read_state(hwnd)?;
-    Ok(NativeMutationOutcome {
-      before_frame: before.frame,
-      after_frame: after.frame,
-      before_minimized: before.minimized,
-      after_minimized: after.minimized,
-      before_visible: before.visible,
-      after_visible: after.visible,
-    })
+    .map_err(|error| backend(format!("SetWindowPos failed: {error}")))?;
+    after = poll(window, |reading| settled(reading, requested))?;
+    detail.push_str(&format!(", then SetWindowPos to outer {} with the normal border {border:?}", outer_text(corrected)));
   }
-
-  struct ObservedState {
-    frame: Rect,
-    minimized: bool,
-    visible: bool,
+  if after.state.is_maximized != Some(false) {
+    return Err(backend(format!("window mutation verification failed: the window is still maximized after {detail}")));
   }
+  let adjusted_by_app = judge_frame(before.frame, after.frame, requested, tolerance)?;
+  let attempt = WindowMutationAttempt::success(WindowMutationPath::PlatformNative, format!("{detail} for visible {requested:?}"));
+  Ok(mutation_result(attempt, before, &after, adjusted_by_app))
+}
 
-  fn read_state(hwnd: HWND) -> DriverResult<ObservedState> {
-    Ok(ObservedState {
-      frame: window_frame(hwnd)?,
-      minimized: unsafe { IsIconic(hwnd) }.as_bool(),
-      visible: unsafe { IsWindowVisible(hwnd) }.as_bool(),
-    })
+/// The outer rectangle as the integer `RECT` that `SetWindowPlacement` takes.
+#[cfg(target_os = "windows")]
+fn rounded_outer(outer: Rect) -> DriverResult<windows::Win32::Foundation::RECT> {
+  let left = rounded_i32(outer.origin.x, "origin.x")?;
+  let top = rounded_i32(outer.origin.y, "origin.y")?;
+  let width = rounded_positive_i32(outer.size.width, "size.width")?;
+  let height = rounded_positive_i32(outer.size.height, "size.height")?;
+  Ok(windows::Win32::Foundation::RECT {
+    left,
+    top,
+    right: left.saturating_add(width),
+    bottom: top.saturating_add(height),
+  })
+}
+
+#[cfg(target_os = "windows")]
+fn outer_text(rect: windows::Win32::Foundation::RECT) -> String {
+  format!("{},{} {}x{}", rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+}
+
+#[cfg(target_os = "windows")]
+fn native_set_state(window: &Window, target: WindowStateTarget, options: &WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  use windows::Win32::UI::WindowsAndMessaging::{SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, ShowWindow};
+
+  use crate::window::{read_window, window_handle};
+
+  // NOTICE: `options.verification` does not change how a state is checked: `IsIconic` and
+  // `IsZoomed` are exact on Windows, so every target is verified.
+  let _ = options;
+  let hwnd = window_handle(window)?;
+  let before = read_window(window)?;
+  if current_target(&before.state) == target {
+    let attempt =
+      WindowMutationAttempt::success(WindowMutationPath::PlatformNative, format!("already {}; no call made", target_name(target)));
+    return Ok(mutation_result(attempt, &before, &before, false));
   }
+  let command = match target {
+    WindowStateTarget::Normal => SW_RESTORE,
+    WindowStateTarget::Minimized => SW_MINIMIZE,
+    WindowStateTarget::Maximized => SW_MAXIMIZE,
+  };
+  // ShowWindow returns the prior visibility as a BOOL and does not signal
+  // failure, so the return value is intentionally ignored.
+  let _ = unsafe { ShowWindow(hwnd, command) };
+  let mut after = poll(window, |reading| current_target(&reading.state) != current_target(&before.state))?;
+  let mut calls = 1;
+  // A minimized window that was maximized restores to maximized; a second SW_RESTORE makes it
+  // normal.
+  if target == WindowStateTarget::Normal && current_target(&after.state) == WindowStateTarget::Maximized {
+    let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+    after = poll(window, |reading| current_target(&reading.state) == WindowStateTarget::Normal)?;
+    calls += 1;
+  }
+  let reached = current_target(&after.state);
+  if reached != target {
+    return Err(backend(format!(
+      "window mutation verification failed: window is {} after {calls} ShowWindow call(s), not {}",
+      target_name(reached),
+      target_name(target)
+    )));
+  }
+  let attempt =
+    WindowMutationAttempt::success(WindowMutationPath::PlatformNative, format!("ShowWindow x{calls} to {}", target_name(target)));
+  Ok(mutation_result(attempt, &before, &after, false))
+}
 
-  fn apply(hwnd: HWND, kind: WindowMutationKind) -> DriverResult<()> {
-    match kind {
-      WindowMutationKind::MoveTo { point } => {
-        let x = rounded_i32(point.x, "point.x")?;
-        let y = rounded_i32(point.y, "point.y")?;
-        unsafe { SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) }
-          .map_err(|error| backend(format!("SetWindowPos move failed: {error}")))
-      }
-      WindowMutationKind::Resize { size } => {
-        let width = rounded_positive_i32(size.width, "size.width")?;
-        let height = rounded_positive_i32(size.height, "size.height")?;
-        unsafe { SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) }
-          .map_err(|error| backend(format!("SetWindowPos resize failed: {error}")))
-      }
-      WindowMutationKind::SetFrame { frame } => {
-        let x = rounded_i32(frame.origin.x, "frame.origin.x")?;
-        let y = rounded_i32(frame.origin.y, "frame.origin.y")?;
-        let width = rounded_positive_i32(frame.size.width, "frame.size.width")?;
-        let height = rounded_positive_i32(frame.size.height, "frame.size.height")?;
-        unsafe { SetWindowPos(hwnd, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE) }
-          .map_err(|error| backend(format!("SetWindowPos set_frame failed: {error}")))
-      }
-      // ShowWindow returns the prior visibility as a BOOL and does not signal
-      // failure, so the return value is intentionally ignored.
-      WindowMutationKind::Minimize => {
-        let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
-        Ok(())
-      }
-      WindowMutationKind::Restore => {
-        let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
-        Ok(())
-      }
-      WindowMutationKind::Zoom => {
-        let _ = unsafe { ShowWindow(hwnd, SW_MAXIMIZE) };
-        Ok(())
-      }
+#[cfg(target_os = "windows")]
+fn native_focus(window: &Window, options: &WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+  use crate::window::{activate_window, read_window};
+
+  let before = read_window(window)?;
+  if before.state.is_focused == Some(true) {
+    let attempt = WindowMutationAttempt::success(WindowMutationPath::PlatformNative, "already focused; no call made");
+    return Ok(mutation_result(attempt, &before, &before, false));
+  }
+  // NOTICE: `activate_window` restores a minimized window (a focused window must be shown) but
+  // keeps a maximized one maximized. Its refusal (`SetForegroundWindow` denied by the foreground
+  // lock) is the error.
+  activate_window(window)?;
+  if !options.settle.is_zero() {
+    std::thread::sleep(options.settle);
+  }
+  let after = read_window(window)?;
+  if after.state.is_focused != Some(true) {
+    return Err(backend("window mutation verification failed: another window is in front after focus settled"));
+  }
+  let attempt = WindowMutationAttempt::success(WindowMutationPath::PlatformNative, "SetForegroundWindow");
+  Ok(mutation_result(attempt, &before, &after, false))
+}
+
+/// Reads the window up to `READBACK_ATTEMPTS` times until `settled` holds, returning the last
+/// reading either way.
+#[cfg(target_os = "windows")]
+fn poll(window: &Window, settled: impl Fn(&WindowReading) -> bool) -> DriverResult<WindowReading> {
+  let mut reading = crate::window::read_window(window)?;
+  for _ in 1..READBACK_ATTEMPTS {
+    if settled(&reading) {
+      break;
     }
+    std::thread::sleep(READBACK_INTERVAL);
+    reading = crate::window::read_window(window)?;
   }
-
-  /// Reads the visible window rectangle, preferring the DWM extended frame
-  /// bounds and falling back to `GetWindowRect`. Matches `window::native`.
-  fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
-    let mut rect = RECT::default();
-    let dwm =
-      unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32) };
-    if dwm.is_err() {
-      unsafe {
-        GetWindowRect(hwnd, &mut rect).map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
-      }
-    }
-    Ok(Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top)))
-  }
+  Ok(reading)
 }
 
 #[cfg(test)]

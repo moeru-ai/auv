@@ -1,107 +1,76 @@
+use auv_driver_common::error::DriverError;
 use auv_driver_common::geometry::{Point, Rect, Size};
-use auv_driver_common::input::DisturbanceLevel;
-use auv_driver_common::window::{WindowMutationKind, WindowMutationPath, WindowMutationVerification, WindowState};
+use auv_driver_common::window::{WindowState, WindowStateTarget};
 
 use super::*;
 
-fn outcome(before: Rect, after: Rect) -> NativeMutationOutcome {
-  NativeMutationOutcome {
-    before_frame: before,
-    after_frame: after,
-    before_minimized: false,
-    after_minimized: false,
-    before_visible: true,
-    after_visible: true,
-  }
-}
-
+// Owner decision 2026-11-03: a maximized window may take a frame and ends normal; a minimized
+// window is still refused.
 #[test]
-fn move_result_reports_platform_native_path() {
-  let kind = WindowMutationKind::MoveTo {
-    point: Point::new(10.0, 20.0),
+fn set_frame_allows_a_maximized_window_and_refuses_a_minimized_one() {
+  let normal = WindowState {
+    is_minimized: Some(false),
+    is_maximized: Some(false),
+    is_fullscreen: Some(false),
+    ..Default::default()
   };
-  let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(10.0, 20.0, 100.0, 80.0)));
-
-  assert_eq!(result.selected_path, WindowMutationPath::PlatformNative);
-  assert_eq!(result.focus_disturbance, DisturbanceLevel::None);
-  assert!(result.attempts[0].succeeded);
-}
-
-#[test]
-fn state_change_reports_foreground_focus_disturbance() {
-  let result =
-    window_mutation_result(WindowMutationKind::Minimize, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(0.0, 0.0, 100.0, 80.0)));
-
-  assert_eq!(result.focus_disturbance, DisturbanceLevel::Foreground);
-}
-
-#[test]
-fn move_within_tolerance_passes_verification() {
-  let kind = WindowMutationKind::MoveTo {
-    point: Point::new(10.0, 20.0),
-  };
-  let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(11.0, 19.0, 100.0, 80.0)));
-
-  assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 2.0 }, &result).is_ok());
-}
-
-#[test]
-fn move_beyond_tolerance_fails_verification() {
-  let kind = WindowMutationKind::MoveTo {
-    point: Point::new(10.0, 20.0),
-  };
-  let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(50.0, 20.0, 100.0, 80.0)));
-
-  assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 2.0 }, &result).is_err());
-}
-
-#[test]
-fn resize_verifies_size_only() {
-  let kind = WindowMutationKind::Resize {
-    size: Size::new(640.0, 480.0),
-  };
-  let result = window_mutation_result(
-    kind,
-    // Origin moved but size matched; resize verification ignores origin.
-    outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(33.0, 44.0, 640.0, 480.0)),
-  );
-
-  assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 1.0 }, &result).is_ok());
-}
-
-#[test]
-fn minimize_state_verification_requires_minimized_flag() {
-  let kind = WindowMutationKind::Minimize;
-  let mut result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(0.0, 0.0, 100.0, 80.0)));
-
-  // Default outcome leaves after_minimized false -> verification fails.
-  assert!(verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_err());
-
-  result.after_state = Some(WindowState {
-    is_minimized: Some(true),
-    is_visible: Some(false),
-  });
-  assert!(verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_ok());
-}
-
-#[test]
-fn validate_rejects_non_finite_and_non_positive() {
+  assert!(frame_precondition(&normal).is_ok());
   assert!(
-    validate_window_mutation_kind(WindowMutationKind::MoveTo {
-      point: Point::new(f64::NAN, 0.0),
-    })
-    .is_err()
-  );
-  assert!(
-    validate_window_mutation_kind(WindowMutationKind::Resize {
-      size: Size::new(0.0, 100.0),
-    })
-    .is_err()
-  );
-  assert!(
-    validate_window_mutation_kind(WindowMutationKind::SetFrame {
-      frame: Rect::new(0.0, 0.0, 100.0, 100.0),
+    frame_precondition(&WindowState {
+      is_maximized: Some(true),
+      ..normal.clone()
     })
     .is_ok()
   );
+
+  let minimized = WindowState {
+    is_minimized: Some(true),
+    is_maximized: Some(true),
+    ..normal
+  };
+  let Err(DriverError::FailedPrecondition { message, recovery }) = frame_precondition(&minimized) else {
+    panic!("a minimized window must fail the precondition");
+  };
+  assert!(message.contains("minimized"), "{message}");
+  assert_eq!(recovery.as_deref(), Some("call set_state(Normal) first"));
+}
+
+#[test]
+fn a_frame_request_keeps_the_parts_it_leaves_out() {
+  let current = Rect::new(10.0, 20.0, 300.0, 200.0);
+
+  assert_eq!(requested_frame(current, Some(Point::new(50.0, 60.0)), None), Rect::new(50.0, 60.0, 300.0, 200.0));
+  assert_eq!(requested_frame(current, None, Some(Size::new(640.0, 480.0))), Rect::new(10.0, 20.0, 640.0, 480.0));
+  assert!(validate_frame_request(None, None).is_err());
+}
+
+// The window either lands on the request, settles elsewhere because the app adjusted it, or did
+// not change: only the last one fails verification.
+#[test]
+fn a_settled_frame_is_matched_adjusted_or_unchanged() {
+  let before = Rect::new(0.0, 0.0, 300.0, 200.0);
+  let requested = Rect::new(100.0, 100.0, 100.0, 50.0);
+
+  assert!(!judge_frame(before, Rect::new(101.0, 99.0, 100.0, 50.0), requested, 2.0).unwrap());
+  // Moved, but the app's minimum size kept it larger than requested.
+  assert!(judge_frame(before, Rect::new(100.0, 100.0, 160.0, 90.0), requested, 2.0).unwrap());
+  assert!(judge_frame(before, before, requested, 2.0).is_err());
+}
+
+#[test]
+fn a_minimized_window_counts_as_minimized_whatever_it_restores_to() {
+  let minimized_from_maximized = WindowState {
+    is_minimized: Some(true),
+    is_maximized: Some(true),
+    ..Default::default()
+  };
+  let maximized = WindowState {
+    is_minimized: Some(false),
+    is_maximized: Some(true),
+    ..Default::default()
+  };
+
+  assert_eq!(current_target(&minimized_from_maximized), WindowStateTarget::Minimized);
+  assert_eq!(current_target(&maximized), WindowStateTarget::Maximized);
+  assert_eq!(current_target(&WindowState::default()), WindowStateTarget::Normal);
 }

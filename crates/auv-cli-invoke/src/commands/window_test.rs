@@ -17,6 +17,7 @@ fn window_list_report_uses_human_first_table_and_wide_diagnostic_columns() {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     },
     Window {
       reference: WindowRef {
@@ -30,6 +31,7 @@ fn window_list_report_uses_human_first_table_and_wide_diagnostic_columns() {
       coordinate_space: CoordinateSpace::Screen,
       is_main: false,
       is_visible: false,
+      state: Default::default(),
     },
   ];
 
@@ -68,6 +70,7 @@ fn window_list_report_preserves_full_cell_values_for_human_rendering() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: true,
+    state: Default::default(),
   }];
 
   let output = InvokeCommandOutput::from_result(&windows).expect("window result should serialize").with_report(window_list_report(&windows));
@@ -94,6 +97,7 @@ fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     },
     matches: auv_driver::OcrMatches {
       matches: vec![auv_driver::OcrMatch {
@@ -144,6 +148,7 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     },
     matches: auv_driver::OcrMatches {
       matches: vec![
@@ -296,6 +301,7 @@ fn sample_window(frame: auv_driver::Rect) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
