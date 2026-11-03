@@ -55,11 +55,33 @@ function fakeDaemon(overrides: Partial<Transport> = {}): { calls: UnaryCall[], t
 }
 
 describe('sdk bridge', () => {
-  // ROOT CAUSE:
-  //
-  // Playground scripts could only reach Runner RPCs that had a hand-written
-  // binding. The bridge lets a script use `@auv-js/sdk` directly: encoded calls
-  // cross to the host, which adds the credential and records them.
+  it('rejects a late execution and a canceled execution before delivering or recording input', async () => {
+    const channel = new MessageChannel()
+    channels.push(channel)
+    const daemon = fakeDaemon()
+    const abort = new AbortController()
+    let recorded = 0
+    const { context: host } = createHostContext(channel.port1 as unknown as Worker)
+    serveBridge(host, {
+      record: () => {
+        recorded++
+        return () => {}
+      },
+      target: executionId => executionId === 2 ? { signal: abort.signal, transport: daemon.transport } : 'This script execution has ended.',
+    })
+    const { context: worker } = createWorkerContext({ messagePort: channel.port2 as unknown as Worker })
+    const old = await connect({ transport: createBridgeTransport(worker, () => null, () => 1) })
+    await expect(createAuv(old).runner({ runnerClass: 'auv.core.local' }).input.click({ x: 10, y: 20 })).rejects.toThrow('execution has ended')
+    const current = await connect({ transport: createBridgeTransport(worker, () => null, () => 2) })
+    abort.abort()
+    await expect(createAuv(current).runner({ runnerClass: 'auv.core.local' }).input.click({ x: 10, y: 20 })).rejects.toThrow()
+    expect(daemon.calls).toEqual([])
+    expect(recorded).toBe(0)
+    await old.close()
+    await current.close()
+  })
+
+  // SDK requests cross to the host, which adds credentials and records calls.
   it('forwards an SDK call to the host transport with the credential, and records it', async () => {
     const daemon = fakeDaemon()
     const recorded: Array<{ end?: BridgedCallEnd, start: BridgedCallStart }> = []

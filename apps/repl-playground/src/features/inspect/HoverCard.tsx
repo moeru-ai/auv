@@ -22,14 +22,16 @@ export function HoverCard({ info, line, name }: { info: HoverInfo | null, line: 
   const binds = usePlayground(state => state.binds)
   const vars = usePlayground(state => state.vars)
   const allCalls = usePlayground(state => state.calls)
+  const scriptId = usePlayground(state => state.run.script?.id)
+  const isolated = usePlayground(state => state.run.script?.kind === 'codemode')
   const resources = usePlayground(state => state.resources)
   const cursor = usePlayground(cursorSeq)
 
   // Value history: every binding of `name` in this run; top-level values from
   // an earlier cell fall back to the persisted value.
   // `binds` is subscribed above so the card re-renders as new values arrive.
-  const samples = name && binds.length > 0 ? bindHistory(usePlayground.getState(), name) : []
-  const persisted = name && samples.length === 0 && name in vars ? [{ hit: 1, line: 0, seq: -1, value: vars[name] }] : []
+  const samples = name && binds.length > 0 ? bindHistory(usePlayground.getState(), name, scriptId) : []
+  const persisted = !isolated && name && samples.length === 0 && name in vars ? [{ hit: 1, line: 0, seq: -1, value: vars[name] }] : []
   const values = samples.length > 0 ? samples : persisted
   const [valuePick, setValuePick] = useState<null | number>(null)
   const valueIndex = valuePick ?? sampleIndexAt(values, cursor)
@@ -40,7 +42,7 @@ export function HoverCard({ info, line, name }: { info: HoverInfo | null, line: 
   const [capturePick, setCapturePick] = useState<null | number>(null)
   const captureIndex = capturePick ?? sampleIndexAt(captures, cursor)
 
-  const calls = allCalls.filter(call => call.line === line)
+  const calls = allCalls.filter(call => call.line === line && call.script.id === scriptId)
   const [callPick, setCallPick] = useState<null | number>(null)
   const callIndex = callPick ?? sampleIndexAt(calls, cursor)
   const call = calls[callIndex]

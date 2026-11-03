@@ -89,5 +89,5 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
-      - name: Test
+      - name: Test (includes Playground Node and browser projects)
         run: pnpm test:run

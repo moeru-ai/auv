@@ -48,10 +48,11 @@ export function VariablesPanel() {
   const binds = usePlayground(state => state.binds)
   const cursor = usePlayground(cursorSeq)
   const following = usePlayground(state => state.cursor === null)
+  const isolated = usePlayground(state => state.run.script?.kind === 'codemode')
   const entries = useMemo(() => {
     const asOf = binds.length > 0 ? varsAt(usePlayground.getState(), cursor) : {}
-    return Object.entries(following ? { ...asOf, ...vars } : asOf)
-  }, [binds, cursor, following, vars])
+    return Object.entries(following && !isolated ? { ...asOf, ...vars } : asOf)
+  }, [binds, cursor, following, isolated, vars])
 
   if (entries.length === 0)
     return <Empty>Declared names show up here; scrub the timeline to see them at any moment.</Empty>
@@ -199,13 +200,17 @@ function CallPanel() {
             title="Move the time cursor to this call"
             type="button"
           >
-            {`${call.line === null ? '' : `L${call.line} `}#${call.hit} · seq ${call.seq}`}
+            {`S${call.script.id} · ${call.line === null ? '' : `L${call.line} `}#${call.hit} · seq ${call.seq}`}
           </button>
         </div>
         <div className="text-[11.5px] text-fg-subtle font-mono">
           {`${call.status}${duration === undefined ? '' : ` · ${duration}ms`} · ${call.effect}`}
         </div>
         <MethodDocs call={call} key={call.id} />
+        <details className="text-[11.5px]">
+          <summary className="text-fg-muted cursor-pointer">{`Script ${call.script.id} source · starts at L${call.script.startLine}`}</summary>
+          <pre className="font-mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere]">{call.script.source}</pre>
+        </details>
         {call.args.length > 0 && (
           <div className="flex flex-col gap-1">
             <div className="panel-title">Arguments</div>

@@ -1,9 +1,12 @@
+import { Tabs } from '@base-ui/react/tabs'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { useEffect } from 'react'
 import { Group, Panel } from 'react-resizable-panels'
 
 import { PanelFrame } from './components/PanelFrame'
 import { ResizeHandle } from './components/ResizeHandle'
+import { TabBar } from './components/TabBar'
+import { AgentTab } from './features/agent/AgentTab'
 import { DesktopCanvas } from './features/desktop/DesktopCanvas'
 import { restoreDevices } from './features/device/devices'
 import { CodeEditor } from './features/editor/CodeEditor'
@@ -56,10 +59,21 @@ export function App() {
                     </Panel>
                     <ResizeHandle orientation="horizontal" />
                     <Panel defaultSize="40%" minSize="20%">
-                      <PanelFrame title="Script">
-                        <CodeEditor />
-                        <DebugBar />
-                      </PanelFrame>
+                      <Tabs.Root className="bg-surface-1 flex flex-col h-full" defaultValue="agent">
+                        <TabBar tabs={[
+                          { icon: 'i-ph-chat-circle', label: 'Agent', value: 'agent' },
+                          { icon: 'i-ph-code', label: 'Script', value: 'script' },
+                        ]}
+                        />
+                        {/* Keep the connection and editor alive when switching tabs. */}
+                        <Tabs.Panel className="flex-1 min-h-0 data-[hidden]:hidden" keepMounted value="agent">
+                          <AgentTab />
+                        </Tabs.Panel>
+                        <Tabs.Panel className="flex-1 min-h-0 relative data-[hidden]:hidden" keepMounted value="script">
+                          <CodeEditor />
+                          <DebugBar />
+                        </Tabs.Panel>
+                      </Tabs.Root>
                     </Panel>
                     <ResizeHandle orientation="horizontal" />
                     <Panel defaultSize="22%" minSize="12%">

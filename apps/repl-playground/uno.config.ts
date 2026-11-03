@@ -13,9 +13,11 @@ export default defineConfig({
     presetIcons({ scale: 1.1 }),
   ],
   shortcuts: {
+    'agent-tool-output': 'text-[11px] text-fg-muted font-mono leading-[1.65] mt-1 mb-2 px-2.5 py-2 border border-line rounded-md bg-surface-1 max-h-[220px] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere]',
     'btn': 'inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[13px] font-medium transition-colors disabled:(opacity-40 cursor-not-allowed) cursor-pointer select-none',
     'btn-ghost': 'btn text-fg-muted hover:(bg-surface-2 text-fg)',
     'btn-primary': 'btn bg-accent text-white hover:bg-accent-strong',
+    'disclosure-summary': 'cursor-pointer [&::-webkit-details-marker]:hidden focus-visible:(outline-2 outline-accent outline-offset-3 rounded)',
     'input': 'h-8 w-full rounded-md border border-line bg-surface-1 px-2.5 text-[13px] text-fg outline-none focus:border-accent placeholder:text-fg-subtle',
     'panel-title': 'text-[11px] font-semibold uppercase tracking-wider text-fg-subtle',
   },
