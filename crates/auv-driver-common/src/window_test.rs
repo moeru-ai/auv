@@ -32,11 +32,14 @@ fn window_mutation_types_serde_as_snake_case() {
     before_state: Some(WindowState {
       is_minimized: Some(false),
       is_visible: Some(true),
+      ..Default::default()
     }),
     after_state: Some(WindowState {
       is_minimized: Some(false),
       is_visible: Some(true),
+      ..Default::default()
     }),
+    adjusted_by_app: false,
     focus_disturbance: DisturbanceLevel::None,
     mouse_disturbance: DisturbanceLevel::None,
   };
@@ -62,6 +65,7 @@ fn window(id: &str) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
@@ -87,4 +91,113 @@ fn visible_applications_hint_sorts_dedups_and_caps_the_list() {
   let hint = visible_applications_hint(many.iter().map(String::as_str));
   assert!(hint.starts_with("visible applications: app00, app01,"), "{hint}");
   assert!(hint.ends_with("app19, … (5 more)"), "{hint}");
+}
+
+fn minimized(mut window: Window) -> Window {
+  window.is_visible = false;
+  window.state.is_minimized = Some(true);
+  window
+}
+
+fn stacked(mut window: Window, stack_index: u32) -> Window {
+  window.state.stack_index = Some(stack_index);
+  window
+}
+
+fn selected(candidates: &[Window]) -> Option<&str> {
+  select_main_window(candidates).map(|window| window.reference.id.as_str())
+}
+
+#[test]
+fn select_main_window_takes_a_single_minimized_window() {
+  assert_eq!(selected(&[minimized(window("1"))]), Some("1"));
+  assert_eq!(selected(&[]), None);
+}
+
+#[test]
+fn select_main_window_prefers_a_shown_window_over_a_minimized_one() {
+  // The minimized window is frontmost and main; being shown still wins.
+  let mut hidden = stacked(minimized(window("hidden")), 0);
+  hidden.is_main = true;
+
+  assert_eq!(selected(&[hidden, stacked(window("shown"), 1)]), Some("shown"));
+}
+
+#[test]
+fn select_main_window_takes_the_frontmost_of_several_minimized_windows() {
+  let windows = [
+    stacked(minimized(window("back")), 3),
+    stacked(minimized(window("front")), 1),
+  ];
+
+  assert_eq!(selected(&windows), Some("front"));
+}
+
+#[test]
+fn select_main_window_takes_another_desktop_window_only_when_it_is_the_only_one() {
+  let mut elsewhere = stacked(window("elsewhere"), 0);
+  elsewhere.state.desktop = Some(WindowDesktop {
+    id: "other".into(),
+    is_current: false,
+  });
+
+  assert_eq!(selected(&[elsewhere.clone(), minimized(window("here"))]), Some("here"));
+  assert_eq!(selected(&[elsewhere]), Some("elsewhere"));
+}
+
+#[test]
+fn select_main_window_prefers_the_focused_window_over_the_main_one() {
+  let mut main = window("main");
+  main.is_main = true;
+  let mut focused = window("focused");
+  focused.state.is_focused = Some(true);
+
+  assert_eq!(selected(&[main, focused]), Some("focused"));
+}
+
+#[test]
+fn select_main_window_breaks_ties_by_stack_then_area_then_listing_order() {
+  let mut large = window("large");
+  large.frame = Rect::new(0.0, 0.0, 800.0, 600.0);
+
+  // A stacking position beats a larger frame without one.
+  assert_eq!(selected(&[large.clone(), stacked(window("stacked"), 5)]), Some("stacked"));
+  assert_eq!(selected(&[window("small"), large]), Some("large"));
+  assert_eq!(selected(&[window("first"), window("second")]), Some("first"));
+}
+
+#[test]
+fn window_list_filter_keeps_every_window_by_default() {
+  let other_desktop = Window {
+    state: WindowState {
+      desktop: Some(WindowDesktop {
+        id: "b".to_string(),
+        is_current: false,
+      }),
+      ..Default::default()
+    },
+    ..window("2")
+  };
+  let windows = [minimized(window("1")), other_desktop, window("3")];
+
+  let kept = |filter: WindowListFilter| {
+    windows.iter().filter(|window| filter.keeps(window)).map(|window| window.reference.id.as_str()).collect::<Vec<_>>()
+  };
+
+  assert_eq!(kept(WindowListFilter::default()), ["1", "2", "3"]);
+  assert_eq!(
+    kept(WindowListFilter {
+      exclude_minimized: true,
+      ..Default::default()
+    }),
+    ["2", "3"]
+  );
+  // Window 3 has no known desktop, so it stays.
+  assert_eq!(
+    kept(WindowListFilter {
+      exclude_other_desktops: true,
+      ..Default::default()
+    }),
+    ["1", "3"]
+  );
 }

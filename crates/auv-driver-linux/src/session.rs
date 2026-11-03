@@ -3,8 +3,8 @@ use std::thread;
 use auv_driver_common::application::{ApplicationActivationResult, ApplicationIdKind, unsupported_activation};
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
-use auv_driver_common::error::DriverResult;
-use auv_driver_common::geometry::{Point, RelativeRect, ScreenPoint, WindowPoint};
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::geometry::{Point, RelativeRect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
   ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
@@ -12,7 +12,7 @@ use auv_driver_common::input::{
 use auv_driver_common::permission::PermissionProbe;
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
-use auv_driver_common::window::Window;
+use auv_driver_common::window::{Window, WindowMutationOptions, WindowMutationResult, WindowStateTarget, find_window};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, list_displays};
@@ -197,6 +197,38 @@ impl WindowApi<'_> {
     resolve_window(&selector)
   }
 
+  pub fn get(&self, window_id: &str) -> DriverResult<Window> {
+    find_window(self.list()?, window_id)
+  }
+
+  // TODO(linux-window-management): window mutation and focus are not
+  // implemented on Linux. Wayland gives clients no portable way to move,
+  // resize, or activate another client's window; see "Linux (not supported
+  // yet)" in `docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md`
+  // for per-compositor routes. Re-open with an owner-approved Linux slice.
+  pub fn set_frame(
+    &self,
+    window: &Window,
+    origin: Option<Point>,
+    size: Option<Size>,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    let _ = (self.session, window, origin, size, options);
+    Err(window_management_unsupported("window.setFrame"))
+  }
+
+  // TODO(linux-window-management): see `set_frame`.
+  pub fn set_state(&self, window: &Window, state: WindowStateTarget, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    let _ = (self.session, window, state, options);
+    Err(window_management_unsupported("window.setState"))
+  }
+
+  // TODO(linux-window-management): see `set_frame`.
+  pub fn focus(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    let _ = (self.session, window, options);
+    Err(window_management_unsupported("window.focus"))
+  }
+
   pub fn capture(&self, window: &Window) -> DriverResult<Capture> {
     self.capture_with(window, CaptureOptions::default())
   }
@@ -332,6 +364,13 @@ impl WindowInput for WindowApi<'_> {
     );
     Ok((point, result))
   }
+}
+
+fn window_management_unsupported(operation: &'static str) -> DriverError {
+  DriverError::unsupported_with_recovery(
+    operation,
+    "Linux support is not written yet; pull requests are welcome at https://github.com/moeru-ai/auv",
+  )
 }
 
 /// Folds the AT-SPI window focus that precedes foreground pointer delivery

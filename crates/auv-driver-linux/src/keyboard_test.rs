@@ -61,6 +61,7 @@ fn a_keyboard_target_is_served_only_while_it_has_focus() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let editor = window("atspi::editor", Some("org.gnome.TextEditor"), "gnome-text-editor");
   let terminal = window("atspi::terminal", None, "org.gnome.Terminal");

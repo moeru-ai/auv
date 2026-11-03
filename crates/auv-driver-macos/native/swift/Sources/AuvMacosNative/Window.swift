@@ -17,8 +17,10 @@ private func boundsDict(_ value: NSDictionary?) -> [String: Int64]? {
 }
 
 func list_displays() -> NativeDisplayListResponse {
+  // Frames stay in Cocoa coordinates (bottom-left origin, y up) in
+  // `NSScreen.screens` order; the first screen is the primary display.
+  // `decode_display_response` converts them to global CG coordinates.
   let screens = NSScreen.screens
-  let referenceHeight = NSScreen.main?.frame.height ?? screens.first?.frame.height ?? 0
 
   var ids: [Int64] = []
   var mainFlags: [Bool] = []
@@ -47,11 +49,11 @@ func list_displays() -> NativeDisplayListResponse {
     mainFlags.append(CGDisplayIsMain(displayId) != 0)
     builtInFlags.append(CGDisplayIsBuiltin(displayId) != 0)
     boundsXValues.append(Int64(frame.origin.x.rounded()))
-    boundsYValues.append(Int64((referenceHeight - frame.origin.y - frame.height).rounded()))
+    boundsYValues.append(Int64(frame.origin.y.rounded()))
     boundsWidthValues.append(Int64(frame.width.rounded()))
     boundsHeightValues.append(Int64(frame.height.rounded()))
     visibleXValues.append(Int64(visibleFrame.origin.x.rounded()))
-    visibleYValues.append(Int64((referenceHeight - visibleFrame.origin.y - visibleFrame.height).rounded()))
+    visibleYValues.append(Int64(visibleFrame.origin.y.rounded()))
     visibleWidthValues.append(Int64(visibleFrame.width.rounded()))
     visibleHeightValues.append(Int64(visibleFrame.height.rounded()))
     scaleFactors.append(Double(scaleFactor))
@@ -80,14 +82,123 @@ func list_displays() -> NativeDisplayListResponse {
   )
 }
 
+/// AX facts for one window, keyed by its CGWindowID.
+private struct WindowAxState {
+  let minimized: Bool
+  let fullscreen: Bool
+}
+
+// NOTICE(window-list-ax-timeout): the default AX messaging timeout is about
+// 6 s per call, so one hung application would stall every listing. Reads in
+// the listing give up after this bound and leave that app's state unknown.
+private let windowListAxTimeout: Float = 0.5
+
+/// AX window state for every window of `pid`. Empty when Accessibility is not
+/// trusted or the application does not answer.
+private func windowAxStates(pid: pid_t) -> [Int64: WindowAxState] {
+  let appElement = AXUIElementCreateApplication(pid)
+  AXUIElementSetMessagingTimeout(appElement, windowListAxTimeout)
+  var states: [Int64: WindowAxState] = [:]
+  for window in windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String) {
+    guard let windowId = windowAxCgWindowId(window) else { continue }
+    states[windowId] = WindowAxState(
+      minimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String),
+      // NOTICE: `AXFullScreen` has no public constant in ApplicationServices;
+      // AppKit windows publish it under this name.
+      fullscreen: windowAxBoolAttribute(window, "AXFullScreen")
+    )
+  }
+  return states
+}
+
+/// The CGWindowID of the focused window of the frontmost application, or nil
+/// when it has none. `known` is false when focus could not be read.
+private func frontmostFocusedWindow(_ frontmost: NSRunningApplication?) -> (known: Bool, windowId: Int64?) {
+  guard AXIsProcessTrusted(), let frontmost else { return (false, nil) }
+  let appElement = AXUIElementCreateApplication(frontmost.processIdentifier)
+  AXUIElementSetMessagingTimeout(appElement, windowListAxTimeout)
+  guard let focused = windowAxElementAttribute(appElement, kAXFocusedWindowAttribute as String) else {
+    return (true, nil)
+  }
+  return (true, windowAxCgWindowId(focused))
+}
+
+/// The application that is frontmost now.
+// NOTICE(macos-frontmost-stale): `NSWorkspace.frontmostApplication` is updated
+// from workspace notifications on the main run loop, which the Runner and CLI
+// never pump, so a process keeps reporting the app that was frontmost at its
+// first read (reproduced 2026-11-03: it still named the terminal 3 s after
+// `open -a TextEdit`, and changed only after `RunLoop.run(until:)`). That made
+// `window.focus` fail verification right after a successful activation. The
+// system-wide AX element answers live; NSWorkspace stays the fallback when AX
+// is not trusted or has no focused application.
+private func currentFrontmostApplication() -> NSRunningApplication? {
+  if AXIsProcessTrusted() {
+    let systemWide = AXUIElementCreateSystemWide()
+    AXUIElementSetMessagingTimeout(systemWide, windowListAxTimeout)
+    var value: CFTypeRef?
+    if AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &value) == .success,
+       let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
+      var pid: pid_t = 0
+      if AXUIElementGetPid(value as! AXUIElement, &pid) == .success,
+         let app = NSRunningApplication(processIdentifier: pid) {
+        return app
+      }
+    }
+  }
+  return NSWorkspace.shared.frontmostApplication
+}
+
 func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse {
   let limit = max(Int(request.limit), 1)
   let appFilter = request.app_filter.toString().lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-  let frontmostAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-  let frontmostAppBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+  let includeOffscreen = request.include_offscreen
+  let frontmostApplication = currentFrontmostApplication()
+  let frontmostAppName = frontmostApplication?.localizedName ?? ""
+  let frontmostAppBundleId = frontmostApplication?.bundleIdentifier ?? ""
 
-  let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+  // `.optionAll` also returns windows that are not on screen: minimized
+  // windows, windows on other Spaces, tabs, and many invisible helper windows.
+  let options: CGWindowListOption =
+    includeOffscreen ? [.optionAll, .excludeDesktopElements] : [.optionOnScreenOnly, .excludeDesktopElements]
   let rawWindowInfo = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+
+  var applications: [Int: NSRunningApplication?] = [:]
+  func application(_ pid: Int) -> NSRunningApplication? {
+    if let cached = applications[pid] { return cached }
+    let app = NSRunningApplication(processIdentifier: pid_t(pid))
+    applications[pid] = app
+    return app
+  }
+  var axStates: [Int: [Int64: WindowAxState]] = [:]
+  func axState(_ pid: Int, _ windowNumber: Int64) -> WindowAxState? {
+    if axStates[pid] == nil {
+      // NOTICE(window-list-ax-latency): the first AX message to a process costs
+      // about 10-40 ms. Only regular (Dock) applications own user windows, so
+      // agents and XPC services are not asked.
+      // An unresolved application is asked anyway, because
+      // `NSRunningApplication(processIdentifier:)` can transiently miss a
+      // live app on worker threads (see `inputProcessIsRunning`).
+      let isRegular = application(pid).map { $0.activationPolicy == .regular } ?? true
+      axStates[pid] = isRegular ? windowAxStates(pid: pid_t(pid)) : [:]
+    }
+    return axStates[pid]?[windowNumber]
+  }
+  func matchesAppFilter(name: String, bundleId: String) -> Bool {
+    appFilter.isEmpty || name.lowercased().contains(appFilter) || bundleId.lowercased() == appFilter
+  }
+  // Only the frontmost application has a focused window. A listing scoped to
+  // another application skips the AX message to the frontmost one, which costs
+  // 10-40 ms when it is the first to that process; no window it returns can be
+  // focused, so focus stays known.
+  let focus: (known: Bool, windowId: Int64?)
+  if !includeOffscreen {
+    focus = (known: false, windowId: nil)
+  } else if matchesAppFilter(name: frontmostAppName, bundleId: frontmostAppBundleId) {
+    focus = frontmostFocusedWindow(frontmostApplication)
+  } else {
+    focus = (known: AXIsProcessTrusted(), windowId: nil)
+  }
 
   var appNames: [String] = []
   var ownerPids: [Int64] = []
@@ -99,39 +210,60 @@ func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse 
   var yValues: [Int64] = []
   var widthValues: [Int64] = []
   var heightValues: [Int64] = []
+  var onScreenFlags: [Bool] = []
+  var axStateFlags: [Bool] = []
+  var minimizedFlags: [Bool] = []
+  var fullscreenFlags: [Bool] = []
+  var focusedFlags: [Bool] = []
 
   for window in rawWindowInfo {
+    let alpha = window[kCGWindowAlpha as String] as? Double ?? 1.0
+    let bounds = boundsDict(window[kCGWindowBounds as String] as? NSDictionary)
+    // Dropped before the owner lookup: `.optionAll` returns hundreds of
+    // transparent or degenerate helper windows, and each new owner costs an
+    // `NSRunningApplication` lookup.
+    if alpha <= 0 || (bounds?["width"] ?? 0) <= 1 || (bounds?["height"] ?? 0) <= 1 {
+      continue
+    }
     let ownerName = (window[kCGWindowOwnerName as String] as? String) ?? "Unknown"
     let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
-    let ownerBundleId = NSRunningApplication(processIdentifier: pid_t(ownerPid))?.bundleIdentifier ?? ""
-    if !appFilter.isEmpty
-      && !ownerName.lowercased().contains(appFilter)
-      && ownerBundleId.lowercased() != appFilter {
+    let ownerBundleId = application(ownerPid)?.bundleIdentifier ?? ""
+    if !matchesAppFilter(name: ownerName, bundleId: ownerBundleId) {
       continue
     }
 
-    let alpha = window[kCGWindowAlpha as String] as? Double ?? 1.0
     let layer = window[kCGWindowLayer as String] as? Int ?? 0
-    let bounds = boundsDict(window[kCGWindowBounds as String] as? NSDictionary)
     let title =
       (window[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
       ?? ""
-    let windowNumber = window[kCGWindowNumber as String] as? Int ?? 0
+    let windowNumber = Int64(window[kCGWindowNumber as String] as? Int ?? 0)
+    let onScreen = !includeOffscreen || (window[kCGWindowIsOnscreen as String] as? Bool ?? false)
 
-    if alpha <= 0 || (bounds?["width"] ?? 0) <= 1 || (bounds?["height"] ?? 0) <= 1 {
+    let ax = includeOffscreen && layer == 0 ? axState(ownerPid, windowNumber) : nil
+    // An off-screen window is listed only when its application reports it as
+    // an AX window (for example a minimized window). This drops the helper
+    // and tab windows that `.optionAll` returns.
+    // TODO(macos-window-space): windows on other Spaces are not AX windows of
+    // their application and stay unlisted; listing them needs private CGS API.
+    if !onScreen && ax == nil {
       continue
     }
 
     appNames.append(ownerName)
     ownerPids.append(Int64(ownerPid))
     ownerBundleIds.append(ownerBundleId)
-    windowNumbers.append(Int64(windowNumber))
+    windowNumbers.append(windowNumber)
     layers.append(Int64(layer))
     titles.append(title)
     xValues.append(bounds?["x"] ?? 0)
     yValues.append(bounds?["y"] ?? 0)
     widthValues.append(bounds?["width"] ?? 0)
     heightValues.append(bounds?["height"] ?? 0)
+    onScreenFlags.append(onScreen)
+    axStateFlags.append(ax != nil)
+    minimizedFlags.append(ax?.minimized ?? false)
+    fullscreenFlags.append(ax?.fullscreen ?? false)
+    focusedFlags.append(focus.windowId == windowNumber)
 
     if appNames.count >= limit {
       break
@@ -162,17 +294,17 @@ func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse 
     y_values: nativeVec(yValues),
     width_values: nativeVec(widthValues),
     height_values: nativeVec(heightValues),
+    on_screen_flags: nativeVec(onScreenFlags),
+    ax_state_flags: nativeVec(axStateFlags),
+    minimized_flags: nativeVec(minimizedFlags),
+    fullscreen_flags: nativeVec(fullscreenFlags),
+    focused_flags: nativeVec(focusedFlags),
+    focus_known: focus.known,
     error_message: nil,
     recovery_hint: nil
   )
 }
 
-private struct NativeWindowFrame {
-  let x: Int64
-  let y: Int64
-  let width: Int64
-  let height: Int64
-}
 
 private typealias AXUIElementGetWindowFn = @convention(c) (
   AXUIElement,
@@ -259,14 +391,6 @@ private func windowAxValueAttribute(_ element: AXUIElement, _ attribute: String)
   return unsafeBitCast(rawValue, to: AXValue.self)
 }
 
-private func windowAxPointAttribute(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
-  guard let value = windowAxValueAttribute(element, attribute) else { return nil }
-  guard AXValueGetType(value) == .cgPoint else { return nil }
-  var point = CGPoint.zero
-  guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
-  return point
-}
-
 private func windowAxSizeAttribute(_ element: AXUIElement, _ attribute: String) -> CGSize? {
   guard let value = windowAxValueAttribute(element, attribute) else { return nil }
   guard AXValueGetType(value) == .cgSize else { return nil }
@@ -274,232 +398,147 @@ private func windowAxSizeAttribute(_ element: AXUIElement, _ attribute: String) 
   guard AXValueGetValue(value, .cgSize, &size) else { return nil }
   return size
 }
+// NOTICE(window-mutation-ax-timeout): a hung application must not stall a
+// window mutation for the default ~6 s per AX message. trycua/cua
+// `libs/cua-driver/rust/crates/platform-macos/src/tools/set_window_frame.rs`
+// uses the same bound (checked 2026-11-03).
+private let windowMutationAxTimeout: Float = 2.0
 
-private func windowAxFrame(_ element: AXUIElement) -> NativeWindowFrame {
-  let point = windowAxPointAttribute(element, kAXPositionAttribute as String) ?? .zero
-  let size = windowAxSizeAttribute(element, kAXSizeAttribute as String) ?? .zero
-  return NativeWindowFrame(
-    x: Int64(point.x.rounded()),
-    y: Int64(point.y.rounded()),
-    width: Int64(size.width.rounded()),
-    height: Int64(size.height.rounded())
-  )
-}
-
-private func emptyWindowMutationResponse(
-  message: String,
-  recovery: String,
-  before: NativeWindowFrame = NativeWindowFrame(x: 0, y: 0, width: 0, height: 0),
-  after: NativeWindowFrame = NativeWindowFrame(x: 0, y: 0, width: 0, height: 0),
-  wasMinimized: Bool = false,
-  isMinimized: Bool = false
-) -> NativeWindowMutationResponse {
+private func windowMutationError(_ message: String, _ recovery: String) -> NativeWindowMutationResponse {
   NativeWindowMutationResponse(
     performed_action: "".intoRustString(),
     path: "".intoRustString(),
-    before_x: before.x,
-    before_y: before.y,
-    before_width: before.width,
-    before_height: before.height,
-    after_x: after.x,
-    after_y: after.y,
-    after_width: after.width,
-    after_height: after.height,
-    was_minimized: wasMinimized,
-    is_minimized: isMinimized,
     error_message: message.intoRustString(),
     recovery_hint: recovery.intoRustString()
   )
 }
 
-private func resolveWindowMutationTarget(
-  request: NativeWindowMutationRequest
+/// The AX element of window `windowNumber` owned by `pid`, with the mutation
+/// messaging timeout set on the application and window elements.
+private func resolveMutationWindow(
+  pid: Int64,
+  windowNumber: Int64,
+  title: String
 ) -> (window: AXUIElement, path: String)? {
-  let appElement = AXUIElementCreateApplication(pid_t(request.pid))
+  guard pid > 0 && pid <= Int64(Int32.max) else { return nil }
+  let appElement = AXUIElementCreateApplication(pid_t(pid))
+  AXUIElementSetMessagingTimeout(appElement, windowMutationAxTimeout)
   let windows = windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String)
-  let requestedWindowNumber = request.window_number
-  if requestedWindowNumber > 0 {
-    for (index, window) in windows.enumerated() {
-      if windowAxCgWindowId(window) == requestedWindowNumber {
-        return (window, "pid=\(request.pid) window_number=\(requestedWindowNumber) ax_window_index=\(index)")
-      }
+  var resolved: (AXUIElement, String)?
+  if windowNumber > 0 {
+    if let index = windows.firstIndex(where: { windowAxCgWindowId($0) == windowNumber }) {
+      resolved = (windows[index], "pid=\(pid) window_number=\(windowNumber) ax_window_index=\(index)")
     }
-    return nil
-  }
-
-  let requestedTitle = request.title.toString().trimmingCharacters(in: .whitespacesAndNewlines)
-  if !requestedTitle.isEmpty {
-    for (index, window) in windows.enumerated() {
-      if windowAxStringAttribute(window, kAXTitleAttribute as String) == requestedTitle {
-        return (window, "pid=\(request.pid) title=\(requestedTitle) ax_window_index=\(index)")
-      }
+  } else if !title.isEmpty {
+    if let index = windows.firstIndex(where: { windowAxStringAttribute($0, kAXTitleAttribute as String) == title }) {
+      resolved = (windows[index], "pid=\(pid) title=\(title) ax_window_index=\(index)")
     }
+  } else if let focusedWindow = windowAxElementAttribute(appElement, kAXFocusedWindowAttribute as String) {
+    resolved = (focusedWindow, "pid=\(pid) focused_window")
   }
-
-  if requestedWindowNumber <= 0 && requestedTitle.isEmpty,
-     let focusedWindow = windowAxElementAttribute(appElement, kAXFocusedWindowAttribute as String) {
-    return (focusedWindow, "pid=\(request.pid) focused_window")
-  }
-
-  return nil
+  guard let resolved else { return nil }
+  AXUIElementSetMessagingTimeout(resolved.0, windowMutationAxTimeout)
+  return (resolved.0, resolved.1)
 }
 
-private func setWindowPosition(_ window: AXUIElement, x: Int64, y: Int64) -> AXError {
+private func setWindowPosition(_ window: AXUIElement, x: Double, y: Double) -> AXError {
   var point = CGPoint(x: CGFloat(x), y: CGFloat(y))
   guard let value = AXValueCreate(.cgPoint, &point) else { return .failure }
   return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
 }
 
-private func setWindowSize(_ window: AXUIElement, width: Int64, height: Int64) -> AXError {
+private func setWindowSize(_ window: AXUIElement, width: Double, height: Double) -> AXError {
   var size = CGSize(width: CGFloat(width), height: CGFloat(height))
   guard let value = AXValueCreate(.cgSize, &size) else { return .failure }
   return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
 }
 
-func mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse {
-  // TODO(window-management-api-task3): pointer and foreground fallback are
-  // deferred because this task exposes only the native AX bridge; add fallback
-  // policy when WindowApi dispatch is introduced.
-  guard request.pid >= 0 && request.pid <= Int64(Int32.max),
-        NSRunningApplication(processIdentifier: pid_t(request.pid)) != nil else {
-    return emptyWindowMutationResponse(
-      message: "could not resolve target AX app for pid \(request.pid)",
-      recovery: "verify the app is still running, refresh the window list, and retry with a current pid"
+/// One geometry pass. Rust owns the corrective-pass policy and confirms each
+/// pass against `window_server_frame`, not against the AX values written here.
+func write_window_frame(request: NativeWindowFrameWriteRequest) -> NativeActionResponse {
+  guard let target = resolveMutationWindow(pid: request.pid, windowNumber: request.window_number, title: "") else {
+    return nativeActionError(
+      "could not resolve target AX window for pid \(request.pid), window_number \(request.window_number)",
+      "verify Accessibility permission, refresh the window list, and retry with a current window"
     )
   }
+  // NOTICE(macos-ax-position-before-size): on macOS Tahoe, writing AXPosition
+  // right after AXSize can silently restore the old size while both writes
+  // report success. Position is written first. See trycua/cua
+  // `platform-macos/src/tools/set_window_frame.rs` (checked 2026-11-03).
+  if request.write_position {
+    let result = setWindowPosition(target.window, x: request.x, y: request.y)
+    guard result == .success else {
+      return nativeActionError(
+        "AXUIElementSetAttributeValue(kAXPositionAttribute) returned \(result.rawValue) (\(target.path))",
+        "verify the target window accepts AXPosition and retry"
+      )
+    }
+  }
+  if request.write_size {
+    let result = setWindowSize(target.window, width: request.width, height: request.height)
+    guard result == .success else {
+      return nativeActionError(
+        "AXUIElementSetAttributeValue(kAXSizeAttribute) returned \(result.rawValue) (\(target.path))",
+        "the window may not be resizable; retry with only an origin"
+      )
+    }
+  }
+  return nativeActionOk()
+}
 
-  guard let target = resolveWindowMutationTarget(request: request) else {
-    return emptyWindowMutationResponse(
-      message: "could not resolve target AX window for pid \(request.pid), window_number \(request.window_number), title \(request.title.toString())",
-      recovery: "verify Accessibility permission, refresh the window list, and retry with pid plus window_number or title"
+func window_server_frame(window_number: Int64) -> NativeWindowServerFrameResponse {
+  let missing = NativeWindowServerFrameResponse(found: false, x: 0, y: 0, width: 0, height: 0)
+  guard window_number > 0, window_number <= Int64(UInt32.max),
+        let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(window_number)) as? [[String: Any]],
+        let window = windows.first(where: { ($0[kCGWindowNumber as String] as? NSNumber)?.int64Value == window_number }),
+        let bounds = window[kCGWindowBounds as String] as? NSDictionary
+  else { return missing }
+  var rect = CGRect.zero
+  guard CGRectMakeWithDictionaryRepresentation(bounds, &rect) else { return missing }
+  return NativeWindowServerFrameResponse(
+    found: true,
+    x: Double(rect.origin.x),
+    y: Double(rect.origin.y),
+    width: Double(rect.size.width),
+    height: Double(rect.size.height)
+  )
+}
+
+/// Minimize, unminimize or raise one window. The caller reads the state
+/// back through the window listing after its settle delay.
+func mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse {
+  guard let target = resolveMutationWindow(
+    pid: request.pid,
+    windowNumber: request.window_number,
+    title: request.title.toString().trimmingCharacters(in: .whitespacesAndNewlines)
+  ) else {
+    return windowMutationError(
+      "could not resolve target AX window for pid \(request.pid), window_number \(request.window_number), title \(request.title.toString())",
+      "verify Accessibility permission, refresh the window list, and retry with pid plus window_number or title"
     )
   }
 
   let window = target.window
-  let before = windowAxFrame(window)
-  let wasMinimized = windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-  var action = ""
-
+  let action: String
+  let result: AXError
   switch request.kind {
-  case .MoveTo:
-    let result = setWindowPosition(window, x: request.x, y: request.y)
-    guard result == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXPositionAttribute) returned \(result.rawValue)",
-        recovery: "verify the target window accepts AXPosition mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "move_to"
-  case .Resize:
-    let result = setWindowSize(window, width: request.width, height: request.height)
-    guard result == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXSizeAttribute) returned \(result.rawValue)",
-        recovery: "verify the target window accepts AXSize mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "resize"
-  case .SetFrame:
-    // TODO(window-set-frame-transaction): rollback is deferred because this
-    // slice only exposes native AX mutation and verification; add transactional
-    // recovery when owner approves rollback policy for partially moved windows.
-    let positionResult = setWindowPosition(window, x: request.x, y: request.y)
-    guard positionResult == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXPositionAttribute) returned \(positionResult.rawValue)",
-        recovery: "verify the target window accepts AXPosition mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    let sizeResult = setWindowSize(window, width: request.width, height: request.height)
-    guard sizeResult == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXSizeAttribute) returned \(sizeResult.rawValue)",
-        recovery: "verify the target window accepts AXSize mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "set_frame"
   case .Minimize:
-    let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-    guard result == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXMinimizedAttribute=true) returned \(result.rawValue)",
-        recovery: "verify the target window accepts AXMinimized mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "minimize"
-  case .Restore:
-    let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-    guard result == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementSetAttributeValue(kAXMinimizedAttribute=false) returned \(result.rawValue)",
-        recovery: "verify the target window accepts AXMinimized mutations and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "restore"
-  case .Zoom:
-    guard let zoomButton = windowAxElementAttribute(window, kAXZoomButtonAttribute as String) else {
-      return emptyWindowMutationResponse(
-        message: "target AX window does not expose kAXZoomButtonAttribute",
-        recovery: "choose a window that exposes a zoom button or use move/resize/set_frame instead",
-        before: before,
-        after: before,
-        wasMinimized: wasMinimized,
-        isMinimized: wasMinimized
-      )
-    }
-    let result = AXUIElementPerformAction(zoomButton, kAXPressAction as CFString)
-    guard result == .success else {
-      return emptyWindowMutationResponse(
-        message: "AXUIElementPerformAction(kAXPressAction) on kAXZoomButtonAttribute returned \(result.rawValue)",
-        recovery: "verify the target window zoom button accepts AXPress and retry",
-        before: before,
-        after: windowAxFrame(window),
-        wasMinimized: wasMinimized,
-        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
-      )
-    }
-    action = "zoom"
+    action = "set AXMinimized=true"
+    result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
+  case .Unminimize:
+    action = "set AXMinimized=false"
+    result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+  case .Raise:
+    action = "kAXRaiseAction"
+    result = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
   }
-
-  let after = windowAxFrame(window)
-  let isMinimized = windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+  guard result == .success else {
+    return windowMutationError("\(action) returned AXError \(result.rawValue)", "verify the target window supports \(action) and retry")
+  }
   return NativeWindowMutationResponse(
     performed_action: action.intoRustString(),
     path: target.path.intoRustString(),
-    before_x: before.x,
-    before_y: before.y,
-    before_width: before.width,
-    before_height: before.height,
-    after_x: after.x,
-    after_y: after.y,
-    after_width: after.width,
-    after_height: after.height,
-    was_minimized: wasMinimized,
-    is_minimized: isMinimized,
     error_message: nil,
     recovery_hint: nil
   )

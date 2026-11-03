@@ -114,6 +114,7 @@ fn create_test_window(
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
 
   (

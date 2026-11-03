@@ -36,6 +36,7 @@ fn focus_result_uses_ax_focus_path() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
 
   let result = InputActionResult {

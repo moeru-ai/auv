@@ -59,8 +59,9 @@ pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{ImageMatch, ImageMatchResult, OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
 pub use window::{
-  ObservedWindows, Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
-  WindowMutationPolicy, WindowMutationResult, WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState, find_window,
+  ObservedWindows, Window, WindowDesktop, WindowListFilter, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
+  WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult, WindowMutationStrategy, WindowMutationVerification,
+  WindowRef, WindowState, WindowStateTarget, find_window, select_main_window,
 };
 
 #[cfg(test)]

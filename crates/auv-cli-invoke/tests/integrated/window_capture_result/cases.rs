@@ -18,6 +18,7 @@ fn pixels_are_excluded_from_the_public_window_capture_result() {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     },
     capture: Capture {
       origin: None,

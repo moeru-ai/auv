@@ -15,6 +15,7 @@ fn test_window(width: f64, height: f64) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 

@@ -990,13 +990,10 @@ pub(super) fn resolve_window_ref(
   if window_ref.window_id.trim().is_empty() {
     return Err(Status::invalid_argument("window.window_id is required"));
   }
-  session
-    .window()
-    .list()
-    .map_err(driver_status)?
-    .into_iter()
-    .find(|window| window.reference.id == window_ref.window_id)
-    .ok_or_else(|| Status::not_found(format!("unknown Window: {}", window_ref.window_id)))
+  // NOTICE: every platform's `get` is a full listing plus a lookup today, so
+  // this costs what the former list-and-find did. `TODO(window-list-cache)`:
+  // the watch model becomes the cache; no other cache is added before it.
+  session.window().get(&window_ref.window_id).map_err(driver_status)
 }
 
 /// Window-point input is accepted only inside the freshly resolved Window, so a
@@ -2599,7 +2596,9 @@ fn driver_status(error: auv_driver::DriverError) -> Status {
     auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
     auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
     auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
-    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),
+    auv_driver::DriverError::StaleUiReference { .. }
+    | auv_driver::DriverError::RoleMismatch { .. }
+    | auv_driver::DriverError::FailedPrecondition { .. } => Status::failed_precondition(message),
     auv_driver::DriverError::Backend { .. } => Status::unavailable(message),
   }
 }

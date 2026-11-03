@@ -338,9 +338,7 @@ fn windows_not_found_media_session_maps_to_not_found() {
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_unsupported_media_backend_maps_to_unimplemented() {
-  let status = windows_media_control_status(auv_driver::DriverError::Unsupported {
-    operation: "media controls",
-  });
+  let status = windows_media_control_status(auv_driver::DriverError::unsupported("media controls"));
   assert_eq!(status.code(), tonic::Code::Unimplemented);
 }
 
@@ -978,6 +976,7 @@ fn window_scoped_positions_convert_with_the_current_window_frame() {
     coordinate_space: auv_driver::CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let no_display = |id: &str| -> Result<auv_driver::Point, Status> { panic!("unexpected display lookup for {id}") };
   let at = |x, y, coordinate_space| auv_driver::Position {

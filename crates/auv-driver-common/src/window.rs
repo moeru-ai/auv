@@ -28,6 +28,10 @@ pub struct Window {
   pub coordinate_space: CoordinateSpace,
   pub is_main: bool,
   pub is_visible: bool,
+  /// Minimized, maximized, focus, stacking and desktop facts. A `None` field
+  /// means the platform cannot tell, never "false".
+  #[serde(default)]
+  pub state: WindowState,
 }
 
 /// The window with `id` from an observation, or `NotFound` naming `window:<id>`.
@@ -37,6 +41,61 @@ pub struct Window {
 pub fn find_window(windows: impl IntoIterator<Item = Window>, id: &str) -> DriverResult<Window> {
   windows.into_iter().find(|window| window.reference.id == id).ok_or_else(|| DriverError::NotFound {
     target: format!("window:{id}"),
+  })
+}
+
+/// Opt-outs for a window listing. The default lists every window a user could
+/// switch to, minimized windows and windows on other desktops included.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowListFilter {
+  pub exclude_minimized: bool,
+  /// Drops windows known to be on another desktop. A window whose desktop is
+  /// unknown (`state.desktop` is `None`) is kept.
+  pub exclude_other_desktops: bool,
+}
+
+impl WindowListFilter {
+  /// Whether `window` stays in a listing with this filter.
+  pub fn keeps(&self, window: &Window) -> bool {
+    let minimized = window.state.is_minimized == Some(true);
+    let on_other_desktop = window.state.desktop.as_ref().is_some_and(|desktop| !desktop.is_current);
+    !(self.exclude_minimized && minimized || self.exclude_other_desktops && on_other_desktop)
+  }
+}
+
+/// The application's main window among `candidates`: the windows that already
+/// match a selector's application and title. `None` only when there is none.
+///
+/// One narrowing cascade shared by every platform resolver and by callers that
+/// need "the app's main window" (`application.activate`). Each preference keeps only
+/// the candidates that pass it, but is skipped when none would pass, so a
+/// single minimized window or a window on another desktop is still chosen.
+/// See "Main window selection" in
+/// `docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md`.
+pub fn select_main_window<'a>(candidates: impl IntoIterator<Item = &'a Window>) -> Option<&'a Window> {
+  let preferences: [fn(&Window) -> bool; 5] = [
+    |window| window.state.desktop.as_ref().is_none_or(|desktop| desktop.is_current),
+    |window| window.state.is_minimized != Some(true),
+    |window| window.state.is_focused == Some(true),
+    |window| window.is_main,
+    |window| window.title.as_deref().is_some_and(|title| !title.trim().is_empty()),
+  ];
+  let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+  for prefers in preferences {
+    if candidates.len() <= 1 {
+      break;
+    }
+    if candidates.iter().any(|window| prefers(window)) {
+      candidates.retain(|window| prefers(window));
+    }
+  }
+  // Frontmost first (a window without a stacking position goes last), then
+  // the largest frame; `min_by` keeps the first of equal windows, which is
+  // listing order.
+  candidates.into_iter().min_by(|a, b| {
+    let stack = |window: &Window| (window.state.stack_index.is_none(), window.state.stack_index);
+    let area = |window: &Window| window.frame.size.width * window.frame.size.height;
+    stack(a).cmp(&stack(b)).then_with(|| area(b).total_cmp(&area(a)))
   })
 }
 
@@ -190,6 +249,10 @@ pub struct WindowMutationResult {
   pub after_frame: Option<Rect>,
   pub before_state: Option<WindowState>,
   pub after_state: Option<WindowState>,
+  /// The window changed but the app settled it at another frame than the one
+  /// requested (minimum or maximum size, grid snapping).
+  #[serde(default)]
+  pub adjusted_by_app: bool,
   pub focus_disturbance: DisturbanceLevel,
   pub mouse_disturbance: DisturbanceLevel,
 }
@@ -201,21 +264,59 @@ impl WindowMutationResult {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What a platform knows about a window beyond its frame. See
+/// `docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowState {
   pub is_minimized: Option<bool>,
+  pub is_maximized: Option<bool>,
+  pub is_fullscreen: Option<bool>,
   pub is_visible: Option<bool>,
+  /// Has keyboard focus. Distinct from `Window::is_main`, which keeps its
+  /// selector meaning.
+  pub is_focused: Option<bool>,
+  pub is_always_on_top: Option<bool>,
+  /// 0 is the frontmost window of the listing that carries it. Valid only
+  /// inside that listing or event; it is not an identity.
+  pub stack_index: Option<u32>,
+  pub desktop: Option<WindowDesktop>,
+}
+
+/// The virtual desktop a window is on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowDesktop {
+  /// Opaque platform id, such as a Windows virtual desktop GUID. Callers
+  /// compare it and never parse it.
+  pub id: String,
+  pub is_current: bool,
+}
+
+/// The state `SetWindowState` moves a window to.
+// TODO(window-fullscreen): no `Fullscreen` target. macOS full screen moves the
+// window to its own Space with an asynchronous animation, and Win32 has no
+// generic full screen for another app's window. `WindowState::is_fullscreen`
+// stays on the read side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowStateTarget {
+  /// Neither minimized nor maximized.
+  Normal,
+  Minimized,
+  Maximized,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowMutationKind {
-  MoveTo { point: Point },
-  Resize { size: Size },
-  SetFrame { frame: Rect },
-  Minimize,
-  Restore,
-  Zoom,
+  /// Moves and/or resizes a `Normal` window. A missing origin keeps the
+  /// position; a missing size keeps the size.
+  SetFrame {
+    origin: Option<Point>,
+    size: Option<Size>,
+  },
+  SetState {
+    state: WindowStateTarget,
+  },
 }
 
 #[cfg(test)]

@@ -125,7 +125,7 @@ mod native {
     DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceEnumerator,
     ISimpleAudioVolume, MMDeviceEnumerator, eCommunications, eMultimedia, eRender,
   };
-  use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+  use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
   use windows::core::{Interface, PCWSTR};
 
   use super::{AudioLookupStats, AudioLookupStatus, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState};
@@ -436,22 +436,7 @@ mod native {
     }
   }
 
-  struct ComGuard {
-    uninit: bool,
-  }
-
-  impl Drop for ComGuard {
-    fn drop(&mut self) {
-      if self.uninit {
-        unsafe { CoUninitialize() };
-      }
-    }
-  }
-
-  fn init_com() -> ComGuard {
-    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    ComGuard { uninit: hr.is_ok() }
-  }
+  use crate::com::init_com;
 
   unsafe fn get_device_id(device: &IMMDevice) -> Option<String> {
     unsafe {

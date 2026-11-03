@@ -9,7 +9,7 @@ use auv_driver_common::{DriverDescriptor, PlatformKind};
 /// window messages via `background_input`), window-scoped OCR polling, and
 /// text and rich (format-preserving) clipboard snapshot/restore/set.
 // TODO(windows-driver): extend as further slices land, mirroring
-// `MACOS_DESKTOP_CAPABILITIES`. Window mutation (move/resize/minimize) is
+// `MACOS_DESKTOP_CAPABILITIES`. Window mutation (set_frame/set_state/focus) is
 // exposed on WindowApi but, like the macOS driver, is not represented as a
 // capability string here until a consumer needs to gate on it.
 pub const WINDOWS_DESKTOP_CAPABILITIES: &[&str] = &[

@@ -219,6 +219,7 @@ pub enum FailureCode {
   InvalidInput,
   StaleUiReference,
   RoleMismatch,
+  FailedPrecondition,
   Backend,
 }
 
@@ -260,6 +261,7 @@ impl From<auv_driver::DriverError> for InvokeFailure {
       DriverError::InvalidInput { .. } => FailureCode::InvalidInput,
       DriverError::StaleUiReference { .. } => FailureCode::StaleUiReference,
       DriverError::RoleMismatch { .. } => FailureCode::RoleMismatch,
+      DriverError::FailedPrecondition { .. } => FailureCode::FailedPrecondition,
       DriverError::Backend { .. } => FailureCode::Backend,
     };
     Self::new(code, message)

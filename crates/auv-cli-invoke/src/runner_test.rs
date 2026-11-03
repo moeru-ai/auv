@@ -396,6 +396,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
     coordinate_space: auv_driver::CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   };
   let matched = auv_driver::OcrMatch {
     text: "Play".to_string(),

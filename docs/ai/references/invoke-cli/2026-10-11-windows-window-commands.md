@@ -146,9 +146,10 @@ witness runs do not prove it from the desktop side.
   question the `apps` survey asks of the background session, not yet of this path.
 - OCR quality beyond the receiver's two lines of text, and OCR languages other than the
   profile's.
-- `window.list` lists a minimized window with its off-screen frame and `is_visible: true`. Changing
-  that alters how a background session discovers a window it must answer `skipped_minimized` for,
-  so it is left as it was (`TODO(windows-window-list-minimized)` in `window.rs`).
+- `window.list` used to list a minimized window with its off-screen frame and `is_visible: true`.
+  Since window management v1 (2026-11-03) it reports the restore frame with
+  `state.is_minimized: Some(true)` and `is_visible: false`; the background session still answers
+  `skipped_minimized`. See `../driver/2026-11-02-window-management-api-v1-design.md`.
 - The selected Runner path.
 
 ## Validation

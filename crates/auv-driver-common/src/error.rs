@@ -7,6 +7,8 @@ pub type DriverResult<T> = Result<T, DriverError>;
 pub enum DriverError {
   Unsupported {
     operation: &'static str,
+    /// What the caller can do instead, such as "pull requests are welcome".
+    recovery: Option<&'static str>,
   },
   NotFound {
     target: String,
@@ -36,6 +38,12 @@ pub enum DriverError {
     message: String,
     recovery: Option<String>,
   },
+  /// The target exists but is in a state the operation refuses, such as
+  /// moving a minimized window. The caller must change that state first.
+  FailedPrecondition {
+    message: String,
+    recovery: Option<String>,
+  },
   Backend {
     message: String,
   },
@@ -50,14 +58,33 @@ pub enum DriverError {
 
 impl DriverError {
   pub fn unsupported(operation: &'static str) -> Self {
-    Self::Unsupported { operation }
+    Self::Unsupported {
+      operation,
+      recovery: None,
+    }
+  }
+
+  pub fn unsupported_with_recovery(operation: &'static str, recovery: &'static str) -> Self {
+    Self::Unsupported {
+      operation,
+      recovery: Some(recovery),
+    }
   }
 }
 
 impl fmt::Display for DriverError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Self::Unsupported { operation } => write!(f, "{operation} is not supported by this driver"),
+      Self::Unsupported {
+        operation,
+        recovery,
+      } => {
+        write!(f, "{operation} is not supported by this driver")?;
+        if let Some(recovery) = recovery {
+          write!(f, "; {recovery}")?;
+        }
+        Ok(())
+      }
       Self::NotFound { target } => write!(f, "{target} was not found"),
       Self::PermissionDenied {
         permission,
@@ -73,7 +100,9 @@ impl fmt::Display for DriverError {
         }
         Ok(())
       }
-      Self::StaleUiReference { message, recovery } | Self::RoleMismatch { message, recovery } => {
+      Self::StaleUiReference { message, recovery }
+      | Self::RoleMismatch { message, recovery }
+      | Self::FailedPrecondition { message, recovery } => {
         f.write_str(message)?;
         if let Some(recovery) = recovery {
           write!(f, ": {recovery}")?;

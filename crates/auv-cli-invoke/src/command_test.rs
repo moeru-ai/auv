@@ -65,6 +65,7 @@ fn failure_codes_serialize_to_their_documented_json_spelling() {
     (FailureCode::InvalidInput, "invalid_input"),
     (FailureCode::StaleUiReference, "stale_ui_reference"),
     (FailureCode::RoleMismatch, "role_mismatch"),
+    (FailureCode::FailedPrecondition, "failed_precondition"),
     (FailureCode::Backend, "backend"),
   ];
   for (code, encoded) in cases {
@@ -145,9 +146,7 @@ fn placement_failures_classify_transport_categories_and_keep_deferred_text() {
 #[test]
 fn keyboard_input_failures_preserve_partial_progress() {
   let error = auv_driver::KeyboardInputError {
-    cause: auv_driver::DriverError::Unsupported {
-      operation: "type_text",
-    },
+    cause: auv_driver::DriverError::unsupported("type_text"),
     progress: auv_driver::KeyboardInputProgress {
       action_index: 2,
       completed: Vec::new(),

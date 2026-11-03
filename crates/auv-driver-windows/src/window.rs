@@ -4,13 +4,21 @@
 //! shared [`Window`] type so window-targeted consumers stay backend-agnostic.
 //! Enumeration uses Win32 `EnumWindows`; frames prefer the DWM extended frame
 //! bounds (the visible window rectangle) and fall back to `GetWindowRect`.
+//!
+//! NOTICE(windows-window-dpi): every rectangle here is in physical screen pixels. The DWM frame
+//! bounds are physical whatever the caller's DPI awareness, while `GetWindowRect`,
+//! `GetWindowPlacement` and `SetWindowPos` are virtualized for a DPI-unaware process. At 150%
+//! scaling on luoling-windows-11 (2026-11-03) a window at logical (300, 200) 640x480 had DWM
+//! bounds (461, 300) 938x709 and an outer rect of (300, 200) 640x480 unaware, (450, 300) 960x720
+//! per-monitor aware. The host makes the process per-monitor aware
+//! (`crate::dpi::set_process_per_monitor_aware`), so the native reads and writes agree.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use auv_driver_common::error::DriverResult;
-use auv_driver_common::geometry::Rect;
+use auv_driver_common::geometry::{Insets, Point, Rect};
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver_common::window::Window;
+use auv_driver_common::window::{Window, WindowState, select_main_window};
 
 use crate::error::{invalid_input, not_found};
 
@@ -59,6 +67,8 @@ pub(crate) fn probe_window(hwnd: isize) -> WindowProbe {
   native::probe(hwnd)
 }
 
+/// Lists every top-level window a user could switch to, front to back: minimized windows (with
+/// the frame they restore to) and windows on other virtual desktops included.
 #[cfg(target_os = "windows")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
   ENUMERATIONS.fetch_add(1, Ordering::Relaxed);
@@ -73,6 +83,96 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
 pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
   let windows = list_windows()?;
   resolve_from_windows(&windows, selector)
+}
+
+/// One window's frame and state read fresh, without enumerating. `outer` is the `GetWindowRect`
+/// rectangle that `SetWindowPos` addresses; `frame` is the visible frame `list_windows` reports.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowReading {
+  pub(crate) frame: Rect,
+  pub(crate) outer: Rect,
+  /// `stack_index` is `None`: a stacking position needs the whole enumeration.
+  pub(crate) state: WindowState,
+  /// The raw foreground handle at read time, for focus-disturbance reporting.
+  pub(crate) foreground: isize,
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn read_window(window: &Window) -> DriverResult<WindowReading> {
+  native::read_one(window_handle(window)?)
+}
+
+/// The invisible resize border: how far the outer rectangle (`GetWindowRect`) reaches past the
+/// visible frame (DWM extended frame bounds) on each side. On Windows 10 and 11 a standard frame
+/// has one on the left, right and bottom (7 px at 100%, 11 px at 150%) and none on top.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn invisible_border(outer: Rect, visible: Rect) -> Insets {
+  Insets {
+    top: visible.origin.y - outer.origin.y,
+    left: visible.origin.x - outer.origin.x,
+    right: (outer.origin.x + outer.size.width) - (visible.origin.x + visible.size.width),
+    bottom: (outer.origin.y + outer.size.height) - (visible.origin.y + visible.size.height),
+  }
+}
+
+/// The invisible border that turns the outer restore rectangle (`rcNormalPosition`) of a minimized
+/// or maximized window into the visible frame it has once normal, from the outer and visible
+/// rectangles the window has now. A normal window's own border is [`invisible_border`].
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn restore_border(outer: Rect, visible: Rect, minimized: bool) -> Insets {
+  let border = invisible_border(outer, visible);
+  if minimized {
+    // NOTICE: a minimized window's rectangles describe its iconic stub (at -32000,-32000 or the
+    // minimized-window arrangement). The stub keeps the window's left and right invisible border,
+    // but a per-monitor aware window's stub has none at the bottom. luoling-windows-11 (150%,
+    // 2026-11-04): Paint and a per-monitor aware WinForms form (sizable and fixed dialog) had a
+    // 9 px border on the left, right and bottom when normal, and a stub inset of 9, 9 and 0, so the
+    // listed frame was 9 px too tall (1600x1009 for a 1600x1000 Paint). DPI-unaware stubs kept all
+    // three (11 px); a borderless form's stub had none. The sizing frame is as wide at the bottom
+    // as at the sides (`SM_CXSIZEFRAME` and `SM_CYSIZEFRAME` were both 5 at 144 DPI), so the
+    // stub's side inset stands in for the bottom.
+    // The system metrics do not give this border: `GetSystemMetricsForDpi(SM_CXSIZEFRAME)` +
+    // `SM_CXPADDEDBORDER` (and `AdjustWindowRectExForDpi`) give the whole sizing frame, 11 px for
+    // the per-monitor aware form and 12 px (8 px scaled by 1.5) for a DPI-unaware one, against a
+    // measured 9 px and 11 px; how much of the frame DWM counts inside the extended frame bounds
+    // is not documented. The style does not tell either: the fixed dialog had no `WS_THICKFRAME`
+    // but the same 9 px border.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetricsfordpi
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
+    // https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect
+    return Insets {
+      bottom: border.bottom.max(border.left.min(border.right)),
+      ..border
+    };
+  }
+  // NOTICE: a maximized window hangs past its work area on every side, and that overhang is not
+  // the invisible border it has once normal. luoling-windows-11 (150%, 2026-11-03): a per-monitor
+  // aware WinForms window hung 11 px past every side of `0,0 3840x2088` but had 9 px left, right
+  // and bottom and none on top once normal; a DPI-unaware one 12 px against 11 px. The placement
+  // uses the overhang without a top border.
+  Insets { top: 0.0, ..border }
+}
+
+/// The outer rectangle to hand `SetWindowPos` so the visible frame lands on `visible`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn outer_frame_for_visible(visible: Rect, border: Insets) -> Rect {
+  visible.inset(Insets {
+    top: -border.top,
+    right: -border.right,
+    bottom: -border.bottom,
+    left: -border.left,
+  })
+}
+
+/// How far a monitor's workspace coordinates sit from its screen coordinates: screen = workspace +
+/// offset. Workspace (0,0) is the top-left of the work area, which excludes a top or left taskbar.
+// NOTICE: `WINDOWPLACEMENT.rcNormalPosition` is in workspace coordinates for every top-level window
+// without `WS_EX_TOOLWINDOW`; tool windows use screen coordinates.
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn workspace_offset(monitor: Rect, work: Rect) -> Point {
+  Point::new(work.origin.x - monitor.origin.x, work.origin.y - monitor.origin.y)
 }
 
 /// Restores and foregrounds a top-level window for `SendInput` delivery.
@@ -101,30 +201,28 @@ pub(crate) fn window_handle(window: &Window) -> DriverResult<windows::Win32::Fou
   Ok(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
 }
 
-/// The main-window preference `WindowSelector::main_visible` and the
-/// activation window observation share: foreground first, then a titled
-/// window, then the largest frame. One rank so the resolver and the
-/// observation can never disagree about which window is the app's main one.
-pub(crate) fn main_visible_rank(window: &Window) -> (bool, bool, i64) {
-  (
-    window.is_main,
-    window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
-    (window.frame.size.width * window.frame.size.height).round() as i64,
-  )
+/// Whether `window` is a surface a person can switch to: shown, minimized, or on another virtual
+/// desktop. The listing already drops hidden, zero-area and cloaked-on-this-desktop surfaces; this
+/// pre-filter keeps a hand-built or stale list to the same rule before the shared cascade runs.
+fn switchable(window: &Window) -> bool {
+  window.is_visible || window.state.is_minimized == Some(true) || !on_current_desktop(window)
+}
+
+fn on_current_desktop(window: &Window) -> bool {
+  window.state.desktop.as_ref().is_none_or(|desktop| desktop.is_current)
 }
 
 /// Resolves a single window from an already-observed list.
 ///
 /// Kept independent of the Win32 enumeration so selector semantics are unit
-/// testable without a live desktop. For `main_visible` selectors this prefers
-/// the foreground window, then a titled window, then the largest frame, which
-/// mirrors the macOS resolver's ordering.
+/// testable without a live desktop. A `main_visible` selector picks with the
+/// shared `select_main_window` cascade, which `application.activate`'s window
+/// observation also uses, so the two never disagree about the main window.
 fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> DriverResult<Window> {
-  let mut matches: Vec<&Window> = windows.iter().filter(|window| matches_window_selector_except_main_visible(window, selector)).collect();
+  let matches: Vec<&Window> = windows.iter().filter(|window| matches_window_selector_except_main_visible(window, selector)).collect();
 
   if selector.main_visible {
-    matches.sort_by_key(|window| std::cmp::Reverse(main_visible_rank(window)));
-    return matches.first().map(|window| (*window).clone()).ok_or_else(|| missing_window(windows, selector, "main visible window"));
+    return select_main_window(matches).cloned().ok_or_else(|| missing_window(windows, selector, "main visible window"));
   }
 
   match matches.as_slice() {
@@ -139,7 +237,7 @@ fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> Driver
 fn missing_window(windows: &[Window], selector: &WindowSelector, target: &str) -> auv_driver_common::error::DriverError {
   match &selector.app {
     Some(app) if !app.frontmost && (app.id.is_some() || app.name.is_some()) => {
-      let owned = windows.iter().any(|window| window.is_visible && matches_app_selector(window, app));
+      let owned = windows.iter().any(|window| switchable(window) && matches_app_selector(window, app));
       if owned {
         not_found(target)
       } else {
@@ -151,7 +249,15 @@ fn missing_window(windows: &[Window], selector: &WindowSelector, target: &str) -
 }
 
 fn matches_window_selector_except_main_visible(window: &Window, selector: &WindowSelector) -> bool {
-  if !window.is_visible {
+  if !switchable(window) {
+    return false;
+  }
+  // NOTICE: only the main-window cascade may pick a window on another virtual desktop (and only
+  // when the app has no window on this one). A title or application selector skips them, as it
+  // did before the list reported them; a caller that wants one targets it by id.
+  // TODO(windows-window-select-other-desktop): selecting across desktops by title needs an
+  // owner-approved selector field; it is not part of the window management v1 design.
+  if !selector.main_visible && !on_current_desktop(window) {
     return false;
   }
   if let Some(app) = &selector.app
@@ -216,26 +322,40 @@ fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-mod native {
+pub(crate) mod native {
   use std::ffi::c_void;
   use std::mem::size_of;
   use std::path::Path;
 
   use auv_driver_common::error::DriverResult;
   use auv_driver_common::geometry::{CoordinateSpace, Rect};
-  use auv_driver_common::window::{Window, WindowRef};
+  use auv_driver_common::window::{Window, WindowDesktop, WindowRef, WindowState};
   use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, SetLastError, TRUE, WIN32_ERROR};
   use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+  use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, MonitorFromWindow,
+  };
+  use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
   use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
   };
+  use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
   use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+    BringWindowToTop, EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowPlacement,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
+    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement, ShowWindow, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS,
+    WS_CAPTION, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
   };
-  use windows::core::PWSTR;
+  use windows::core::{GUID, PWSTR};
 
+  use super::{WindowReading, restore_border};
   use crate::error::backend;
+
+  /// The public virtual desktop API, or `None` when the shell does not provide it (no Explorer,
+  /// Server Core); windows then carry no desktop and cloaked windows are dropped as before.
+  fn virtual_desktops() -> Option<IVirtualDesktopManager> {
+    unsafe { CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL) }.ok()
+  }
 
   pub(super) fn list_windows() -> DriverResult<Vec<Window>> {
     crate::desktop::try_ensure_input_desktop().map_err(|error| backend(format!("input desktop attachment failed: {error}")))?;
@@ -260,14 +380,27 @@ mod native {
     // this tolerance if the Win32 wrapper begins preserving callback-stop
     // state separately from GetLastError.
 
+    let _com = crate::com::init_com();
+    let desktops = virtual_desktops();
     let foreground = unsafe { GetForegroundWindow() };
     let mut windows = Vec::new();
     for hwnd in handles {
-      if let Some(window) = observe_window(hwnd, foreground)? {
+      if let Some(mut window) = observe_window(hwnd, foreground, desktops.as_ref())? {
+        // EnumWindows walks the Z order from the top, so the listing position is the stacking order.
+        window.state.stack_index = Some(windows.len() as u32);
         windows.push(window);
       }
     }
     Ok(windows)
+  }
+
+  pub(super) fn read_one(hwnd: HWND) -> DriverResult<WindowReading> {
+    if !unsafe { IsWindow(hwnd) }.as_bool() {
+      return Err(crate::error::not_found(format!("window:{}", hwnd.0 as isize)));
+    }
+    let _com = crate::com::init_com();
+    let desktops = virtual_desktops();
+    read(hwnd, unsafe { GetForegroundWindow() }, desktops.as_ref())
   }
 
   pub(super) fn probe(raw: isize) -> super::WindowProbe {
@@ -346,22 +479,24 @@ mod native {
     TRUE
   }
 
-  fn observe_window(hwnd: HWND, foreground: HWND) -> DriverResult<Option<Window>> {
-    // TODO(windows-window-list-minimized): a minimized window passes `IsWindowVisible` and is
-    // listed with its off-screen frame (-32000, -32000) and `is_visible: true`. It is not
-    // dropped or flagged here because the background session discovers a target through this
-    // list and must still be able to answer `skipped_minimized` for it. Decide how a list
-    // reports a minimized window before changing it; `capture` already refuses one.
+  fn observe_window(hwnd: HWND, foreground: HWND, desktops: Option<&IVirtualDesktopManager>) -> DriverResult<Option<Window>> {
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
       return Ok(None);
     }
-    if is_cloaked(hwnd) {
+    let desktop = desktops.and_then(|desktops| window_desktop(desktops, hwnd));
+    // NOTICE(windows-window-cloaked): DWM cloaks a window on another virtual desktop, and also
+    // windows nobody can switch to on this one: suspended UWP frames, hidden shell surfaces and
+    // pre-launched apps. A cloaked window is listed only when the virtual desktop API places it
+    // on another desktop; a cloaked window on the current desktop (or with no desktop) is dropped
+    // as before. Without the API (`desktops` is `None`) every cloaked window is dropped.
+    let on_other_desktop = desktop.as_ref().is_some_and(|desktop| !desktop.is_current);
+    if is_cloaked(hwnd) && !on_other_desktop {
       return Ok(None);
     }
-    let frame = window_frame(hwnd)?;
+    let reading = read_with_desktop(hwnd, foreground, desktop)?;
     // Skip zero-area windows; visible top-level windows include many invisible
     // helper surfaces with degenerate frames that are not useful targets.
-    if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
+    if reading.frame.size.width <= 0.0 || reading.frame.size.height <= 0.0 {
       return Ok(None);
     }
 
@@ -382,11 +517,154 @@ mod native {
       // window hints, readiness), so it waits for an owner-approved slice.
       application_id: None,
       process_id: (pid != 0).then_some(pid),
-      frame,
+      frame: reading.frame,
       coordinate_space: CoordinateSpace::Screen,
       is_main: hwnd == foreground,
-      is_visible: true,
+      is_visible: reading.state.is_visible == Some(true),
+      state: reading.state,
     }))
+  }
+
+  fn read(hwnd: HWND, foreground: HWND, desktops: Option<&IVirtualDesktopManager>) -> DriverResult<WindowReading> {
+    read_with_desktop(hwnd, foreground, desktops.and_then(|desktops| window_desktop(desktops, hwnd)))
+  }
+
+  /// Reads a window's frames and state.
+  fn read_with_desktop(hwnd: HWND, foreground: HWND, desktop: Option<WindowDesktop>) -> DriverResult<WindowReading> {
+    let minimized = unsafe { IsIconic(hwnd) }.as_bool();
+    let outer = outer_rect(hwnd)?;
+    let visible = window_frame(hwnd)?;
+    // A minimized window's rectangles describe its iconic stub at (-32000, -32000). Its frame is
+    // the one it restores to; the stub's border (see `restore_border`) turns the restore rectangle
+    // into a visible frame.
+    let (frame, outer) = if minimized {
+      let restore_outer = restore_rect(hwnd)?;
+      (restore_outer.inset(restore_border(outer, visible, true)), restore_outer)
+    } else {
+      (visible, outer)
+    };
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    let maximized = unsafe { IsZoomed(hwnd) }.as_bool();
+    let on_current_desktop = desktop.as_ref().is_none_or(|desktop| desktop.is_current);
+    Ok(WindowReading {
+      frame,
+      outer,
+      state: WindowState {
+        is_minimized: Some(minimized),
+        is_maximized: Some(maximized),
+        // NOTICE: Win32 has no full-screen state for another application's window. Best effort:
+        // a window without a caption whose outer rectangle covers its whole monitor (borderless
+        // games, F11 browsers, presentations). A maximized window keeps its caption.
+        is_fullscreen: Some(!minimized && style & WS_CAPTION.0 != WS_CAPTION.0 && covers_monitor(hwnd, outer)),
+        is_visible: Some(!minimized && on_current_desktop),
+        is_focused: Some(hwnd == foreground),
+        is_always_on_top: Some(ex_style & WS_EX_TOPMOST.0 != 0),
+        stack_index: None,
+        desktop,
+      },
+      foreground: foreground.0 as isize,
+    })
+  }
+
+  fn outer_rect(hwnd: HWND) -> DriverResult<Rect> {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }.map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
+    Ok(rect_from(rect))
+  }
+
+  /// The outer rectangle a minimized or maximized window restores to, in screen coordinates.
+  pub(crate) fn restore_rect(hwnd: HWND) -> DriverResult<Rect> {
+    let placement = placement(hwnd)?;
+    let normal = rect_from(placement.rcNormalPosition);
+    if is_tool_window(hwnd) {
+      return Ok(normal);
+    }
+    let monitor = unsafe { MonitorFromRect(&placement.rcNormalPosition, MONITOR_DEFAULTTONEAREST) };
+    let Some(offset) = monitor_workspace_offset(monitor) else {
+      return Ok(normal);
+    };
+    Ok(normal.offset(offset.x, offset.y))
+  }
+
+  /// Makes a window normal at the outer rectangle `outer` (screen coordinates) with one
+  /// `SetWindowPlacement`, without activating it. A maximized window goes straight to `outer`
+  /// instead of first restoring to its old normal frame, as `SW_RESTORE` + `SetWindowPos` would.
+  pub(crate) fn place_normal(hwnd: HWND, outer: RECT) -> DriverResult<()> {
+    let mut placement = placement(hwnd)?;
+    let mut normal = outer;
+    if !is_tool_window(hwnd) {
+      // The workspace of the monitor the window lands on.
+      let monitor = unsafe { MonitorFromRect(&outer, MONITOR_DEFAULTTONEAREST) };
+      if let Some(offset) = monitor_workspace_offset(monitor) {
+        let (dx, dy) = (offset.x as i32, offset.y as i32);
+        normal = RECT {
+          left: outer.left - dx,
+          top: outer.top - dy,
+          right: outer.right - dx,
+          bottom: outer.bottom - dy,
+        };
+      }
+    }
+    placement.rcNormalPosition = normal;
+    placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
+    // No WPF_SETMINPOSITION or WPF_RESTORETOMAXIMIZED: the window ends normal.
+    placement.flags = WINDOWPLACEMENT_FLAGS(0);
+    unsafe { SetWindowPlacement(hwnd, &placement) }.map_err(|error| backend(format!("SetWindowPlacement failed: {error}")))
+  }
+
+  fn placement(hwnd: HWND) -> DriverResult<WINDOWPLACEMENT> {
+    let mut placement = WINDOWPLACEMENT {
+      length: size_of::<WINDOWPLACEMENT>() as u32,
+      ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut placement) }.map_err(|error| backend(format!("GetWindowPlacement failed: {error}")))?;
+    Ok(placement)
+  }
+
+  /// Tool windows keep their placement in screen coordinates (see [`super::workspace_offset`]).
+  fn is_tool_window(hwnd: HWND) -> bool {
+    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    ex_style & WS_EX_TOOLWINDOW.0 != 0
+  }
+
+  fn monitor_workspace_offset(monitor: HMONITOR) -> Option<auv_driver_common::geometry::Point> {
+    let mut info = MONITORINFO {
+      cbSize: size_of::<MONITORINFO>() as u32,
+      ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+      .as_bool()
+      .then(|| super::workspace_offset(rect_from(info.rcMonitor), rect_from(info.rcWork)))
+  }
+
+  fn covers_monitor(hwnd: HWND, outer: Rect) -> bool {
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+      cbSize: size_of::<MONITORINFO>() as u32,
+      ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() && outer.contains_rect(rect_from(info.rcMonitor))
+  }
+
+  /// The virtual desktop a window is on, from the public `IVirtualDesktopManager`.
+  // TODO(windows-window-desktop-pinned): a window the user pinned to every desktop, and a window
+  // the shell has not placed on a desktop, report the empty GUID; they carry no desktop (`None`)
+  // rather than a made-up id. Model "every desktop" only if a caller needs it.
+  fn window_desktop(desktops: &IVirtualDesktopManager, hwnd: HWND) -> Option<WindowDesktop> {
+    let id = unsafe { desktops.GetWindowDesktopId(hwnd) }.ok()?;
+    if id == GUID::zeroed() {
+      return None;
+    }
+    let is_current = unsafe { desktops.IsWindowOnCurrentVirtualDesktop(hwnd) }.ok()?.as_bool();
+    Some(WindowDesktop {
+      id: format!("{id:?}"),
+      is_current,
+    })
+  }
+
+  fn rect_from(rect: RECT) -> Rect {
+    Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top))
   }
 
   fn window_title(hwnd: HWND) -> Option<String> {
@@ -405,7 +683,7 @@ mod native {
 
   /// Reads the visible window rectangle, preferring the DWM extended frame
   /// bounds and falling back to `GetWindowRect` when DWM is unavailable.
-  fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
+  pub(crate) fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
     let mut rect = RECT::default();
     let dwm =
       unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32) };
@@ -414,7 +692,7 @@ mod native {
         GetWindowRect(hwnd, &mut rect).map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
       }
     }
-    Ok(Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top)))
+    Ok(rect_from(rect))
   }
 
   /// Reports whether DWM has cloaked the window (for example a UWP app on a
