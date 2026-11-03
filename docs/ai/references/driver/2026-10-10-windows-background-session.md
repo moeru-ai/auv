@@ -302,6 +302,9 @@ frame's bounds, so a caller mapping pixels to the screen is off by the invisible
 `geometry` got 380x300 and 460x340 pixels for bounds of 366x293 and 446x333. This is the existing
 `TODO(windows-window-capture-dpi)`, unchanged here.
 
+> Update (2026-11-03): the crop now maps into the bitmap and the TODO is removed; see
+> [Windows DPI awareness](2026-11-03-windows-dpi-awareness.md) (issue #460).
+
 ### Applications
 
 The [support matrix](../../../SUPPORT_MATRIX.md#windows-background-session-by-application)

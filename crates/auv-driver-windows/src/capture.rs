@@ -159,14 +159,15 @@ struct PixelCrop {
 /// `PrintWindow` renders the whole `GetWindowRect` rectangle. On Windows 10 and 11 that includes
 /// an invisible resize border which the DWM extended frame, and so `Window.frame`, leaves out.
 /// Keeping the whole bitmap under the frame's bounds would shift every pixel by the border and
-/// stretch the scale; cropping makes the image and the bounds the same rectangle. `None` when the
-/// frame has no area inside the bitmap.
+/// stretch the scale; cropping makes the image and the bounds the same rectangle. `scale` is
+/// bitmap pixels per screen pixel (see `window_native::render_scale`). `None` when the frame has
+/// no area inside the bitmap.
 #[cfg(any(target_os = "windows", test))]
-fn visible_crop(window_rect: Rect, bitmap: (u32, u32), frame: Rect) -> Option<PixelCrop> {
-  let left = (frame.origin.x - window_rect.origin.x).round().max(0.0);
-  let top = (frame.origin.y - window_rect.origin.y).round().max(0.0);
-  let right = (frame.origin.x + frame.size.width - window_rect.origin.x).round().min(f64::from(bitmap.0));
-  let bottom = (frame.origin.y + frame.size.height - window_rect.origin.y).round().min(f64::from(bitmap.1));
+fn visible_crop(window_rect: Rect, bitmap: (u32, u32), frame: Rect, scale: f64) -> Option<PixelCrop> {
+  let left = ((frame.origin.x - window_rect.origin.x) * scale).round().max(0.0);
+  let top = ((frame.origin.y - window_rect.origin.y) * scale).round().max(0.0);
+  let right = ((frame.origin.x + frame.size.width - window_rect.origin.x) * scale).round().min(f64::from(bitmap.0));
+  let bottom = ((frame.origin.y + frame.size.height - window_rect.origin.y) * scale).round().min(f64::from(bitmap.1));
   if right <= left || bottom <= top {
     return None;
   }
@@ -198,23 +199,20 @@ pub fn capture_window(window: &Window) -> DriverResult<Capture> {
   // NOTICE: `bounds` describes the pixels, read when they were captured, not the `window`
   // snapshot, which may be older. The frame is the visible window; without it the whole bitmap
   // is kept under the window rect.
-  let (image, bounds) = match pixels.frame.and_then(|frame| visible_crop(pixels.window_rect, bitmap, frame)) {
-    Some(crop) => {
-      let bounds = Rect::new(
-        pixels.window_rect.origin.x + f64::from(crop.x),
-        pixels.window_rect.origin.y + f64::from(crop.y),
-        f64::from(crop.width),
-        f64::from(crop.height),
-      );
+  let visible = pixels.frame.and_then(|frame| Some((visible_crop(pixels.window_rect, bitmap, frame, pixels.scale)?, frame)));
+  let (image, bounds) = match visible {
+    Some((crop, frame)) => {
+      let bounds = frame.intersect(pixels.window_rect).unwrap_or(frame);
       (image::imageops::crop_imm(&image, crop.x, crop.y, crop.width, crop.height).to_image(), bounds)
     }
     None => (image, pixels.window_rect),
   };
-  // NOTICE: the scale is image pixels per desktop coordinate, as for display captures. It is 1.0
-  // for a process whose coordinates are physical pixels.
-  // TODO(windows-window-capture-dpi): a process that is not per-monitor DPI aware is handed
-  // virtualized coordinates on a scaled display, and this mapping is not evidenced there. Only
-  // 100% scaling has been measured; see the Windows window commands reference.
+  // NOTICE: the scale is image pixels per desktop coordinate, as for display captures. The
+  // per-monitor-aware process (`crate::dpi`) reads `GetWindowRect` and the DWM frame in the same
+  // physical pixels; a DPI-unaware process got a virtualized `GetWindowRect`, a bitmap too small
+  // and a crop of its corner (issue #460). The scale is 1.0 for a per-monitor-aware window and
+  // below 1.0 for a window Windows scales up on screen (see `window_native::render_scale`). The
+  // display's DPI scale is `Display.scale_factor`.
   let scale_factor = capture_scale_factor(&image, bounds);
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let target_name = window.app_name.as_deref().or(window.title.as_deref());
@@ -335,9 +333,10 @@ mod window_native {
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC,
-    GetDIBits, HDC, ReleaseDC, SelectObject,
+    GetDIBits, HDC, MONITOR_DEFAULTTONEAREST, MonitorFromWindow, ReleaseDC, SelectObject,
   };
   use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
+  use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
   use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, PW_RENDERFULLCONTENT};
 
   use crate::error::{backend, invalid_input};
@@ -353,6 +352,8 @@ mod window_native {
     pub window_rect: Rect,
     /// The visible frame, read right after it, when DWM reports one.
     pub frame: Option<Rect>,
+    /// Bitmap pixels per screen pixel; see [`render_scale`].
+    pub scale: f64,
   }
 
   pub(super) fn capture_window_rgba(window: &Window) -> DriverResult<WindowPixels> {
@@ -360,14 +361,41 @@ mod window_native {
     let rect = window_rect(hwnd)?;
     let frame = crate::window::probe_window(hwnd.0 as isize).frame;
     let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-    let bgra = print_window_bgra(hwnd, width, height)?;
+    let scale = render_scale(hwnd);
+    let (bitmap_width, bitmap_height) = (scaled_length(width, scale), scaled_length(height, scale));
+    let bgra = print_window_bgra(hwnd, bitmap_width, bitmap_height)?;
     Ok(WindowPixels {
-      width: width as u32,
-      height: height as u32,
+      width: bitmap_width as u32,
+      height: bitmap_height as u32,
       rgba: bgra_to_rgba(bgra),
       window_rect: Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(width), f64::from(height)),
       frame,
+      scale,
     })
+  }
+
+  /// Pixels `PrintWindow` draws per screen pixel of the window.
+  ///
+  /// NOTICE(windows-printwindow-dpi): `PrintWindow` renders a window at its own DPI, not at the
+  /// size DWM shows it. A DPI-unaware window (96 DPI) on a 150% monitor (144 DPI) draws 400x300
+  /// pixels for a 600x450 physical rectangle; a bitmap of the physical size came back 56% black
+  /// for a PowerShell WinForms window on luoling-windows-11 (2026-11-03). Per-monitor-aware
+  /// windows (Notepad, most current apps) draw at the monitor DPI, so the scale is 1. See
+  /// `https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows`.
+  /// Falls back to 1 when either DPI cannot be read.
+  fn render_scale(hwnd: HWND) -> f64 {
+    let window_dpi = unsafe { GetDpiForWindow(hwnd) };
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let (mut monitor_dpi, mut unused) = (0u32, 0u32);
+    let read = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut monitor_dpi, &mut unused) };
+    if window_dpi == 0 || read.is_err() || monitor_dpi == 0 {
+      return 1.0;
+    }
+    f64::from(window_dpi) / f64::from(monitor_dpi)
+  }
+
+  fn scaled_length(length: i32, scale: f64) -> i32 {
+    ((f64::from(length) * scale).round() as i32).max(1)
   }
 
   fn window_rect(hwnd: HWND) -> DriverResult<RECT> {

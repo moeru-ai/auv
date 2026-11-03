@@ -177,7 +177,13 @@ fn main() -> std::process::ExitCode {
     },
   }
 
-  let result = match Cli::parse().scenario {
+  let scenario = Cli::parse().scenario;
+  // This evaluation drives the Windows driver in its own process, which has no manifest: opt in
+  // to physical pixels as `auv.exe` does by its manifest. See NOTICE(windows-dpi-awareness).
+  if !auv_driver_windows::dpi::set_process_per_monitor_aware() {
+    eprintln!("background-session-eval: this process could not become per-monitor DPI aware");
+  }
+  let result = match scenario {
     Scenario::Probe { output } => auv_base_evals::desktop_windows::probe::foreground_rights(&Options {
       output,
       repetitions: 1,

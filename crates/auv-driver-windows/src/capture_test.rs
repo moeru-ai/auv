@@ -131,7 +131,7 @@ fn visible_crop_drops_the_invisible_resize_border() {
   let window_rect = Rect::new(1980.0, 960.0, 380.0, 300.0);
   let frame = Rect::new(1987.0, 960.0, 366.0, 293.0);
 
-  let crop = visible_crop(window_rect, (380, 300), frame).expect("the frame lies inside the bitmap");
+  let crop = visible_crop(window_rect, (380, 300), frame, 1.0).expect("the frame lies inside the bitmap");
 
   assert_eq!(
     crop,
@@ -149,7 +149,7 @@ fn visible_crop_keeps_everything_when_the_frame_is_the_window_rect() {
   let rect = Rect::new(100.0, 200.0, 640.0, 480.0);
 
   assert_eq!(
-    visible_crop(rect, (640, 480), rect),
+    visible_crop(rect, (640, 480), rect, 1.0),
     Some(PixelCrop {
       x: 0,
       y: 0,
@@ -166,7 +166,7 @@ fn visible_crop_stays_inside_the_bitmap_when_the_window_moved_between_reads() {
   let window_rect = Rect::new(100.0, 100.0, 200.0, 100.0);
   let frame = Rect::new(95.0, 100.0, 200.0, 100.0);
 
-  let crop = visible_crop(window_rect, (200, 100), frame).expect("most of the frame is inside");
+  let crop = visible_crop(window_rect, (200, 100), frame, 1.0).expect("most of the frame is inside");
 
   assert_eq!(
     crop,
@@ -183,6 +183,35 @@ fn visible_crop_stays_inside_the_bitmap_when_the_window_moved_between_reads() {
 fn visible_crop_refuses_a_frame_that_misses_the_bitmap() {
   let window_rect = Rect::new(0.0, 0.0, 100.0, 100.0);
 
-  assert_eq!(visible_crop(window_rect, (100, 100), Rect::new(500.0, 500.0, 100.0, 100.0)), None);
-  assert_eq!(visible_crop(window_rect, (100, 100), Rect::new(0.0, 0.0, 0.0, 0.0)), None);
+  assert_eq!(visible_crop(window_rect, (100, 100), Rect::new(500.0, 500.0, 100.0, 100.0), 1.0), None);
+  assert_eq!(visible_crop(window_rect, (100, 100), Rect::new(0.0, 0.0, 0.0, 0.0), 1.0), None);
+}
+
+// https://github.com/moeru-ai/auv/issues/460
+//
+// ROOT CAUSE:
+//
+// If the target window is not per-monitor DPI aware, `PrintWindow` draws it at its own 96 DPI
+// size, smaller than the physical rectangle DWM shows on a scaled display.
+//
+// Before the fix, the bitmap had the physical size and came back 56% black around a 400x300
+// drawing (PowerShell WinForms, 150%, luoling-windows-11, 2026-11-03). The fix sizes the bitmap
+// at the window's render scale and crops in bitmap pixels. Numbers: outer rect 1800,1050 600x450
+// (11 px invisible border at 150%), DWM frame 1811,1050 578x439, scale 96/144.
+#[test]
+fn issue_460_visible_crop_maps_the_frame_into_a_dpi_unaware_bitmap() {
+  let window_rect = Rect::new(1800.0, 1050.0, 600.0, 450.0);
+  let frame = Rect::new(1811.0, 1050.0, 578.0, 439.0);
+
+  let crop = visible_crop(window_rect, (400, 300), frame, 96.0 / 144.0).expect("the frame lies inside the bitmap");
+
+  assert_eq!(
+    crop,
+    PixelCrop {
+      x: 7,
+      y: 0,
+      width: 386,
+      height: 293
+    }
+  );
 }

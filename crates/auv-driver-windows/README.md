@@ -24,6 +24,19 @@ UIA, and `Windows.Media.Ocr`.
 - Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window capture stream that never serves a stale frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
 - Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
 
+## DPI awareness
+
+The driver works in physical pixels and needs a per-monitor DPI aware host
+process. It does not change the host's awareness. `auv.exe` declares
+per-monitor-v2 in its application manifest (`crates/auv-cli/auv.exe.manifest`).
+Any other executable that hosts the driver must declare it too, best in its own
+manifest ([Microsoft guidance](https://learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process)).
+If the host is not per-monitor aware, `WindowsDriver::open_local` prints one
+warning: on a scaled display Windows then virtualizes its coordinates, and
+window frames, captures and clicks can disagree. AUV's own test and evaluation
+executables call `dpi::set_process_per_monitor_aware()` before their first
+window ([reference](../../docs/ai/references/driver/2026-11-03-windows-dpi-awareness.md)).
+
 ## Open TODOs
 
 | Marker | Location | What is deferred |
@@ -31,12 +44,12 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-input-target-lease)` | `src/input.rs` | Typed input lease matching the macOS slice |
 | `TODO(windows-window-mutation-fallback)` | `src/mutation.rs` | Foreground/SendInput fallback for mutation when the Win32 API is blocked |
 | `TODO(windows-window-zoom-verification)` | `src/mutation.rs` | Zoom/maximize state verification after mutation |
-| `TODO(windows-window-capture-dpi)` | `src/capture.rs` | Tighter DPI/border mapping for window capture |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-focus-reference)` | `src/accessibility.rs` | Cross-call focus by a typed element identity; raw child paths are refused |
 | `TODO(windows-uia-cancellation)` | `src/accessibility.rs` | Bounded or cancelable synchronous UIA provider calls |
 | `TODO(windows-focus-progress)` | `src/accessibility.rs` | Shared structured metadata for a readback failure after focus delivery |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
+| `TODO(windows-overlay-dpi)` | `crates/auv-driver-overlay-windows/src/window.rs` | Overlay art and labels are not scaled by the monitor DPI |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |
