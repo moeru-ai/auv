@@ -366,7 +366,7 @@ async fn bind_listener(
     }
     #[cfg(unix)]
     ListenEndpoint::Unix { path } => {
-      let (listener, cleanup) = bind_unix(&path)?;
+      let (listener, cleanup) = bind_unix(&path).await?;
       let owner_uid = cleanup.owner_uid;
       (
         BoundListener::Unix { listener, cleanup },
@@ -443,19 +443,11 @@ fn resolve_remote_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String>
 }
 
 #[cfg(unix)]
-fn bind_unix(path: &Path) -> Result<(UnixListener, UnixSocketCleanup), String> {
-  if path.exists() {
-    return Err(format!("API Unix socket path already exists: {}", path.display()));
-  }
-  if let Some(parent) = path.parent() {
-    std::fs::create_dir_all(parent).map_err(|error| format!("failed to create API socket directory {}: {error}", parent.display()))?;
-  }
-  let listener = UnixListener::bind(path).map_err(|error| format!("failed to bind API Unix socket {}: {error}", path.display()))?;
-  // Local transport skips pairing, so the socket itself must not grant access
-  // to group/other users while peer-caller projection remains deferred.
-  use std::os::unix::fs::PermissionsExt;
-  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-    .map_err(|error| format!("failed to protect API Unix socket {}: {error}", path.display()))?;
+async fn bind_unix(path: &Path) -> Result<(UnixListener, UnixSocketCleanup), String> {
+  // A crashed or SIGKILL-ed daemon leaves its socket behind; reclaim it only
+  // when it is this user's socket and nothing listens on it.
+  crate::unix_socket::clear_stale(path, &format!("API Unix socket {}", path.display())).await?;
+  let listener = crate::unix_socket::bind_private(path)?;
   let cleanup = UnixSocketCleanup::new(path)?;
   Ok((listener, cleanup))
 }

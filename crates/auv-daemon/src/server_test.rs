@@ -596,6 +596,44 @@ async fn registered_daemon_with_only_a_paired_listener_publishes_its_owner_socke
   task.await.unwrap().unwrap();
 }
 
+// ROOT CAUSE:
+//
+// If a registered daemon was killed with SIGKILL, its `auv.sock` stayed beside
+// the discovery descriptor because socket cleanup runs only in Drop.
+//
+// Before the fix, the next registered daemon failed with "API Unix socket
+// path already exists". The fix reclaims an owned socket nobody listens on,
+// binds it 0600, and still refuses a socket that has a live listener.
+#[cfg(unix)]
+#[tokio::test]
+async fn registered_daemon_reclaims_a_stale_owner_socket_but_not_a_live_one() {
+  use std::os::unix::fs::PermissionsExt;
+  let root = tempfile::tempdir().unwrap();
+  let descriptor = root.path().join("daemon.json");
+  let owner_socket = root.path().join("auv.sock");
+  drop(std::os::unix::net::UnixListener::bind(&owner_socket).unwrap());
+  // Each daemon owns its store and pairing locks; only the discovery
+  // directory, and so the owner socket, is shared.
+  let registered = |store: &std::path::Path| {
+    let mut options = config(Vec::new(), store);
+    options.discovery_file = Some(descriptor.clone());
+    options.register = true;
+    options
+  };
+
+  let server = Server::bind(registered(root.path())).await.unwrap();
+
+  assert_eq!(server.discovery_endpoint(), Some(&BoundEndpoint::Unix(owner_socket.clone())));
+  assert_eq!(std::fs::metadata(&owner_socket).unwrap().permissions().mode() & 0o777, 0o600);
+
+  let second = tempfile::tempdir().unwrap();
+  let error = Server::bind(registered(second.path())).await.err().expect("a live owner socket is not reclaimed");
+
+  assert!(error.contains("already has a live listener"), "{error}");
+  assert!(std::os::unix::net::UnixStream::connect(&owner_socket).is_ok());
+  drop(server);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unregistered_daemon_uses_a_private_owner_socket_and_publishes_nothing() {
