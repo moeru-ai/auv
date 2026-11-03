@@ -434,10 +434,20 @@ Decided with the owner on 2026-11-02 and 2026-11-03.
 - **A cache before the watch.** Per-pid app info caching and parallel AX
   reads were considered for the slow macOS `list()`; deferred so that the
   watcher's model becomes the one window cache (`TODO(window-list-cache)`).
-- **JS reactivity in the SDK core.** Rejected: alien-signals lives in the
+- **Which reactivity model for JS.** The owner chose the alien-signals
+  pattern (`signal` / `computed` / `effect`) for its performance and wide
+  adoption. Its push-pull propagation evaluates `computed` values lazily, and
+  its core avoids `Array`/`Set`/`Map` and recursion. It does well in the
+  [js-reactivity-benchmark](https://github.com/transitive-bullshit/js-reactivity-benchmark),
+  and Vue 3.6's reactivity core is a port of it
+  ([vuejs/core#12349](https://github.com/vuejs/core/pull/12349)); XState's atoms
+  port it too ([statelyai/xstate#5250](https://github.com/statelyai/xstate/pull/5250)).
+  Most front-end readers already know the model.
+- **Reactivity in the SDK core.** Rejected: alien-signals lives in the
   `@auv-js/sdk/signals` subpath with an optional peer dependency, driven by
   the async iterator; the core SDK exposes `watch()` and Tauri-style `on*`
-  listeners only.
+  listeners only, so Node scripts and agents that never render UI do not pay
+  for a reactivity runtime.
 
 ### Driver side
 
