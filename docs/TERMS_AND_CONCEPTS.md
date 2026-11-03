@@ -798,6 +798,37 @@ close buffers explicitly, and the owning Runner closes any remaining buffers
 during shutdown. Opening and reading a buffer are separate calls, so callers
 must use a Run-affine route that keeps both calls on the same Runner.
 
+## Watch
+
+A **watch** (*provisional*) is a server-streaming RPC that keeps a client's copy
+of some Runner-observed state current, such as the windows on a Device. It is
+state sync, not an event log: a client learns the current state and what
+changed, not every intermediate step. The full history of what AUV did belongs
+to trace recording.
+
+Every watch follows one shape:
+
+- The stream starts with a **snapshot** of the full state, then sends changes
+  (`added`, `modified`, `removed`) that carry the full new object, then a
+  **current** marker once the client holds the current state.
+- Every message carries an opaque **resume token**. A client stores the latest
+  one after applying its message and passes it when it reconnects. The Runner
+  then sends only the net difference since that stream ended. When it cannot
+  (the token expired, was used, or came from another caller, filter or Runner
+  instance), it sends a snapshot marked `RESET` instead. A bad token is never an
+  error.
+- The Runner keeps no event log, only the last state a stream sent, for a short
+  retention after it ends. Nothing survives a Runner restart.
+- Pending changes merge per object, so nothing is dropped and the backlog is
+  bounded by the number of objects. A heartbeat advances the token while
+  nothing changes.
+
+The shape follows Firestore Listen (`resume_token`, `RESET`, `CURRENT`) and
+Kubernetes watch. The first watch is `WatchWindows`; see
+`docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md`.
+`TODO(pointer-watch)` and the daemon resource watches (`TODO(watch-v1)`)
+should use the same shape.
+
 ## Runner service surface
 
 Registering a RunnerClass approves its whole gRPC endpoint, not a daemon-owned
