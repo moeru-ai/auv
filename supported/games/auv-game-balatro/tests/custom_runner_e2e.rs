@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
-use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use auv_api_proto::auv::api::image::v1 as image_proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
 use auv_daemon::{Config, Server};
 
@@ -36,7 +36,7 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
   let device = device.r#ref.expect("Device ref");
   let run = client
     .runs()
-    .create_run(daemon_proto::CreateRunRequest {
+    .create_run(runtime_proto::CreateRunRequest {
       devices: vec![device.clone()],
       labels: Default::default(),
     })
@@ -68,7 +68,7 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
     .expect_err("malformed frame must fail before model loading");
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
 
-  client.runs().stop_run(run.run_id, daemon_proto::RunOutcome::Succeeded).await.expect("stop Run");
+  client.runs().stop_run(run.run_id, runtime_proto::RunOutcome::Succeeded).await.expect("stop Run");
   shutdown.cancel();
   server.await.expect("join daemon task").expect("serve daemon");
 }

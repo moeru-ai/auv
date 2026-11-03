@@ -348,8 +348,8 @@ fn windows_unsupported_media_backend_maps_to_unimplemented() {
 #[tokio::test]
 #[ignore = "live SMTC media control trial through the Runner route against an active media session"]
 async fn live_windows_runner_media_control_parity() {
-  use auv_api_proto::auv::api::driver::macos::v1::media_control_service_client::MediaControlServiceClient;
-  use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::MediaControlServiceServer;
+  use auv_api_proto::auv::api::driver::macos::v1::media_service_client::MediaServiceClient;
+  use auv_api_proto::auv::api::driver::macos::v1::media_service_server::MediaServiceServer;
   use std::io::Write;
   use std::time::Instant;
 
@@ -361,7 +361,7 @@ async fn live_windows_runner_media_control_parity() {
 
   let server_handle = tokio::spawn(async move {
     let _ = tonic::transport::Server::builder()
-      .add_service(MediaControlServiceServer::new(LocalMediaControlService))
+      .add_service(MediaServiceServer::new(LocalMediaService))
       .serve_with_shutdown(local_addr, async {
         let _ = shutdown_rx.await;
       })
@@ -375,7 +375,7 @@ async fn live_windows_runner_media_control_parity() {
     .connect()
     .await
     .expect("connect to local runner media service");
-  let mut client = MediaControlServiceClient::new(channel);
+  let mut client = MediaServiceClient::new(channel);
 
   // NOTICE: records go to the temp dir so a rerun cannot overwrite the committed
   // evidence in docs/ai/references/driver/; copy the file there after review.
@@ -385,7 +385,7 @@ async fn live_windows_runner_media_control_parity() {
     std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&jsonl_path).expect("open jsonl output file");
 
   // 1. nowPlaying x 3
-  println!("\n=== Running mediaControl.nowPlaying via Runner Route (3 runs) ===");
+  println!("\n=== Running media.getNowPlaying via Runner Route (3 runs) ===");
   for run in 1..=3 {
     let start = Instant::now();
     let res = client.get_now_playing(macos_proto::GetNowPlayingRequest {}).await.expect("get_now_playing RPC failed").into_inner();
@@ -398,7 +398,7 @@ async fn live_windows_runner_media_control_parity() {
     );
 
     let record = serde_json::json!({
-      "command_id": "mediaControl.nowPlaying",
+      "command_id": "media.getNowPlaying",
       "route": "runner",
       "run": run,
       "redacted": "title, artist and album are the user's own music; only whether each was reported is kept",
@@ -438,14 +438,14 @@ async fn live_windows_runner_media_control_parity() {
 
   if !pre_state.is_playing {
     println!("Pre-test state was paused; starting playback first to match #342 initial conditions...");
-    let _ = client.play(macos_proto::PlayRequest {}).await.expect("initial play");
+    let _ = client.play(macos_proto::PlayMediaRequest {}).await.expect("initial play");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
   }
 
   // Step 1: pause
   step += 1;
   let start = Instant::now();
-  let outcome = client.pause(macos_proto::PauseRequest {}).await.expect("pause RPC").into_inner().outcome.expect("outcome");
+  let outcome = client.pause(macos_proto::PauseMediaRequest {}).await.expect("pause RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -458,7 +458,7 @@ async fn live_windows_runner_media_control_parity() {
   assert!(!after.is_playing, "after pause must not be playing");
   let rec_pause = serde_json::json!({
     "command": "pause",
-    "command_id": "mediaControl.pause",
+    "command_id": "media.pause",
     "route": "runner",
     "step": step,
     "before": {
@@ -483,7 +483,7 @@ async fn live_windows_runner_media_control_parity() {
   // Step 2: play
   step += 1;
   let start = Instant::now();
-  let outcome = client.play(macos_proto::PlayRequest {}).await.expect("play RPC").into_inner().outcome.expect("outcome");
+  let outcome = client.play(macos_proto::PlayMediaRequest {}).await.expect("play RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -496,7 +496,7 @@ async fn live_windows_runner_media_control_parity() {
   assert!(after.is_playing, "after play must be playing");
   let rec_play = serde_json::json!({
     "command": "play",
-    "command_id": "mediaControl.play",
+    "command_id": "media.play",
     "route": "runner",
     "step": step,
     "before": {
@@ -525,7 +525,7 @@ async fn live_windows_runner_media_control_parity() {
   // Step 3: next
   step += 1;
   let start = Instant::now();
-  let outcome = client.next_track(macos_proto::NextTrackRequest {}).await.expect("next RPC").into_inner().outcome.expect("outcome");
+  let outcome = client.next_track(macos_proto::SkipToNextTrackRequest {}).await.expect("next RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -535,7 +535,7 @@ async fn live_windows_runner_media_control_parity() {
   assert!(track_changed, "track must change on next");
   let rec_next = serde_json::json!({
     "command": "next",
-    "command_id": "mediaControl.next",
+    "command_id": "media.skipToNextTrack",
     "route": "runner",
     "step": step,
     "before": {
@@ -561,7 +561,7 @@ async fn live_windows_runner_media_control_parity() {
   step += 1;
   let start = Instant::now();
   let outcome =
-    client.previous_track(macos_proto::PreviousTrackRequest {}).await.expect("previous RPC").into_inner().outcome.expect("outcome");
+    client.previous_track(macos_proto::SkipToPreviousTrackRequest {}).await.expect("previous RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -574,7 +574,7 @@ async fn live_windows_runner_media_control_parity() {
   assert!(outcome.verified, "previous must be verified");
   let rec_prev = serde_json::json!({
     "command": "previous",
-    "command_id": "mediaControl.previous",
+    "command_id": "media.skipToPreviousTrack",
     "route": "runner",
     "step": step,
     "before": {
@@ -614,7 +614,7 @@ async fn live_windows_runner_media_control_parity() {
   step += 1;
   let start = Instant::now();
   let outcome =
-    client.toggle_play_pause(macos_proto::TogglePlayPauseRequest {}).await.expect("toggle RPC").into_inner().outcome.expect("outcome");
+    client.toggle_play_pause(macos_proto::ToggleMediaPlaybackRequest {}).await.expect("toggle RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -627,7 +627,7 @@ async fn live_windows_runner_media_control_parity() {
   assert_ne!(before.is_playing, after.is_playing, "playing state must flip");
   let rec_toggle = serde_json::json!({
     "command": "toggle",
-    "command_id": "mediaControl.togglePlayPause",
+    "command_id": "media.togglePlayback",
     "route": "runner",
     "step": step,
     "before": {
@@ -1067,10 +1067,9 @@ fn overlay_shadow_mapper_preserves_native_dimensions_and_rejects_invalid_blur() 
 async fn keyboard_rpc_requires_explicit_recipient_before_delivery() {
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let error = service
-    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+    .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
       inputs: vec![keyboard_press_request("a", 1)],
       ..Default::default()
     }))
@@ -1101,13 +1100,10 @@ fn keyboard_press_request(key: &str, count: u32) -> proto::KeyboardInput {
 async fn targeted_keyboard_rpc_rejects_changed_window_owner() {
   let session = auv_driver::open_local().unwrap();
   let window = session.window().list().unwrap().into_iter().find(|window| window.process_id.is_some()).unwrap();
-  let service = LocalInputService {
-    session,
-    captures: test_capture_store(),
-  };
+  let service = LocalInputService { session };
   for dry_run in [false, true] {
     let error = service
-      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
         target: Some(proto::InputTarget {
           recipient: Some(proto::input_target::Recipient::Window(proto::Window {
             r#ref: Some(proto::WindowRef {
@@ -1133,10 +1129,9 @@ async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let error = service
-    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+    .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
       target: Some(proto::InputTarget {
         recipient: Some(proto::input_target::Recipient::Foreground(true)),
       }),
@@ -1161,7 +1156,6 @@ async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let error = service
     .press_keys(Request::new(proto::PressKeysRequest {
@@ -1187,7 +1181,6 @@ async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
 async fn keyboard_hold_rpc_rejects_missing_deadline_before_delivery() {
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let target = proto::InputTarget {
     recipient: Some(proto::input_target::Recipient::Foreground(true)),
@@ -1222,10 +1215,9 @@ async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let error = service
-    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+    .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
       target: Some(proto::InputTarget {
         recipient: Some(proto::input_target::Recipient::Foreground(true)),
       }),
@@ -1252,7 +1244,6 @@ mod linux_keyboard_tests {
     use auv_driver::Driver;
     let service = LocalInputService {
       session: auv_driver::LocalDriver::new().open_local().unwrap(),
-      captures: super::test_capture_store(),
     };
     let press = |key: &str| proto::KeyboardInput {
       action: Some(proto::keyboard_input::Action::Press(proto::KeyboardPress {
@@ -1268,7 +1259,7 @@ mod linux_keyboard_tests {
       recipient: Some(proto::input_target::Recipient::Foreground(true)),
     });
     let result = service
-      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
         target: target.clone(),
         inputs: vec![press("a")],
         dry_run: true,
@@ -1277,7 +1268,7 @@ mod linux_keyboard_tests {
       .unwrap();
     assert!(result.into_inner().actions.is_empty());
     let error = service
-      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
         target,
         inputs: vec![press("a"), press("invalid-key")],
         dry_run: false,
@@ -1370,7 +1361,6 @@ fn scroll_rpc_accepts_only_finite_non_zero_deltas_before_delivery() {
 async fn scroll_point_rpc_reuses_window_scroll_validation_before_delivery() {
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let position = proto::Position {
     x: 10.0,
@@ -1404,7 +1394,6 @@ async fn scroll_point_rpc_reuses_window_scroll_validation_before_delivery() {
 async fn scroll_point_rpc_rejects_a_window_position_before_delivery() {
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    captures: test_capture_store(),
   };
   let error = service
     .scroll_point(Request::new(proto::ScrollPointRequest {
@@ -1422,7 +1411,7 @@ async fn scroll_point_rpc_rejects_a_window_position_before_delivery() {
     .await
     .unwrap_err();
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
-  assert!(error.message().contains("ScrollWindowPoint"), "{}", error.message());
+  assert!(error.message().contains("ScrollWindow"), "{}", error.message());
 }
 
 #[test]
@@ -2043,7 +2032,6 @@ async fn fetched_images_are_cached_on_the_capture_except_raw_pixels() {
   let captures = test_capture_store();
   let id = captures.insert(gradient_capture(10, 4));
   let service = LocalCaptureService {
-    session: auv_driver::open_local().unwrap(),
     captures: captures.clone(),
   };
   let request = |encoding: image_proto::ImageEncoding, max_size: Option<image_proto::PixelSize>| {

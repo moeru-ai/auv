@@ -55,7 +55,7 @@ fn main() {
           result
         }
         "up" => held.as_mut().ok_or("fixture has no hold")?.release().map_err(|e| e.to_string())?,
-        "input.keys" => input
+        "input.pressKeys" => input
           .press_keys(
             &target,
             PressKeysOptions {

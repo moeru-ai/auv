@@ -13,32 +13,38 @@ pub fn group() -> CommandGroup {
   // TODO(invoke-keyboard-hold): cross-call holds need a persistent invoke owner
   // and release route; expose them here after that frontend lifecycle is defined.
   // TODO(invoke-mouse-hold): cross-call mouseDown/mouseUp have the same owner and
-  // release requirement. input.drag exposes only the complete one-admission gesture.
+  // release requirement. input.dragMouse exposes only the complete one-admission gesture.
   CommandGroup::new("input", "INPUT")
-    .command(focus_text_input_invoke_command())
-    .command(ax_focus_text_input_invoke_command())
     .command(type_text_invoke_command())
     .command(paste_text_preserve_clipboard_invoke_command())
-    .command(press_key_invoke_command())
     .command(press_keys_invoke_command())
-    .command(press_keys_named_invoke_command())
     .command(hold_keys_invoke_command())
-    .command(input_keyboard_invoke_command())
+    .command(perform_keyboard_inputs_invoke_command())
     .command(pointer_position_invoke_command())
     .command(move_mouse_invoke_command())
     .command(scroll_point_invoke_command())
     .command(click_point_invoke_command())
-    .command(drag_invoke_command())
-    .command(scroll_invoke_command())
-    .command(scroll_until_invoke_command())
+    .command(drag_mouse_invoke_command())
+}
+
+/// `AccessibilityService` commands. The Runner route and the local path share
+/// the typed focus operation in this module.
+pub fn accessibility_group() -> CommandGroup {
+  CommandGroup::new("accessibility", "ACCESSIBILITY").command(focus_text_input_invoke_command())
+}
+
+/// Window scroll commands, registered in the `window` group because
+/// `WindowService` owns ScrollWindow and ScrollWindowUntil.
+pub(crate) fn window_scroll_commands() -> [crate::InvokeCommand; 2] {
+  [scroll_invoke_command(), scroll_until_invoke_command()]
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.pointerPosition --json")]
+#[command(after_long_help = "Examples:\n  auv invoke input.getPointerPosition --json")]
 struct PointerPositionArgs {}
 
 #[invoke_command(
-  id = "input.pointerPosition",
+  id = "input.getPointerPosition",
   support = { macos: Supported, linux: Unsupported("the portal cannot report the pointer position"), windows: Supported },
   runner = Direct,
   group = "input",
@@ -56,13 +62,13 @@ async fn pointer_position(input: InvokeCommandInput, _args: PointerPositionArgs)
   }
   #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
-    Err("input.pointerPosition is unavailable on this platform".to_string())
+    Err("input.getPointerPosition is unavailable on this platform".to_string())
   }
 }
 
 pub fn pointer_position_output(point: auv_driver::Point) -> InvokeCommandResult {
   if !point.x.is_finite() || !point.y.is_finite() {
-    return Err("input.pointerPosition observed non-finite coordinates".to_string());
+    return Err("input.getPointerPosition observed non-finite coordinates".to_string());
   }
   Ok(InvokeCommandOutput::from_result(&point)?.with_report(InvokeReport::new(
     vec![InvokeReportField::new(
@@ -248,7 +254,7 @@ pub(crate) fn decode_screen_scroll(
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.focusText \"Search\" --target com.apple.TextEdit")]
+#[command(after_long_help = "Examples:\n  auv invoke accessibility.focusText \"Search\" --target com.apple.TextEdit")]
 struct FocusTextArgs {
   /// Text identifying the input to focus.
   #[arg(value_name = "TEXT")]
@@ -264,7 +270,7 @@ struct FocusTextArgs {
 }
 
 #[invoke_command(
-  id = "input.focusText",
+  id = "accessibility.focusText",
   support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
   // Runner support describes its native backend, independently of this host.
   runner = {
@@ -273,7 +279,7 @@ struct FocusTextArgs {
     windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
   },
   target = RequiredApplication,
-  group = "input",
+  group = "accessibility",
   description = "Focus a control in a target app through accessibility, located by its text.",
   input = FocusTextArgs,
 )]
@@ -281,7 +287,7 @@ async fn focus_text_input(input: InvokeCommandInput, args: FocusTextArgs) -> cra
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
-  let app = input.application_target()?.ok_or_else(|| "input.focusText requires --target app:".to_string())?.to_string();
+  let app = input.application_target()?.ok_or_else(|| "accessibility.focusText requires --target app:".to_string())?.to_string();
   let candidate = args.candidate.unwrap_or_default();
   let result = focus_text(app, args.query, candidate.clone(), args.expected_role).await?;
   emit_input_action_result(&result.input_action_result);
@@ -311,54 +317,8 @@ pub async fn focus_text(
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (app, query, candidate);
-    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.focusText is only available on macOS and Windows"))
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "accessibility.focusText is only available on macOS and Windows"))
   }
-}
-
-#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.axFocusText \"Search\" --target com.apple.TextEdit")]
-struct AxFocusTextArgs {
-  /// Text identifying the input to focus.
-  #[arg(value_name = "TEXT")]
-  query: String,
-  /// Exact accessibility path on macOS. Windows accepts query selection only.
-  #[arg(long, value_name = "PATH")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  candidate: Option<String>,
-  /// Programmatic accessibility role used to disambiguate equal query matches.
-  #[arg(long, value_name = "ROLE")]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  expected_role: Option<String>,
-}
-
-// NOTICE(input-ax-focus-text-alias): this command is a compatibility alias for
-// input.focusText. Both use the same typed platform focus operation. Neither
-// provides an overlay or pointer fallback. Windows confirms focus by UIA
-// readback; macOS continues to report delivery only.
-// Remove the alias only after an owner-approved CLI compatibility boundary.
-#[invoke_command(
-  id = "input.axFocusText",
-  support = { macos: Supported, linux: Unsupported, windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392") },
-  runner = {
-    macos: Supported,
-    linux: Unsupported("the Runner has no Linux accessibility focus backend"),
-    windows: Partial("Live-validated Win32 EDIT query focus on one isolated desktop; raw paths unsupported; evidence: https://github.com/moeru-ai/auv/actions/runs/40683082392"),
-  },
-  role = Alias("input.focusText"),
-  target = RequiredApplication,
-  group = "input",
-  description = "Compatibility spelling of input.focusText; prefer input.focusText.",
-  input = AxFocusTextArgs,
-)]
-async fn ax_focus_text_input(input: InvokeCommandInput, args: AxFocusTextArgs) -> crate::InvokeExecutionResult {
-  if input.dry_run {
-    return Ok(InvokeCommandOutput::completed());
-  }
-  let app = input.application_target()?.ok_or_else(|| "input.axFocusText requires --target app:".to_string())?.to_string();
-  let candidate = args.candidate.unwrap_or_default();
-  let result = focus_text(app, args.query, candidate.clone(), args.expected_role).await?;
-  emit_input_action_result(&result.input_action_result);
-  Ok(focus_text_output(&result, &candidate)?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -448,26 +408,9 @@ pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.key cmd+f")]
-struct PressKeyArgs {
-  /// Physical key or legacy shortcut (for example cmd+a). Use input.typeText for literal Unicode text.
-  #[arg(value_name = "KEY")]
-  key: String,
-  /// Foreground prepares focus; background modes do not activate or automatically fall back.
-  #[arg(long, value_enum)]
-  #[serde(rename = "input-policy")]
-  input_policy: Option<InputPolicyArg>,
-  /// Number of complete presses, 1..255. Repetition requires --interval-ms.
-  #[arg(long)]
-  count: Option<u32>,
-  /// Interval between complete presses in milliseconds; no delay after the last.
-  #[arg(long)]
-  #[serde(rename = "interval-ms")]
-  interval_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.keys cmd shift p\n  auv invoke input.keys return --count 2 --interval-ms 100")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke input.pressKeys cmd shift p\n  auv invoke input.pressKeys return --count 2 --interval-ms 100"
+)]
 struct PressKeysArgs {
   /// One key combination: key names or ANSI characters. Modifiers precede ordinary keys. MCP inputs encode this list as a JSON array string.
   #[arg(value_name = "KEY", num_args = 1..)]
@@ -486,7 +429,7 @@ struct PressKeysArgs {
 }
 
 #[invoke_command(
-  id = "input.keys",
+  id = "input.pressKeys",
   target = OptionalKeyboard,
   group = "input",
   description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Keys are released in reverse order; effects remain unverified.",
@@ -496,22 +439,6 @@ struct PressKeysArgs {
 )]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
   execute_keyboard(&input, vec![args.into()])
-}
-
-// NOTICE: input.keys is the existing complete-press spelling. Keep both
-// commands on the same typed path while callers adopt the explicit verb.
-#[invoke_command(
-  id = "input.pressKeys",
-  target = OptionalKeyboard,
-  group = "input",
-  description = "Press and release one key combination such as [\"ctrl\",\"l\"], optionally repeated. Equivalent to input.keys.",
-  input = PressKeysArgs,
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
-  runner = Direct,
-  role = Alias("input.keys"),
-)]
-async fn press_keys_named(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
-  press_keys(input, args).await
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -602,9 +529,9 @@ async fn execute_hold_keys(
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.keyboard --actions '[{\"kind\":\"press\",\"keys\":[\"cmd\",\"a\"]},{\"kind\":\"type_text\",\"text\":\"hello\"}]' --target app:com.netease.163music\nActions: press (keys, optional count and interval_ms), type_text (text), paste_text (text). Entire list is validated first; a delivery failure stops execution and retains progress."
+  after_long_help = "Examples:\n  auv invoke input.performKeyboardInputs --actions '[{\"kind\":\"press\",\"keys\":[\"cmd\",\"a\"]},{\"kind\":\"type_text\",\"text\":\"hello\"}]' --target app:com.netease.163music\nActions: press (keys, optional count and interval_ms), type_text (text), paste_text (text). Entire list is validated first; a delivery failure stops execution and retains progress."
 )]
-struct InputKeyboardArgs {
+struct PerformKeyboardInputsArgs {
   /// JSON array: press {keys, count?, interval_ms?}, type_text {text}, or paste_text {text}; each object requires kind.
   #[arg(long, value_name = "JSON")]
   actions: String,
@@ -632,51 +559,17 @@ enum KeyboardActionArg {
 }
 
 #[invoke_command(
-  id = "input.keyboard",
+  id = "input.performKeyboardInputs",
   target = OptionalKeyboard,
   group = "input",
   description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.",
-  input = InputKeyboardArgs,
+  input = PerformKeyboardInputsArgs,
   support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
   runner = Direct,
 )]
-async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
+async fn perform_keyboard_inputs(input: InvokeCommandInput, args: PerformKeyboardInputsArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
   execute_keyboard(&input, actions)
-}
-
-#[invoke_command(
-  id = "input.key",
-  support = { macos: Supported, linux: Partial("focused target only; cannot focus or raise a window"), windows: Partial("foreground delivery only; targeted delivery is unsupported") },
-  runner = Direct,
-  target = OptionalKeyboard,
-  group = "input",
-  description = "Press one key or shortcut written as one string, such as \"enter\" or \"ctrl+l\".",
-  input = PressKeyArgs,
-)]
-async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input, vec![args.into()])
-}
-
-pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-  {
-    let session = auv::local::open().map_err(|error| error.to_string())?;
-    let result = session
-      .input()
-      .press_key(auv_driver::KeyPressOptions {
-        key,
-        ..auv_driver::KeyPressOptions::default()
-      })
-      .map_err(|error| error.to_string())?;
-    emit_input_action_result(&result);
-    Ok(result)
-  }
-  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-  {
-    let _ = key;
-    Err("input.key is unavailable on this platform".to_string())
-  }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -1052,7 +945,7 @@ pub fn click_point_output(result: ClickPointResult) -> InvokeCommandResult {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.drag 400 300 700 300\n  auv invoke input.drag 0.2 0.5 0.8 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.drag 20 38 380 38 --target app:com.apple.TextEdit --input-policy foreground-preferred\n  auv invoke input.drag 100 80 300 80 --target display:1 --button right --duration-ms 600\nThe button goes down at the start point, the pointer moves in a straight line, and the button goes up at the end point under one input admission. Screen and display drags move the real pointer; activate the target app first, because an inactive window can treat the first press as activation only. Window-relative drags default to background-preferred: window-targeted delivery that does not move the pointer, which an inactive application can ignore. Use --input-policy foreground-preferred to foreground the window before a desktop drag. Delivery does not verify the application drop result."
+  after_long_help = "Examples:\n  auv invoke input.dragMouse 400 300 700 300\n  auv invoke input.dragMouse 0.2 0.5 0.8 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.dragMouse 20 38 380 38 --target app:com.apple.TextEdit --input-policy foreground-preferred\n  auv invoke input.dragMouse 100 80 300 80 --target display:1 --button right --duration-ms 600\nThe button goes down at the start point, the pointer moves in a straight line, and the button goes up at the end point under one input admission. Screen and display drags move the real pointer; activate the target app first, because an inactive window can treat the first press as activation only. Window-relative drags default to background-preferred: window-targeted delivery that does not move the pointer, which an inactive application can ignore. Use --input-policy foreground-preferred to foreground the window before a desktop drag. Delivery does not verify the application drop result."
 )]
 struct DragArgs {
   /// Start X coordinate in the selected coordinate basis.
@@ -1115,7 +1008,7 @@ pub(crate) struct DragPlan {
 impl DragArgs {
   fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<DragPlan, String> {
     let basis = point_basis(
-      "input.drag",
+      "input.dragMouse",
       target,
       self.relative_to.map(RelativeToArg::as_str),
       self.normalized,
@@ -1124,13 +1017,13 @@ impl DragArgs {
     )?;
     let coordinates = [self.start_x, self.start_y, self.end_x, self.end_y];
     if coordinates.iter().any(|value| !value.is_finite()) {
-      return Err("input.drag requires finite coordinates".to_string());
+      return Err("input.dragMouse requires finite coordinates".to_string());
     }
     if self.normalized && coordinates.iter().any(|value| !(0.0..=1.0).contains(value)) {
-      return Err("input.drag --normalized coordinates must be within 0..=1".to_string());
+      return Err("input.dragMouse --normalized coordinates must be within 0..=1".to_string());
     }
     if self.duration_ms > MAX_DRAG_DURATION_MS {
-      return Err(format!("input.drag --duration-ms must be within 0..={MAX_DRAG_DURATION_MS}"));
+      return Err(format!("input.dragMouse --duration-ms must be within 0..={MAX_DRAG_DURATION_MS}"));
     }
     Ok(DragPlan {
       basis,
@@ -1149,7 +1042,7 @@ impl DragPlan {
   /// Projects both endpoints from a window or display frame into screen space.
   pub(crate) fn screen_points(&self, frame: auv_driver::Rect, basis: &str) -> Result<(ScreenPoint, ScreenPoint), crate::InvokeFailure> {
     let local = |point: auv_driver::Point| {
-      resolve_local_point("input.drag", point.x, point.y, self.normalized, frame.size, basis)
+      resolve_local_point("input.dragMouse", point.x, point.y, self.normalized, frame.size, basis)
         .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))
     };
     let (start, end) = (local(self.start)?, local(self.end)?);
@@ -1166,7 +1059,7 @@ impl DragPlan {
       return self.screen_points(frame, "window");
     }
     for point in [self.start, self.end] {
-      screen_point_in_window("input.drag", point, frame)
+      screen_point_in_window("input.dragMouse", point, frame)
         .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
     }
     Ok((ScreenPoint::new(self.start.x, self.start.y), ScreenPoint::new(self.end.x, self.end.y)))
@@ -1235,7 +1128,7 @@ impl DragResult {
 }
 
 #[invoke_command(
-  id = "input.drag",
+  id = "input.dragMouse",
   support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   // DragMouse carries no window policy, so the Runner route refuses the foreground-preferred
   // input policy before any RPC; every platform is Partial because of that refusal.
@@ -1249,7 +1142,7 @@ impl DragResult {
   description = "Press a mouse button, move in a straight line, and release it at the end point.",
   input = DragArgs,
 )]
-async fn drag(input: InvokeCommandInput, args: DragArgs) -> crate::InvokeExecutionResult {
+async fn drag_mouse(input: InvokeCommandInput, args: DragArgs) -> crate::InvokeExecutionResult {
   let plan = args.plan(input.target.as_ref()).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
   execute_drag(&input, plan).await
 }
@@ -1286,7 +1179,7 @@ async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::Invo
       };
       let session = session.as_ref().expect("display resolution opens a session");
       let display = session.display().list()?.displays.into_iter().find(|display| display.id == *id).ok_or_else(|| {
-        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find display target {id:?}"))
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.dragMouse could not find display target {id:?}"))
       })?;
       let (start, end) = plan.screen_points(display.frame, "display")?;
       let mut result = DragResult::planned(&plan, start, end);
@@ -1319,7 +1212,7 @@ async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::Invo
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 async fn execute_drag(_input: &InvokeCommandInput, _plan: DragPlan) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.drag is unavailable on this platform"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.dragMouse is unavailable on this platform"))
 }
 
 pub fn drag_output(result: DragResult) -> InvokeCommandResult {
@@ -1345,7 +1238,7 @@ pub fn drag_output(result: DragResult) -> InvokeCommandResult {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.scroll 200 300 --dy 300 --target app:com.google.Chrome\n  auv invoke input.scroll 0.5 0.5 --normalized --dy -600 --target window:12345 --input-policy background-only\n  auv invoke input.scroll 200 300 --dy 1200 --duration-ms 800 --easing ease-in-out --target app:com.google.Chrome\nDeltas are logical pixels. Positive --dy scrolls toward later content (down) and positive --dx scrolls right, matching DOM WheelEvent; the natural-scrolling preference does not apply. With --duration-ms the total is spread over time by --easing (linear, ease-in, ease-out, ease-in-out, cubic-bezier:x1,y1,x2,y2) at --sample-rate-hz; the first sample selects the delivery path. The default background-preferred policy tries window-targeted delivery before a foreground wheel. Delivery does not prove the viewport moved: a covered Chromium window can accept a wheel event without scrolling, so verify with a capture."
+  after_long_help = "Examples:\n  auv invoke window.scroll 200 300 --dy 300 --target app:com.google.Chrome\n  auv invoke window.scroll 0.5 0.5 --normalized --dy -600 --target window:12345 --input-policy background-only\n  auv invoke window.scroll 200 300 --dy 1200 --duration-ms 800 --easing ease-in-out --target app:com.google.Chrome\nDeltas are logical pixels. Positive --dy scrolls toward later content (down) and positive --dx scrolls right, matching DOM WheelEvent; the natural-scrolling preference does not apply. With --duration-ms the total is spread over time by --easing (linear, ease-in, ease-out, ease-in-out, cubic-bezier:x1,y1,x2,y2) at --sample-rate-hz; the first sample selects the delivery path. The default background-preferred policy tries window-targeted delivery before a foreground wheel. Delivery does not prove the viewport moved: a covered Chromium window can accept a wheel event without scrolling, so verify with a capture."
 )]
 struct ScrollArgs {
   /// X coordinate inside the target window.
@@ -1433,7 +1326,7 @@ pub(crate) fn parse_timing_function(value: &str) -> Result<auv_driver::TimingFun
 // (`InputService/ScrollPoint`), not this plan.
 // TODO(scroll-delivery-candidates-cli): the CLI keeps the Driver default
 // candidate ladder; expose an ordered candidate flag when a caller needs it.
-// TODO(scroll-stream-invoke): live velocity control (`InputService/StreamScroll`)
+// TODO(scroll-stream-invoke): live velocity control (`WindowService/StreamWindowScroll`)
 // needs a caller that keeps a stream open, so it is SDK/Runner-only; add an
 // invoke surface when a one-shot protocol for it is designed.
 #[derive(Clone, Debug)]
@@ -1449,18 +1342,18 @@ pub(crate) struct ScrollPlan {
 
 impl ScrollArgs {
   fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollPlan, String> {
-    validate_window_point("input.scroll", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
+    validate_window_point("window.scroll", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
     if !self.dx.is_finite() || !self.dy.is_finite() {
-      return Err("input.scroll requires finite --dx and --dy".to_string());
+      return Err("window.scroll requires finite --dx and --dy".to_string());
     }
     if self.dx == 0.0 && self.dy == 0.0 {
-      return Err("input.scroll requires a non-zero --dx or --dy".to_string());
+      return Err("window.scroll requires a non-zero --dx or --dy".to_string());
     }
     if self.settle_ms > MAX_SCROLL_SETTLE_MS {
-      return Err(format!("input.scroll --settle-ms must be within 0..={MAX_SCROLL_SETTLE_MS}"));
+      return Err(format!("window.scroll --settle-ms must be within 0..={MAX_SCROLL_SETTLE_MS}"));
     }
     let motion = timed_scroll_motion(
-      "input.scroll",
+      "window.scroll",
       "--duration-ms",
       auv_driver::Scroll::new(self.dx, self.dy),
       self.duration_ms,
@@ -1541,7 +1434,7 @@ fn timed_scroll_motion(
 impl ScrollPlan {
   /// Resolves the requested point against the target window's current size.
   pub(crate) fn window_point(&self, window: &auv_driver::Window) -> Result<auv_driver::WindowPoint, crate::InvokeFailure> {
-    let point = resolve_local_point("input.scroll", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
+    let point = resolve_local_point("window.scroll", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
       .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
     Ok(auv_driver::WindowPoint::new(point.x, point.y))
   }
@@ -1591,11 +1484,11 @@ pub struct ScrollResult {
 }
 
 #[invoke_command(
-  id = "input.scroll",
+  id = "window.scroll",
   support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   runner = Direct,
   target = RequiredWindow,
-  group = "input",
+  group = "window",
   description = "Scroll at a point in a target window by logical-pixel deltas (positive dy scrolls down). Requires an app or window target; without one, use input.scrollPoint.",
   input = ScrollArgs,
 )]
@@ -1634,7 +1527,7 @@ async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::
 /// Resolves an `app:` (optionally by title) or `window:` target on the local
 /// driver for window-bound scroll commands.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn resolve_local_window(
+pub(super) fn resolve_local_window(
   session: &auv_driver::LocalDriverSession,
   input: &InvokeCommandInput,
   title: Option<&str>,
@@ -1648,7 +1541,7 @@ fn resolve_local_window(
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 async fn execute_scroll(_input: &InvokeCommandInput, _plan: ScrollPlan) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.scroll is unavailable on this platform"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.scroll is unavailable on this platform"))
 }
 
 pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
@@ -1678,7 +1571,7 @@ pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.scrollUntil 200 300 --dy 600 --until end --target app:com.google.Chrome\n  auv invoke input.scrollUntil 0.5 0.5 --normalized --dy 800 --until 'text:Load more' --settle-ms 600 --target window:12345\n  auv invoke input.scrollUntil 200 300 --dy 900 --step-duration-ms 500 --easing ease-in-out --until end --region 0,0.1,1,0.8 --target app:com.google.Chrome\nEach step scrolls --dx/--dy logical pixels (one axis; positive is down/right), waits --settle-ms so lazy content can load, then captures the window once. --until end stops after --confirmations consecutive steps without visual motion in --region; --until text:<query> stops when recognized text contains the query, or at the end; keep the step well below the visible height (for example 60-70%) so each line appears whole in at least one update. --max-steps bounds the loop. An end stop means no visual progress was observed, not proof that no more content exists."
+  after_long_help = "Examples:\n  auv invoke window.scrollUntil 200 300 --dy 600 --until end --target app:com.google.Chrome\n  auv invoke window.scrollUntil 0.5 0.5 --normalized --dy 800 --until 'text:Load more' --settle-ms 600 --target window:12345\n  auv invoke window.scrollUntil 200 300 --dy 900 --step-duration-ms 500 --easing ease-in-out --until end --region 0,0.1,1,0.8 --target app:com.google.Chrome\nEach step scrolls --dx/--dy logical pixels (one axis; positive is down/right), waits --settle-ms so lazy content can load, then captures the window once. --until end stops after --confirmations consecutive steps without visual motion in --region; --until text:<query> stops when recognized text contains the query, or at the end; keep the step well below the visible height (for example 60-70%) so each line appears whole in at least one update. --max-steps bounds the loop. An end stop means no visual progress was observed, not proof that no more content exists."
 )]
 struct ScrollUntilArgs {
   /// X coordinate inside the target window.
@@ -1726,7 +1619,7 @@ struct ScrollUntilArgs {
   #[arg(long, default_value_t = 0)]
   #[serde(rename = "step-duration-ms", default)]
   step_duration_ms: u64,
-  /// Timing function for --step-duration-ms (see input.scroll --easing).
+  /// Timing function for --step-duration-ms (see window.scroll --easing).
   #[arg(long, value_name = "FUNCTION")]
   easing: Option<String>,
   /// Samples per second for --step-duration-ms (1..=1000).
@@ -1765,19 +1658,19 @@ pub(crate) struct ScrollUntilPlan {
 
 impl ScrollUntilArgs {
   fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollUntilPlan, String> {
-    validate_window_point("input.scrollUntil", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
+    validate_window_point("window.scrollUntil", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
     let condition = match self.until.trim() {
       "end" => auv_scan::ScrollUntilCondition::End,
       value => match value.strip_prefix("text:") {
         Some(query) => auv_scan::ScrollUntilCondition::TextVisible {
           query: query.trim().to_string(),
         },
-        None => return Err(format!("input.scrollUntil --until must be end or text:<query>, got {value:?}")),
+        None => return Err(format!("window.scrollUntil --until must be end or text:<query>, got {value:?}")),
       },
     };
     let delta = auv_driver::Scroll::new(self.dx, self.dy);
     let step = match timed_scroll_motion(
-      "input.scrollUntil",
+      "window.scrollUntil",
       "--step-duration-ms",
       delta,
       self.step_duration_ms,
@@ -1797,7 +1690,7 @@ impl ScrollUntilArgs {
       // The command reports only the result, so updates skip OCR.
       output: auv_scan::ScrollUntilOutputOptions { text: false },
     };
-    request.validate().map_err(|error| format!("input.scrollUntil: {error}"))?;
+    request.validate().map_err(|error| format!("window.scrollUntil: {error}"))?;
     Ok(ScrollUntilPlan {
       point: auv_driver::Point::new(self.x, self.y),
       normalized: self.normalized,
@@ -1825,7 +1718,7 @@ fn parse_normalized_region(value: &str) -> Result<auv_driver::RelativeRect, Stri
 
 impl ScrollUntilPlan {
   pub(crate) fn window_point(&self, window: &auv_driver::Window) -> Result<auv_driver::WindowPoint, crate::InvokeFailure> {
-    let point = resolve_local_point("input.scrollUntil", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
+    let point = resolve_local_point("window.scrollUntil", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
       .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
     Ok(auv_driver::WindowPoint::new(point.x, point.y))
   }
@@ -1863,11 +1756,11 @@ pub struct ScrollUntilOutput {
 }
 
 #[invoke_command(
-  id = "input.scrollUntil",
+  id = "window.scrollUntil",
   support = { macos: Supported, linux: Partial("foreground delivery only; background_only input policy is rejected"), windows: Partial("background delivery posts window messages, so whether an application acts on them depends on its toolkit") },
   runner = Direct,
   target = RequiredWindow,
-  group = "input",
+  group = "window",
   description = "Scroll a target window in steps until no visual motion remains, target text appears, or a step budget runs out.",
   input = ScrollUntilArgs,
 )]
@@ -1901,7 +1794,7 @@ async fn execute_scroll_until(input: &InvokeCommandInput, plan: ScrollUntilPlan)
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 async fn execute_scroll_until(_input: &InvokeCommandInput, _plan: ScrollUntilPlan) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.scrollUntil is unavailable on this platform"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.scrollUntil is unavailable on this platform"))
 }
 
 pub fn scroll_until_output(output: ScrollUntilOutput) -> InvokeCommandResult {
@@ -1933,7 +1826,7 @@ pub fn scroll_until_output(output: ScrollUntilOutput) -> InvokeCommandResult {
 /// Runs one blocking driver input on the blocking pool. Invoke cancellation,
 /// or dropping the invoke future, wakes waits inside the driver input.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-async fn run_cancellable_input<T: Send + 'static>(
+pub(super) async fn run_cancellable_input<T: Send + 'static>(
   cancellation: &crate::InvokeCancellation,
   operation: impl FnOnce() -> auv_driver::DriverResult<T> + Send + 'static,
 ) -> Result<T, crate::InvokeFailure> {
@@ -2048,24 +1941,6 @@ impl From<PressKeysArgs> for auv_driver::KeyboardInput {
   }
 }
 
-impl From<PressKeyArgs> for auv_driver::KeyboardInput {
-  fn from(args: PressKeyArgs) -> Self {
-    // Preserve the released shortcut spelling through the shared conversion.
-    let options: auv_driver::PressKeysOptions = auv_driver::KeyPressOptions {
-      key: args.key,
-      ..Default::default()
-    }
-    .into();
-    PressKeysArgs {
-      keys: options.keys,
-      count: args.count,
-      interval_ms: args.interval_ms,
-      input_policy: args.input_policy,
-    }
-    .into()
-  }
-}
-
 impl From<TypeTextArgs> for auv_driver::KeyboardInput {
   fn from(args: TypeTextArgs) -> Self {
     Self::TypeText {
@@ -2090,7 +1965,7 @@ impl From<PasteTextArgs> for auv_driver::KeyboardInput {
   }
 }
 
-impl InputKeyboardArgs {
+impl PerformKeyboardInputsArgs {
   fn into_keyboard_inputs(self) -> Result<Vec<auv_driver::KeyboardInput>, String> {
     let actions: Vec<KeyboardActionArg> =
       serde_json::from_str(&self.actions).map_err(|error| format!("invalid keyboard actions: {error}"))?;
@@ -2134,11 +2009,10 @@ fn keyboard_policy(policy: Option<InputPolicyArg>) -> auv_driver::InputPolicy {
 pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<auv_driver::KeyboardInput>, String> {
   use crate::command::decode_args;
   match input.command_id.as_str() {
-    "input.key" => decode_args::<PressKeyArgs>(input).map(|args| vec![args.into()]),
-    "input.keys" | "input.pressKeys" => decode_args::<PressKeysArgs>(input).map(|args| vec![args.into()]),
+    "input.pressKeys" => decode_args::<PressKeysArgs>(input).map(|args| vec![args.into()]),
     "input.typeText" => decode_args::<TypeTextArgs>(input).map(|args| vec![args.into()]),
     "input.pasteText" => decode_args::<PasteTextArgs>(input).map(|args| vec![args.into()]),
-    "input.keyboard" => decode_args::<InputKeyboardArgs>(input)?.into_keyboard_inputs(),
+    "input.performKeyboardInputs" => decode_args::<PerformKeyboardInputsArgs>(input)?.into_keyboard_inputs(),
     _ => Err(format!("{} is not a keyboard input command", input.command_id)),
   }
 }
@@ -2224,7 +2098,7 @@ pub(crate) fn keyboard_output(
       return Err(error);
     }
   };
-  if input.command_id != "input.keyboard" {
+  if input.command_id != "input.performKeyboardInputs" {
     return targeted_keyboard_output(actions.as_ref().and_then(|actions| actions.first())).map_err(Into::into);
   }
   let Some(actions) = actions else {
@@ -2264,16 +2138,6 @@ pub(crate) fn targeted_keyboard_output(action: Option<&auv_driver::InputActionRe
 /// daemon-backed input frontends.
 pub fn input_action_output(result: &auv_driver::InputActionResult) -> InvokeCommandResult {
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(input_action_report_fields(result), Vec::new())))
-}
-
-/// Builds the shared `input.key` result while keeping transport selection out
-/// of the command's public output contract.
-pub fn press_key_output(result: &auv_driver::InputActionResult, key: &str) -> InvokeCommandResult {
-  let mut fields = input_action_report_fields(result);
-  fields.insert(1, InvokeReportField::new("Key", key));
-  fields.insert(2, InvokeReportField::new("Target", "active app"));
-  fields.push(InvokeReportField::new("Backend", "auv-driver-macos.input"));
-  Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 pub fn focus_text_output(result: &auv_driver::AxFocusResult, candidate: &str) -> InvokeCommandResult {
@@ -2325,7 +2189,7 @@ pub(super) fn input_action_report_fields(result: &auv_driver::InputActionResult)
   fields
 }
 
-pub(super) fn validation_only_output() -> InvokeCommandOutput {
+pub(crate) fn validation_only_output() -> InvokeCommandOutput {
   InvokeCommandOutput::completed().with_report(InvokeReport::new(
     vec![
       InvokeReportField::new("Delivery", "not_performed"),

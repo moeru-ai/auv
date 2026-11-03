@@ -4,11 +4,11 @@ use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommand
 use clap::Args;
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.nowPlaying")]
+#[command(after_long_help = "Examples:\n  auv invoke media.getNowPlaying")]
 struct NowPlayingArgs {}
 
 pub fn group() -> CommandGroup {
-  CommandGroup::new("mediaControl", "MEDIA CONTROL")
+  CommandGroup::new("media", "MEDIA")
     .command(media_control_now_playing_invoke_command())
     .command(media_control_play_invoke_command())
     .command(media_control_pause_invoke_command())
@@ -18,16 +18,16 @@ pub fn group() -> CommandGroup {
 }
 
 #[invoke_command(
-  id = "mediaControl.nowPlaying",
+  id = "media.getNowPlaying",
   support = { macos: Supported, linux: Unsupported, windows: Partial("no duration, elapsed time or playback rate") },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Read structured now-playing media state from the desktop backend.",
   input = NowPlayingArgs,
 )]
 async fn media_control_now_playing(input: InvokeCommandInput, _args: NowPlayingArgs) -> InvokeCommandResult {
   if input.target.is_some() {
-    return Err("mediaControl.nowPlaying cannot use --target; the now-playing state is system-wide".to_string());
+    return Err("media.getNowPlaying cannot use --target; the now-playing state is system-wide".to_string());
   }
   let result = read_now_playing().await?;
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(now_playing_report(&result)))
@@ -53,87 +53,87 @@ pub async fn read_now_playing() -> Result<NowPlayingOutput, String> {
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.play")]
+#[command(after_long_help = "Examples:\n  auv invoke media.play")]
 struct PlayArgs {}
 
 #[invoke_command(
-  id = "mediaControl.play",
+  id = "media.play",
   support = { macos: Supported, linux: Unsupported, windows: Supported },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Send a generic system media play command and read now-playing state for verification.",
   input = PlayArgs,
 )]
 async fn media_control_play(input: InvokeCommandInput, _args: PlayArgs) -> InvokeCommandResult {
-  reject_media_target(&input, "mediaControl.play")?;
+  reject_media_target(&input, "media.play")?;
   media_control_output(&control_media(MediaCommand::Play).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.pause")]
+#[command(after_long_help = "Examples:\n  auv invoke media.pause")]
 struct PauseArgs {}
 
 #[invoke_command(
-  id = "mediaControl.pause",
+  id = "media.pause",
   support = { macos: Supported, linux: Unsupported, windows: Supported },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Send a generic system media pause command and read now-playing state for verification.",
   input = PauseArgs,
 )]
 async fn media_control_pause(input: InvokeCommandInput, _args: PauseArgs) -> InvokeCommandResult {
-  reject_media_target(&input, "mediaControl.pause")?;
+  reject_media_target(&input, "media.pause")?;
   media_control_output(&control_media(MediaCommand::Pause).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.togglePlayPause")]
+#[command(after_long_help = "Examples:\n  auv invoke media.togglePlayback")]
 struct TogglePlayPauseArgs {}
 
 #[invoke_command(
-  id = "mediaControl.togglePlayPause",
+  id = "media.togglePlayback",
   support = { macos: Supported, linux: Unsupported, windows: Supported },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   input = TogglePlayPauseArgs,
 )]
 async fn media_control_toggle_play_pause(input: InvokeCommandInput, _args: TogglePlayPauseArgs) -> InvokeCommandResult {
-  reject_media_target(&input, "mediaControl.togglePlayPause")?;
+  reject_media_target(&input, "media.togglePlayback")?;
   media_control_output(&control_media(MediaCommand::TogglePlayPause).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.next")]
+#[command(after_long_help = "Examples:\n  auv invoke media.skipToNextTrack")]
 struct NextArgs {}
 
 #[invoke_command(
-  id = "mediaControl.next",
+  id = "media.skipToNextTrack",
   support = { macos: Supported, linux: Unsupported, windows: Supported },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Send a generic system media next-track command and compare now-playing identity before and after.",
   input = NextArgs,
 )]
 async fn media_control_next(input: InvokeCommandInput, _args: NextArgs) -> InvokeCommandResult {
-  reject_media_target(&input, "mediaControl.next")?;
+  reject_media_target(&input, "media.skipToNextTrack")?;
   media_control_output(&control_media(MediaCommand::NextTrack).await?)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke mediaControl.previous")]
+#[command(after_long_help = "Examples:\n  auv invoke media.skipToPreviousTrack")]
 struct PreviousArgs {}
 
 #[invoke_command(
-  id = "mediaControl.previous",
+  id = "media.skipToPreviousTrack",
   support = { macos: Supported, linux: Unsupported, windows: Supported },
   runner = Direct,
-  group = "mediaControl",
+  group = "media",
   description = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   input = PreviousArgs,
 )]
 async fn media_control_previous(input: InvokeCommandInput, _args: PreviousArgs) -> InvokeCommandResult {
-  reject_media_target(&input, "mediaControl.previous")?;
+  reject_media_target(&input, "media.skipToPreviousTrack")?;
   media_control_output(&control_media(MediaCommand::PreviousTrack).await?)
 }
 

@@ -385,7 +385,7 @@ region(frame, { height: 80, right: 0, top: '10%', width: '30%' })
 ```
 
 Keyboard input can name its window too. `typeText`, `pressKeys` and
-`pasteText` on a `WindowClient` send `InputService/InputKeyboard` with that
+`pasteText` on a `WindowClient` send `InputService/PerformKeyboardInputs` with that
 window as the recipient. By default (`InputPolicy.FOREGROUND_PREFERRED`) the
 window is brought to the front and focused first, so the input cannot land in
 another app. `input.typeText` and `input.pressKey` go to whichever app has
@@ -411,7 +411,7 @@ application or foreground recipient and several ordered actions.
 Runner, until the text appears, no visual motion remains, the budget runs out,
 or a client predicate says stop. Omitted `maxSteps`, `noMotionConfirmations`
 and `settle` take the Runner's defaults (50 steps, 2 confirmations, 400 ms),
-the same as `auv invoke input.scrollUntil`. `SCROLL_UNTIL_DEFAULTS` mirrors
+the same as `auv invoke window.scrollUntil`. `SCROLL_UNTIL_DEFAULTS` mirrors
 them for JavaScript that stands in for a Runner:
 
 ```ts
@@ -554,15 +554,15 @@ implementation. Dynamic ProtoJSON invocation supports unary and
 server-streaming APIs. Generated clients are still preferable when the
 extension API is known at build time.
 
-Methods describe themselves. `presentation` comes with the descriptors: an API
-name (`window.find_text`, which `camelCaseName` spells `window.findText`), a
-title and a one-paragraph description. Long-form Markdown docs and examples are
+Methods describe themselves. `presentation` comes with the descriptors: an
+operation id (`window.findText`, the same id as the invoke command and MCP
+tool), a title and a one-paragraph description. Long-form Markdown docs and examples are
 fetched on request; `docs()` resolves `undefined` when a method has none:
 
 ```ts
 const core = await auv.runners.discover({ runnerClass: 'auv.core.local' })
-const findText = core.describeMethod('/auv.api.driver.v1.TextRecognitionService/FindWindowText')
-findText?.presentation // { name: 'window.find_text', title: 'Find text in a window', description: '…' }
+const findText = core.describeMethod('/auv.api.driver.v1.WindowService/FindWindowText')
+findText?.presentation // { name: 'window.findText', title: 'Find text in a window', description: '…' }
 const docs = await findText?.docs() // { markdown, examples: [{ language: 'ts', title, code }, …] }
 ```
 

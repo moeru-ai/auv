@@ -350,13 +350,16 @@ pub type InvokeExecutionResult = Result<InvokeCommandOutput, InvokeFailure>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InvokeNamespace {
   Display,
-  Screen,
   Window,
   Input,
+  /// App-local commands, such as `app.textedit.document.write`.
   App,
+  Application,
+  Permission,
+  Accessibility,
+  Media,
   Game,
   Overlay,
-  MediaControl,
   Fixture,
   Scan,
 }
@@ -365,13 +368,15 @@ impl InvokeNamespace {
   pub fn as_str(self) -> &'static str {
     match self {
       Self::Display => "display",
-      Self::Screen => "screen",
       Self::Window => "window",
       Self::Input => "input",
       Self::App => "app",
+      Self::Application => "application",
+      Self::Permission => "permission",
+      Self::Accessibility => "accessibility",
+      Self::Media => "media",
       Self::Game => "game",
       Self::Overlay => "overlay",
-      Self::MediaControl => "mediaControl",
       Self::Fixture => "fixture",
       Self::Scan => "scan",
     }

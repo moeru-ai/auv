@@ -179,16 +179,16 @@ pub async fn run(options: LocalStore, request: LocalRequest, project_root: &Path
   match request {
     LocalRequest::Enrollments(EnrollmentsCommand::Add { user }) => {
       let mut credential = read_hidden_credential()?;
-      let request = proto::EnrollRequest {
+      let request = proto::CreateEnrollmentRequest {
         user,
         // The generated gRPC encoder takes ownership of this buffer. The
         // temporary terminal buffer is wiped on all earlier error paths.
         credential: std::mem::take(&mut *credential),
       };
       let enrollment = service
-        .enroll(request)
+        .create_enrollment(request)
         .await
-        // EnrollRequest contains secret bytes; never format its error body.
+        // CreateEnrollmentRequest contains secret bytes; never format its error body.
         .map_err(|status| format!("enrollment failed ({})", status.code()))?
         .into_inner()
         .enrollment;
@@ -215,7 +215,7 @@ pub async fn run(options: LocalStore, request: LocalRequest, project_root: &Path
     }
     LocalRequest::Enrollments(EnrollmentsCommand::Remove { user }) => {
       service
-        .remove_enrollment(proto::RemoveEnrollmentRequest { user: user.clone() })
+        .delete_enrollment(proto::DeleteEnrollmentRequest { user: user.clone() })
         .await
         .map_err(|status| format!("remove enrollment failed ({})", status.code()))?;
       if json {
@@ -255,7 +255,7 @@ pub async fn run(options: LocalStore, request: LocalRequest, project_root: &Path
 
     LocalRequest::Audit(AuditCommand::List { page_token, limit }) => {
       let page = service
-        .list_audit(proto::ListAuditRequest {
+        .list_audit_entries(proto::ListAuditEntriesRequest {
           page_token: page_token.unwrap_or_default(),
           limit,
         })
@@ -354,7 +354,7 @@ fn audit_time(at_unix_millis: u64) -> String {
 }
 
 #[cfg(any(unix, windows))]
-fn print_audit(page: auv_api_proto::auv::api::daemon::v1::ListAuditResponse, json: bool) -> Result<(), String> {
+fn print_audit(page: auv_api_proto::auv::api::daemon::v1::ListAuditEntriesResponse, json: bool) -> Result<(), String> {
   if json {
     let entries = page
       .entries

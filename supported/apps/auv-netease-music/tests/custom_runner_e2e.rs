@@ -1,6 +1,6 @@
 #![cfg(all(unix, target_os = "macos"))]
 
-use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
 use auv_daemon::{Config, Server};
 
@@ -51,7 +51,7 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   let device = device.r#ref.expect("Device ref");
   let run = client
     .runs()
-    .create_run(daemon_proto::CreateRunRequest {
+    .create_run(runtime_proto::CreateRunRequest {
       devices: vec![device.clone()],
       labels: Default::default(),
     })
@@ -120,7 +120,7 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   let plugin_response: serde_json::Value = serde_json::from_slice(&plugin.stdout).expect("plugin JSON response");
   assert_eq!(plugin_response["present"], false);
 
-  client.runs().stop_run(run.run_id, daemon_proto::RunOutcome::Succeeded).await.expect("stop Run");
+  client.runs().stop_run(run.run_id, runtime_proto::RunOutcome::Succeeded).await.expect("stop Run");
   shutdown.cancel();
   server.await.expect("join daemon task").expect("serve daemon");
 }

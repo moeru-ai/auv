@@ -3,15 +3,19 @@ use crate::{InvokeReport, InvokeReportField, InvokeReportSection};
 use clap::Args;
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke app.probePermissions")]
+#[command(after_long_help = "Examples:\n  auv invoke permission.probe")]
 struct ProbePermissionsArgs {}
 
-pub fn group() -> CommandGroup {
-  CommandGroup::new("app", "APP").command(probe_permissions_invoke_command()).command(activate_app_invoke_command())
+pub fn application_group() -> CommandGroup {
+  CommandGroup::new("application", "APPLICATION").command(activate_app_invoke_command())
+}
+
+pub fn permission_group() -> CommandGroup {
+  CommandGroup::new("permission", "PERMISSION").command(probe_permissions_invoke_command())
 }
 
 #[invoke_command(
-  id = "app.probePermissions",
+  id = "permission.probe",
   support = { macos: Supported, linux: Unsupported, windows: Unsupported("the result names macOS privacy permissions; the Windows driver's elevation, UIAccess and session probe has no field in it") },
   // The Runner-side PermissionService handler is macOS-only, which is a different refusal
   // reason than the direct Windows note, so the route declares its own cells.
@@ -20,13 +24,13 @@ pub fn group() -> CommandGroup {
     linux: Unsupported("the Runner's permission service is macOS-only"),
     windows: Unsupported("the Runner's permission service is macOS-only"),
   },
-  group = "app",
+  group = "permission",
   description = "Probe macOS screen recording, accessibility, and automation permissions.",
   input = ProbePermissionsArgs,
 )]
 async fn probe_permissions(input: InvokeCommandInput, _args: ProbePermissionsArgs) -> crate::InvokeExecutionResult {
   if input.target.is_some() {
-    return Err("app.probePermissions cannot use --target".to_string().into());
+    return Err("permission.probe cannot use --target".to_string().into());
   }
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
@@ -47,20 +51,20 @@ pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, InvokeFai
   }
   #[cfg(not(target_os = "macos"))]
   {
-    Err(InvokeFailure::new(FailureCode::Unsupported, "app.probePermissions is only available on macOS"))
+    Err(InvokeFailure::new(FailureCode::Unsupported, "permission.probe is only available on macOS"))
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke app.activate --target com.apple.TextEdit")]
+#[command(after_long_help = "Examples:\n  auv invoke application.activate --target com.apple.TextEdit")]
 struct ActivateAppArgs {}
 
 #[invoke_command(
-  id = "app.activate",
+  id = "application.activate",
   support = { macos: Supported, linux: Unsupported("application activation is not implemented on Linux yet"), windows: Supported },
   runner = Direct,
   target = RequiredApplication,
-  group = "app",
+  group = "application",
   description = "Bring a target app to the foreground before a foreground-dependent step. The target is an application id: a bundle id on macOS, an executable name on Windows (the APP column of window.list, `.exe` optional).",
   input = ActivateAppArgs,
 )]
@@ -69,7 +73,7 @@ async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> crat
   Ok(activation_output(&result)?)
 }
 
-/// The settle delay `app.activate` waits before checking the foreground, on
+/// The settle delay `application.activate` waits before checking the foreground, on
 /// both the in-process and the Runner path.
 pub const ACTIVATION_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
@@ -118,7 +122,7 @@ pub async fn activate_application(
   let target_application_id = target_application_id
     .as_deref()
     .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, "app.activate requires --target"))?;
+    .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, "application.activate requires --target"))?;
   let session = auv::local::open()?;
   Ok(session.applications().activate(target_application_id, ACTIVATION_SETTLE)?)
 }

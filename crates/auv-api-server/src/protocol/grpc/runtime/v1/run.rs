@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use auv_api_proto::auv::api::daemon::v1 as proto;
-use auv_api_proto::auv::api::daemon::v1::run_service_server::RunService;
+use auv_api_proto::auv::api::runtime::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1::run_service_server::RunService;
 use tonic::{Request, Response, Status};
 
 use crate::authentication;

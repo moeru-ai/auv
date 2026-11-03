@@ -387,7 +387,7 @@ impl Entry<'_> {
 
   fn native(&self, command: &str, args: &[String]) -> Result<Value> {
     match command {
-      "input.focusText" => {
+      "accessibility.focusText" => {
         let result = self
           .driver
           .accessibility()
@@ -404,30 +404,32 @@ impl Entry<'_> {
         Ok(json!({"decoded_strip": decode_strip(&capture, &self.layout.strip), "window": self.window,
           "pixels": [capture.image.width(), capture.image.height()], "backend": capture.backend}))
       }
-      "screen.findText" | "screen.clickText" => {
+      "display.findText" | "display.clickText" => {
         let capture = self.driver.display().capture(CaptureOptions::default()).map_err(anyhow::Error::msg)?;
         let matches = self
           .driver
           .vision()
           .find_text_in_capture(&capture.capture, &args[0], RelativeRect::new(0.0, 0.0, 1.0, 1.0))
           .map_err(anyhow::Error::msg)?;
-        if command == "screen.findText" {
+        if command == "display.findText" {
           return Ok(json!({"matches": matches.matches}));
         }
         let point = matches.best_match().context("no OCR match; no click sent")?.action_point();
-        if command == "screen.clickText" {
+        if command == "display.clickText" {
           ensure_workflow_click_bounds(args, &point)?;
         }
         let action =
           self.driver.input().click_at(point, MouseButton::Left, Click::Single, Default::default()).map_err(anyhow::Error::msg)?;
         Ok(json!({"matches": matches, "point": point, "action": action}))
       }
-      "input.key" => {
+      "input.pressKeys" => {
+        // The direct backend joins the combination into the driver's shortcut
+        // spelling; the CLI backend passes the keys to `input.pressKeys`.
         let action = self
           .driver
           .input()
           .press_key(KeyPressOptions {
-            key: args[0].clone(),
+            key: args.join("+"),
             ..Default::default()
           })
           .map_err(anyhow::Error::msg)?;
@@ -447,7 +449,7 @@ impl Entry<'_> {
           .map_err(anyhow::Error::msg)?;
         Ok(json!({"action": action}))
       }
-      "input.scroll" => {
+      "window.scroll" => {
         let local = point_in_window(self.window, self.layout.edit_center);
         let action = self
           .driver
@@ -473,8 +475,8 @@ impl Entry<'_> {
 /// Verify the direct Rust route uses the same freshly selected, bounded OCR point as
 /// the CLI and Runner routes. The allowed rectangle is in logical screen coordinates.
 fn ensure_workflow_click_bounds(args: &[String], point: &auv_driver_common::geometry::Point) -> Result<()> {
-  let index = args.iter().position(|arg| arg == "--within").context("workflow screen.clickText omitted its required --within fence")?;
-  let raw = args.get(index + 1).context("workflow screen.clickText omitted the --within value")?;
+  let index = args.iter().position(|arg| arg == "--within").context("workflow display.clickText omitted its required --within fence")?;
+  let raw = args.get(index + 1).context("workflow display.clickText omitted the --within value")?;
   let coordinates = raw.split(',').map(|part| part.trim().parse::<f64>()).collect::<std::result::Result<Vec<_>, _>>()?;
   if coordinates.len() != 4
     || coordinates.iter().any(|value| !value.is_finite())
@@ -490,7 +492,7 @@ fn ensure_workflow_click_bounds(args: &[String], point: &auv_driver_common::geom
     || point.x >= coordinates[2]
     || point.y >= coordinates[3]
   {
-    bail!("workflow screen.clickText re-resolved outside the owned control; no input delivered");
+    bail!("workflow display.clickText re-resolved outside the owned control; no input delivered");
   }
   Ok(())
 }
@@ -533,7 +535,7 @@ fn find_text(
 ) -> Result<(auv_driver_common::geometry::Point, [i32; 2])> {
   let mut point = None;
   for attempt in 1..=3 {
-    let found = call(scenario, entry, "screen.findText", &[query.into()], true)?;
+    let found = call(scenario, entry, "display.findText", &[query.into()], true)?;
     let count = found.json.as_ref().and_then(|value| value["result"]["matches"].as_array()).map_or(0, Vec::len);
     if count > 1 {
       bail!("OCR preflight was ambiguous; no click sent");
@@ -574,7 +576,7 @@ fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect:
   reject_user_input(entry.start, &scenario.watch.snapshot())?;
   scenario.pointer_may_go(&[pixel])?;
   let fence = exact_click_fence(&point)?;
-  let clicked = call(scenario, entry, "screen.clickText", &[query.into(), "--within".into(), fence], false)?;
+  let clicked = call(scenario, entry, "display.clickText", &[query.into(), "--within".into(), fence], false)?;
   let actual = clicked.json.as_ref().map(|value| &value["result"]["point"]);
   let contained = actual.is_some_and(|point| {
     point["x"].as_f64().is_some_and(|x| x >= f64::from(rect[0]) && x < f64::from(rect[2]))
@@ -582,7 +584,7 @@ fn click_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, query: &str, rect:
   });
   scenario.records.write("click_destination", json!({"query": query, "actual": actual, "owned_rect": rect, "verified": contained}))?;
   if !contained {
-    bail!("screen.clickText reported a point outside the owned control");
+    bail!("display.clickText reported a point outside the owned control");
   }
   Ok(())
 }
@@ -599,7 +601,7 @@ fn focus_text(scenario: &mut Scenario<'_>, entry: &Entry<'_>, target: &mut Recei
   let before_state = target.request(json!({"cmd": "state"}))?;
   let before = scenario.watch.snapshot();
   let app = entry.window.app_name.as_deref().context("receiver window omitted its executable name")?;
-  let result = call(scenario, entry, "input.focusText", &[query.into(), "--target".into(), format!("app:{app}")], false)?;
+  let result = call(scenario, entry, "accessibility.focusText", &[query.into(), "--target".into(), format!("app:{app}")], false)?;
   let after = scenario.watch.snapshot();
   let state = target.request(json!({"cmd": "state"}))?;
   let resolved = result.json.as_ref().map(|value| &value["result"]);
@@ -651,7 +653,7 @@ fn attempt_focus(entry: &Entry<'_>, query: &str) -> Result<(bool, Value)> {
     };
     Ok((result.is_err(), response))
   } else {
-    let result = entry.call("input.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
+    let result = entry.call("accessibility.focusText", &[query.into(), "--target".into(), format!("app:{app}")])?;
     Ok((result.exit != Some(0), result.json.unwrap_or(Value::Null)))
   }
 }
@@ -1229,9 +1231,9 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     // This native single-line EDIT does not select all on Ctrl+A. Select the line through
     // keyboard input, then verify the actual control selection before replacing its text.
     keys_may_go(&scenario, &entry, &mut target)?;
-    call(&mut scenario, &entry, "input.key", &["home".into()], false)?;
+    call(&mut scenario, &entry, "input.pressKeys", &["home".into()], false)?;
     keys_may_go(&scenario, &entry, &mut target)?;
-    call(&mut scenario, &entry, "input.key", &["shift+end".into()], false)?;
+    call(&mut scenario, &entry, "input.pressKeys", &["shift".into(), "end".into()], false)?;
     let selection = target.request(json!({"cmd": "state"}))?;
     let expected_selection = json!([0, input_caption.encode_utf16().count()]);
     let selected = selection["typing"]["focused"] == true
@@ -1260,7 +1262,7 @@ fn case(options: &Options, route: &'static str, round: u32) -> Result<bool> {
     call(
       &mut scenario,
       &entry,
-      "input.scroll",
+      "window.scroll",
       &[
         local.x.to_string(),
         local.y.to_string(),

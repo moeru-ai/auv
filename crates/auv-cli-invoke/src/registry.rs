@@ -62,10 +62,11 @@ fn assert_aliases_name_a_canonical_command(commands: &[InvokeCommand]) {
 pub fn default_registry() -> InvokeRegistry {
   InvokeRegistry::from_groups(vec![
     commands::display::group(),
-    commands::screen::group(),
     commands::window::group(),
     commands::input::group(),
-    commands::app::group(),
+    commands::input::accessibility_group(),
+    commands::app::application_group(),
+    commands::app::permission_group(),
     commands::overlay::group(),
     commands::media_control::group(),
     commands::scan::group(),

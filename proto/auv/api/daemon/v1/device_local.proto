@@ -12,14 +12,14 @@ service DeviceLocalService {
   // Administrators may list all accounts; ordinary callers see only their
   // own enrollment, using the authenticated peer UID/SID for that decision.
   rpc ListEnrollments(ListEnrollmentsRequest) returns (ListEnrollmentsResponse);
-  rpc Enroll(EnrollRequest) returns (EnrollResponse);
-  rpc RemoveEnrollment(RemoveEnrollmentRequest) returns (RemoveEnrollmentResponse);
+  rpc CreateEnrollment(CreateEnrollmentRequest) returns (CreateEnrollmentResponse);
+  rpc DeleteEnrollment(DeleteEnrollmentRequest) returns (DeleteEnrollmentResponse);
   // Reads the target-wide remote entry switch from this Device only.
   rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
   // Only the authenticated target-local OS administrator may change it.
   rpc SetPolicy(SetPolicyRequest) returns (SetPolicyResponse);
   // Reads a bounded, account-filtered page from this Device's local audit.
-  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+  rpc ListAuditEntries(ListAuditEntriesRequest) returns (ListAuditEntriesResponse);
 }
 
 // An enrollment is bound to one resolved OS account, not to a display name.
@@ -61,7 +61,7 @@ message ListEnrollmentsResponse {
   repeated Enrollment enrollments = 1;
 }
 
-message EnrollRequest {
+message CreateEnrollmentRequest {
   // Resolve this name to a stable OS account identity before authorization;
   // an administrator may enroll another account, an ordinary user only self.
   string user = 1;
@@ -86,16 +86,16 @@ message EnrollRequest {
   reserved "storage_kind";
 }
 
-message EnrollResponse {
+message CreateEnrollmentResponse {
   Enrollment enrollment = 1;
 }
 
-message RemoveEnrollmentRequest {
+message DeleteEnrollmentRequest {
   // Resolve this name to a stable OS account identity before authorization.
   string user = 1;
 }
 
-message RemoveEnrollmentResponse {}
+message DeleteEnrollmentResponse {}
 
 message GetPolicyRequest {}
 
@@ -111,7 +111,7 @@ message SetPolicyResponse {
   bool enabled = 1;
 }
 
-message ListAuditRequest {
+message ListAuditEntriesRequest {
   reserved 1;
   reserved "cursor";
   // Number of visible records, from 1 through 100; zero selects 50.
@@ -121,7 +121,7 @@ message ListAuditRequest {
   string page_token = 3;
 }
 
-message ListAuditResponse {
+message ListAuditEntriesResponse {
   repeated AuditEntry entries = 1;
   reserved 2;
   reserved "next_cursor";

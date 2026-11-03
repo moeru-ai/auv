@@ -3,7 +3,7 @@
 //! macOS reads the system Now Playing slot (`auv-media-macos`); Windows reads the current System
 //! Media Transport Controls session (`auv-driver-windows::media`). Both report the same
 //! [`NowPlayingState`], take the same [`MediaCommand`], and emit the same agent-facing
-//! `now-playing-v0` output, so `mediaControl.*` has one result shape on every platform.
+//! `now-playing-v0` output, so `media.*` has one result shape on every platform.
 
 /// A structured snapshot of the system now-playing state.
 ///

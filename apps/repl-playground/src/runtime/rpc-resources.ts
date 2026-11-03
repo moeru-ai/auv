@@ -176,15 +176,15 @@ function inputAction(method: string, request: Message | undefined): InputHandle[
   const name = method.slice(method.lastIndexOf('/') + 1)
   if (name.startsWith('Click'))
     return 'click'
-  if (name.startsWith('Scroll') || name === 'StreamScroll')
+  if (name.startsWith('Scroll') || name === 'StreamWindowScroll')
     return 'scroll'
   if (name === 'TypeText' || name === 'PasteText')
     return 'type'
-  if (name === 'PressKey' || name === 'PressKeys')
+  if (name === 'PressKeys')
     return 'key'
   if (name.startsWith('Activate'))
     return 'activate'
-  if (name === 'InputKeyboard') {
+  if (name === 'PerformKeyboardInputs') {
     const first = (request?.inputs as Array<{ action?: { case?: string } }> | undefined)?.[0]?.action?.case
     return first === 'typeText' || first === 'pasteText' ? 'type' : 'key'
   }

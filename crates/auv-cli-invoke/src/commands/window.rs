@@ -21,12 +21,13 @@ use crate::artifact::{emit_capture, emit_capture_with_receipt};
 pub fn group() -> CommandGroup {
   // TODO(invoke-window-stubs): incomplete window commands stay intentionally
   // unregistered until owner-approved implementations have behavioral evidence.
-  CommandGroup::new("window", "WINDOW")
+  let group = CommandGroup::new("window", "WINDOW")
     .command(list_windows_invoke_command())
     .command(capture_window_invoke_command())
     .command(find_window_text_invoke_command())
     .command(wait_for_window_text_invoke_command())
-    .command(click_window_text_invoke_command())
+    .command(click_window_text_invoke_command());
+  super::input::window_scroll_commands().into_iter().fold(group, CommandGroup::command)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]

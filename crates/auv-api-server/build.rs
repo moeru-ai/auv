@@ -3,6 +3,7 @@ use std::path::PathBuf;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let config = tonic_rest_build::RestCodegenConfig::new()
     .package("auv.api.daemon.v1", "auv::api::daemon::v1")
+    .package("auv.api.runtime.v1", "auv::api::runtime::v1")
     .proto_root("auv_api_proto")
     .runtime_crate("crate::rest")
     .extension_type("crate::control::CallerId")

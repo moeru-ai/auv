@@ -9,6 +9,7 @@ pub mod runner;
 use std::collections::HashMap;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 
 use auv_api_client::protocol::grpc::Client as GrpcClient;
 use auv_api_client::{ConnectEndpoint, PairedConnectConfig};
@@ -466,7 +467,7 @@ impl Client {
       None => None,
     };
     if let Some(run) = &existing
-      && run.phase != proto::RunPhase::Running as i32
+      && run.phase != runtime_proto::RunPhase::Running as i32
     {
       return Err(PlacementError::Selection("Runner placement requires a running Run".to_string()));
     }
@@ -489,7 +490,7 @@ impl Client {
         (
           grpc
             .runs()
-            .create_run(proto::CreateRunRequest {
+            .create_run(runtime_proto::CreateRunRequest {
               devices: vec![device_ref],
               labels: options.labels,
             })
@@ -550,7 +551,7 @@ impl Client {
 #[derive(Debug)]
 pub struct RunClient {
   client: Client,
-  run: proto::Run,
+  run: runtime_proto::Run,
   resource: crate::runs::Run,
   selected_device: Option<proto::Device>,
   device: Option<crate::devices::Device>,
@@ -754,7 +755,7 @@ fn matching_devices<'a>(context: &AuvContext, devices: &'a [proto::Device]) -> V
     .collect()
 }
 
-fn matching_run_ids(selector: &str, runs: &[proto::Run]) -> Vec<String> {
+fn matching_run_ids(selector: &str, runs: &[runtime_proto::Run]) -> Vec<String> {
   let Ok(selector) = RunSelector::parse(selector) else {
     return Vec::new();
   };

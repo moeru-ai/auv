@@ -3,29 +3,7 @@ syntax = "proto3";
 
 package auv.api.driver.v1;
 
-import "auv/api/annotations/v1/annotations.proto";
 import "auv/api/driver/v1/geometry.proto";
-
-service WindowService {
-  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
-    option (auv.api.annotations.v1.presentation) = {
-      name: "windows.list"
-      title: "List windows"
-      description: "Lists the visible windows with their applications, titles, process IDs and frames in logical screen coordinates."
-    };
-  }
-  rpc ResolveWindow(ResolveWindowRequest) returns (ResolveWindowResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
-    option (auv.api.annotations.v1.presentation) = {
-      name: "windows.resolve"
-      title: "Find a window"
-      description: "Finds one window by application (application ID, name, process ID or the frontmost app) and optionally by title."
-    };
-  }
-}
 
 message WindowRef {
   string window_id = 1;
@@ -33,7 +11,7 @@ message WindowRef {
 
 message WindowSelector {
   oneof application {
-    // The platform application ID that windows.list reports.
+    // The platform application ID that window.list reports.
     string application_id = 1;
     string application_name = 2;
     uint32 process_id = 3;

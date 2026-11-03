@@ -5,6 +5,7 @@ inputs:
       - auv/api/annotations/v1
       - auv/api/daemon/v1
       - auv/api/driver
+      - auv/api/runtime/v1
       - auv/api/transport/websocket/v1
       - grpc/reflection/v1
 plugins:
@@ -32,9 +33,9 @@ plugins:
       - auv.api.daemon.v1.DiscoveryService
       - auv.api.daemon.v1.HealthService
       - auv.api.daemon.v1.PairingService
-      - auv.api.daemon.v1.RunService
-      - auv.api.daemon.v1.RunnerService
-      - auv.api.daemon.v1.RunnerClassService
+      - auv.api.runtime.v1.RunService
+      - auv.api.runtime.v1.RunnerService
+      - auv.api.runtime.v1.RunnerClassService
     opt:
       - allow_merge=true
       - merge_file_name=auv-daemon
@@ -45,5 +46,6 @@ plugins:
       - Mauv/api/daemon/v1/health.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
       - Mauv/api/daemon/v1/pairing.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
       - Mauv/api/daemon/v1/resource.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
-      - Mauv/api/daemon/v1/run.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
-      - Mauv/api/daemon/v1/runner.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/runtime/v1/resource.proto=github.com/moeru-ai/auv/proto/auv/api/runtime/v1
+      - Mauv/api/runtime/v1/run.proto=github.com/moeru-ai/auv/proto/auv/api/runtime/v1
+      - Mauv/api/runtime/v1/runner.proto=github.com/moeru-ai/auv/proto/auv/api/runtime/v1

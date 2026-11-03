@@ -43,7 +43,7 @@ describe('recordRpcResources', () => {
 
   it('shows a window text search as the window, its frame and the matches in it', () => {
     const scope = new CallScope(1, 0, null)
-    recordRpcResources(scope, `/${V1}.TextRecognitionService/FindWindowText`, message('FindWindowTextRequest', { query: 'Reply', window: message('WindowRef', { windowId: 'w-1' }) }), [
+    recordRpcResources(scope, `/${V1}.WindowService/FindWindowText`, message('FindWindowTextRequest', { query: 'Reply', window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('FindWindowTextResponse', {
         capture: capture('cap-1'),
         matches: [message('TextMatch', { bounds: message('ScreenRect', { height: 20, width: 60, x: 300, y: 200 }), confidence: 0.9, text: 'Reply' })],
@@ -73,8 +73,8 @@ describe('recordRpcResources', () => {
 
   it('places a window scroll at the window point plus the window origin', () => {
     const scope = new CallScope(3, 0, null)
-    recordRpcResources(scope, `/${V1}.InputService/ScrollWindowPoint`, undefined, [
-      message('ScrollWindowPointResponse', { action, point: message('WindowPoint', { x: 10, y: 20 }), scroll: message('Scroll', { deltaX: 0, deltaY: 300 }), window }),
+    recordRpcResources(scope, `/${V1}.WindowService/ScrollWindow`, undefined, [
+      message('ScrollWindowResponse', { action, point: message('WindowPoint', { x: 10, y: 20 }), scroll: message('Scroll', { deltaX: 0, deltaY: 300 }), window }),
     ])
 
     const input = resourcesOf(scope).find(resource => resource.kind === 'input')!.handle as InputHandle
@@ -83,8 +83,8 @@ describe('recordRpcResources', () => {
 
   it('shows every scroll-until step, inside its stream event', () => {
     const scope = new CallScope(4, 0, null)
-    const update = (id: string) => message('ScrollUntilResponse', { event: { case: 'update', value: message('ScrollUntilUpdate', { capture: capture(id), steps: 1 }) } })
-    recordRpcResources(scope, `/${V1}.InputService/ScrollUntil`, message('ScrollUntilRequest', { event: { case: 'begin', value: message('ScrollUntilBegin', { window: message('WindowRef', { windowId: 'w-1' }) }) } }), [update('cap-1'), update('cap-2')])
+    const update = (id: string) => message('ScrollWindowUntilResponse', { event: { case: 'update', value: message('ScrollUntilUpdate', { capture: capture(id), steps: 1 }) } })
+    recordRpcResources(scope, `/${V1}.WindowService/ScrollWindowUntil`, message('ScrollWindowUntilRequest', { event: { case: 'begin', value: message('ScrollUntilBegin', { window: message('WindowRef', { windowId: 'w-1' }) }) } }), [update('cap-1'), update('cap-2')])
 
     const frames = resourcesOf(scope).filter(resource => resource.kind === 'frame')
     expect(frames.map(frame => frame.kind === 'frame' && [frame.frame.ref, frame.frame.source])).toEqual([['cap-1', 'window:w-1'], ['cap-2', 'window:w-1']])
@@ -92,11 +92,11 @@ describe('recordRpcResources', () => {
 
   it('keeps a capture seen again in the same run as one resource with its first producer', () => {
     const first = new CallScope(1, 0, null)
-    recordRpcResources(first, `/${V1}.CaptureService/CaptureWindow`, message('CaptureWindowRequest', { window: message('WindowRef', { windowId: 'w-1' }) }), [
+    recordRpcResources(first, `/${V1}.WindowService/CaptureWindow`, message('CaptureWindowRequest', { window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('CaptureWindowResponse', { capture: capture('cap-7'), window }),
     ])
     const again = new CallScope(2, 5, null)
-    recordRpcResources(again, `/${V1}.TextRecognitionService/FindWindowText`, message('FindWindowTextRequest', { query: 'x', window: message('WindowRef', { windowId: 'w-1' }) }), [
+    recordRpcResources(again, `/${V1}.WindowService/FindWindowText`, message('FindWindowTextRequest', { query: 'x', window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('FindWindowTextResponse', { capture: capture('cap-7'), matches: [], window }),
     ])
 

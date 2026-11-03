@@ -1,6 +1,7 @@
 import type { V1GetDeviceRequest } from '@auv-js/api-client'
 
-import type { Device as ProtoDevice, UserSession as ProtoUserSession } from '../../gen/auv/api/daemon/v1/device_pb'
+import type { Device as ProtoDevice } from '../../gen/auv/api/daemon/v1/device_pb'
+import type { UserSession as ProtoUserSession } from '../../gen/auv/api/daemon/v1/user_session_pb'
 import type { AuvConnection, RpcDefinition } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 
@@ -11,24 +12,27 @@ import {
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 
 import {
-  DeviceEntryEffectKind,
-  DeviceEntryErrorSchema,
   DeviceService,
-  EnsureUserSessionUnlockedRequestSchema,
-  EnsureUserSessionUnlockedResponseSchema,
   GetDeviceRequestSchema,
   GetDeviceResponseSchema,
-  GetUserSessionRequestSchema,
-  GetUserSessionResponseSchema,
   ListDevicesRequestSchema,
   ListDevicesResponseSchema,
+  DevicePlatform as ProtoDevicePlatform,
+} from '../../gen/auv/api/daemon/v1/device_pb'
+import {
+  DeviceEntryEffectKind,
+  DeviceEntryErrorSchema,
+  EnsureUserSessionUnlockedRequestSchema,
+  EnsureUserSessionUnlockedResponseSchema,
+  GetUserSessionRequestSchema,
+  GetUserSessionResponseSchema,
   ListUserSessionsRequestSchema,
   ListUserSessionsResponseSchema,
   DeviceEntryErrorReason as ProtoDeviceEntryErrorReason,
-  DevicePlatform as ProtoDevicePlatform,
   UserSessionConnectionKind as ProtoUserSessionConnectionKind,
   UserSessionLockState as ProtoUserSessionLockState,
-} from '../../gen/auv/api/daemon/v1/device_pb'
+  UserSessionService,
+} from '../../gen/auv/api/daemon/v1/user_session_pb'
 import { AuvConfigurationError, AuvProtocolError, AuvRemoteError, AuvRpcError } from '../../transport/errors'
 import { decodeRpcStatus } from '../../transport/rpc-status'
 import { unknownEnum } from './wire'
@@ -120,19 +124,19 @@ const getDeviceRpc = {
 // them on the gRPC transport until the approved REST contract is implemented.
 const listUserSessionsRpc = {
   input: ListUserSessionsRequestSchema,
-  method: `/${DeviceService.typeName}/${DeviceService.method.listUserSessions.name}`,
+  method: `/${UserSessionService.typeName}/${UserSessionService.method.listUserSessions.name}`,
   output: ListUserSessionsResponseSchema,
 } satisfies RpcDefinition<typeof ListUserSessionsRequestSchema, typeof ListUserSessionsResponseSchema>
 
 const getUserSessionRpc = {
   input: GetUserSessionRequestSchema,
-  method: `/${DeviceService.typeName}/${DeviceService.method.getUserSession.name}`,
+  method: `/${UserSessionService.typeName}/${UserSessionService.method.getUserSession.name}`,
   output: GetUserSessionResponseSchema,
 } satisfies RpcDefinition<typeof GetUserSessionRequestSchema, typeof GetUserSessionResponseSchema>
 
 const ensureUserSessionUnlockedRpc = {
   input: EnsureUserSessionUnlockedRequestSchema,
-  method: `/${DeviceService.typeName}/${DeviceService.method.ensureUserSessionUnlocked.name}`,
+  method: `/${UserSessionService.typeName}/${UserSessionService.method.ensureUserSessionUnlocked.name}`,
   output: EnsureUserSessionUnlockedResponseSchema,
 } satisfies RpcDefinition<typeof EnsureUserSessionUnlockedRequestSchema, typeof EnsureUserSessionUnlockedResponseSchema>
 

@@ -182,7 +182,7 @@ impl RunnerAttribute {
   }
 }
 
-/// `role = Alias("input.keys")` or `role = Fixture`. A command without one drives the desktop.
+/// `role = Alias("input.pressKeys")` or `role = Fixture`. A command without one drives the desktop.
 enum RoleAttribute {
   Alias(LitStr),
   Fixture,
@@ -295,19 +295,22 @@ impl RoleAttribute {
 fn namespace(group: &LitStr) -> Result<Ident> {
   let name = match group.value().as_str() {
     "display" => "Display",
-    "screen" => "Screen",
     "window" => "Window",
     "input" => "Input",
+    // App-local commands, such as `app.textedit.document.write`.
     "app" => "App",
+    "application" => "Application",
+    "permission" => "Permission",
+    "accessibility" => "Accessibility",
+    "media" => "Media",
     "game" => "Game",
     "overlay" => "Overlay",
-    "mediaControl" => "MediaControl",
     "fixture" => "Fixture",
     "scan" => "Scan",
     _ => {
       return Err(syn::Error::new(
         group.span(),
-        "invoke_command unknown group; expected one of: display, screen, window, input, app, game, overlay, mediaControl, fixture, scan",
+        "invoke_command unknown group; expected one of: display, window, input, app, application, permission, accessibility, media, game, overlay, fixture, scan",
       ));
     }
   };

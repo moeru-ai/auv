@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { createAuv, discoverRunner } from '../apis'
-import { InputService, ScrollUntilStopReason } from '../gen/auv/api/driver/v1/input_pb'
-import { WindowService } from '../gen/auv/api/driver/v1/window_pb'
+import { ScrollUntilStopReason } from '../gen/auv/api/driver/v1/input_pb'
+import { WindowService } from '../gen/auv/api/driver/v1/window_service_pb'
 import { connectTransport } from '../transport/connection'
 import { AuvRpcError } from '../transport/errors'
 import { serveMockDaemon } from './daemon'
@@ -52,9 +52,9 @@ describe('mock Runner transport', () => {
 
   it('streams both ways for a bidirectional method', async () => {
     const { auv, connection } = await mockRunner(({ service }) => {
-      service(WindowService, { listWindows: () => ({ windows: [window] }) })
-      service(InputService, {
-        async* scrollUntil(requests) {
+      service(WindowService, {
+        listWindows: () => ({ windows: [window] }),
+        async* scrollWindowUntil(requests) {
           const iterator = requests[Symbol.asyncIterator]()
           const begin = (await iterator.next()).value
           expect(begin?.event.case).toBe('begin')
@@ -87,7 +87,7 @@ describe('mock Runner transport', () => {
 
     const discovered = await discoverRunner(connection, { runnerClass: 'auv.core.local' })
     const list = discovered.apis.find(api => api.method === 'ListWindows')
-    expect(list?.presentation?.name).toBe('windows.list')
+    expect(list?.presentation?.name).toBe('window.list')
     expect(discovered.describeMethod('/auv.api.driver.v1.WindowService/ListWindows')?.effect).toBe('read_only')
     await connection.close()
   })

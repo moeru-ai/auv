@@ -825,7 +825,7 @@ mod frontend {
        Points: with an app or window `target`, point coordinates are window-local unless `inputs.relative-to` is \
        `screen`. Fetch image receipts with `artifact_read_image`, using `run_id` and `artifact_id` from `artifacts[].uri`; \
        `file_path` refers to the server filesystem. Evidence from `display.capture`, `window.capture`, and \
-       `screen.captureRegion` is stored at logical resolution. For a returned PNG pixel `(px, py)`, the screen point is \
+       `display.captureRegion` is stored at logical resolution. For a returned PNG pixel `(px, py)`, the screen point is \
        `(capture.bounds.x + px * source_width / width, capture.bounds.y + py * source_height / height)`. \
        Use `capture.bounds.x` and `capture.bounds.y` from that artifact's attributes. `source_width`/`source_height` are \
        stored artifact dimensions; `width`/`height` are returned PNG dimensions. Do not divide by the capture's scale factor again. \

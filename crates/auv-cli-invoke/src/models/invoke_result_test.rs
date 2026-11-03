@@ -47,7 +47,7 @@ fn primary_artifact_is_directly_openable_in_human_and_json_output() {
 #[test]
 fn typed_failure_keeps_legacy_message_and_machine_readable_reason() {
   let registry = default_registry();
-  let command = registry.resolve("input.key").unwrap();
+  let command = registry.resolve("input.pressKeys").unwrap();
   let failure = crate::InvokeFailure::from(auv_driver::DriverError::NotFound {
     target: "window:missing".into(),
   });
@@ -62,7 +62,7 @@ fn typed_failure_keeps_legacy_message_and_machine_readable_reason() {
   )
   .unwrap();
   assert_eq!(json["status"], "failed");
-  assert_eq!(json["command_id"], "input.key");
+  assert_eq!(json["command_id"], "input.pressKeys");
   assert_eq!(json["failure"], "window:missing was not found");
   assert_eq!(json["failure_details"]["code"], "not_found");
   assert_eq!(json["failure_details"]["message"], json["failure"]);

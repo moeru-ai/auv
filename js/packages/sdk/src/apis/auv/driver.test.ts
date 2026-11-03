@@ -7,7 +7,7 @@ import { FocusTextRequestSchema, FocusTextResponseSchema } from '../../gen/auv/a
 import { ActivateApplicationRequestSchema, ActivateApplicationResponseSchema, ApplicationActivationMethod, ApplicationIdKind } from '../../gen/auv/api/driver/v1/application_pb'
 import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputKeyboardRequestSchema, InputKeyboardResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPointRequestSchema, ClickPointResponseSchema, CreateMouseResponseSchema, DisturbanceLevel, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputDeliveryPath, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, PerformKeyboardInputsRequestSchema, PerformKeyboardInputsResponseSchema, ScrollDeliveryCandidate, ScrollUntilStopReason, ScrollWindowRequestSchema, ScrollWindowResponseSchema, ScrollWindowUntilRequestSchema, ScrollWindowUntilResponseSchema, ScrollWindowWithMotionRequestSchema, ScrollWindowWithMotionResponseSchema, StandardMotionTimingFunction, StreamWindowScrollRequestSchema, StreamWindowScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
@@ -91,7 +91,7 @@ describe('runner Driver control surface', () => {
               return toBinary(GetCaptureImageResponseSchema, create(GetCaptureImageResponseSchema, {
                 image: { data: new Uint8Array([1, 2]), encoding: ImageEncoding.JPEG, height: 50, width: 80 },
               }))
-            case '/auv.api.driver.v1.TextRecognitionService/RecognizeText':
+            case '/auv.api.driver.v1.TextService/RecognizeText':
               return toBinary(RecognizeTextResponseSchema, create(RecognizeTextResponseSchema, { text: 'ok' }))
             default: throw new Error(`unexpected method: ${call.method}`)
           }
@@ -205,12 +205,12 @@ describe('runner Driver control surface', () => {
         async unary(call) {
           calls.push(call)
           switch (call.method) {
-            case '/auv.api.driver.v1.InputService/ScrollWindowPoint':
-              return toBinary(ScrollWindowPointResponseSchema, create(ScrollWindowPointResponseSchema, { scroll: { deltaY: 300 } }))
             case '/auv.api.driver.v1.WindowService/ResolveWindow':
               return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
                 window: { ref: { windowId: 'scroll-target' } },
               }))
+            case '/auv.api.driver.v1.WindowService/ScrollWindow':
+              return toBinary(ScrollWindowResponseSchema, create(ScrollWindowResponseSchema, { scroll: { deltaY: 300 } }))
             default:
               throw new Error(`unexpected unary call: ${call.method}`)
           }
@@ -223,7 +223,7 @@ describe('runner Driver control surface', () => {
       deliveryCandidates: [ScrollDeliveryCandidate.WINDOW_TARGETED_WHEEL, ScrollDeliveryCandidate.FOREGROUND_HID],
       policy: InputPolicy.BACKGROUND_ONLY,
     })
-    const request = fromBinary(ScrollWindowPointRequestSchema, calls[1]!.body)
+    const request = fromBinary(ScrollWindowRequestSchema, calls[1]!.body)
     expect(request.window?.windowId).toBe('scroll-target')
     expect(request.point).toMatchObject({ x: 10, y: 20 })
     expect(request.scroll).toMatchObject({ deltaX: -15, deltaY: 300 })
@@ -246,10 +246,10 @@ describe('runner Driver control surface', () => {
             close() {},
             async halfClose() {},
             responses: (async function* () {
-              yield toBinary(ScrollWindowPointMotionResponseSchema, create(ScrollWindowPointMotionResponseSchema, {
+              yield toBinary(ScrollWindowWithMotionResponseSchema, create(ScrollWindowWithMotionResponseSchema, {
                 event: { case: 'started', value: { plannedSampleCount: 31n } },
               }))
-              yield toBinary(ScrollWindowPointMotionResponseSchema, create(ScrollWindowPointMotionResponseSchema, {
+              yield toBinary(ScrollWindowWithMotionResponseSchema, create(ScrollWindowWithMotionResponseSchema, {
                 event: { case: 'completed', value: { delivered: { deltaY: 600 } } },
               }))
             })(),
@@ -279,9 +279,9 @@ describe('runner Driver control surface', () => {
     })) {
       events.push(event.event.case)
     }
-    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/ScrollWindowPointMotion')
+    expect(streamedMethod).toBe('/auv.api.driver.v1.WindowService/ScrollWindowWithMotion')
     expect(events).toEqual(['started', 'completed'])
-    const request = fromBinary(ScrollWindowPointMotionRequestSchema, sent[0]!)
+    const request = fromBinary(ScrollWindowWithMotionRequestSchema, sent[0]!)
     expect(request.window?.windowId).toBe('motion-target')
     expect(request.motion?.total?.deltaY).toBe(600)
     expect(request.motion?.sampleRateHz).toBe(60)
@@ -306,11 +306,11 @@ describe('runner Driver control surface', () => {
             responses: (async function* () {
               for (const [steps, line] of [[0, 'feed item 1'], [1, 'TARGET ROW 137']] as const) {
                 const decision = nextDecision()
-                yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+                yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                   event: { case: 'update', value: { awaitingDecision: true, steps, text: { text: line } } },
                 }))
                 if (await decision) {
-                  yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+                  yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                     event: { case: 'completed', value: { reason: ScrollUntilStopReason.PREDICATE_SATISFIED, steps } },
                   }))
                   return
@@ -319,7 +319,7 @@ describe('runner Driver control surface', () => {
             })(),
             async send(body) {
               sent.push(body)
-              const event = fromBinary(ScrollUntilRequestSchema, body).event
+              const event = fromBinary(ScrollWindowUntilRequestSchema, body).event
               if (event.case === 'decision')
                 decisions.shift()!(event.value.stop)
             },
@@ -346,10 +346,10 @@ describe('runner Driver control surface', () => {
       until: async update => update.text?.text.includes('TARGET') ?? false,
     })
 
-    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/ScrollUntil')
+    expect(streamedMethod).toBe('/auv.api.driver.v1.WindowService/ScrollWindowUntil')
     expect(completed.reason).toBe(ScrollUntilStopReason.PREDICATE_SATISFIED)
     expect(seen).toEqual([0, 1])
-    const requests = sent.map(body => fromBinary(ScrollUntilRequestSchema, body).event)
+    const requests = sent.map(body => fromBinary(ScrollWindowUntilRequestSchema, body).event)
     expect(requests.map(event => event.case === 'decision' ? event.value.stop : event.case)).toEqual(['begin', false, true])
     const begin = requests[0]!
     expect(begin.case === 'begin' && begin.value.window?.windowId).toBe('until-target')
@@ -372,13 +372,13 @@ describe('runner Driver control surface', () => {
             close() {},
             async halfClose() {},
             responses: (async function* () {
-              yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+              yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                 event: { case: 'update', value: { steps: 0 } },
               }))
-              yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+              yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                 event: { case: 'update', value: { steps: 1, stop: ScrollUntilStopReason.TEXT_VISIBLE } },
               }))
-              yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+              yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                 event: { case: 'completed', value: { reason: ScrollUntilStopReason.TEXT_VISIBLE, steps: 1 } },
               }))
             })(),
@@ -404,7 +404,7 @@ describe('runner Driver control surface', () => {
 
     expect(completed.reason).toBe(ScrollUntilStopReason.TEXT_VISIBLE)
     expect(stops).toEqual([ScrollUntilStopReason.UNSPECIFIED, ScrollUntilStopReason.TEXT_VISIBLE])
-    const requests = sent.map(body => fromBinary(ScrollUntilRequestSchema, body).event)
+    const requests = sent.map(body => fromBinary(ScrollWindowUntilRequestSchema, body).event)
     expect(requests.map(event => event.case)).toEqual(['begin'])
     const begin = requests[0]!
     expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(false)
@@ -432,15 +432,15 @@ describe('runner Driver control surface', () => {
             close() {},
             async halfClose() {},
             responses: (async function* () {
-              yield toBinary(StreamScrollResponseSchema, create(StreamScrollResponseSchema, { event: { case: 'started', value: {} } }))
+              yield toBinary(StreamWindowScrollResponseSchema, create(StreamWindowScrollResponseSchema, { event: { case: 'started', value: {} } }))
               await stopReceived
-              yield toBinary(StreamScrollResponseSchema, create(StreamScrollResponseSchema, {
+              yield toBinary(StreamWindowScrollResponseSchema, create(StreamWindowScrollResponseSchema, {
                 event: { case: 'completed', value: { delivered: { deltaY: 120 }, reason: 1 } },
               }))
             })(),
             async send(body) {
               sent.push(body)
-              if (fromBinary(StreamScrollRequestSchema, body).event.case === 'stop')
+              if (fromBinary(StreamWindowScrollRequestSchema, body).event.case === 'stop')
                 stopped()
             },
           }
@@ -465,9 +465,9 @@ describe('runner Driver control surface', () => {
       sampleRateHz: 60,
     })
 
-    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/StreamScroll')
+    expect(streamedMethod).toBe('/auv.api.driver.v1.WindowService/StreamWindowScroll')
     expect(completed.delivered?.deltaY).toBe(120)
-    const requests = sent.map(body => fromBinary(StreamScrollRequestSchema, body).event)
+    const requests = sent.map(body => fromBinary(StreamWindowScrollRequestSchema, body).event)
     expect(requests.map(event => event.case)).toEqual(['begin', 'setVelocity', 'setVelocity', 'stop'])
     expect(requests[0]!.case === 'begin' && requests[0]!.value.window?.windowId).toBe('stream-target')
     expect(requests[0]!.case === 'begin' && requests[0]!.value.maxAcceleration).toBe(4000)
@@ -530,7 +530,7 @@ describe('runner Driver control surface', () => {
         async unary(call) {
           calls.push(call)
           switch (call.method) {
-            case '/auv.api.driver.v1.CaptureService/CaptureWindow':
+            case '/auv.api.driver.v1.WindowService/CaptureWindow':
               return toBinary(CaptureWindowResponseSchema, create(CaptureWindowResponseSchema, {
                 window: {
                   frame: { height: 720, width: 1280, x: 20, y: 30 },
@@ -795,8 +795,8 @@ describe('window keyboard', () => {
         async unary(call) {
           calls.push(call)
           switch (call.method) {
-            case '/auv.api.driver.v1.InputService/InputKeyboard':
-              return toBinary(InputKeyboardResponseSchema, create(InputKeyboardResponseSchema, { actions: [{ attempts: [{ succeeded: true }] }] }))
+            case '/auv.api.driver.v1.InputService/PerformKeyboardInputs':
+              return toBinary(PerformKeyboardInputsResponseSchema, create(PerformKeyboardInputsResponseSchema, { actions: [{ attempts: [{ succeeded: true }] }] }))
             case '/auv.api.driver.v1.WindowService/ListWindows':
               return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
                 windows: [{ processId: 4242, ref: { windowId: 'w-7' }, title: 'Search' }],
@@ -814,7 +814,7 @@ describe('window keyboard', () => {
   // The SDK only wrapped TypeText/PressKey, which name no recipient, so a REPL
   // script's typing went to its own browser.
   //
-  // The fix sends InputKeyboard to the window, foreground-first by default.
+  // The fix sends PerformKeyboardInputs to the window, foreground-first by default.
   it('types, presses and pastes into the window as the recipient, foreground first by default', async () => {
     const calls: UnaryCall[] = []
     const connection = await keyboardConnection(calls)
@@ -826,7 +826,7 @@ describe('window keyboard', () => {
     await music!.pasteText('Reply', { policy: InputPolicy.BACKGROUND_ONLY })
     await music!.pressKeys('cmd+shift+z')
 
-    const requests = calls.slice(1).map(call => fromBinary(InputKeyboardRequestSchema, call.body))
+    const requests = calls.slice(1).map(call => fromBinary(PerformKeyboardInputsRequestSchema, call.body))
     for (const request of requests) {
       expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242, ref: expect.objectContaining({ windowId: 'w-7' }) }) })
       expect(request.inputs).toHaveLength(1)
@@ -846,8 +846,8 @@ describe('window keyboard', () => {
 
     await runner.windows.from('w-7').typeText('Reply', { policy: InputPolicy.BACKGROUND_PREFERRED })
 
-    expect(calls.map(call => call.method.split('/').pop())).toEqual(['ListWindows', 'InputKeyboard'])
-    const request = fromBinary(InputKeyboardRequestSchema, calls[1]!.body)
+    expect(calls.map(call => call.method.split('/').pop())).toEqual(['ListWindows', 'PerformKeyboardInputs'])
+    const request = fromBinary(PerformKeyboardInputsRequestSchema, calls[1]!.body)
     expect(request.target?.recipient).toEqual({ case: 'window', value: expect.objectContaining({ processId: 4242 }) })
     expect(request.inputs[0]!.action).toMatchObject({ case: 'typeText', value: { options: { policy: InputPolicy.BACKGROUND_PREFERRED } } })
     await expect(runner.windows.from('w-9').pressKeys(['return'])).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })

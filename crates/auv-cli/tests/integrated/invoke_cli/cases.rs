@@ -41,7 +41,7 @@ fn invoke_store_root_configures_tracing_without_becoming_command_input() {
 fn screen_find_text_accepts_a_typed_positional_query() {
   let command = auv_cli_invoke::parse_invoke_args(&arguments(&[
     "invoke",
-    "screen.findText",
+    "display.findText",
     "Settings",
     "--target",
     "com.apple.TextEdit",
@@ -72,7 +72,7 @@ fn screen_find_text_accepts_a_typed_positional_query() {
 fn invoke_context_uses_clap_equals_and_end_of_options_semantics() {
   let command = auv_cli_invoke::parse_invoke_args(&arguments(&[
     "invoke",
-    "screen.findText",
+    "display.findText",
     "Settings",
     "--target=com.apple.TextEdit",
     "--dry-run",

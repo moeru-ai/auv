@@ -6,7 +6,7 @@ import type {
   V1ListRunnerClassesRequest,
 } from '@auv-js/api-client'
 
-import type { Runner as ProtoRunner, RunnerClass as ProtoRunnerClass } from '../../gen/auv/api/daemon/v1/runner_pb'
+import type { Runner as ProtoRunner, RunnerClass as ProtoRunnerClass } from '../../gen/auv/api/runtime/v1/runner_pb'
 import type { AuvConnection, RpcDefinition } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 
@@ -37,7 +37,7 @@ import {
   RunnerPhase as ProtoRunnerPhase,
   RunnerClassService,
   RunnerService,
-} from '../../gen/auv/api/daemon/v1/runner_pb'
+} from '../../gen/auv/api/runtime/v1/runner_pb'
 import { AuvProtocolError } from '../../transport/errors'
 import { selectedDevice } from '../auv/routing'
 import { duration, durationMilliseconds, timestampDate, unknownEnum } from './wire'

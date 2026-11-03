@@ -1,12 +1,12 @@
 import type { MessageInitShape } from '@bufbuild/protobuf'
 
-import type { RunSchema } from '../gen/auv/api/daemon/v1/run_pb'
+import type { RunSchema } from '../gen/auv/api/runtime/v1/run_pb'
 import type { MockRouter } from './transport'
 
 import { timestampNow } from '@bufbuild/protobuf/wkt'
 
 import { DevicePlatform, DeviceService } from '../gen/auv/api/daemon/v1/device_pb'
-import { RunOutcome, RunPhase, RunService } from '../gen/auv/api/daemon/v1/run_pb'
+import { RunOutcome, RunPhase, RunService } from '../gen/auv/api/runtime/v1/run_pb'
 import { AuvRpcError } from '../transport/errors'
 
 /** The one Device a mock daemon reports. */

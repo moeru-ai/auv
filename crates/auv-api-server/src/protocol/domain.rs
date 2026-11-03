@@ -3,10 +3,11 @@
 use std::str::FromStr as _;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 
 use crate::control::ControlError;
 
-pub(crate) fn create_run(value: proto::CreateRunRequest) -> Result<auv::runs::CreateRun, ControlError> {
+pub(crate) fn create_run(value: runtime_proto::CreateRunRequest) -> Result<auv::runs::CreateRun, ControlError> {
   Ok(auv::runs::CreateRun {
     devices: value
       .devices
@@ -17,12 +18,12 @@ pub(crate) fn create_run(value: proto::CreateRunRequest) -> Result<auv::runs::Cr
   })
 }
 
-pub(crate) fn create_runner(value: proto::CreateRunnerRequest) -> Result<auv::runners::CreateRunner, ControlError> {
-  let lifecycle = match proto::RunnerLifecycle::try_from(value.lifecycle).unwrap_or_default() {
-    proto::RunnerLifecycle::Ephemeral => auv::runners::RunnerLifecycle::Ephemeral,
-    proto::RunnerLifecycle::UnlessIdle => auv::runners::RunnerLifecycle::UnlessIdle,
-    proto::RunnerLifecycle::UnlessShutdown => auv::runners::RunnerLifecycle::UnlessShutdown,
-    proto::RunnerLifecycle::Unspecified => return Err(ControlError::InvalidArgument("Runner lifecycle is required")),
+pub(crate) fn create_runner(value: runtime_proto::CreateRunnerRequest) -> Result<auv::runners::CreateRunner, ControlError> {
+  let lifecycle = match runtime_proto::RunnerLifecycle::try_from(value.lifecycle).unwrap_or_default() {
+    runtime_proto::RunnerLifecycle::Ephemeral => auv::runners::RunnerLifecycle::Ephemeral,
+    runtime_proto::RunnerLifecycle::UnlessIdle => auv::runners::RunnerLifecycle::UnlessIdle,
+    runtime_proto::RunnerLifecycle::UnlessShutdown => auv::runners::RunnerLifecycle::UnlessShutdown,
+    runtime_proto::RunnerLifecycle::Unspecified => return Err(ControlError::InvalidArgument("Runner lifecycle is required")),
   };
   Ok(auv::runners::CreateRunner {
     device: value
@@ -39,12 +40,12 @@ pub(crate) fn create_runner(value: proto::CreateRunnerRequest) -> Result<auv::ru
   })
 }
 
-pub(crate) fn run_outcome(value: proto::RunOutcome) -> Result<auv::runs::RunOutcome, ControlError> {
+pub(crate) fn run_outcome(value: runtime_proto::RunOutcome) -> Result<auv::runs::RunOutcome, ControlError> {
   match value {
-    proto::RunOutcome::Succeeded => Ok(auv::runs::RunOutcome::Succeeded),
-    proto::RunOutcome::Failed => Ok(auv::runs::RunOutcome::Failed),
-    proto::RunOutcome::Canceled => Ok(auv::runs::RunOutcome::Canceled),
-    proto::RunOutcome::Unspecified => Err(ControlError::InvalidArgument("Run outcome is required")),
+    runtime_proto::RunOutcome::Succeeded => Ok(auv::runs::RunOutcome::Succeeded),
+    runtime_proto::RunOutcome::Failed => Ok(auv::runs::RunOutcome::Failed),
+    runtime_proto::RunOutcome::Canceled => Ok(auv::runs::RunOutcome::Canceled),
+    runtime_proto::RunOutcome::Unspecified => Err(ControlError::InvalidArgument("Run outcome is required")),
   }
 }
 
@@ -139,18 +140,18 @@ pub(crate) fn device_entry_error_reason(value: auv::devices::DeviceEntryErrorRea
   }
 }
 
-pub(crate) fn run(value: auv::runs::Run) -> proto::Run {
-  proto::Run {
-    r#ref: Some(proto::RunRef {
+pub(crate) fn run(value: auv::runs::Run) -> runtime_proto::Run {
+  runtime_proto::Run {
+    r#ref: Some(runtime_proto::RunRef {
       run_id: value.id.to_string(),
     }),
     phase: match value.phase {
-      auv::runs::RunPhase::Unspecified => proto::RunPhase::Unspecified,
-      auv::runs::RunPhase::Pending => proto::RunPhase::Pending,
-      auv::runs::RunPhase::Running => proto::RunPhase::Running,
-      auv::runs::RunPhase::Succeeded => proto::RunPhase::Succeeded,
-      auv::runs::RunPhase::Failed => proto::RunPhase::Failed,
-      auv::runs::RunPhase::Canceled => proto::RunPhase::Canceled,
+      auv::runs::RunPhase::Unspecified => runtime_proto::RunPhase::Unspecified,
+      auv::runs::RunPhase::Pending => runtime_proto::RunPhase::Pending,
+      auv::runs::RunPhase::Running => runtime_proto::RunPhase::Running,
+      auv::runs::RunPhase::Succeeded => runtime_proto::RunPhase::Succeeded,
+      auv::runs::RunPhase::Failed => runtime_proto::RunPhase::Failed,
+      auv::runs::RunPhase::Canceled => runtime_proto::RunPhase::Canceled,
     } as i32,
     devices: value
       .devices
@@ -165,23 +166,23 @@ pub(crate) fn run(value: auv::runs::Run) -> proto::Run {
   }
 }
 
-fn lifecycle(value: auv::runners::RunnerLifecycle) -> proto::RunnerLifecycle {
+fn lifecycle(value: auv::runners::RunnerLifecycle) -> runtime_proto::RunnerLifecycle {
   match value {
-    auv::runners::RunnerLifecycle::Ephemeral => proto::RunnerLifecycle::Ephemeral,
-    auv::runners::RunnerLifecycle::UnlessIdle => proto::RunnerLifecycle::UnlessIdle,
-    auv::runners::RunnerLifecycle::UnlessShutdown => proto::RunnerLifecycle::UnlessShutdown,
+    auv::runners::RunnerLifecycle::Ephemeral => runtime_proto::RunnerLifecycle::Ephemeral,
+    auv::runners::RunnerLifecycle::UnlessIdle => runtime_proto::RunnerLifecycle::UnlessIdle,
+    auv::runners::RunnerLifecycle::UnlessShutdown => runtime_proto::RunnerLifecycle::UnlessShutdown,
   }
 }
 
-pub(crate) fn runner(value: auv::runners::Runner) -> proto::Runner {
-  proto::Runner {
-    r#ref: Some(proto::RunnerRef {
+pub(crate) fn runner(value: auv::runners::Runner) -> runtime_proto::Runner {
+  runtime_proto::Runner {
+    r#ref: Some(runtime_proto::RunnerRef {
       runner_id: value.id.to_string(),
     }),
     device: Some(proto::DeviceRef {
       device_id: value.device.to_string(),
     }),
-    runner_class: Some(proto::RunnerClassRef {
+    runner_class: Some(runtime_proto::RunnerClassRef {
       runner_class: value.class.to_string(),
     }),
     labels: value.labels,
@@ -191,12 +192,12 @@ pub(crate) fn runner(value: auv::runners::Runner) -> proto::Runner {
       nanos: value.subsec_nanos() as i32,
     }),
     phase: match value.phase {
-      auv::runners::RunnerPhase::Unspecified => proto::RunnerPhase::Unspecified,
-      auv::runners::RunnerPhase::Starting => proto::RunnerPhase::Starting,
-      auv::runners::RunnerPhase::Ready => proto::RunnerPhase::Ready,
-      auv::runners::RunnerPhase::Draining => proto::RunnerPhase::Draining,
-      auv::runners::RunnerPhase::Stopped => proto::RunnerPhase::Stopped,
-      auv::runners::RunnerPhase::Failed => proto::RunnerPhase::Failed,
+      auv::runners::RunnerPhase::Unspecified => runtime_proto::RunnerPhase::Unspecified,
+      auv::runners::RunnerPhase::Starting => runtime_proto::RunnerPhase::Starting,
+      auv::runners::RunnerPhase::Ready => runtime_proto::RunnerPhase::Ready,
+      auv::runners::RunnerPhase::Draining => runtime_proto::RunnerPhase::Draining,
+      auv::runners::RunnerPhase::Stopped => runtime_proto::RunnerPhase::Stopped,
+      auv::runners::RunnerPhase::Failed => runtime_proto::RunnerPhase::Failed,
     } as i32,
     created_at: value.created_at.map(timestamp),
     process_id: value.process_id.unwrap_or_default(),
@@ -205,9 +206,9 @@ pub(crate) fn runner(value: auv::runners::Runner) -> proto::Runner {
   }
 }
 
-pub(crate) fn runner_class(value: auv::runners::RunnerClass) -> proto::RunnerClass {
-  proto::RunnerClass {
-    r#ref: Some(proto::RunnerClassRef {
+pub(crate) fn runner_class(value: auv::runners::RunnerClass) -> runtime_proto::RunnerClass {
+  runtime_proto::RunnerClass {
+    r#ref: Some(runtime_proto::RunnerClassRef {
       runner_class: value.id.to_string(),
     }),
     device: value.device.map(|id| proto::DeviceRef {

@@ -38,7 +38,7 @@ export const deviceServiceGetDevice = <ThrowOnError extends boolean = false>(opt
 });
 
 export const pairingServiceRevokeDeviceCredential = <ThrowOnError extends boolean = false>(options: Options<PairingServiceRevokeDeviceCredentialData, ThrowOnError>): RequestResult<PairingServiceRevokeDeviceCredentialResponses, unknown, ThrowOnError> => (options.client ?? client).post<PairingServiceRevokeDeviceCredentialResponses, unknown, ThrowOnError>({
-    url: '/apis/auv/daemon/v1/pairing/credentials/revoke',
+    url: '/apis/auv/daemon/v1/pairing/credentials:revoke',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -56,7 +56,7 @@ export const pairingServicePairDevice = <ThrowOnError extends boolean = false>(o
 });
 
 export const pairingServiceSetPairedDeviceEnabled = <ThrowOnError extends boolean = false>(options: Options<PairingServiceSetPairedDeviceEnabledData, ThrowOnError>): RequestResult<PairingServiceSetPairedDeviceEnabledResponses, unknown, ThrowOnError> => (options.client ?? client).post<PairingServiceSetPairedDeviceEnabledResponses, unknown, ThrowOnError>({
-    url: '/apis/auv/daemon/v1/pairing/devices/enabled',
+    url: '/apis/auv/daemon/v1/pairing/devices:setEnabled',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -65,7 +65,7 @@ export const pairingServiceSetPairedDeviceEnabled = <ThrowOnError extends boolea
 });
 
 export const pairingServiceUnpairDevice = <ThrowOnError extends boolean = false>(options: Options<PairingServiceUnpairDeviceData, ThrowOnError>): RequestResult<PairingServiceUnpairDeviceResponses, unknown, ThrowOnError> => (options.client ?? client).post<PairingServiceUnpairDeviceResponses, unknown, ThrowOnError>({
-    url: '/apis/auv/daemon/v1/pairing/devices/unpair',
+    url: '/apis/auv/daemon/v1/pairing/devices:unpair',
     ...options,
     headers: {
         'Content-Type': 'application/json',

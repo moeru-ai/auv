@@ -1,8 +1,8 @@
 //! `foreground`: the commands that act on the desktop rather than on one window, run as the real
 //! `auv` binary against a window this harness owns: `display.list`, `display.capture`,
-//! `screen.captureRegion`, `input.moveMouse`, `input.clickPoint` and `input.drag` (screen, display
-//! and window bases), and the foreground keyboard commands `input.typeText`, `input.key`,
-//! `input.keys`, `input.holdKeys`, `input.keyboard` and `input.pasteText`.
+//! `display.captureRegion`, `input.moveMouse`, `input.clickPoint` and `input.dragMouse` (screen, display
+//! and window bases), and the foreground keyboard commands `input.typeText`,
+//! `input.pressKeys`, `input.holdKeys`, `input.performKeyboardInputs` and `input.pasteText`.
 //!
 //! Unlike the other scenarios this one moves the real pointer and sends real keys, because that is
 //! what these commands do. It keeps them on its own window:
@@ -409,7 +409,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   let (local_from, local_to) = (point_in_window(&window, from), point_in_window(&window, to));
   target.request(json!({"cmd": "reset_log"}))?;
   let (dragged, facts) = scenario.quiet(
-    "input.drag",
+    "input.dragMouse",
     &[
       arg(local_from.point().x),
       arg(local_from.point().y),
@@ -423,13 +423,13 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   )?;
   std::thread::sleep(Duration::from_millis(200));
   let drag = target.request(json!({"cmd": "state"}))?["pad"].clone();
-  scenario.tally.expect(dragged.completed(), format!("input.drag relative to the window failed: {}", dragged.failure()));
+  scenario.tally.expect(dragged.completed(), format!("input.dragMouse relative to the window failed: {}", dragged.failure()));
   scenario.tally.expect(
     near(from, &drag["down"], 2.0) && near(to, &drag["up"], 2.0) && drag["moves"].as_u64().unwrap_or(0) > 0,
     format!("the pad recorded the window drag as {drag}, not from {from:?} to {to:?} with moves"),
   );
   scenario.records.write(
-    "input.drag.window",
+    "input.dragMouse.window",
     json!({"exit": dragged.exit, "ms": dragged.ms, "selected_path": selected_path(&dragged), "from": from, "to": to, "pad": drag, "watch": facts}),
   )?;
 
@@ -462,10 +462,10 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     arg("--height"),
     arg(y1 - y0),
   ];
-  let (region_capture, facts) = scenario.quiet("screen.captureRegion", &region)?;
+  let (region_capture, facts) = scenario.quiet("display.captureRegion", &region)?;
   let decoded = decoded_capture(&region_capture, &layout.strip)?;
   let bounds = region_capture.json.as_ref().and_then(|json| rect_of(&json["result"]["capture"]["bounds"]));
-  scenario.tally.expect(region_capture.completed(), format!("screen.captureRegion failed: {}", region_capture.failure()));
+  scenario.tally.expect(region_capture.completed(), format!("display.captureRegion failed: {}", region_capture.failure()));
   scenario.tally.expect(
     bounds
       == Some([
@@ -474,12 +474,12 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
         f64::from(x1 - x0),
         f64::from(y1 - y0),
       ]),
-    format!("screen.captureRegion bounds are {bounds:?}, not the region asked for"),
+    format!("display.captureRegion bounds are {bounds:?}, not the region asked for"),
   );
-  scenario.tally.expect(pixels_match_bounds(&region_capture), "screen.captureRegion pixels are not the size of its bounds at its scale");
+  scenario.tally.expect(pixels_match_bounds(&region_capture), "display.captureRegion pixels are not the size of its bounds at its scale");
   scenario.tally.expect(decoded == Some(wanted), format!("the region capture decodes to {decoded:?}, not the receiver's {wanted:?}"));
   scenario.records.write(
-    "screen.captureRegion",
+    "display.captureRegion",
     json!({"exit": region_capture.exit, "ms": region_capture.ms, "bounds": bounds, "decoded_strip": decoded, "wanted_strip": wanted,
       "watch": facts}),
   )?;
@@ -534,10 +534,10 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   let mut bounds = None;
   // Observe readiness with a bounded budget. Never retry a delivered click.
   for attempt in 1..=3 {
-    let (found, _) = scenario.quiet("screen.findText", &[caption.clone()])?;
+    let (found, _) = scenario.quiet("display.findText", &[caption.clone()])?;
     bounds = found.json.as_ref().and_then(|json| rect_of(&json["result"]["matches"][0]["bounds"]));
     scenario.records.write(
-      "screen.clickText.preflight",
+      "display.clickText.preflight",
       json!({"query": caption, "attempt": attempt, "exit": found.exit, "ms": found.ms, "best_bounds": bounds,
         "matches": found.json.as_ref().and_then(|value| value["result"]["matches"].as_array()).map(Vec::len), "button_rect": layout.button_rect}),
     )?;
@@ -558,7 +558,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
       .vision()
       .recognize_text_in_capture(&capture, auv_driver_common::geometry::RelativeRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| anyhow::anyhow!(error))?;
-    scenario.records.write("screen.clickText.owned_fixture_ocr", json!({"text": recognized.text, "regions": recognized.regions}))?;
+    scenario.records.write("display.clickText.owned_fixture_ocr", json!({"text": recognized.text, "regions": recognized.regions}))?;
   }
   let Some(bounds) = bounds else {
     bail!("the owned button caption was not recognized; no screen click sent")
@@ -573,21 +573,21 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   }
   scenario.pointer_may_go(&[point])?;
   let before = target.state()?;
-  let (clicked, facts) = scenario.acting("screen.clickText", &[caption.clone()])?;
+  let (clicked, facts) = scenario.acting("display.clickText", &[caption.clone()])?;
   std::thread::sleep(Duration::from_millis(200));
   let after = target.state()?;
-  scenario.tally.expect(clicked.completed(), format!("screen.clickText failed: {}", clicked.failure()));
-  scenario.tally.expect(after.clicks == before.clicks + 1, "screen.clickText did not increment the owned button's click count once");
-  scenario.tally.expect(selected_path(&clicked) == "foreground_system_events", "screen.clickText did not use foreground input");
+  scenario.tally.expect(clicked.completed(), format!("display.clickText failed: {}", clicked.failure()));
+  scenario.tally.expect(after.clicks == before.clicks + 1, "display.clickText did not increment the owned button's click count once");
+  scenario.tally.expect(selected_path(&clicked) == "foreground_system_events", "display.clickText did not use foreground input");
   scenario.records.write(
-    "screen.clickText",
+    "display.clickText",
     json!({"query": caption, "exit": clicked.exit, "ms": clicked.ms, "point": point,
       "clicks": [before.clicks, after.clicks], "selected_path": selected_path(&clicked), "semantic_verified": after.clicks == before.clicks + 1,
       "watch": facts}),
   )?;
   let missing = format!("MissingAUV{}", std::process::id());
   let before = target.state()?;
-  let (missed, facts) = scenario.quiet("screen.clickText", &[missing])?;
+  let (missed, facts) = scenario.quiet("display.clickText", &[missing])?;
   let after = target.state()?;
   let failure_code = missed.json.as_ref().map(|value| value["failure_details"]["code"].clone());
   scenario
@@ -596,19 +596,19 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   scenario.tally.expect(after.clicks == before.clicks, "missing screen text clicked the receiver");
   scenario.tally.expect(failure_code == Some(json!("not_found")), "missing screen text did not return typed NotFound");
   scenario.records.write(
-    "screen.clickText.missing",
+    "display.clickText.missing",
     json!({"exit": missed.exit, "ms": missed.ms, "failure": missed.failure(), "failure_code": failure_code,
       "clicks": [before.clicks, after.clicks], "watch": facts}),
   )?;
 
   scenario.pointer_may_go(&[from, to])?;
   target.request(json!({"cmd": "reset_log"}))?;
-  let (dragged, facts) = scenario.acting("input.drag", &[arg(from[0]), arg(from[1]), arg(to[0]), arg(to[1])])?;
+  let (dragged, facts) = scenario.acting("input.dragMouse", &[arg(from[0]), arg(from[1]), arg(to[0]), arg(to[1])])?;
   std::thread::sleep(Duration::from_millis(200));
   let drag = target.request(json!({"cmd": "state"}))?["pad"].clone();
   let cursor = watch.snapshot().cursor;
   let held_ms = drag["up_ms"].as_u64().zip(drag["down_ms"].as_u64()).map(|(up, down)| up.saturating_sub(down));
-  scenario.tally.expect(dragged.completed(), format!("input.drag on the screen failed: {}", dragged.failure()));
+  scenario.tally.expect(dragged.completed(), format!("input.dragMouse on the screen failed: {}", dragged.failure()));
   scenario.tally.expect(
     near(from, &drag["down"], 1.0) && near(to, &drag["up"], 1.0) && drag["moves"].as_u64().unwrap_or(0) >= 5,
     format!("the pad recorded the screen drag as {drag}, not from {from:?} to {to:?} with moves"),
@@ -618,7 +618,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     .tally
     .expect((cursor.0 - to[0]).abs() <= 1 && (cursor.1 - to[1]).abs() <= 1, format!("the pointer ended at {cursor:?}, not {to:?}"));
   scenario.records.write(
-    "input.drag.screen",
+    "input.dragMouse.screen",
     json!({"exit": dragged.exit, "ms": dragged.ms, "from": from, "to": to, "pad": drag, "button_down_ms": held_ms,
       "pointer_after": [cursor.0, cursor.1], "watch": facts}),
   )?;
@@ -639,11 +639,11 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
   // application received. Text that is typed elsewhere cannot appear here.
   let steps: Vec<(&str, Vec<String>, &str)> = vec![
     ("input.typeText", vec![arg("auv typed")], "auv typed"),
-    ("input.key", vec![arg("a")], "a"),
-    ("input.key", vec![arg("shift+b")], "B"),
-    ("input.keys", vec![arg("shift"), arg("c")], "C"),
+    ("input.pressKeys", vec![arg("a")], "a"),
+    ("input.pressKeys", vec![arg("shift"), arg("b")], "B"),
+    ("input.pressKeys", vec![arg("shift"), arg("c")], "C"),
     (
-      "input.keys",
+      "input.pressKeys",
       vec![
         arg("d"),
         arg("--count"),
@@ -655,7 +655,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     ),
     ("input.holdKeys", vec![arg("shift"), arg("e"), arg("--duration-ms"), arg(400)], "E"),
     (
-      "input.keyboard",
+      "input.performKeyboardInputs",
       vec![
         arg("--actions"),
         arg(r#"[{"kind":"press","keys":["f"]},{"kind":"type_text","text":"gh"}]"#),
@@ -711,7 +711,7 @@ pub fn foreground_commands(options: &ForegroundCommandsOptions) -> Result<bool> 
     let pastes: [(&str, Vec<String>, &str); 2] = [
       ("input.pasteText", vec![arg("ij")], "ij"),
       (
-        "input.keyboard",
+        "input.performKeyboardInputs",
         vec![
           arg("--actions"),
           arg(r#"[{"kind":"paste_text","text":"kl"}]"#),
