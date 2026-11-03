@@ -201,7 +201,7 @@ pub(crate) fn matches_executable(app_name: &str, matcher: &TextMatcher) -> bool 
   }
 }
 
-fn without_exe_suffix(value: &str) -> &str {
+pub(crate) fn without_exe_suffix(value: &str) -> &str {
   match value.len().checked_sub(4) {
     Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
     _ => value,

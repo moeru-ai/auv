@@ -23,7 +23,7 @@ use crate::playback_guard::{
 };
 use crate::track_identity::{TrackChangeVerdict, TrackIdentity, evaluate_track_change};
 use crate::wgc::{WindowHealth, capture_window_health_cached, capture_window_health_strict};
-use crate::window::list_windows;
+use crate::window::{list_windows, without_exe_suffix};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
@@ -50,13 +50,49 @@ pub struct WindowsOperationContext {
   pub timings: DiscoveryTimings,
 }
 
+/// Matches a window's application name against the expected process name.
+///
+/// Rejects substring false positives (e.g. `NotQQMusic.exe` when expecting `QQMusic.exe`).
+pub(crate) fn matches_target_window_app(window: &Window, expected_app_process: &str) -> bool {
+  let Some(app_name) = window.app_name.as_deref() else {
+    return false;
+  };
+  let expected_trim = expected_app_process.trim();
+  let app_trim = app_name.trim();
+  if expected_trim.is_empty() || app_trim.is_empty() {
+    return false;
+  }
+  let expected_stem = without_exe_suffix(expected_trim);
+  let app_stem = without_exe_suffix(app_trim);
+  app_trim.eq_ignore_ascii_case(expected_trim) || app_stem.eq_ignore_ascii_case(expected_stem)
+}
+
+/// Selects the target window for an application process from enumerated windows.
+///
+/// Enforces:
+/// - Exact identity matching (no loose substring authorization)
+/// - Ambiguity handling: if multiple candidate windows match, returns an error (fail-closed).
+pub(crate) fn select_target_window(windows: &[Window], app_process: &str) -> DriverResult<Window> {
+  let matches: Vec<&Window> = windows.iter().filter(|w| matches_target_window_app(w, app_process)).collect();
+
+  match matches.as_slice() {
+    [] => Err(DriverError::NotFound {
+      target: format!("{app_process} window"),
+    }),
+    [single] => Ok((*single).clone()),
+    multiple => Err(DriverError::InvalidInput {
+      message: format!("Ambiguous match: multiple windows (count: {}) matched target '{app_process}'", multiple.len()),
+    }),
+  }
+}
+
 impl WindowsOperationContext {
   /// Resolves the context targeting QQ Music, optionally utilizing a cached CoreAudio endpoint ID.
   pub fn resolve(cached_endpoint_id: Option<&str>) -> DriverResult<Self> {
-    Self::resolve_for_target("qqmusic", "QQMusic.exe", cached_endpoint_id)
+    Self::resolve_for_target("QQMusic.exe", "QQMusic.exe", cached_endpoint_id)
   }
 
-  /// Resolves context for a given SMTC app substring and process executable name.
+  /// Resolves context for a given SMTC target app and process executable name.
   pub fn resolve_for_target(smtc_filter: &str, app_process: &str, cached_endpoint_id: Option<&str>) -> DriverResult<Self> {
     let t_mgr = Instant::now();
     let manager = SmtcMediaManager::new()?;
@@ -70,17 +106,7 @@ impl WindowsOperationContext {
 
     let t_win = Instant::now();
     let windows = list_windows()?;
-    let window = windows
-      .into_iter()
-      .find(|w| {
-        w.app_name
-          .as_deref()
-          .map(|n| n.eq_ignore_ascii_case(app_process) || n.to_ascii_lowercase().contains(&smtc_filter.to_ascii_lowercase()))
-          .unwrap_or(false)
-      })
-      .ok_or_else(|| DriverError::NotFound {
-        target: format!("{app_process} window"),
-      })?;
+    let window = select_target_window(&windows, app_process)?;
     let window_discovery_ms = t_win.elapsed().as_secs_f64() * 1000.0;
 
     let pid = window.process_id.unwrap_or(0);
@@ -406,6 +432,62 @@ fn evaluate_step_track_change(gate: &VerificationGateDef, previous: &TrackIdenti
   evaluate_track_change(previous, current, false).0
 }
 
+/// Validates that the operation and request target a supported Windows application and backend.
+///
+/// Fails closed before any COM or Windows driver context resolution if:
+/// - Operation target application is not `QQMusic.exe` (case-insensitive)
+/// - Request application is empty or does not match operation target application (case-insensitive)
+/// - Target backend is not `windows.smtc+coreaudio+wgc` (exact match)
+/// - Any step declares an `app_id` that is not a string or does not match operation target application
+fn validate_supported_target(op: &OperationDef, request: &TaskRequest) -> Result<(), (String, String)> {
+  if !op.target.app_name.eq_ignore_ascii_case("QQMusic.exe") {
+    return Err((
+      "target_validation".to_string(),
+      format!(
+        "Unsupported operation target app '{}'; only 'QQMusic.exe' is currently supported by WindowsProductionExecutor",
+        op.target.app_name
+      ),
+    ));
+  }
+
+  if request.app_name.is_empty() || !request.app_name.eq_ignore_ascii_case(&op.target.app_name) {
+    return Err((
+      "target_validation".to_string(),
+      format!("Request app '{}' does not match operation target app '{}'", request.app_name, op.target.app_name),
+    ));
+  }
+
+  if op.target.backend != "windows.smtc+coreaudio+wgc" {
+    return Err((
+      "target_validation".to_string(),
+      format!("Unsupported operation target backend '{}'; only 'windows.smtc+coreaudio+wgc' is supported", op.target.backend),
+    ));
+  }
+
+  for step in &op.steps {
+    if let Some(val) = step.action.get("app_id") {
+      match val.as_str() {
+        Some(step_app) => {
+          if !step_app.eq_ignore_ascii_case(&op.target.app_name) {
+            return Err((
+              step.id.clone(),
+              format!(
+                "step '{}' specifies app_id '{}' which does not match operation target app '{}'",
+                step.id, step_app, op.target.app_name
+              ),
+            ));
+          }
+        }
+        None => {
+          return Err((step.id.clone(), format!("step '{}' has invalid 'app_id' field: expected string, found {val}", step.id)));
+        }
+      }
+    }
+  }
+
+  Ok(())
+}
+
 impl OperationExecutor for WindowsProductionExecutor {
   fn execute(&self, op: &OperationDef, request: &TaskRequest) -> ExecutionResult {
     // Second gate check at driver boundary:
@@ -444,6 +526,15 @@ impl OperationExecutor for WindowsProductionExecutor {
           };
         }
       }
+    }
+
+    // Target validation: verify supported app, backend, and step app_id BEFORE COM/driver context resolution
+    if let Err((step_id, message)) = validate_supported_target(op, request) {
+      return ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures: 1,
+      };
     }
 
     // Acquire operation context (first driver call occurs ONLY after mode gate and pre-flight step checks pass)
@@ -1186,6 +1277,13 @@ mod tests {
     for step in &raw_fast.steps {
       classify_step(step).unwrap_or_else(|e| panic!("step {} in fast op must be recognized: {e}", step.id));
     }
+
+    // Both operations must pass target validation
+    let req_ver = dummy_request(Some(ExecutionMode::Verified));
+    validate_supported_target(&raw_verified, &req_ver).expect("qqmusic verified operation must pass target validation");
+
+    let req_fast = dummy_request(Some(ExecutionMode::Fast));
+    validate_supported_target(&raw_fast, &req_fast).expect("qqmusic fast operation must pass target validation");
   }
 
   #[test]
@@ -1505,6 +1603,342 @@ mod tests {
         assert!(message.contains("below gate threshold"), "message must explicitly state ratio is below threshold: {message}");
       }
       other => panic!("expected GateFailed, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_unsupported_op_target_app() {
+    let executor = WindowsProductionExecutor::default();
+    let mut op = dummy_operation("other.prepare", ExecutionMode::Verified);
+    op.target.app_name = "Other.exe".to_string();
+
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "Other.exe".to_string();
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "target_validation");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("Unsupported operation target app 'Other.exe'"), "{message}");
+      }
+      other => panic!("expected GateFailed for unsupported target app, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_request_target_mismatch() {
+    let executor = WindowsProductionExecutor::default();
+    let op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "Notepad.exe".to_string();
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "target_validation");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("Request app 'Notepad.exe' does not match operation target app 'QQMusic.exe'"), "{message}");
+      }
+      other => panic!("expected GateFailed for request/target mismatch, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_empty_request_app() {
+    let executor = WindowsProductionExecutor::default();
+    let op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "".to_string();
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "target_validation");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("Request app '' does not match operation target app 'QQMusic.exe'"), "{message}");
+      }
+      other => panic!("expected GateFailed for empty request app, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_unsupported_backend() {
+    let executor = WindowsProductionExecutor::default();
+    let mut op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+    op.target.backend = "linux.pipewire".to_string();
+
+    let req = dummy_request(Some(ExecutionMode::Verified));
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "target_validation");
+        assert_eq!(consecutive_failures, 1);
+        assert!(message.contains("Unsupported operation target backend 'linux.pipewire'"), "{message}");
+      }
+      other => panic!("expected GateFailed for unsupported backend, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_step_app_id_mismatch() {
+    let executor = WindowsProductionExecutor::default();
+    let mut op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+    op.steps[0].action = serde_json::json!({
+      "type": "smtc_query",
+      "app_id": "Other.exe"
+    });
+
+    let req = dummy_request(Some(ExecutionMode::Verified));
+
+    let res = executor.execute(&op, &req);
+    match res {
+      ExecutionResult::GateFailed {
+        step_id,
+        message,
+        consecutive_failures,
+      } => {
+        assert_eq!(step_id, "step_smtc_query");
+        assert_eq!(consecutive_failures, 1);
+        assert!(
+          message.contains("step 'step_smtc_query' specifies app_id 'Other.exe' which does not match operation target app 'QQMusic.exe'"),
+          "{message}"
+        );
+      }
+      other => panic!("expected GateFailed for step app_id mismatch, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_target_validation_rejects_step_app_id_non_string_types() {
+    let invalid_values = vec![
+      serde_json::json!(12345),
+      serde_json::json!(true),
+      serde_json::json!(null),
+      serde_json::json!(["QQMusic.exe"]),
+      serde_json::json!({ "name": "QQMusic.exe" }),
+    ];
+
+    let executor = WindowsProductionExecutor::default();
+    let req = dummy_request(Some(ExecutionMode::Verified));
+
+    for val in invalid_values {
+      let mut op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+      op.steps[0].action = serde_json::json!({
+        "type": "smtc_query",
+        "app_id": val
+      });
+
+      let res = executor.execute(&op, &req);
+      match res {
+        ExecutionResult::GateFailed {
+          step_id,
+          message,
+          consecutive_failures,
+        } => {
+          assert_eq!(step_id, "step_smtc_query");
+          assert_eq!(consecutive_failures, 1);
+          assert!(
+            message.contains("step 'step_smtc_query' has invalid 'app_id' field: expected string"),
+            "val: {:?}, message: {}",
+            val,
+            message
+          );
+        }
+        other => panic!("expected GateFailed for non-string app_id {:?}, got {:?}", val, other),
+      }
+    }
+  }
+
+  #[test]
+  fn test_target_validation_accepts_valid_qqmusic_targets() {
+    let mut op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+    op.target.app_name = "qqmusic.exe".to_string(); // case-insensitive check
+    op.target.backend = "windows.smtc+coreaudio+wgc".to_string();
+    op.steps[0].action = serde_json::json!({
+      "type": "smtc_query",
+      "app_id": "QQMusic.exe"
+    });
+
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "QQMUSIC.EXE".to_string();
+
+    assert!(validate_supported_target(&op, &req).is_ok());
+  }
+
+  fn test_window(id: &str, app: Option<&str>, is_visible: bool, is_main: bool) -> Window {
+    Window {
+      reference: auv_driver_common::window::WindowRef { id: id.to_string() },
+      title: Some("Test Window".to_string()),
+      app_name: app.map(str::to_string),
+      application_id: None,
+      process_id: Some(1234),
+      frame: auv_driver_common::geometry::Rect::new(0.0, 0.0, 800.0, 600.0),
+      coordinate_space: auv_driver_common::geometry::CoordinateSpace::Screen,
+      is_main,
+      is_visible,
+    }
+  }
+
+  #[test]
+  fn test_select_target_window_resolution_and_ambiguity() {
+    // 1. Positive exact / case-insensitive / stem matches
+    let win_exact = test_window("1", Some("QQMusic.exe"), true, true);
+    assert_eq!(select_target_window(&[win_exact], "QQMusic.exe").unwrap().reference.id, "1");
+
+    let win_lower = test_window("2", Some("qqmusic.exe"), true, true);
+    assert_eq!(select_target_window(&[win_lower], "QQMusic.exe").unwrap().reference.id, "2");
+
+    let win_stem = test_window("3", Some("QQMusic"), true, true);
+    assert_eq!(select_target_window(&[win_stem], "QQMusic.exe").unwrap().reference.id, "3");
+
+    // 2. Strict negative matches: substring false positives are NOT authorized
+    let win_not = test_window("4", Some("NotQQMusic.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_not], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    let win_helper = test_window("5", Some("QQMusic_Helper.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_helper], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    let win_other = test_window("6", Some("Spotify.exe"), true, true);
+    assert!(matches!(select_target_window(&[win_other], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    // 3. Target missing (empty list)
+    assert!(matches!(select_target_window(&[], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
+
+    // 4. Ambiguity: multiple windows for target rejected
+    let win_a = test_window("a", Some("QQMusic.exe"), true, false);
+    let win_b = test_window("b", Some("QQMusic.exe"), true, false);
+    let ambig_err = select_target_window(&[win_a, win_b], "QQMusic.exe").unwrap_err();
+    match ambig_err {
+      DriverError::InvalidInput { message } => {
+        assert!(message.contains("Ambiguous match"), "{message}");
+        assert!(message.contains("count: 2"), "{message}");
+      }
+      other => panic!("expected InvalidInput for ambiguous windows, got {other:?}"),
+    }
+  }
+
+  /// WARNING: Side-effecting live test against the host's running QQ Music instance!
+  ///
+  /// Manually running this test (`-- --ignored`) will interact with and mutate the active QQ Music instance,
+  /// including adjusting process volume (to 40%), triggering playback, and skipping to the next track via SMTC.
+  ///
+  /// This test is strictly for local developer manual verification and MUST NOT be run in shared or unattended Windows CI.
+  #[cfg(target_os = "windows")]
+  #[test]
+  #[ignore = "live Windows execution against running QQMusic: run explicitly with -- --ignored --nocapture"]
+  fn live_windows_production_executor_qqmusic_verification() {
+    let executor = WindowsProductionExecutor::default();
+
+    // 1. Target validation gate rejects unsupported/mismatched targets before COM calls
+    let mut bad_req_op = dummy_operation("qqmusic.prepare", ExecutionMode::Verified);
+    bad_req_op.target.app_name = "QQMusic.exe".to_string();
+    bad_req_op.target.backend = "windows.smtc+coreaudio+wgc".to_string();
+    let mut bad_req = dummy_request(Some(ExecutionMode::Verified));
+    bad_req.app_name = "Spotify.exe".to_string();
+    let res = executor.execute(&bad_req_op, &bad_req);
+    assert!(matches!(res, ExecutionResult::GateFailed { ref step_id, .. } if step_id == "target_validation"));
+
+    // 2. Resolve live WindowsOperationContext
+    let ctx = WindowsOperationContext::resolve(None).expect("live WindowsOperationContext::resolve should succeed with QQMusic running");
+    assert!(ctx.window.app_name.as_deref().unwrap_or("").eq_ignore_ascii_case("QQMusic.exe"));
+    assert!(ctx.audio.is_some(), "CoreAudio session should be resolved for QQMusic PID");
+    let wgc_health = crate::wgc::capture_window_health_strict(&ctx.window).ok();
+    println!(
+      "Live discovery verified: Window HWND={:?}, PID={:?}, App={:?}, Title={:?}, AudioResolved={}, WGC={:?}",
+      ctx.window.reference.id,
+      ctx.window.process_id,
+      ctx.window.app_name,
+      ctx.window.title,
+      ctx.audio.is_some(),
+      wgc_health.as_ref().map(|h| format!("non_black_ratio={:.2}%, alive={}, is_fresh={}", h.non_black_ratio, h.alive, h.is_fresh)),
+    );
+
+    // 3. Check live minimized state and execute verified operation
+    let is_minimized = check_minimized_and_restore(&ctx.window, false);
+    println!("Live window state: is_minimized={}", is_minimized);
+
+    let op_json = include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json");
+    let op: OperationDef = serde_json::from_str(op_json).expect("parse verified operation");
+    let mut req = dummy_request(Some(ExecutionMode::Verified));
+    req.app_name = "QQMusic.exe".to_string();
+
+    let res = executor.execute(&op, &req);
+    println!("live verified execute result: {:?}", res);
+    if is_minimized {
+      // In Verified mode, a minimized window must fail gate at step_4_verify_window_alive (allow_restore = false)
+      assert!(
+        matches!(res, ExecutionResult::GateFailed { ref step_id, ref message, .. } if step_id == "step_4_verify_window_alive" && message.contains("minimized")),
+        "minimized window must fail gate in Verified mode; got {:?}",
+        res
+      );
+    } else {
+      match res {
+        ExecutionResult::Success {
+          steps_executed,
+          execution_mode,
+          confirmed,
+        } => {
+          assert_eq!(execution_mode, ExecutionMode::Verified);
+          assert_eq!(steps_executed, 4);
+          assert!(confirmed, "verified execution with title change and WGC must be confirmed");
+        }
+        ExecutionResult::GateFailed {
+          step_id, message, ..
+        } => {
+          panic!("live execution failed at gate '{step_id}': {message}");
+        }
+        other => panic!("unexpected execution result: {other:?}"),
+      }
+    }
+
+    // 4. Load actual Fast operation and execute live
+    let fast_op_json = include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback-fast.json");
+    let fast_op: OperationDef = serde_json::from_str(fast_op_json).expect("parse fast operation");
+    let mut fast_req = dummy_request(Some(ExecutionMode::Fast));
+    fast_req.app_name = "QQMusic.exe".to_string();
+
+    let fast_res = executor.execute(&fast_op, &fast_req);
+    println!("live fast execute result: {:?}", fast_res);
+    match fast_res {
+      ExecutionResult::Success {
+        steps_executed,
+        execution_mode,
+        confirmed,
+      } => {
+        assert_eq!(execution_mode, ExecutionMode::Fast);
+        if is_minimized {
+          assert_eq!(steps_executed, 3, "fast mode skips minimized WGC without failure");
+        } else {
+          assert_eq!(steps_executed, 4);
+        }
+        assert!(!confirmed, "fast mode must never report confirmed: true");
+      }
+      ExecutionResult::GateFailed {
+        step_id, message, ..
+      } => {
+        panic!("live fast execution failed at gate '{step_id}': {message}");
+      }
+      other => panic!("unexpected execution result: {other:?}"),
     }
   }
 }

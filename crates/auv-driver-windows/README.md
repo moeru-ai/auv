@@ -126,3 +126,35 @@ non-elevated process without UIAccess is the normal automation posture.
 App-level activation resolves the process's most relevant window via the
 `main_visible` selector (foreground → titled → largest), foregrounds it, then
 verifies by re-observing the foreground window's owning process name.
+
+## Operation target validation and context resolution
+
+Mode-aware operations on Windows (`production_executor.rs`) interact with three decoupled OS subsystems:
+1. WinRT System Media Transport Controls (SMTC) via `SourceAppUserModelId`
+2. Desktop top-level windows via Win32 `EnumWindows`
+3. Process audio volume via CoreAudio `ISimpleAudioVolume` (keyed by process ID)
+
+### Admission gating & exact identity matching
+
+Before acquiring COM or driver resources, `validate_supported_target` verifies:
+- `op.target.app_name` matches `QQMusic.exe` (case-insensitively).
+- `request.app_name` is non-empty and matches `op.target.app_name` (case-insensitively).
+- `op.target.backend` strictly equals `"windows.smtc+coreaudio+wgc"`.
+- Each step's `action["app_id"]` (if declared) is a string matching `op.target.app_name`.
+
+Context resolution (`WindowsOperationContext::resolve_for_target`) enforces exact executable and stem matching:
+- `matches_smtc_app_id`: matches full ID, stem (without `.exe`), or file path ending with the executable name. Rejects substring false-positives (e.g. `NotQQMusic.exe`).
+- `matches_target_window_app`: matches window `app_name` or stem. Rejects substring false-positives.
+
+### Ambiguity handling (fail-closed)
+
+If multiple SMTC sessions match the target, `select_target_session` returns `DriverError::InvalidInput("Ambiguous match...")`.
+If multiple windows match the target process, `select_target_window` returns `DriverError::InvalidInput("Ambiguous match...")`. Neither guesses based on transient foreground state (`is_main`).
+
+### Known design boundaries
+
+- **Name-level admission vs. cross-resource identity proof**: Resolution verifies that SMTC and Window each match `QQMusic.exe`, and CoreAudio attaches to the resolved window PID. This provides strict name-level gating rejecting unsupported or mismatched application names, but does not independently establish cryptographic or kernel-level mutual proof that SMTC and HWND belong to the same process instance.
+- **Pre-flight admission rejection (zero side-effects) vs. step-level verification gate failure**:
+  - `validate_supported_target` performs pre-flight validation before any COM acquisition or step execution, ensuring zero side-effects on rejection.
+  - In contrast, step-level gate failures (e.g., Step 4 `wgc_capture` failing when the target window is minimized in Verified mode) occur **after** earlier steps have already executed. Actions dispatched by prior steps (such as CoreAudio volume adjustment in Step 2 or SMTC next-track in Step 3) have already modified live application state; AUV operations do not roll back preceding actions on verification gate failure. Higher-risk operations must distinguish pre-flight refusal from post-execution verification failure.
+- **Multi-window and minimized window contract**: Multiple top-level windows trigger ambiguity rejection. Passing window discovery does not imply operation success; for example, a minimized window resolves cleanly in window discovery, but `wgc_capture` in Verified mode fails the window health gate (`is_still_minimized` with `allow_restore = false`), while Fast mode skips WGC capture and records 3 steps executed.
