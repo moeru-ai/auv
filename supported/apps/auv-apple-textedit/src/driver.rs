@@ -158,24 +158,18 @@ pub struct MacosTextEditDriver;
 #[cfg(not(target_os = "macos"))]
 impl MacosTextEditDriver {
   pub fn open_local() -> DriverResult<Self> {
-    Err(auv_driver::DriverError::Unsupported {
-      operation: "MacosTextEditDriver.open_local",
-    })
+    Err(auv_driver::DriverError::unsupported("MacosTextEditDriver.open_local"))
   }
 }
 
 #[cfg(not(target_os = "macos"))]
 impl TextEditDriver for MacosTextEditDriver {
   fn activate_app(&mut self, _app_id: &str, _settle: Duration) -> DriverResult<TextEditActionResult> {
-    Err(auv_driver::DriverError::Unsupported {
-      operation: "MacosTextEditDriver.activate_app",
-    })
+    Err(auv_driver::DriverError::unsupported("MacosTextEditDriver.activate_app"))
   }
 
   fn focus_text_input(&mut self, _app_id: &str, _query: &str, _candidate: &str) -> DriverResult<TextEditActionResult> {
-    Err(auv_driver::DriverError::Unsupported {
-      operation: "MacosTextEditDriver.focus_text_input",
-    })
+    Err(auv_driver::DriverError::unsupported("MacosTextEditDriver.focus_text_input"))
   }
 
   fn paste_text_preserve_clipboard(
@@ -185,14 +179,10 @@ impl TextEditDriver for MacosTextEditDriver {
     _replace_existing: bool,
     _settle: Duration,
   ) -> DriverResult<TextEditActionResult> {
-    Err(auv_driver::DriverError::Unsupported {
-      operation: "MacosTextEditDriver.paste_text_preserve_clipboard",
-    })
+    Err(auv_driver::DriverError::unsupported("MacosTextEditDriver.paste_text_preserve_clipboard"))
   }
 
   fn verify_ax_text(&mut self, _app_id: &str, _target_text: &str, _target_role: &str) -> DriverResult<VerificationOutcome> {
-    Err(auv_driver::DriverError::Unsupported {
-      operation: "MacosTextEditDriver.verify_ax_text",
-    })
+    Err(auv_driver::DriverError::unsupported("MacosTextEditDriver.verify_ax_text"))
   }
 }
