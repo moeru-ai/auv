@@ -595,3 +595,66 @@ fn window_selector_names_the_executable_on_windows() {
   assert_eq!(selector.title, Some(auv_driver::TextMatcher::Contains("Untitled".to_string())));
   assert!(selector.main_visible);
 }
+
+fn frame_args(x: Option<f64>, y: Option<f64>, width: Option<f64>, height: Option<f64>) -> SetWindowFrameArgs {
+  SetWindowFrameArgs {
+    x,
+    y,
+    width,
+    height,
+    title: None,
+  }
+}
+
+#[test]
+fn window_set_frame_fills_omitted_values_from_the_current_frame() {
+  let current = Rect::new(10.0, 20.0, 400.0, 300.0);
+
+  let (origin, size) = frame_args(Some(50.0), None, None, None).request(current);
+  assert_eq!(origin, Some(auv_driver::Point::new(50.0, 20.0)));
+  assert_eq!(size, None);
+
+  let (origin, size) = frame_args(None, None, None, Some(500.0)).request(current);
+  assert_eq!(origin, None);
+  assert_eq!(size, Some(auv_driver::Size::new(400.0, 500.0)));
+}
+
+#[test]
+fn window_set_frame_needs_one_value_and_positive_sizes() {
+  let missing = frame_args(None, None, None, None).validate().expect_err("no value");
+  assert_eq!(missing.code, crate::FailureCode::InvalidInput);
+  assert!(frame_args(None, None, Some(0.0), None).validate().is_err());
+  assert!(frame_args(Some(-120.0), None, None, None).validate().is_ok());
+}
+
+#[test]
+fn window_mutation_report_names_state_before_and_after() {
+  let window = sample_window(Rect::new(0.0, 0.0, 400.0, 300.0));
+  let result = auv_driver::WindowMutationResult {
+    selected_path: auv_driver::WindowMutationPath::AxWindowAttribute,
+    attempts: Vec::new(),
+    before_frame: Some(window.frame),
+    after_frame: Some(window.frame),
+    before_state: Some(auv_driver::WindowState {
+      is_minimized: Some(true),
+      ..Default::default()
+    }),
+    after_state: Some(auv_driver::WindowState {
+      is_minimized: Some(false),
+      is_maximized: Some(false),
+      is_focused: Some(true),
+      ..Default::default()
+    }),
+    adjusted_by_app: false,
+    focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
+    mouse_disturbance: auv_driver::DisturbanceLevel::None,
+  };
+
+  let output = window_mutation_output(&window, &result).expect("mutation output");
+  let report = output.report.as_ref().expect("report");
+
+  assert_eq!(report_field(report, "State before"), "minimized");
+  assert_eq!(report_field(report, "State after"), "normal,focused");
+  assert_eq!(report_field(report, "Focus disturbance"), "foreground");
+  assert_eq!(output.result().expect("result")["result"]["after_state"]["is_focused"], true);
+}

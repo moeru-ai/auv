@@ -12,7 +12,7 @@ import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/v1/accessi
 import type { ActivateApplicationRequestSchema } from '../../gen/auv/api/driver/v1/application_pb'
 import type { CaptureRefSchema, CaptureResolution, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import type { PositionSchema, ScreenRectSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
+import type { LogicalSizeSchema, PositionSchema, ScreenPointSchema, ScreenRectSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
   ClickOptionsSchema,
   InputActionResult,
@@ -42,7 +42,8 @@ import type {
   FindWindowTextRequestSchema,
   RecognizeTextRequestSchema,
 } from '../../gen/auv/api/driver/v1/text_recognition_pb'
-import type { Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import type { ListWindowsRequestSchema, Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import type { WindowMutationResult } from '../../gen/auv/api/driver/v1/window_service_pb'
 import type { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
@@ -59,9 +60,9 @@ import { DisplayService } from '../../gen/auv/api/driver/v1/display_service_pb'
 import { InputPolicy, InputService } from '../../gen/auv/api/driver/v1/input_pb'
 import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
-import { WindowSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import { WindowSchema, WindowStateTarget } from '../../gen/auv/api/driver/v1/window_pb'
 import { WindowService } from '../../gen/auv/api/driver/v1/window_service_pb'
-import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
+import { AuvProtocolError } from '../../transport/errors'
 import { durationsFromMillis } from './duration'
 import { center } from './geometry'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
@@ -94,6 +95,13 @@ export type CaptureTarget = string | { captureId: string } | { ref?: { captureId
 export interface FindDisplayTextOptions extends InputFields<typeof FindDisplayTextRequestSchema, 'query' | 'selector'>, OperationOptions {}
 
 export interface FindWindowTextOptions extends InputFields<typeof FindWindowTextRequestSchema, 'query' | 'window'>, OperationOptions {}
+
+/**
+ * `windows.list` options. By default the listing has every window a user could
+ * switch to, minimized windows and windows on other desktops included.
+ * `excludeOtherDesktops` keeps windows whose desktop is unknown.
+ */
+export interface ListWindowsOptions extends InputFields<typeof ListWindowsRequestSchema, never>, OperationOptions {}
 
 /**
  * Where a pointer action lands (*provisional* name):
@@ -207,12 +215,12 @@ export interface RunnerClient {
      */
     from: (target: WindowTarget) => WindowClient
     /**
-     * The window `target` names, from a fresh listing and bound to this route.
-     * Rejects with an `AuvRpcError` (`rpcCode` 5, NOT_FOUND) once it is gone.
+     * The window `target` names, read fresh (`GetWindow`) and bound to this
+     * route. Rejects with an `AuvRpcError` (`rpcCode` 5, NOT_FOUND) once it is gone.
      */
     get: (target: WindowTarget, options?: OperationOptions) => Promise<WindowClient>
-    /** Lists windows as ready-to-use clients carrying their metadata. */
-    list: (options?: OperationOptions) => Promise<readonly WindowClient[]>
+    /** Lists windows as ready-to-use clients carrying their metadata and state. */
+    list: (options?: ListWindowsOptions) => Promise<readonly WindowClient[]>
     /**
      * The window a selector names, such as `{ applicationId: 'com.apple.TextEdit' }`
      * for that app's main visible window. Takes a `WindowQuery` or the full
@@ -238,6 +246,7 @@ export interface ScrollStreamController {
   setVelocity: (velocity: Init<typeof ScrollVelocitySchema>) => Promise<void>
   stop: () => Promise<void>
 }
+
 export interface ScrollUntilCallOptions extends OperationOptions {
   /** Receives every update in order, including the last one. */
   onUpdate?: (update: ScrollUntilUpdate) => Promise<void> | void
@@ -248,7 +257,6 @@ export interface ScrollUntilCallOptions extends OperationOptions {
    */
   until?: (update: ScrollUntilUpdate) => boolean | Promise<boolean>
 }
-
 /**
  * `scrollUntil` begin fields; the window, point, and decision mode come from
  * the call. Without a `condition`, the loop stops at the end (no visual motion).
@@ -274,6 +282,10 @@ export interface WindowClient {
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof WindowService.method.findWindowText.output>>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
+  /** Maximizes this window. On macOS it fills the visible frame of the window's display; `unmaximize` restores the frame the same Runner recorded. */
+  maximize: (options?: OperationOptions) => Promise<WindowMutationResult>
+  /** Minimizes this window and remembers whether it was maximized, for `unminimize`. */
+  minimize: (options?: OperationOptions) => Promise<WindowMutationResult>
   /**
    * Pastes text into this window through the clipboard. Same policy default
    * and focus rules as `typeText`.
@@ -285,6 +297,11 @@ export interface WindowClient {
    * does. Same policy default and focus rules as `typeText`.
    */
   pressKeys: (keys: readonly string[] | string, pressOptions?: WindowPressKeysOptions, options?: OperationOptions) => Promise<InputActionResult>
+  /**
+   * A fresh read of this window (`GetWindow`): its frame and state now. The
+   * `window` snapshot of this client does not change.
+   */
+  refresh: (options?: OperationOptions) => Promise<Window>
   /**
    * Wheel-scrolls at a point in this window. Deltas are logical pixels: positive
    * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
@@ -321,6 +338,25 @@ export interface WindowClient {
    */
   scrollWith: (steps: AsyncIterable<ScrollWithStep> | Iterable<ScrollWithStep>, begin: ScrollStreamBegin, options?: OperationOptions) => Promise<StreamScrollCompleted>
   /**
+   * Raises this window and gives it keyboard focus, bringing its application to
+   * the front. A minimized window rejects with FAILED_PRECONDITION. The result
+   * reports the focus disturbance and `afterState.isFocused`.
+   */
+  setFocus: (options?: OperationOptions) => Promise<WindowMutationResult>
+  /**
+   * Moves and/or resizes this window. A maximized window becomes normal at
+   * the new frame. A minimized or full-screen window rejects with
+   * FAILED_PRECONDITION: call `setState(WindowStateTarget.NORMAL)` first. A
+   * window the app settled at another frame resolves with `adjustedByApp`.
+   */
+  setFrame: (frame: WindowFrameInit, options?: OperationOptions) => Promise<WindowMutationResult>
+  /** Moves this window; `setFrame({ origin })`. */
+  setPosition: (origin: Init<typeof ScreenPointSchema>, options?: OperationOptions) => Promise<WindowMutationResult>
+  /** Resizes this window; `setFrame({ size })`. */
+  setSize: (size: Init<typeof LogicalSizeSchema>, options?: OperationOptions) => Promise<WindowMutationResult>
+  /** Moves this window to `NORMAL`, `MINIMIZED` or `MAXIMIZED`; a window already there resolves without a change. */
+  setState: (state: WindowStateTarget, options?: OperationOptions) => Promise<WindowMutationResult>
+  /**
    * Types text into this window. `typeOptions.policy` defaults to
    * `InputPolicy.FOREGROUND_PREFERRED`: the window is brought to the front and
    * focused first, so text cannot land in another app. Background policies
@@ -330,12 +366,30 @@ export interface WindowClient {
    * evidence, not proof the text arrived.
    */
   typeText: (text: string, typeOptions?: Init<typeof TypeTextOptionsSchema>, options?: OperationOptions) => Promise<InputActionResult>
+  /** Leaves maximized (`setState(NORMAL)`). */
+  unmaximize: (options?: OperationOptions) => Promise<WindowMutationResult>
+  /**
+   * Restores this window from minimized to the state it had before the last
+   * `minimize()` through this Runner client (`MAXIMIZED` if it was maximized).
+   * Without one, it restores to `NORMAL`, which also leaves maximized for a
+   * window that is not minimized.
+   */
+  unminimize: (options?: OperationOptions) => Promise<WindowMutationResult>
   /**
    * Metadata from the call that produced this client (`resolve` or `list`),
    * or just the reference for a client bound with `windows.client`. It is a
    * snapshot: the Runner re-resolves the window before every operation.
    */
   readonly window: Window
+}
+
+/**
+ * A new outer frame for `WindowClient.setFrame`, in logical screen points. An
+ * omitted `origin` keeps the position; an omitted `size` keeps the size.
+ */
+export interface WindowFrameInit {
+  origin?: Init<typeof ScreenPointSchema>
+  size?: Init<typeof LogicalSizeSchema>
 }
 
 /** Options for `WindowClient.pasteText`; `policy` defaults to `InputPolicy.FOREGROUND_PREFERRED`. */
@@ -349,7 +403,7 @@ export type WindowPressKeysOptions = InputFields<typeof PressKeysOptionsSchema, 
  * and the Runner applies these; use them where JavaScript stands in for a
  * Runner, such as a mock.
  * NOTICE(scroll-until-defaults): mirrors
- * `auv_scan::ScrollUntilRequest::DEFAULT_*`, which the Runner and the CLI use.
+ * `auv_scan::ScrollWindowUntilRequest::DEFAULT_*`, which the Runner and the CLI use.
  * JavaScript cannot read them, so change both together.
  */
 export const SCROLL_UNTIL_DEFAULTS = {
@@ -357,9 +411,6 @@ export const SCROLL_UNTIL_DEFAULTS = {
   noMotionConfirmations: 2,
   settle: { nanos: 400_000_000, seconds: 0n },
 } as const
-
-// gRPC status code NOT_FOUND.
-const GRPC_NOT_FOUND = 5
 
 /**
  * The short form of a `WindowSelector`: at most one application field and at
@@ -446,13 +497,22 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       stop: () => call.send({ event: { case: 'stop', value: {} } }),
     }
   }
-  /** A window from a fresh listing; NOT_FOUND, like the Runner, once it is gone. */
+  /** A fresh read of one window; the Runner answers NOT_FOUND once it is gone. */
   const findWindow = async (id: string | undefined, options?: OperationOptions): Promise<Window> => {
-    const windows = (await unary(WindowService.method.listWindows, {}, options)).windows
-    const found = windows.find(candidate => candidate.ref?.windowId === id)
+    const found = (await unary(WindowService.method.getWindow, { window: { windowId: id } }, options)).window
     if (!found)
-      throw new AuvRpcError(GRPC_NOT_FOUND, `window:${id} was not found`)
+      throw new AuvProtocolError('GetWindowResponse omitted window')
     return found
+  }
+  /**
+   * The state each window had before its last `minimize()` through this client,
+   * so `unminimize()` can return to it.
+   */
+  const beforeMinimize = new Map<string, WindowStateTarget>()
+  const mutationResult = (response: { result?: WindowMutationResult }, rpc: string): WindowMutationResult => {
+    if (!response.result)
+      throw new AuvProtocolError(`${rpc}Response omitted result`)
+    return response.result
   }
   const window = (metadata: Window): WindowClient => {
     const id = metadata.ref?.windowId
@@ -473,6 +533,13 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       return action
     }
     const local = { case: 'windowId', value: id } as const
+    const setState = async (state: WindowStateTarget, options?: OperationOptions): Promise<WindowMutationResult> =>
+      mutationResult(await unary(WindowService.method.setWindowState, { state, window: { windowId: id } }, options), 'SetWindowState')
+    const setFrame = async (frame: WindowFrameInit, options?: OperationOptions): Promise<WindowMutationResult> => {
+      if (frame.origin === undefined && frame.size === undefined)
+        throw new TypeError('setFrame needs an origin, a size, or both')
+      return mutationResult(await unary(WindowService.method.setWindowFrame, { ...frame, window: { windowId: id } }, options), 'SetWindowFrame')
+    }
     return {
       capture: ({ resolution, ...options } = {}) => unary(WindowService.method.captureWindow, { resolution, window: { windowId: id } }, options),
       click: (target, clickOptions, options) => unary(InputService.method.clickPoint, {
@@ -489,12 +556,21 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         }, { signal })
       },
       id,
+      maximize: options => setState(WindowStateTarget.MAXIMIZED, options),
+      minimize: async (options) => {
+        const result = await setState(WindowStateTarget.MINIMIZED, options)
+        // A window that was already minimized keeps the state remembered before.
+        if (result.beforeState?.isMinimized !== true)
+          beforeMinimize.set(id, result.beforeState?.isMaximized === true ? WindowStateTarget.MAXIMIZED : WindowStateTarget.NORMAL)
+        return result
+      },
       pasteText: (text, { policy, ...pasteOptions } = {}, options) => keyboard({
         action: { case: 'pasteText', value: { options: pasteOptions, policy: policy || InputPolicy.FOREGROUND_PREFERRED, text } },
       }, options),
       pressKeys: (keys, { policy, ...pressOptions } = {}, options) => keyboard({
         action: { case: 'press', value: { options: { ...pressOptions, keys: typeof keys === 'string' ? splitKeyCombination(keys) : [...keys] }, policy: policy || InputPolicy.FOREGROUND_PREFERRED } },
       }, options),
+      refresh: options => findWindow(id, options),
       scroll: (point, scroll, scrollOptions, options) => unary(WindowService.method.scrollWindow, {
         options: scrollOptions,
         point: positionOf(point, local),
@@ -563,9 +639,20 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
         await controller.stop()
         return await completion
       },
+      setFocus: async options => mutationResult(await unary(WindowService.method.focusWindow, { window: { windowId: id } }, options), 'FocusWindow'),
+      setFrame,
+      setPosition: (origin, options) => setFrame({ origin }, options),
+      setSize: (size, options) => setFrame({ size }, options),
+      setState,
       typeText: (text, typeOptions = {}, options) => keyboard({
         action: { case: 'typeText', value: { options: { ...typeOptions, policy: typeOptions.policy || InputPolicy.FOREGROUND_PREFERRED }, text } },
       }, options),
+      unmaximize: options => setState(WindowStateTarget.NORMAL, options),
+      unminimize: async (options) => {
+        const result = await setState(beforeMinimize.get(id) ?? WindowStateTarget.NORMAL, options)
+        beforeMinimize.delete(id)
+        return result
+      },
       window: metadata,
     }
   }
@@ -652,7 +739,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     windows: {
       from: target => window(windowOf(target)),
       get: async (target, options) => window(await findWindow(windowOf(target).ref?.windowId, options)),
-      list: async options => (await unary(WindowService.method.listWindows, {}, options)).windows.map(window),
+      list: async ({ signal, ...request } = {}) => (await unary(WindowService.method.listWindows, request, { signal })).windows.map(window),
       resolve: async (selector, options) => {
         const response = await unary(WindowService.method.resolveWindow, { selector: windowSelectorOf(selector) }, options)
         if (!response.window)

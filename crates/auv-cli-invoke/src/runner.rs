@@ -325,10 +325,25 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         },
       },
     },
-    "window.list" => runner.windows().list().await.map_err(|error| step_failure("WindowService/ListWindows", error)).and_then(|windows| {
-      crate::commands::window::list_windows_output(&windows.iter().map(|window| window.resource().clone()).collect::<Vec<_>>())
-        .map_err(Into::into)
-    }),
+    "window.list" => match crate::command::decode_args::<crate::commands::window::ListWindowsArgs>(&input) {
+      Err(message) => Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message)),
+      Ok(args) => {
+        runner.windows().list_with(args.filter()).await.map_err(|error| step_failure("WindowService/ListWindows", error)).and_then(
+          |windows| {
+            crate::commands::window::list_windows_output(&windows.iter().map(|window| window.resource().clone()).collect::<Vec<_>>())
+              .map_err(Into::into)
+          },
+        )
+      }
+    },
+    "window.get" => {
+      async {
+        let window = resolve_runner_window(&runner, &input).await.map_err(|error| step_failure("WindowService/GetWindow", error))?;
+        crate::commands::window::window_output(window.resource()).map_err(Into::into)
+      }
+      .await
+    }
+    "window.setFrame" | "window.setState" | "window.focus" => execute_window_mutation(&input, &runner).await,
     "window.capture" => {
       let selector = selected_window_selector(&input);
       let response = match runner.windows().resolve(selector).await {
@@ -916,6 +931,42 @@ async fn execute_scroll_until(input: crate::InvokeCommandInput, daemon: Selected
   }
   output.result = Some(result);
   crate::commands::input::scroll_until_output(output).map_err(Into::into)
+}
+
+/// Runner route for `window.setFrame`, `window.setState` and `window.focus`:
+/// the same arguments and result as local invoke, through the Runner's
+/// WindowService. A dry run resolves the window and mutates nothing.
+async fn execute_window_mutation(
+  input: &crate::InvokeCommandInput,
+  runner: &auv::client::runner::RunnerClient,
+) -> crate::InvokeExecutionResult {
+  let invalid = |message: String| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message);
+  let frame = match input.command_id.as_str() {
+    "window.setFrame" => {
+      let args = crate::command::decode_args::<crate::commands::window::SetWindowFrameArgs>(input).map_err(invalid)?;
+      args.validate()?;
+      Some(args)
+    }
+    _ => None,
+  };
+  let state = match input.command_id.as_str() {
+    "window.setState" => Some(crate::command::decode_args::<crate::commands::window::SetWindowStateArgs>(input).map_err(invalid)?.state),
+    _ => None,
+  };
+  let window = resolve_runner_window(runner, input).await?;
+  if input.dry_run {
+    return Ok(crate::commands::input::validation_only_output());
+  }
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let result = match (frame, state) {
+    (Some(args), _) => {
+      let (origin, size) = args.request(window.resource().frame);
+      window.set_frame(origin, size).await.map_err(|error| step_failure("WindowService/SetWindowFrame", error))?
+    }
+    (_, Some(state)) => window.set_state(state.into()).await.map_err(|error| step_failure("WindowService/SetWindowState", error))?,
+    (None, None) => window.focus().await.map_err(|error| step_failure("WindowService/FocusWindow", error))?,
+  };
+  crate::commands::window::window_mutation_output(window.resource(), &result).map_err(Into::into)
 }
 
 /// Resolves an `app:` (optionally by title) or `window:` target through the

@@ -4,7 +4,8 @@
 - `tasks/focus_without_raise.rs`: activation, key-window focus, and restoration.
 - `tasks/native/`: Swift controllers for macOS focus and input-source state.
 - `cases/`: input scenarios and receiver checks in Rust.
-- `test-objects/appkit/`: native Swift receivers.
+- `test-objects/appkit/`: native Swift receivers; `window.swift` is the
+  throwaway window for `cases/window_management.rs`.
 
 Electron and web receivers are shared from `../desktop-universal/test-objects/`.
 

@@ -1304,27 +1304,25 @@ window-listing API instead of silently selecting an arbitrary candidate.
 Window state is what a platform reports about a window beyond its frame:
 minimized, maximized, full screen, visible, focused (has keyboard focus),
 always on top, stacking position, and virtual desktop. It travels as
-`Window.state` (`WindowState` in `auv-driver-common`). Every fact is optional:
-an unset fact means "this platform cannot tell", never "false". `is_focused`
-is distinct from `Window.is_main`, which keeps its selector meaning (the
-application's main window). `stack_index` is valid only inside the listing
-that carries it; it is not an identity. For a minimized window, `frame` is the
-frame it returns to.
+`Window.state` (`WindowState` in `auv-driver-common` and in
+`auv.api.driver.v1`). Every fact is optional: an unset fact means "this
+platform cannot tell", never "false". `is_focused` is distinct from
+`Window.is_main`, which keeps its selector meaning (the application's main
+window). `stack_index` is valid only inside the listing that carries it; it is
+not an identity. For a minimized window, `frame` is the frame it returns to.
 
-A driver window listing includes every window a user could switch to,
-minimized windows and windows on other desktops included; `WindowListFilter`
-(`exclude_minimized`, `exclude_other_desktops`) opts out, and a window whose
-desktop is unknown is kept.
+`window.list` lists every window a user could switch to, minimized windows and
+windows on other desktops included; `exclude_minimized` and
+`exclude_other_desktops` opt out (a window whose desktop is unknown is kept).
 See [`2026-11-02-window-management-api-v1-design.md`](ai/references/driver/2026-11-02-window-management-api-v1-design.md).
 
 ## Window Mutation
 
 A window mutation changes a resolved window's frame, its state or its focus:
-`WindowApi::set_frame` (origin and/or size of a normal window),
-`WindowApi::set_state` (`Normal`, `Minimized`, `Maximized`) and
-`WindowApi::focus`. The result is a `WindowMutationResult` with the selected
-path, attempts, frame and window state before and after, `adjusted_by_app`,
-and the focus and mouse disturbance.
+`window.setFrame` (origin and/or size of a normal window), `window.setState`
+(`normal`, `minimized`, `maximized`) and `window.focus`. The result is a
+`WindowMutationResult` with the selected path, attempts, frame and window state
+before and after, `adjusted_by_app`, and the focus and mouse disturbance.
 
 Window mutation is a driver-level window management capability. It is not an
 input delivery result and should not be reported as `InputActionResult`.

@@ -159,6 +159,9 @@ fn main() -> std::process::ExitCode {
       )]
       routes: Vec<auv_base_evals::desktop_windows::foreground_commands::workflow::Route>,
     },
+    /// `set_frame`, minimize, maximize and focus on one receiver, judged by re-reading the
+    /// window. Takes the foreground for the receiver.
+    WindowManagement,
     /// Phase 1: one background window.
     Single {
       /// Fresh output directory for the JSONL records and receiver logs.
@@ -278,6 +281,7 @@ fn main() -> std::process::ExitCode {
         routes,
       },
     ),
+    Scenario::WindowManagement => auv_base_evals::desktop_windows::window_management::window_management(),
     Scenario::Single {
       output,
       repetitions,

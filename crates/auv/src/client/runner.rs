@@ -843,10 +843,19 @@ pub struct WindowsClient {
 }
 
 impl WindowsClient {
-  /// Lists observed windows as clients bound to this route.
+  /// Lists every window a user could switch to (minimized windows and windows
+  /// on other desktops included) as clients bound to this route.
   pub async fn list(&self) -> Result<Vec<WindowClient>, CapabilityError> {
+    self.list_with(auv_driver::WindowListFilter::default()).await
+  }
+
+  /// Lists windows with `filter`'s opt-outs applied by the Runner.
+  pub async fn list_with(&self, filter: auv_driver::WindowListFilter) -> Result<Vec<WindowClient>, CapabilityError> {
     let windows = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
-      .list_windows(proto::ListWindowsRequest {})
+      .list_windows(proto::ListWindowsRequest {
+        exclude_minimized: filter.exclude_minimized,
+        exclude_other_desktops: filter.exclude_other_desktops,
+      })
       .await
       .map_err(capability_status)?
       .into_inner()
@@ -854,14 +863,21 @@ impl WindowsClient {
     windows.into_iter().map(|window| self.from(window_from_proto(window)?)).collect()
   }
 
-  /// Returns the window with `id` from a fresh listing, bound to this route.
+  /// Returns a fresh read of the window with `id`, bound to this route.
   /// A window ID is a stable Device reference: this replaces re-resolving by
   /// app or title, and fails with `NotFound` once the window is gone.
   pub async fn get(&self, id: &str) -> Result<WindowClient, CapabilityError> {
-    let windows = self.list().await?;
-    let window = auv_driver::find_window(windows.iter().map(|client| client.resource().clone()), id)
-      .map_err(|_| CapabilityError::NotFound(format!("window:{id}")))?;
-    self.from(window)
+    let window = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .get_window(proto::GetWindowRequest {
+        window: Some(proto::WindowRef {
+          window_id: id.to_string(),
+        }),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner()
+      .window;
+    self.from(window_from_proto(required(window, "GetWindow response omitted Window")?)?)
   }
 
   /// Resolves one window and returns a route-bound child client.
@@ -925,6 +941,71 @@ impl WindowClient {
   /// Returns the stable WindowRef retained by this child client.
   pub fn reference(&self) -> &auv_driver::WindowRef {
     &self.window.reference
+  }
+
+  /// A fresh read of this window: its frame and state now. The retained
+  /// snapshot of this client does not change.
+  pub async fn refresh(&self) -> Result<auv_driver::Window, CapabilityError> {
+    let window = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .get_window(proto::GetWindowRequest {
+        window: Some(self.window_ref.clone()),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner()
+      .window;
+    window_from_proto(required(window, "GetWindow response omitted Window")?)
+  }
+
+  /// Moves and/or resizes this normal window. `None` keeps that component.
+  /// A minimized or maximized window fails with a failed precondition.
+  pub async fn set_frame(
+    &self,
+    origin: Option<auv_driver::Point>,
+    size: Option<auv_driver::Size>,
+  ) -> Result<auv_driver::WindowMutationResult, CapabilityError> {
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .set_window_frame(proto::SetWindowFrameRequest {
+        window: Some(self.window_ref.clone()),
+        origin: origin.map(|origin| proto::ScreenPoint {
+          x: origin.x,
+          y: origin.y,
+        }),
+        size: size.map(|size| proto::LogicalSize {
+          width: size.width,
+          height: size.height,
+        }),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    window_mutation_result_from_proto(response.result, "SetWindowFrame")
+  }
+
+  /// Moves this window to `state`.
+  pub async fn set_state(&self, state: auv_driver::WindowStateTarget) -> Result<auv_driver::WindowMutationResult, CapabilityError> {
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .set_window_state(proto::SetWindowStateRequest {
+        window: Some(self.window_ref.clone()),
+        state: crate::protocol::window::encode_state_target(state) as i32,
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    window_mutation_result_from_proto(response.result, "SetWindowState")
+  }
+
+  /// Raises this window and gives it keyboard focus, bringing its application
+  /// to the front.
+  pub async fn focus(&self) -> Result<auv_driver::WindowMutationResult, CapabilityError> {
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .focus_window(proto::FocusWindowRequest {
+        window: Some(self.window_ref.clone()),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    window_mutation_result_from_proto(response.result, "FocusWindow")
   }
 
   /// Captures the resolved window at native resolution.
@@ -2555,24 +2636,15 @@ fn display_from_proto(display: proto::Display) -> Result<auv_driver::Display, Ca
 }
 
 fn window_from_proto(window: proto::Window) -> Result<auv_driver::Window, CapabilityError> {
-  let reference = required(window.r#ref, "Window omitted its reference")?;
-  let frame = required(window.frame, "Window omitted its screen frame")?;
-  Ok(auv_driver::Window {
-    reference: auv_driver::WindowRef {
-      id: reference.window_id,
-    },
-    title: window.title,
-    app_name: window.application_name,
-    application_id: window.application_id,
-    process_id: window.process_id,
-    frame: auv_driver::Rect::new(frame.x, frame.y, frame.width, frame.height),
-    coordinate_space: auv_driver::CoordinateSpace::Screen,
-    is_main: window.is_main,
-    is_visible: window.is_visible,
-    // TODO(window-management-api): `proto.Window` carries no state facts yet;
-    // they arrive with the window management API slice of the design doc.
-    state: Default::default(),
-  })
+  crate::protocol::window::decode(window).map_err(|error| CapabilityError::InvalidResponse(error.to_string()))
+}
+
+fn window_mutation_result_from_proto(
+  result: Option<proto::WindowMutationResult>,
+  rpc: &'static str,
+) -> Result<auv_driver::WindowMutationResult, CapabilityError> {
+  let result = result.ok_or_else(|| CapabilityError::InvalidResponse(format!("{rpc} response omitted WindowMutationResult")))?;
+  crate::protocol::window::decode_mutation_result(result).map_err(|error| CapabilityError::InvalidResponse(error.to_string()))
 }
 
 /// A caller-owned image for `RecognizeText`, with its pixels.

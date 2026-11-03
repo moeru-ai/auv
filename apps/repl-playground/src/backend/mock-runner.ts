@@ -191,6 +191,7 @@ export function mockRunner(desktop: MockDesktop): Transport {
         const frame = capture(target.frame, desktop.displayAt(target.frame).scale, { case: 'windowId', value: target.id })
         return { capture: frame, matches: matchesOf(target.frame, searchArea(target.frame, request.screenRegion, request.region), request.query), window: windowMessage(target) }
       },
+      getWindow: request => ({ window: windowMessage(window(request.window?.windowId)) }),
       listWindows: () => ({ windows: desktop.windows().map(windowMessage) }),
       resolveWindow: async (request) => {
         await delay(LATENCY_MS.list)

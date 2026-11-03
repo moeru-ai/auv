@@ -37,6 +37,8 @@ tasks/foreground_commands.rs     `foreground`: `display.*`, `display.captureRegi
                                  receiver's text box, key log and drag pad (`--foreground-input`).
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
                                  background.
+tasks/window_management.rs       `window-management`: `set_frame`, minimize, maximize and focus on one
+                                 receiver (the scenario is shared with macOS, `../../tasks/`).
 tasks/background_session.rs      The runner binary, `background-session-eval`.
 ```
 
@@ -55,6 +57,7 @@ just eval windows quiet    --output evals/auv-base/results/windows-quiet --minut
 just eval windows window   --output evals/auv-base/results/windows-window --auv target/debug/auv.exe
 just eval windows screen   --output evals/auv-base/results/windows-screen --auv target/debug/auv.exe
 just eval windows foreground --output evals/auv-base/results/windows-foreground --auv target/debug/auv.exe
+just eval windows window-management
 just eval windows workflow --output evals/auv-base/results/windows-workflow --auv target/debug/auv.exe --rounds 2
 just eval windows workflow --output evals/auv-base/results/windows-observation --auv target/debug/auv.exe --rounds 2 --observe-only
 ```
