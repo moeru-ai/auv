@@ -173,6 +173,10 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
   let logger = DecisionLogger::new();
   let mut catalog = OperationCatalog::new();
 
+  if args.operation.trim().is_empty() {
+    return Err("Requested operation name cannot be empty or whitespace-only".to_string());
+  }
+
   // 1. Admit the operation file. `auv-cli` ships no app operations: app
   // workflows such as QQ Music live with their app under `supported/`.
   let file_path = &args.file;
@@ -191,6 +195,8 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
   }
 
   // 2. Build TaskRequest with target app and context
+  // NOTE: app_name is derived from the admitted operation target metadata (declared_target),
+  // not from an independent live OS process observation (observed_target).
   let (app_name, task_name) = parse_operation_target(&args.operation, &catalog);
   let mut current_context = HashMap::new();
   current_context.insert("App.ProcessName".to_string(), serde_json::json!(app_name));
@@ -705,5 +711,105 @@ pub(crate) mod tests {
     assert_eq!(output.status, "failed");
     assert_eq!(output.reason_code, "PRECONDITION_MISMATCH");
     assert_eq!(fake_executor.calls_count(), 0, "FakeExecutor must NOT be called on precondition failure");
+  }
+
+  #[test]
+  fn test_run_empty_or_whitespace_operation_name_rejected_and_zero_executor_calls() {
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("valid-op.json");
+
+    let op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "valid.operation",
+      "description": "Valid op",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test empty name rejection"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&op).unwrap()).unwrap();
+
+    // 1. Empty operation name rejected before admission/execution
+    let args_empty = OpRunArgs {
+      operation: "".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path.clone(),
+      json: true,
+    };
+    let err_empty = run_with_executor_inner(&args_empty, &fake_executor).unwrap_err();
+    assert!(err_empty.contains("cannot be empty or whitespace-only"), "{err_empty}");
+    assert_eq!(fake_executor.calls_count(), 0);
+
+    // 2. Whitespace-only operation name rejected
+    let args_space = OpRunArgs {
+      operation: "   ".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path.clone(),
+      json: true,
+    };
+    let err_space = run_with_executor_inner(&args_space, &fake_executor).unwrap_err();
+    assert!(err_space.contains("cannot be empty or whitespace-only"), "{err_space}");
+    assert_eq!(fake_executor.calls_count(), 0);
+
+    // 3. Operation JSON file declaring empty or whitespace name rejected at catalog admission
+    let empty_name_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "  ",
+      "description": "Empty name op",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test admission empty name rejection"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    let file_empty_name = temp_dir.path().join("empty-name-op.json");
+    std::fs::write(&file_empty_name, serde_json::to_string(&empty_name_op).unwrap()).unwrap();
+
+    let mut catalog = OperationCatalog::new();
+    let raw_empty_json = serde_json::to_string(&empty_name_op).unwrap();
+    let err_admit = catalog.admit_operation_json(&raw_empty_json, "test_file.json").unwrap_err();
+    assert!(err_admit.message.contains("missing, empty, or whitespace-only"), "{}", err_admit.message);
   }
 }
