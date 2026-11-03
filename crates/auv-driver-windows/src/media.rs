@@ -15,6 +15,7 @@ use auv_driver_common::media::{self as shared, MediaCommand, MediaControlOutcome
 use serde::{Deserialize, Serialize};
 
 use crate::error::{backend, not_found};
+use crate::window::without_exe_suffix;
 
 /// Current playback state of an SMTC session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,14 +65,6 @@ pub struct AudioLookupStats {
   pub session_count: usize,
 }
 
-/// Strips `.exe` suffix if present (case-insensitively).
-pub(crate) fn without_exe_suffix(value: &str) -> &str {
-  match value.len().checked_sub(4) {
-    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
-    _ => value,
-  }
-}
-
 /// Matches an SMTC session's `SourceAppUserModelId` against an expected process name or ID.
 ///
 /// Ensures exact identity matching without loose substring authorization:
@@ -104,22 +97,22 @@ pub(crate) fn matches_smtc_app_id(session_app_id: &str, expected: &str) -> bool 
   false
 }
 
-/// Pure helper to select a single matching SMTC session from a collection of candidate session app_ids.
+/// Pure helper to select a single matching session from candidate items given an app_id extractor and target.
 ///
-/// Returns:
-/// - `Ok(item)` if exactly one session matches
-/// - `Err(NotFound)` if 0 sessions match
-/// - `Err(InvalidInput)` if multiple sessions match (ambiguous)
-pub(crate) fn select_target_session_id<'a>(candidates: &[&'a str], expected: &str) -> DriverResult<&'a str> {
-  let matches: Vec<&'a str> = candidates.iter().copied().filter(|id| matches_smtc_app_id(id, expected)).collect();
-
-  match matches.as_slice() {
-    [single] => Ok(*single),
-    [] => Err(auv_driver_common::error::DriverError::NotFound {
-      target: format!("{expected} SMTC session"),
-    }),
-    multiple => Err(auv_driver_common::error::DriverError::InvalidInput {
-      message: format!("Ambiguous match: multiple SMTC sessions (count: {}) matched target '{expected}'", multiple.len()),
+/// Semantics match production `find_session`:
+/// - 0 matches: `Ok(None)`
+/// - 1 match: `Ok(Some(item))`
+/// - >1 matches: `Err(InvalidInput)` indicating ambiguous match
+pub(crate) fn select_target_session<T, F>(candidates: Vec<T>, get_app_id: F, expected: &str) -> DriverResult<Option<T>>
+where
+  F: Fn(&T) -> &str,
+{
+  let mut matching: Vec<T> = candidates.into_iter().filter(|item| matches_smtc_app_id(get_app_id(item), expected)).collect();
+  match matching.len() {
+    0 => Ok(None),
+    1 => Ok(matching.pop()),
+    count => Err(auv_driver_common::error::DriverError::InvalidInput {
+      message: format!("Ambiguous match: multiple SMTC sessions (count: {count}) matched target '{expected}'"),
     }),
   }
 }
@@ -339,15 +332,7 @@ mod native {
 
     pub fn find_session(&self, query: &str) -> DriverResult<Option<SmtcSession>> {
       let sessions = self.list_sessions()?;
-      let matching: Vec<SmtcSession> = sessions.into_iter().filter(|s| super::matches_smtc_app_id(s.app_id(), query)).collect();
-
-      match matching.len() {
-        0 => Ok(None),
-        1 => Ok(matching.into_iter().next()),
-        count => Err(auv_driver_common::error::DriverError::InvalidInput {
-          message: format!("Ambiguous match: multiple SMTC sessions (count: {count}) matched target '{query}'"),
-        }),
-      }
+      super::select_target_session(sessions, |s| s.app_id(), query)
     }
 
     pub fn now_playing(&self) -> DriverResult<Option<NowPlayingState>> {

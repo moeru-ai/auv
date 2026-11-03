@@ -23,7 +23,7 @@ use crate::playback_guard::{
 };
 use crate::track_identity::{TrackChangeVerdict, TrackIdentity, evaluate_track_change};
 use crate::wgc::{WindowHealth, capture_window_health_cached, capture_window_health_strict};
-use crate::window::list_windows;
+use crate::window::{list_windows, without_exe_suffix};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
@@ -50,14 +50,6 @@ pub struct WindowsOperationContext {
   pub timings: DiscoveryTimings,
 }
 
-/// Strips `.exe` suffix if present (case-insensitively).
-pub(crate) fn without_exe_suffix(value: &str) -> &str {
-  match value.len().checked_sub(4) {
-    Some(split) if value.is_char_boundary(split) && value[split..].eq_ignore_ascii_case(".exe") => &value[..split],
-    _ => value,
-  }
-}
-
 /// Matches a window's application name against the expected process name.
 ///
 /// Rejects substring false positives (e.g. `NotQQMusic.exe` when expecting `QQMusic.exe`).
@@ -79,41 +71,18 @@ pub(crate) fn matches_target_window_app(window: &Window, expected_app_process: &
 ///
 /// Enforces:
 /// - Exact identity matching (no loose substring authorization)
-/// - Ambiguity handling: if multiple candidate windows match, distinguishes single visible/main
-///   or returns an error for ambiguous matches.
+/// - Ambiguity handling: if multiple candidate windows match, returns an error (fail-closed).
 pub(crate) fn select_target_window(windows: &[Window], app_process: &str) -> DriverResult<Window> {
   let matches: Vec<&Window> = windows.iter().filter(|w| matches_target_window_app(w, app_process)).collect();
 
-  match matches.len() {
-    0 => Err(DriverError::NotFound {
+  match matches.as_slice() {
+    [] => Err(DriverError::NotFound {
       target: format!("{app_process} window"),
     }),
-    1 => Ok(matches[0].clone()),
-    _ => {
-      // Multiple windows match the process name.
-      // 1. Try narrowing to visible windows.
-      let visible: Vec<&Window> = matches.iter().copied().filter(|w| w.is_visible).collect();
-      if visible.len() == 1 {
-        return Ok(visible[0].clone());
-      }
-
-      // 2. If multiple visible windows, try narrowing to main window.
-      if visible.len() > 1 {
-        let mains: Vec<&Window> = visible.iter().copied().filter(|w| w.is_main).collect();
-        if mains.len() == 1 {
-          return Ok(mains[0].clone());
-        }
-      }
-
-      let count = if visible.is_empty() {
-        matches.len()
-      } else {
-        visible.len()
-      };
-      Err(DriverError::InvalidInput {
-        message: format!("Ambiguous match: multiple windows (count: {count}) matched target '{app_process}'"),
-      })
-    }
+    [single] => Ok((*single).clone()),
+    multiple => Err(DriverError::InvalidInput {
+      message: format!("Ambiguous match: multiple windows (count: {}) matched target '{app_process}'", multiple.len()),
+    }),
   }
 }
 
@@ -1855,10 +1824,10 @@ mod tests {
     // 3. Target missing (empty list)
     assert!(matches!(select_target_window(&[], "QQMusic.exe").unwrap_err(), DriverError::NotFound { .. }));
 
-    // 4. Ambiguity: multiple visible windows without a single main window rejected
+    // 4. Ambiguity: multiple windows for target rejected
     let win_a = test_window("a", Some("QQMusic.exe"), true, false);
     let win_b = test_window("b", Some("QQMusic.exe"), true, false);
-    let ambig_err = select_target_window(&[win_a.clone(), win_b.clone()], "QQMusic.exe").unwrap_err();
+    let ambig_err = select_target_window(&[win_a, win_b], "QQMusic.exe").unwrap_err();
     match ambig_err {
       DriverError::InvalidInput { message } => {
         assert!(message.contains("Ambiguous match"), "{message}");
@@ -1866,15 +1835,5 @@ mod tests {
       }
       other => panic!("expected InvalidInput for ambiguous windows, got {other:?}"),
     }
-
-    // 5. Disambiguation: if one is main, it is selected
-    let win_main = test_window("c", Some("QQMusic.exe"), true, true);
-    let resolved = select_target_window(&[win_a.clone(), win_main.clone()], "QQMusic.exe").unwrap();
-    assert_eq!(resolved.reference.id, "c");
-
-    // 6. Disambiguation: if one is visible and one is invisible, visible is selected
-    let win_invis = test_window("d", Some("QQMusic.exe"), false, false);
-    let resolved_vis = select_target_window(&[win_invis, win_a], "QQMusic.exe").unwrap();
-    assert_eq!(resolved_vis.reference.id, "a");
   }
 }

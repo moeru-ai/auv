@@ -229,19 +229,18 @@ fn test_matches_smtc_app_id_exact_and_negative() {
 }
 
 #[test]
-fn test_select_target_session_id_resolution_and_ambiguity() {
-  // 1. Single match succeeds
-  let candidates = ["Spotify.exe", "QQMusic.exe", "chrome.exe"];
-  assert_eq!(select_target_session_id(&candidates, "QQMusic.exe").unwrap(), "QQMusic.exe");
+fn test_select_target_session_resolution_and_ambiguity() {
+  // 1. Single match succeeds with Ok(Some(item))
+  let candidates = vec!["Spotify.exe", "QQMusic.exe", "chrome.exe"];
+  assert_eq!(select_target_session(candidates, |s| *s, "QQMusic.exe").unwrap(), Some("QQMusic.exe"));
 
-  // 2. Not found
-  let candidates_none = ["Spotify.exe", "NotQQMusic.exe"];
-  let err_nf = select_target_session_id(&candidates_none, "QQMusic.exe").unwrap_err();
-  assert!(matches!(err_nf, auv_driver_common::error::DriverError::NotFound { .. }));
+  // 2. Not found returns Ok(None) matching production find_session semantics
+  let candidates_none = vec!["Spotify.exe", "NotQQMusic.exe"];
+  assert_eq!(select_target_session(candidates_none, |s| *s, "QQMusic.exe").unwrap(), None);
 
-  // 3. Ambiguous multiple candidates rejected
-  let candidates_multi = ["QQMusic.exe", r"C:\Tencent\QQMusic\QQMusic.exe"];
-  let err_ambig = select_target_session_id(&candidates_multi, "QQMusic.exe").unwrap_err();
+  // 3. Ambiguous multiple candidates rejected with Err(InvalidInput)
+  let candidates_multi = vec!["QQMusic.exe", r"C:\Tencent\QQMusic\QQMusic.exe"];
+  let err_ambig = select_target_session(candidates_multi, |s| *s, "QQMusic.exe").unwrap_err();
   match err_ambig {
     auv_driver_common::error::DriverError::InvalidInput { message } => {
       assert!(message.contains("Ambiguous match"), "{message}");
