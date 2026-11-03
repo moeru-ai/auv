@@ -3,11 +3,14 @@ use auv_driver_common::capture::{Activation, CaptureOptions};
 #[cfg(target_os = "windows")]
 use auv_driver_common::geometry::RelativeRect;
 use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
-use auv_driver_common::input::{ClickOptions, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollOptions, WaitOptions, WindowInput};
+use auv_driver_common::input::{
+  ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, Scroll, ScrollDeliveryCandidate,
+  ScrollOptions, WaitOptions, WindowInput,
+};
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{InputTarget, KeyboardInput, PressKeysOptions};
 
-use super::{screen_point_for_window_point, window_point_for_screen_point};
+use super::{record_activation, screen_point_for_window_point, window_point_for_screen_point};
 use crate::WindowsDriver;
 
 fn session() -> crate::WindowsDriverSession {
@@ -277,4 +280,40 @@ fn background_click_rejects_alt_meta_before_target_activation() {
       .unwrap_err();
     assert!(error.to_string().contains("windows background click supports only shift/control"));
   }
+}
+
+// ROOT CAUSE:
+//
+// If a foreground-preferred window click activated its window first, the result listed the
+// activation as a second successful `FOREGROUND_SYSTEM_EVENTS` attempt because activation was
+// recorded like a delivery path.
+//
+// Before the fix, `attempts` held two successful entries for one delivery.
+// The fix keeps a successful activation only as a foreground focus disturbance.
+#[test]
+fn successful_activation_is_a_focus_disturbance_not_a_delivery_attempt() {
+  // The shape `crate::input` returns for a `SendInput` click.
+  let delivered = || InputActionResult {
+    mouse_disturbance: DisturbanceLevel::Temporary,
+    focus_disturbance: DisturbanceLevel::Unknown,
+    ..InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents)
+  };
+
+  let mut result = delivered();
+  record_activation(&mut result, Ok(()), "pointer delivery");
+  assert_eq!(
+    result.attempts,
+    vec![InputAttempt::success(
+      InputDeliveryPath::ForegroundSystemEvents
+    )]
+  );
+  assert_eq!(result.focus_disturbance, DisturbanceLevel::Foreground);
+  assert_eq!(result.validate(), Ok(()));
+
+  let mut result = delivered();
+  record_activation(&mut result, Err(crate::error::backend("SetForegroundWindow was refused")), "pointer delivery");
+  assert_eq!(result.attempts.len(), 2);
+  assert_eq!(result.attempts[0].path, InputDeliveryPath::ForegroundSystemEvents);
+  assert!(!result.attempts[0].succeeded);
+  assert_eq!(result.focus_disturbance, DisturbanceLevel::Unknown);
 }

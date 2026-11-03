@@ -1,4 +1,5 @@
 use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
+use auv_driver_common::input::DisturbanceLevel;
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{Driver, WindowInput as _};
 
@@ -160,4 +161,44 @@ fn modified_background_click_is_rejected_before_portal_input() {
       .unwrap_err();
     assert!(error.to_string().contains("linux window.click cannot use background_only"));
   }
+}
+
+// ROOT CAUSE:
+//
+// If AT-SPI focused the target window before a foreground portal click, the
+// click result failed `InputActionResult::validate` and `window.click`
+// returned gRPC `INTERNAL` although the click was delivered, because the
+// successful `AxFocus` focus step was recorded as a delivery attempt on a path
+// other than `selected_path`.
+//
+// Before the fix, the successful focus attempt was spliced into `attempts`.
+// The fix keeps `attempts` to delivery attempts and fallback reasons: a
+// successful focus shows only as a foreground focus disturbance.
+#[test]
+fn focused_foreground_click_result_passes_input_contract_validation() {
+  let mut result = InputActionResult {
+    selected_path: InputDeliveryPath::ForegroundSystemEvents,
+    attempts: vec![InputAttempt::success(
+      InputDeliveryPath::ForegroundSystemEvents,
+    )],
+    verified: false,
+    mouse_disturbance: DisturbanceLevel::Temporary,
+    focus_disturbance: DisturbanceLevel::Unknown,
+    clipboard_disturbance: DisturbanceLevel::None,
+  };
+  let focus = InputActionResult {
+    focus_disturbance: DisturbanceLevel::Foreground,
+    ..InputActionResult::single_success(InputDeliveryPath::AxFocus)
+  };
+
+  record_focus_preparation(&mut result, Ok(focus));
+
+  assert_eq!(result.validate(), Ok(()));
+  assert_eq!(
+    result.attempts,
+    vec![InputAttempt::success(
+      InputDeliveryPath::ForegroundSystemEvents
+    )]
+  );
+  assert_eq!(result.focus_disturbance, DisturbanceLevel::Foreground);
 }
