@@ -1837,6 +1837,12 @@ mod tests {
     }
   }
 
+  /// WARNING: Side-effecting live test against the host's running QQ Music instance!
+  ///
+  /// Manually running this test (`-- --ignored`) will interact with and mutate the active QQ Music instance,
+  /// including adjusting process volume (to 40%), triggering playback, and skipping to the next track via SMTC.
+  ///
+  /// This test is strictly for local developer manual verification and MUST NOT be run in shared or unattended Windows CI.
   #[cfg(target_os = "windows")]
   #[test]
   #[ignore = "live Windows execution against running QQMusic: run explicitly with -- --ignored --nocapture"]
@@ -1856,16 +1862,21 @@ mod tests {
     let ctx = WindowsOperationContext::resolve(None).expect("live WindowsOperationContext::resolve should succeed with QQMusic running");
     assert!(ctx.window.app_name.as_deref().unwrap_or("").eq_ignore_ascii_case("QQMusic.exe"));
     assert!(ctx.audio.is_some(), "CoreAudio session should be resolved for QQMusic PID");
+    let wgc_health = crate::wgc::capture_window_health_strict(&ctx.window).ok();
     println!(
-      "Live discovery verified: Window HWND={:?}, PID={:?}, App={:?}, Title={:?}, AudioResolved={}",
+      "Live discovery verified: Window HWND={:?}, PID={:?}, App={:?}, Title={:?}, AudioResolved={}, WGC={:?}",
       ctx.window.reference.id,
       ctx.window.process_id,
       ctx.window.app_name,
       ctx.window.title,
       ctx.audio.is_some(),
+      wgc_health.as_ref().map(|h| format!("non_black_ratio={:.2}%, alive={}, is_fresh={}", h.non_black_ratio, h.alive, h.is_fresh)),
     );
 
-    // 3. Load actual operations and execute live
+    // 3. Check live minimized state and execute verified operation
+    let is_minimized = check_minimized_and_restore(&ctx.window, false);
+    println!("Live window state: is_minimized={}", is_minimized);
+
     let op_json = include_str!("../../../supported/apps/auv-qqmusic/operations/qqmusic-prepared-playback.json");
     let op: OperationDef = serde_json::from_str(op_json).expect("parse verified operation");
     let mut req = dummy_request(Some(ExecutionMode::Verified));
@@ -1873,22 +1884,31 @@ mod tests {
 
     let res = executor.execute(&op, &req);
     println!("live verified execute result: {:?}", res);
-    match res {
-      ExecutionResult::Success {
-        steps_executed,
-        execution_mode,
-        confirmed,
-      } => {
-        assert_eq!(execution_mode, ExecutionMode::Verified);
-        assert_eq!(steps_executed, 4);
-        assert!(confirmed, "verified execution with title change and WGC must be confirmed");
+    if is_minimized {
+      // In Verified mode, a minimized window must fail gate at step_4_verify_window_alive (allow_restore = false)
+      assert!(
+        matches!(res, ExecutionResult::GateFailed { ref step_id, ref message, .. } if step_id == "step_4_verify_window_alive" && message.contains("minimized")),
+        "minimized window must fail gate in Verified mode; got {:?}",
+        res
+      );
+    } else {
+      match res {
+        ExecutionResult::Success {
+          steps_executed,
+          execution_mode,
+          confirmed,
+        } => {
+          assert_eq!(execution_mode, ExecutionMode::Verified);
+          assert_eq!(steps_executed, 4);
+          assert!(confirmed, "verified execution with title change and WGC must be confirmed");
+        }
+        ExecutionResult::GateFailed {
+          step_id, message, ..
+        } => {
+          panic!("live execution failed at gate '{step_id}': {message}");
+        }
+        other => panic!("unexpected execution result: {other:?}"),
       }
-      ExecutionResult::GateFailed {
-        step_id, message, ..
-      } => {
-        panic!("live execution failed at gate '{step_id}': {message}");
-      }
-      other => panic!("unexpected execution result: {other:?}"),
     }
 
     // 4. Load actual Fast operation and execute live
@@ -1906,7 +1926,11 @@ mod tests {
         confirmed,
       } => {
         assert_eq!(execution_mode, ExecutionMode::Fast);
-        assert_eq!(steps_executed, 4);
+        if is_minimized {
+          assert_eq!(steps_executed, 3, "fast mode skips minimized WGC without failure");
+        } else {
+          assert_eq!(steps_executed, 4);
+        }
         assert!(!confirmed, "fast mode must never report confirmed: true");
       }
       ExecutionResult::GateFailed {
