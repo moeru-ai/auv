@@ -525,7 +525,8 @@ async fn live_windows_runner_media_control_parity() {
   // Step 3: next
   step += 1;
   let start = Instant::now();
-  let outcome = client.skip_to_next_track(macos_proto::SkipToNextTrackRequest {}).await.expect("next RPC").into_inner().outcome.expect("outcome");
+  let outcome =
+    client.skip_to_next_track(macos_proto::SkipToNextTrackRequest {}).await.expect("next RPC").into_inner().outcome.expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -560,8 +561,13 @@ async fn live_windows_runner_media_control_parity() {
   // Step 4: previous
   step += 1;
   let start = Instant::now();
-  let outcome =
-    client.skip_to_previous_track(macos_proto::SkipToPreviousTrackRequest {}).await.expect("previous RPC").into_inner().outcome.expect("outcome");
+  let outcome = client
+    .skip_to_previous_track(macos_proto::SkipToPreviousTrackRequest {})
+    .await
+    .expect("previous RPC")
+    .into_inner()
+    .outcome
+    .expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
@@ -613,8 +619,13 @@ async fn live_windows_runner_media_control_parity() {
   // Step 5: togglePlayPause
   step += 1;
   let start = Instant::now();
-  let outcome =
-    client.toggle_media_playback(macos_proto::ToggleMediaPlaybackRequest {}).await.expect("toggle RPC").into_inner().outcome.expect("outcome");
+  let outcome = client
+    .toggle_media_playback(macos_proto::ToggleMediaPlaybackRequest {})
+    .await
+    .expect("toggle RPC")
+    .into_inner()
+    .outcome
+    .expect("outcome");
   let wall_ms = (start.elapsed().as_secs_f64() * 1000.0).round() as u64;
   let before = outcome.before.expect("before");
   let after = outcome.after.expect("after");
