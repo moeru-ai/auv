@@ -115,6 +115,45 @@ pub(crate) fn invisible_border(outer: Rect, visible: Rect) -> Insets {
   }
 }
 
+/// The invisible border that turns the outer restore rectangle (`rcNormalPosition`) of a minimized
+/// or maximized window into the visible frame it has once normal, from the outer and visible
+/// rectangles the window has now. A normal window's own border is [`invisible_border`].
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn restore_border(outer: Rect, visible: Rect, minimized: bool) -> Insets {
+  let border = invisible_border(outer, visible);
+  if minimized {
+    // NOTICE: a minimized window's rectangles describe its iconic stub (at -32000,-32000 or the
+    // minimized-window arrangement). The stub keeps the window's left and right invisible border,
+    // but a per-monitor aware window's stub has none at the bottom. luoling-windows-11 (150%,
+    // 2026-11-04): Paint and a per-monitor aware WinForms form (sizable and fixed dialog) had a
+    // 9 px border on the left, right and bottom when normal, and a stub inset of 9, 9 and 0, so the
+    // listed frame was 9 px too tall (1600x1009 for a 1600x1000 Paint). DPI-unaware stubs kept all
+    // three (11 px); a borderless form's stub had none. The sizing frame is as wide at the bottom
+    // as at the sides (`SM_CXSIZEFRAME` and `SM_CYSIZEFRAME` were both 5 at 144 DPI), so the
+    // stub's side inset stands in for the bottom.
+    // The system metrics do not give this border: `GetSystemMetricsForDpi(SM_CXSIZEFRAME)` +
+    // `SM_CXPADDEDBORDER` (and `AdjustWindowRectExForDpi`) give the whole sizing frame, 11 px for
+    // the per-monitor aware form and 12 px (8 px scaled by 1.5) for a DPI-unaware one, against a
+    // measured 9 px and 11 px; how much of the frame DWM counts inside the extended frame bounds
+    // is not documented. The style does not tell either: the fixed dialog had no `WS_THICKFRAME`
+    // but the same 9 px border.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetricsfordpi
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
+    // https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect
+    return Insets {
+      bottom: border.bottom.max(border.left.min(border.right)),
+      ..border
+    };
+  }
+  // NOTICE: a maximized window hangs past its work area on every side, and that overhang is not
+  // the invisible border it has once normal. luoling-windows-11 (150%, 2026-11-03): a per-monitor
+  // aware WinForms window hung 11 px past every side of `0,0 3840x2088` but had 9 px left, right
+  // and bottom and none on top once normal; a DPI-unaware one 12 px against 11 px. The placement
+  // uses the overhang without a top border.
+  Insets { top: 0.0, ..border }
+}
+
 /// The outer rectangle to hand `SetWindowPos` so the visible frame lands on `visible`.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn outer_frame_for_visible(visible: Rect, border: Insets) -> Rect {
@@ -309,7 +348,7 @@ pub(crate) mod native {
   };
   use windows::core::{GUID, PWSTR};
 
-  use super::{WindowReading, invisible_border};
+  use super::{WindowReading, restore_border};
   use crate::error::backend;
 
   /// The public virtual desktop API, or `None` when the shell does not provide it (no Explorer,
@@ -496,11 +535,11 @@ pub(crate) mod native {
     let outer = outer_rect(hwnd)?;
     let visible = window_frame(hwnd)?;
     // A minimized window's rectangles describe its iconic stub at (-32000, -32000). Its frame is
-    // the one it restores to; the stub still carries the window's invisible border, so the same
-    // border turns the restore rectangle into a visible frame.
+    // the one it restores to; the stub's border (see `restore_border`) turns the restore rectangle
+    // into a visible frame.
     let (frame, outer) = if minimized {
       let restore_outer = restore_rect(hwnd)?;
-      (restore_outer.inset(invisible_border(outer, visible)), restore_outer)
+      (restore_outer.inset(restore_border(outer, visible, true)), restore_outer)
     } else {
       (visible, outer)
     };

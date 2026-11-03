@@ -269,28 +269,20 @@ fn set_frame_from_maximized(
   size: Option<Size>,
   tolerance: f64,
 ) -> DriverResult<WindowMutationResult> {
-  use auv_driver_common::geometry::Insets;
   use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos};
 
   use crate::window::native::{place_normal, restore_rect};
-  use crate::window::{invisible_border, outer_frame_for_visible};
+  use crate::window::{invisible_border, outer_frame_for_visible, restore_border};
 
-  // NOTICE: a maximized window hangs past its work area on every side, and that overhang is not
-  // the invisible border it has once normal. luoling-windows-11 (150%, 2026-11-03): a per-monitor
-  // aware WinForms window hung 11 px past every side of `0,0 3840x2088` but had 9 px left, right
-  // and bottom and none on top once normal; a DPI-unaware one 12 px against 11 px. The placement
-  // uses the overhang without a top border.
+  // The first placement converts the restore frame with the same border as the listing of a
+  // minimized window (`restore_border`); for a maximized window that is a guess.
   // NOTICE: some apps put the window back at a restore frame of their own when it leaves
   // maximized. A WinForms form showed the requested frame and 4 ms later its remembered restore
   // bounds (fixture bounds log, same host and date). So when the window is normal but not at the
   // request, one `SetWindowPos` with the border read from the normal window moves it there; it
   // also corrects a wrong border guess. A window that still settles elsewhere is `adjusted_by_app`.
   // The app's own frame shows for a few milliseconds; that jump is the app's, not this call's.
-  let overhang = invisible_border(before.outer, before.frame);
-  let guess = Insets {
-    top: 0.0,
-    ..overhang
-  };
+  let guess = restore_border(before.outer, before.frame, false);
   let restore_outer = restore_rect(hwnd)?;
   let mut requested = requested_frame(restore_outer.inset(guess), origin, size);
   let outer = rounded_outer(outer_frame_for_visible(requested, guess))?;

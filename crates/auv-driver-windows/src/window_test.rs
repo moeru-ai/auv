@@ -189,10 +189,44 @@ fn a_visible_frame_request_converts_to_the_outer_rectangle_by_the_invisible_bord
   let border = invisible_border(Rect::new(40.0, 40.0, 886.0, 633.0), Rect::new(47.0, 40.0, 872.0, 626.0));
 
   assert_eq!(outer_frame_for_visible(Rect::new(65.0, 52.0, 872.0, 626.0), border), Rect::new(58.0, 52.0, 886.0, 633.0));
-  // Measured on luoling-windows-11 at 150%: a minimized window's iconic stub has the same border,
-  // which turns its restore rectangle into the visible frame it had before it was minimized.
+  // Measured on luoling-windows-11 at 150%: a minimized DPI-unaware window's iconic stub has the
+  // same border, which turns its restore rectangle into the visible frame it had before it was
+  // minimized. A per-monitor aware stub has no bottom border (see `restore_border`).
   let stub = invisible_border(Rect::new(-48000.0, -48000.0, 356.0, 59.0), Rect::new(-47989.0, -48000.0, 334.0, 48.0));
   assert_eq!(Rect::new(450.0, 300.0, 960.0, 720.0).inset(stub), Rect::new(461.0, 300.0, 938.0, 709.0));
+}
+
+// ROOT CAUSE:
+//
+// If a per-monitor aware window was minimized, `window.list` reported its restore frame 9 px too
+// tall because the border was measured on the iconic stub, whose DWM bounds have no bottom inset.
+//
+// Before the fix, Paint at 150% (luoling-windows-11, 2026-11-04) listed 1600x1009 minimized and
+// 1600x1000 normal.
+// The fix keeps the listed restore frame equal to the visible frame the window has once normal.
+#[test]
+fn a_minimized_per_monitor_aware_window_lists_its_restore_frame_without_the_stub_bottom() {
+  // Paint's stub and restore rectangle, measured: the stub insets 9, 9 and 0 px.
+  let stub_outer = Rect::new(-32000.0, -32000.0, 237.0, 39.0);
+  let stub_visible = Rect::new(-31991.0, -32000.0, 219.0, 39.0);
+  let restore_outer = Rect::new(491.0, 400.0, 1618.0, 1009.0);
+
+  let frame = restore_outer.inset(restore_border(stub_outer, stub_visible, true));
+
+  assert_eq!(frame, Rect::new(500.0, 400.0, 1600.0, 1000.0));
+}
+
+#[test]
+fn a_restore_border_keeps_a_complete_or_empty_stub_border_and_drops_a_maximized_top() {
+  // A DPI-unaware stub keeps its 11 px bottom; a borderless window's stub has no border.
+  let unaware = restore_border(Rect::new(-48000.0, -48000.0, 356.0, 59.0), Rect::new(-47989.0, -48000.0, 334.0, 48.0), true);
+  assert_eq!(Rect::new(600.0, 450.0, 2400.0, 1500.0).inset(unaware), Rect::new(611.0, 450.0, 2378.0, 1489.0));
+  let borderless = restore_border(Rect::new(-32000.0, -32000.0, 237.0, 39.0), Rect::new(-32000.0, -32000.0, 237.0, 39.0), true);
+  assert_eq!(Rect::new(500.0, 400.0, 1200.0, 800.0).inset(borderless), Rect::new(500.0, 400.0, 1200.0, 800.0));
+  // A maximized window hangs 11 px past every side; the normal frame has no top border.
+  let maximized = restore_border(Rect::new(-11.0, -11.0, 3862.0, 2110.0), Rect::new(0.0, 0.0, 3840.0, 2088.0), false);
+  assert_eq!(maximized.top, 0.0);
+  assert_eq!((maximized.left, maximized.right, maximized.bottom), (11.0, 11.0, 11.0));
 }
 
 // `main_visible` runs the shared main-window cascade: a shown window beats a minimized one, an
