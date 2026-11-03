@@ -64,11 +64,11 @@ fn large_capture_metadata() -> proto::CapturedFrame {
 }
 
 #[tonic::async_trait]
-impl proto::capture_service_server::CaptureService for LargeCaptureService {
-  async fn capture_window(
+impl proto::display_service_server::DisplayService for LargeCaptureService {
+  async fn list_displays(
     &self,
-    _request: tonic::Request<proto::CaptureWindowRequest>,
-  ) -> Result<tonic::Response<proto::CaptureWindowResponse>, tonic::Status> {
+    _request: tonic::Request<proto::ListDisplaysRequest>,
+  ) -> Result<tonic::Response<proto::ListDisplaysResponse>, tonic::Status> {
     Err(tonic::Status::unimplemented("not used by this regression"))
   }
 
@@ -90,13 +90,23 @@ impl proto::capture_service_server::CaptureService for LargeCaptureService {
     }))
   }
 
-  async fn capture_region(
+  async fn capture_display_region(
     &self,
-    _request: tonic::Request<proto::CaptureRegionRequest>,
-  ) -> Result<tonic::Response<proto::CaptureRegionResponse>, tonic::Status> {
+    _request: tonic::Request<proto::CaptureDisplayRegionRequest>,
+  ) -> Result<tonic::Response<proto::CaptureDisplayRegionResponse>, tonic::Status> {
     Err(tonic::Status::unimplemented("not used by this regression"))
   }
 
+  async fn find_display_text(
+    &self,
+    _request: tonic::Request<proto::FindDisplayTextRequest>,
+  ) -> Result<tonic::Response<proto::FindDisplayTextResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by this regression"))
+  }
+}
+
+#[tonic::async_trait]
+impl proto::capture_service_server::CaptureService for LargeCaptureService {
   async fn get_capture_image(
     &self,
     request: tonic::Request<proto::GetCaptureImageRequest>,
@@ -206,30 +216,6 @@ macro_rules! input_fixture_impl {
         Err(tonic::Status::unimplemented("not used by the input fixture"))
       }
 
-      type ScrollWindowPointMotionStream = tokio_stream::Empty<Result<proto::ScrollWindowPointMotionResponse, tonic::Status>>;
-      async fn scroll_window_point_motion(
-        &self,
-        _: tonic::Request<proto::ScrollWindowPointMotionRequest>,
-      ) -> Result<tonic::Response<Self::ScrollWindowPointMotionStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented("not used by the input fixture"))
-      }
-
-      type StreamScrollStream = tokio_stream::Empty<Result<proto::StreamScrollResponse, tonic::Status>>;
-      async fn stream_scroll(
-        &self,
-        _: tonic::Request<tonic::Streaming<proto::StreamScrollRequest>>,
-      ) -> Result<tonic::Response<Self::StreamScrollStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented("not used by the input fixture"))
-      }
-
-      type ScrollUntilStream = tokio_stream::Empty<Result<proto::ScrollUntilResponse, tonic::Status>>;
-      async fn scroll_until(
-        &self,
-        _: tonic::Request<tonic::Streaming<proto::ScrollUntilRequest>>,
-      ) -> Result<tonic::Response<Self::ScrollUntilStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented("not used by the input fixture"))
-      }
-
       type StreamMouseMotionStream = tokio_stream::Empty<Result<proto::StreamMouseMotionResponse, tonic::Status>>;
       async fn stream_mouse_motion(
         &self,
@@ -244,18 +230,16 @@ macro_rules! input_fixture_impl {
 input_fixture_impl! {
     get_pointer_position(proto::GetPointerPositionRequest) -> proto::GetPointerPositionResponse;
     create_mouse(proto::CreateMouseRequest) -> proto::CreateMouseResponse;
-    remove_mouse(proto::RemoveMouseRequest) -> proto::RemoveMouseResponse;
+    delete_mouse(proto::DeleteMouseRequest) -> proto::DeleteMouseResponse;
     mouse_down(proto::MouseDownRequest) -> proto::MouseDownResponse;
     mouse_up(proto::MouseUpRequest) -> proto::MouseUpResponse;
     drag_mouse(proto::DragMouseRequest) -> proto::DragMouseResponse;
-    input_keyboard(proto::InputKeyboardRequest) -> proto::InputKeyboardResponse;
+    perform_keyboard_inputs(proto::PerformKeyboardInputsRequest) -> proto::PerformKeyboardInputsResponse;
     press_keys(proto::PressKeysRequest) -> proto::PressKeysResponse;
     hold_keys(proto::HoldKeysRequest) -> proto::HoldKeysResponse;
     click_point(proto::ClickPointRequest) -> proto::ClickPointResponse;
-    scroll_window_point(proto::ScrollWindowPointRequest) -> proto::ScrollWindowPointResponse;
     type_text(proto::TypeTextRequest) -> proto::TypeTextResponse;
     paste_text(proto::PasteTextRequest) -> proto::PasteTextResponse;
-    press_key(proto::PressKeyRequest) -> proto::PressKeyResponse;
 }
 
 /// Serves `InputFixture` on a loopback port and returns a typed input client
@@ -381,6 +365,7 @@ async fn serve_large_capture_fixture() -> (RunnerClient, tokio::task::JoinHandle
   drop(listener);
   let server = tokio::spawn(async move {
     tonic::transport::Server::builder()
+      .add_service(proto::display_service_server::DisplayServiceServer::new(LargeCaptureService))
       .add_service(
         proto::capture_service_server::CaptureServiceServer::new(LargeCaptureService)
           .max_encoding_message_size(IMAGE_RPC_MESSAGE_SIZE_LIMIT),
@@ -956,8 +941,8 @@ fn scroll_motion_projection_keeps_total_duration_function_and_rate() {
 
 #[test]
 fn scroll_motion_events_require_their_payloads() {
-  let completed = scroll_motion_event_from_proto(proto::ScrollWindowPointMotionResponse {
-    event: Some(proto::scroll_window_point_motion_response::Event::Completed(proto::ScrollMotionCompleted {
+  let completed = scroll_motion_event_from_proto(proto::ScrollWindowWithMotionResponse {
+    event: Some(proto::scroll_window_with_motion_response::Event::Completed(proto::ScrollMotionCompleted {
       delivered: Some(proto::Scroll {
         delta_x: 0.0,
         delta_y: 300.0,
@@ -971,8 +956,8 @@ fn scroll_motion_events_require_their_payloads() {
 
 #[test]
 fn scroll_stream_completion_maps_reason_and_optional_action() {
-  let completed = scroll_stream_event_from_proto(proto::StreamScrollResponse {
-    event: Some(proto::stream_scroll_response::Event::Completed(proto::StreamScrollCompleted {
+  let completed = scroll_stream_event_from_proto(proto::StreamWindowScrollResponse {
+    event: Some(proto::stream_window_scroll_response::Event::Completed(proto::StreamScrollCompleted {
       delivered: Some(proto::Scroll::default()),
       action: None,
       reason: proto::ScrollStreamStopReason::LeaseExpired as i32,
@@ -992,8 +977,8 @@ fn scroll_stream_completion_maps_reason_and_optional_action() {
       elapsed: std::time::Duration::from_secs(1),
     }
   );
-  let unknown = scroll_stream_event_from_proto(proto::StreamScrollResponse {
-    event: Some(proto::stream_scroll_response::Event::Completed(proto::StreamScrollCompleted {
+  let unknown = scroll_stream_event_from_proto(proto::StreamWindowScrollResponse {
+    event: Some(proto::stream_window_scroll_response::Event::Completed(proto::StreamScrollCompleted {
       delivered: Some(proto::Scroll::default()),
       action: None,
       reason: proto::ScrollStreamStopReason::Unspecified as i32,
@@ -1049,8 +1034,8 @@ fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
 
 #[test]
 fn scroll_until_update_event_decodes_capture_ref_text_and_decision_flag() {
-  let event = scroll_until_event_from_proto(proto::ScrollUntilResponse {
-    event: Some(proto::scroll_until_response::Event::Update(proto::ScrollUntilUpdate {
+  let event = scroll_until_event_from_proto(proto::ScrollWindowUntilResponse {
+    event: Some(proto::scroll_window_until_response::Event::Update(proto::ScrollUntilUpdate {
       steps: 2,
       delivered: Some(proto::Scroll {
         delta_x: 0.0,
@@ -1084,8 +1069,8 @@ fn scroll_until_update_event_decodes_capture_ref_text_and_decision_flag() {
   assert_eq!(update.capture.reference.id(), LARGE_CAPTURE_ID);
   assert_eq!(update.text.expect("text").text, "row");
 
-  let completed = scroll_until_event_from_proto(proto::ScrollUntilResponse {
-    event: Some(proto::scroll_until_response::Event::Completed(proto::ScrollUntilCompleted {
+  let completed = scroll_until_event_from_proto(proto::ScrollWindowUntilResponse {
+    event: Some(proto::scroll_window_until_response::Event::Completed(proto::ScrollUntilCompleted {
       reason: proto::ScrollUntilStopReason::PredicateSatisfied as i32,
       delivered: Some(proto::Scroll::default()),
       ..Default::default()

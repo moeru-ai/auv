@@ -241,7 +241,7 @@ After you change the permissions, restart the terminal. Then run:
 
 ```sh
 auv doctor
-auv invoke app.probePermissions
+auv invoke permission.probe
 ```
 
 #### Windows

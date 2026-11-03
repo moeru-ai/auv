@@ -220,7 +220,7 @@ auv setup macos-helper open-accessibility-settings
 
 ```sh
 auv doctor
-auv invoke app.probePermissions
+auv invoke permission.probe
 ```
 
 #### Windows

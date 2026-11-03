@@ -381,8 +381,13 @@ impl Devices {
   /// Lists current OS login instances on this Device. A selector may become
   /// stale immediately and is revalidated by `get_user_session` or unlock.
   pub async fn list_user_sessions(&self) -> Result<Vec<UserSession>, DeviceError> {
-    let response =
-      self.client.grpc_client().devices().list_user_sessions().await.map_err(|status| entry_status_error("ListUserSessions", status))?;
+    let response = self
+      .client
+      .grpc_client()
+      .user_sessions()
+      .list_user_sessions()
+      .await
+      .map_err(|status| entry_status_error("ListUserSessions", status))?;
 
     let list = response.list.ok_or(DeviceError::InvalidEntryResponse)?;
     list.sessions.into_iter().map(UserSession::try_from).collect()
@@ -393,7 +398,7 @@ impl Devices {
     let response = self
       .client
       .grpc_client()
-      .devices()
+      .user_sessions()
       .get_user_session(session_selector)
       .await
       .map_err(|status| entry_status_error("GetUserSession", status))?;
@@ -411,7 +416,7 @@ impl Devices {
     let response = self
       .client
       .grpc_client()
-      .devices()
+      .user_sessions()
       .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
         target: Some(target),
       })
@@ -431,7 +436,7 @@ impl Devices {
     let response = self
       .client
       .grpc_client()
-      .devices()
+      .user_sessions()
       .ensure_user_session_locked(proto::EnsureUserSessionLockedRequest {
         target: Some(target),
       })

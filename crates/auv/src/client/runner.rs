@@ -216,7 +216,7 @@ pub enum ScrollMotionEvent {
 }
 
 pub struct ScrollMotionStream {
-  inner: tonic::Streaming<proto::ScrollWindowPointMotionResponse>,
+  inner: tonic::Streaming<proto::ScrollWindowWithMotionResponse>,
 }
 
 impl ScrollMotionStream {
@@ -250,8 +250,8 @@ pub enum ScrollStreamEvent {
 /// Caller side of a live scroll stream. Every `set_velocity` renews the lease;
 /// dropping the session disconnects and stops delivery at the next sample.
 pub struct ScrollStreamSession {
-  requests: tokio::sync::mpsc::Sender<proto::StreamScrollRequest>,
-  responses: tonic::Streaming<proto::StreamScrollResponse>,
+  requests: tokio::sync::mpsc::Sender<proto::StreamWindowScrollRequest>,
+  responses: tonic::Streaming<proto::StreamWindowScrollResponse>,
 }
 
 impl ScrollStreamSession {
@@ -259,7 +259,7 @@ impl ScrollStreamSession {
   pub async fn set_velocity(&self, velocity: auv_driver::ScrollVelocity) -> Result<(), CapabilityError> {
     velocity.validate().map_err(|error| CapabilityError::InvalidArgument(error.to_string()))?;
     self
-      .send(proto::stream_scroll_request::Event::SetVelocity(proto::StreamScrollSetVelocity {
+      .send(proto::stream_window_scroll_request::Event::SetVelocity(proto::StreamScrollSetVelocity {
         velocity: Some(proto::ScrollVelocity {
           delta_x_per_second: velocity.delta_x_per_second,
           delta_y_per_second: velocity.delta_y_per_second,
@@ -270,24 +270,24 @@ impl ScrollStreamSession {
 
   /// Ramps to zero, then completes.
   pub async fn stop(&self) -> Result<(), CapabilityError> {
-    self.send(proto::stream_scroll_request::Event::Stop(proto::StreamScrollStop {})).await
+    self.send(proto::stream_window_scroll_request::Event::Stop(proto::StreamScrollStop {})).await
   }
 
   /// Ends delivery at the next sample without ramping.
   pub async fn cancel(&self) -> Result<(), CapabilityError> {
-    self.send(proto::stream_scroll_request::Event::Cancel(proto::StreamScrollCancel {})).await
+    self.send(proto::stream_window_scroll_request::Event::Cancel(proto::StreamScrollCancel {})).await
   }
 
   pub async fn next(&mut self) -> Result<Option<ScrollStreamEvent>, CapabilityError> {
     self.responses.message().await.map_err(capability_status)?.map(scroll_stream_event_from_proto).transpose()
   }
 
-  async fn send(&self, event: proto::stream_scroll_request::Event) -> Result<(), CapabilityError> {
+  async fn send(&self, event: proto::stream_window_scroll_request::Event) -> Result<(), CapabilityError> {
     self
       .requests
-      .send(proto::StreamScrollRequest { event: Some(event) })
+      .send(proto::StreamWindowScrollRequest { event: Some(event) })
       .await
-      .map_err(|_| CapabilityError::InvalidResponse("StreamScroll request stream closed".into()))
+      .map_err(|_| CapabilityError::InvalidResponse("StreamWindowScroll request stream closed".into()))
   }
 }
 
@@ -306,8 +306,8 @@ pub enum ScrollUntilEvent {
 /// Caller side of a scroll-until operation. Dropping the session disconnects;
 /// a Runner waiting for a decision then stops.
 pub struct ScrollUntilSession {
-  requests: tokio::sync::mpsc::Sender<proto::ScrollUntilRequest>,
-  responses: tonic::Streaming<proto::ScrollUntilResponse>,
+  requests: tokio::sync::mpsc::Sender<proto::ScrollWindowUntilRequest>,
+  responses: tonic::Streaming<proto::ScrollWindowUntilResponse>,
 }
 
 impl ScrollUntilSession {
@@ -319,8 +319,8 @@ impl ScrollUntilSession {
   pub async fn decide(&self, decision: auv_scan::ScrollUntilDecision) -> Result<(), CapabilityError> {
     self
       .requests
-      .send(proto::ScrollUntilRequest {
-        event: Some(proto::scroll_until_request::Event::Decision(proto::ScrollUntilDecision {
+      .send(proto::ScrollWindowUntilRequest {
+        event: Some(proto::scroll_window_until_request::Event::Decision(proto::ScrollUntilDecision {
           stop: decision == auv_scan::ScrollUntilDecision::Stop,
         })),
       })
@@ -539,7 +539,7 @@ impl RunnerClient {
       }),
       RecognitionSource::Image(image) => Source::Image(image_frame_to_proto(image)),
     };
-    let response = proto::text_recognition_service_client::TextRecognitionServiceClient::new(self.transport()?)
+    let response = proto::text_service_client::TextServiceClient::new(self.transport()?)
       .max_encoding_message_size(IMAGE_RPC_MESSAGE_SIZE_LIMIT)
       .recognize_text(proto::RecognizeTextRequest {
         source: Some(source),
@@ -755,7 +755,7 @@ impl DisplaysClient {
     selector: Option<DisplaySelector>,
     resolution: auv_driver::CaptureResolution,
   ) -> Result<auv_driver::DisplayCapture<RunnerCapture>, CapabilityError> {
-    let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
+    let response = proto::display_service_client::DisplayServiceClient::new(self.runner.transport()?)
       .capture_display(proto::CaptureDisplayRequest {
         selector: selector.map(display_selector_to_proto),
         resolution: capture_resolution_to_proto(resolution) as i32,
@@ -785,8 +785,8 @@ impl DisplaysClient {
     selector: Option<DisplaySelector>,
     resolution: auv_driver::CaptureResolution,
   ) -> Result<auv_driver::RegionCapture<RunnerCapture>, CapabilityError> {
-    let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
-      .capture_region(proto::CaptureRegionRequest {
+    let response = proto::display_service_client::DisplayServiceClient::new(self.runner.transport()?)
+      .capture_display_region(proto::CaptureDisplayRegionRequest {
         region: Some(rect_to_proto(region)),
         selector: selector.map(display_selector_to_proto),
         resolution: capture_resolution_to_proto(resolution) as i32,
@@ -795,8 +795,8 @@ impl DisplaysClient {
       .map_err(capability_status)?
       .into_inner();
     Ok(auv_driver::RegionCapture {
-      display: display_from_proto(required(response.display, "CaptureRegion response omitted Display")?)?,
-      capture: runner_capture_from_proto(required(response.capture, "CaptureRegion response omitted CapturedFrame")?)?,
+      display: display_from_proto(required(response.display, "CaptureDisplayRegion response omitted Display")?)?,
+      capture: runner_capture_from_proto(required(response.capture, "CaptureDisplayRegion response omitted CapturedFrame")?)?,
     })
   }
 
@@ -816,7 +816,7 @@ impl DisplaysClient {
     query: impl Into<String>,
     options: FindTextOptions,
   ) -> Result<DisplayTextRecognition, CapabilityError> {
-    let response = proto::text_recognition_service_client::TextRecognitionServiceClient::new(self.runner.transport()?)
+    let response = proto::display_service_client::DisplayServiceClient::new(self.runner.transport()?)
       .find_display_text(proto::FindDisplayTextRequest {
         selector: selector.map(display_selector_to_proto),
         query: query.into(),
@@ -934,7 +934,7 @@ impl WindowClient {
 
   /// Captures the resolved window at `resolution`.
   pub async fn capture_with(&self, resolution: auv_driver::CaptureResolution) -> Result<WindowCapture, CapabilityError> {
-    let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
       .capture_window(proto::CaptureWindowRequest {
         window: Some(self.window_ref.clone()),
         resolution: capture_resolution_to_proto(resolution) as i32,
@@ -955,7 +955,7 @@ impl WindowClient {
 
   /// Finds text using explicit recognition options.
   pub async fn find_text_with(&self, query: impl Into<String>, options: FindTextOptions) -> Result<WindowTextRecognition, CapabilityError> {
-    let response = proto::text_recognition_service_client::TextRecognitionServiceClient::new(self.runner.transport()?)
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
       .find_window_text(proto::FindWindowTextRequest {
         window: Some(self.window_ref.clone()),
         query: query.into(),
@@ -1019,8 +1019,8 @@ impl WindowClient {
     motion: auv_driver::ScrollMotion,
     options: auv_driver::ScrollOptions,
   ) -> Result<ScrollMotionStream, CapabilityError> {
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .scroll_window_point_motion(proto::ScrollWindowPointMotionRequest {
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .scroll_window_with_motion(proto::ScrollWindowWithMotionRequest {
         window: Some(self.window_ref.clone()),
         point: Some(self.pointer_position(point.into())),
         motion: Some(scroll_motion_to_proto(motion)?),
@@ -1042,8 +1042,8 @@ impl WindowClient {
   ) -> Result<ScrollStreamSession, CapabilityError> {
     let (requests, receiver) = tokio::sync::mpsc::channel(4);
     requests
-      .send(proto::StreamScrollRequest {
-        event: Some(proto::stream_scroll_request::Event::Begin(proto::StreamScrollBegin {
+      .send(proto::StreamWindowScrollRequest {
+        event: Some(proto::stream_window_scroll_request::Event::Begin(proto::StreamScrollBegin {
           window: Some(self.window_ref.clone()),
           point: Some(self.pointer_position(point.into())),
           options: Some(scroll_options_to_proto(options)?),
@@ -1054,8 +1054,8 @@ impl WindowClient {
       })
       .await
       .map_err(|_| CapabilityError::InvalidResponse("StreamScroll request stream failed to open".into()))?;
-    let responses = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .stream_scroll(tokio_stream::wrappers::ReceiverStream::new(receiver))
+    let responses = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .stream_window_scroll(tokio_stream::wrappers::ReceiverStream::new(receiver))
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1078,8 +1078,8 @@ impl WindowClient {
   ) -> Result<ScrollUntilSession, CapabilityError> {
     let (requests, receiver) = tokio::sync::mpsc::channel(4);
     requests
-      .send(proto::ScrollUntilRequest {
-        event: Some(proto::scroll_until_request::Event::Begin(scroll_until_begin_to_proto(
+      .send(proto::ScrollWindowUntilRequest {
+        event: Some(proto::scroll_window_until_request::Event::Begin(scroll_until_begin_to_proto(
           self.window_ref.clone(),
           self.pointer_position(point.into()),
           request,
@@ -1089,8 +1089,8 @@ impl WindowClient {
       })
       .await
       .map_err(|_| CapabilityError::InvalidResponse("ScrollUntil request stream failed to open".into()))?;
-    let responses = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .scroll_until(tokio_stream::wrappers::ReceiverStream::new(receiver))
+    let responses = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .scroll_window_until(tokio_stream::wrappers::ReceiverStream::new(receiver))
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1140,8 +1140,8 @@ impl WindowClient {
     scroll: auv_driver::Scroll,
     options: auv_driver::ScrollOptions,
   ) -> Result<WindowPointScroll, CapabilityError> {
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .scroll_window_point(proto::ScrollWindowPointRequest {
+    let response = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
+      .scroll_window(proto::ScrollWindowRequest {
         window: Some(self.window_ref.clone()),
         point: Some(self.pointer_position(point.into())),
         scroll: Some(proto::Scroll {
@@ -1153,13 +1153,13 @@ impl WindowClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    let point = required(response.point, "ScrollWindowPoint response omitted WindowPoint")?;
-    let scroll = required(response.scroll, "ScrollWindowPoint response omitted Scroll")?;
+    let point = required(response.point, "ScrollWindow response omitted WindowPoint")?;
+    let scroll = required(response.scroll, "ScrollWindow response omitted Scroll")?;
     Ok(WindowPointScroll {
-      window: window_from_proto(required(response.window, "ScrollWindowPoint response omitted Window")?)?,
+      window: window_from_proto(required(response.window, "ScrollWindow response omitted Window")?)?,
       point: auv_driver::WindowPoint::new(point.x, point.y),
       scroll: auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y),
-      action: input_action_result_from_proto(required(response.action, "ScrollWindowPoint response omitted InputActionResult")?)?,
+      action: input_action_result_from_proto(required(response.action, "ScrollWindow response omitted InputActionResult")?)?,
     })
   }
 
@@ -1225,7 +1225,7 @@ impl WindowClient {
     let actions = self.runner.input().input_keyboard(&target, vec![input], false).await?;
     actions
       .and_then(|mut actions| (!actions.is_empty()).then(|| actions.remove(0)))
-      .ok_or_else(|| CapabilityError::InvalidResponse("InputKeyboard returned no action result".into()))
+      .ok_or_else(|| CapabilityError::InvalidResponse("PerformKeyboardInputs returned no action result".into()))
   }
 }
 
@@ -1488,7 +1488,7 @@ fn activation_result_from_proto(
 impl MediaControlClient {
   /// Reads the current system-wide now-playing state.
   pub async fn now_playing(&self) -> Result<auv_media_macos::NowPlayingState, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
       .get_now_playing(macos_proto::GetNowPlayingRequest {})
       .await
       .map_err(capability_status)?
@@ -1498,8 +1498,8 @@ impl MediaControlClient {
 
   /// Requests playback and returns before/after evidence.
   pub async fn play(&self) -> Result<auv_media_macos::output::MediaControlOutcome, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
-      .play(macos_proto::PlayRequest {})
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
+      .play_media(macos_proto::PlayMediaRequest {})
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1508,8 +1508,8 @@ impl MediaControlClient {
 
   /// Requests pause and returns before/after evidence.
   pub async fn pause(&self) -> Result<auv_media_macos::output::MediaControlOutcome, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
-      .pause(macos_proto::PauseRequest {})
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
+      .pause_media(macos_proto::PauseMediaRequest {})
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1518,8 +1518,8 @@ impl MediaControlClient {
 
   /// Toggles playback and returns before/after evidence.
   pub async fn toggle_play_pause(&self) -> Result<auv_media_macos::output::MediaControlOutcome, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
-      .toggle_play_pause(macos_proto::TogglePlayPauseRequest {})
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
+      .toggle_media_playback(macos_proto::ToggleMediaPlaybackRequest {})
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1528,8 +1528,8 @@ impl MediaControlClient {
 
   /// Advances to the next track and returns before/after evidence.
   pub async fn next_track(&self) -> Result<auv_media_macos::output::MediaControlOutcome, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
-      .next_track(macos_proto::NextTrackRequest {})
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
+      .skip_to_next_track(macos_proto::SkipToNextTrackRequest {})
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1538,8 +1538,8 @@ impl MediaControlClient {
 
   /// Returns to the previous track and returns before/after evidence.
   pub async fn previous_track(&self) -> Result<auv_media_macos::output::MediaControlOutcome, CapabilityError> {
-    let response = macos_proto::media_control_service_client::MediaControlServiceClient::new(self.runner.transport()?)
-      .previous_track(macos_proto::PreviousTrackRequest {})
+    let response = macos_proto::media_service_client::MediaServiceClient::new(self.runner.transport()?)
+      .skip_to_previous_track(macos_proto::SkipToPreviousTrackRequest {})
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1655,7 +1655,7 @@ impl InputClient {
 
   pub async fn remove_mouse(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .remove_mouse(proto::RemoveMouseRequest { mouse })
+      .delete_mouse(proto::DeleteMouseRequest { mouse })
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1830,29 +1830,29 @@ impl InputClient {
     dry_run: bool,
   ) -> Result<Option<Vec<auv_driver::InputActionResult>>, CapabilityError> {
     let expected_count = inputs.len();
-    let request = proto::InputKeyboardRequest {
+    let request = proto::PerformKeyboardInputsRequest {
       target: Some(input_target_to_proto(target)),
       inputs: inputs.into_iter().map(keyboard_input_to_proto).collect::<Result<_, _>>()?,
       dry_run,
     };
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .input_keyboard(request)
+      .perform_keyboard_inputs(request)
       .await
       .map_err(keyboard_capability_status)?
       .into_inner();
     if dry_run {
       if !response.actions.is_empty() {
-        return Err(CapabilityError::InvalidResponse("InputKeyboard dry-run returned delivery evidence".into()));
+        return Err(CapabilityError::InvalidResponse("PerformKeyboardInputs dry-run returned delivery evidence".into()));
       }
       return Ok(None);
     }
     if response.actions.len() != expected_count {
-      return Err(CapabilityError::InvalidResponse("InputKeyboard omitted action results".into()));
+      return Err(CapabilityError::InvalidResponse("PerformKeyboardInputs omitted action results".into()));
     }
     response.actions.into_iter().map(input_action_result_from_proto).collect::<Result<_, _>>().map(Some)
   }
 
-  /// Submit one key combination, with repetition and target semantics from InputKeyboard.
+  /// Submit one key combination, with repetition and target semantics from PerformKeyboardInputs.
   pub async fn press_keys(
     &self,
     target: &auv_driver::InputTarget,
@@ -1966,19 +1966,6 @@ impl InputClient {
       .map_err(capability_status)?
       .into_inner();
     input_action_result_from_proto(required(response.action, "PasteText response omitted InputActionResult")?)
-  }
-
-  /// Delivers one key press.
-  pub async fn press_key(&self, options: auv_driver::KeyPressOptions) -> Result<auv_driver::InputActionResult, CapabilityError> {
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .press_key(proto::PressKeyRequest {
-        key: options.key,
-        settle: Some(duration_to_proto(options.settle)?),
-      })
-      .await
-      .map_err(capability_status)?
-      .into_inner();
-    input_action_result_from_proto(required(response.action, "PressKey response omitted InputActionResult")?)
   }
 }
 
@@ -2187,7 +2174,7 @@ fn keyboard_capability_status(status: tonic::Status) -> CapabilityError {
     Err(error) => return error,
   };
   CapabilityError::KeyboardInput {
-    source: ClientError::from_status("InputKeyboard", status),
+    source: ClientError::from_status("PerformKeyboardInputs", status),
     progress: auv_driver::KeyboardInputProgress {
       action_index: index as usize,
       completed,
@@ -2281,12 +2268,12 @@ fn scroll_motion_to_proto(value: auv_driver::ScrollMotion) -> Result<proto::Scro
   })
 }
 
-fn scroll_motion_event_from_proto(value: proto::ScrollWindowPointMotionResponse) -> Result<ScrollMotionEvent, CapabilityError> {
-  use proto::scroll_window_point_motion_response::Event;
+fn scroll_motion_event_from_proto(value: proto::ScrollWindowWithMotionResponse) -> Result<ScrollMotionEvent, CapabilityError> {
+  use proto::scroll_window_with_motion_response::Event;
   let scroll = |value: Option<proto::Scroll>, message: &'static str| {
     required(value, message).map(|scroll| auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y))
   };
-  match required(value.event, "ScrollWindowPointMotion response omitted event")? {
+  match required(value.event, "ScrollWindowWithMotion response omitted event")? {
     Event::Started(value) => {
       let point = required(value.point, "scroll motion started event omitted point")?;
       Ok(ScrollMotionEvent::Started {
@@ -2311,8 +2298,8 @@ fn scroll_motion_event_from_proto(value: proto::ScrollWindowPointMotionResponse)
   }
 }
 
-fn scroll_stream_event_from_proto(value: proto::StreamScrollResponse) -> Result<ScrollStreamEvent, CapabilityError> {
-  use proto::stream_scroll_response::Event;
+fn scroll_stream_event_from_proto(value: proto::StreamWindowScrollResponse) -> Result<ScrollStreamEvent, CapabilityError> {
+  use proto::stream_window_scroll_response::Event;
   let scroll = |value: Option<proto::Scroll>, message: &'static str| {
     required(value, message).map(|scroll| auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y))
   };
@@ -2402,8 +2389,8 @@ fn scroll_until_stop_reason_from_proto(value: i32) -> Result<Option<auv_scan::Sc
   })
 }
 
-fn scroll_until_event_from_proto(value: proto::ScrollUntilResponse) -> Result<ScrollUntilEvent, CapabilityError> {
-  use proto::scroll_until_response::Event;
+fn scroll_until_event_from_proto(value: proto::ScrollWindowUntilResponse) -> Result<ScrollUntilEvent, CapabilityError> {
+  use proto::scroll_window_until_response::Event;
   let scroll = |value: Option<proto::Scroll>, message: &'static str| {
     required(value, message).map(|scroll| auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y))
   };

@@ -8,13 +8,16 @@ const SCHEMA_PATHS: &[&str] = &[
   "auv/api/daemon/v1/pairing.proto",
   "auv/api/annotations/v1/annotations.proto",
   "auv/api/annotations/v1/method_docs.proto",
-  "auv/api/daemon/v1/run.proto",
-  "auv/api/daemon/v1/runner.proto",
+  "auv/api/daemon/v1/user_session.proto",
+  "auv/api/runtime/v1/run.proto",
+  "auv/api/runtime/v1/runner.proto",
   "auv/api/transport/websocket/v1/websocket.proto",
   "auv/api/driver/v1/capture.proto",
   "auv/api/driver/v1/recent_frames.proto",
   "auv/api/driver/v1/display.proto",
+  "auv/api/driver/v1/display_service.proto",
   "auv/api/driver/v1/window.proto",
+  "auv/api/driver/v1/window_service.proto",
   "auv/api/driver/v1/geometry.proto",
   "auv/api/driver/v1/input.proto",
   "auv/api/driver/v1/overlay.proto",
@@ -54,10 +57,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   }
 
   let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
-  let mut builder = tonic_prost_build::configure().file_descriptor_set_path(out_dir.join("auv.api.bin")).message_attribute(
-    ".auv.api.daemon.v1",
-    "#[derive(serde::Serialize, serde::Deserialize)] #[serde(default, rename_all = \"camelCase\", deny_unknown_fields)]",
-  );
+  let mut builder = tonic_prost_build::configure().file_descriptor_set_path(out_dir.join("auv.api.bin"));
+  // NOTICE(proto-serde-paths): prost silently ignores an attribute path that
+  // matches nothing, so a package move must update every path below by hand.
+  // `auv.api.runtime.v1` (Run, Runner, RunnerClass) shares the daemon REST
+  // JSON model.
+  for package in [".auv.api.daemon.v1", ".auv.api.runtime.v1"] {
+    builder = builder.message_attribute(
+      package,
+      "#[derive(serde::Serialize, serde::Deserialize)] #[serde(default, rename_all = \"camelCase\", deny_unknown_fields)]",
+    );
+  }
   // NOTICE(proto-build): prost's nested oneof enums do not inherit the
   // daemon-wide message derive. Remove these per-oneof attributes if prost
   // generates the enums with the required serde derives automatically.
@@ -78,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the shared REST model. Keep local enrollment credentials out of every
     // JSON serialization and deserialization path; only local gRPC may carry
     // these bytes.
-    .field_attribute(".auv.api.daemon.v1.EnrollRequest.credential", "#[serde(skip)]")
+    .field_attribute(".auv.api.daemon.v1.CreateEnrollmentRequest.credential", "#[serde(skip)]")
     .field_attribute(
       ".auv.api.daemon.v1.CreatePairingTokenRequest.ttl",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_duration\")]",
@@ -88,31 +98,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       "#[serde(default, alias = \"expires_at\", skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_timestamp\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Run.created_at",
+      ".auv.api.runtime.v1.Run.created_at",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_timestamp\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Run.completed_at",
+      ".auv.api.runtime.v1.Run.completed_at",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_timestamp\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.idle_timeout",
+      ".auv.api.runtime.v1.Runner.idle_timeout",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_duration\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.created_at",
+      ".auv.api.runtime.v1.Runner.created_at",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_timestamp\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.idle_deadline",
+      ".auv.api.runtime.v1.Runner.idle_deadline",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_timestamp\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.CreateRunnerRequest.idle_timeout",
+      ".auv.api.runtime.v1.CreateRunnerRequest.idle_timeout",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_duration\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.DeleteRunnerRequest.grace_period",
+      ".auv.api.runtime.v1.DeleteRunnerRequest.grace_period",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_duration\")]",
     )
     .field_attribute(
@@ -124,31 +134,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       "#[serde(with = \"crate::json::device_platform\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Run.phase",
+      ".auv.api.runtime.v1.Run.phase",
       "#[serde(with = \"crate::json::run_phase\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.StopRunRequest.outcome",
+      ".auv.api.runtime.v1.StopRunRequest.outcome",
       "#[serde(with = \"crate::json::run_outcome\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.RunnerClass.supported_lifecycles",
+      ".auv.api.runtime.v1.RunnerClass.supported_lifecycles",
       "#[serde(with = \"crate::json::runner_lifecycle::repeated\", skip_serializing_if = \"Vec::is_empty\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.lifecycle",
+      ".auv.api.runtime.v1.Runner.lifecycle",
       "#[serde(with = \"crate::json::runner_lifecycle\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.phase",
+      ".auv.api.runtime.v1.Runner.phase",
       "#[serde(with = \"crate::json::runner_phase\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.CreateRunnerRequest.lifecycle",
+      ".auv.api.runtime.v1.CreateRunnerRequest.lifecycle",
       "#[serde(with = \"crate::json::runner_lifecycle\", skip_serializing_if = \"crate::json::is_zero_i32\")]",
     )
     .field_attribute(
-      ".auv.api.daemon.v1.Runner.active_operations",
+      ".auv.api.runtime.v1.Runner.active_operations",
       "#[serde(with = \"crate::json::u64_string\", skip_serializing_if = \"crate::json::is_zero_u64\")]",
     );
   for field in [

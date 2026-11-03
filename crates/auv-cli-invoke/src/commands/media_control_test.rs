@@ -44,7 +44,7 @@ fn now_playing_human_output_exposes_the_current_media_state() {
 #[test]
 fn now_playing_rejects_target_before_platform_access() {
   let input = crate::InvokeCommandInput {
-    command_id: "mediaControl.nowPlaying".to_string(),
+    command_id: "media.getNowPlaying".to_string(),
     target: Some(crate::ExecutionTarget::Application {
       id: "com.example.Player".to_string(),
     }),
@@ -61,11 +61,11 @@ fn now_playing_rejects_target_before_platform_access() {
 #[test]
 fn media_commands_reject_target_before_platform_access() {
   for (command_id, command) in [
-    ("mediaControl.play", media_control_play_invoke_command()),
-    ("mediaControl.pause", media_control_pause_invoke_command()),
-    ("mediaControl.togglePlayPause", media_control_toggle_play_pause_invoke_command()),
-    ("mediaControl.next", media_control_next_invoke_command()),
-    ("mediaControl.previous", media_control_previous_invoke_command()),
+    ("media.play", media_control_play_invoke_command()),
+    ("media.pause", media_control_pause_invoke_command()),
+    ("media.togglePlayback", media_control_toggle_play_pause_invoke_command()),
+    ("media.skipToNextTrack", media_control_next_invoke_command()),
+    ("media.skipToPreviousTrack", media_control_previous_invoke_command()),
   ] {
     let input = crate::InvokeCommandInput {
       command_id: command_id.to_string(),
@@ -140,7 +140,7 @@ fn now_playing_report_still_has_a_meaningful_field_when_nothing_is_playing() {
 #[test]
 fn media_help_explicitly_describes_forbidden_target() {
   let registry = crate::default_registry();
-  let command = registry.resolve("mediaControl.play").unwrap();
+  let command = registry.resolve("media.play").unwrap();
   let help = crate::help::render_command_help(command);
   assert!(help.contains("Target forbidden"), "{help}");
   assert!(!help.contains("--target <TARGET>"), "{help}");

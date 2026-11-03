@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 use tokio::process::Child;
 use tokio::sync::Notify;
 use tokio_util::task::TaskTracker;
@@ -31,7 +32,7 @@ pub(crate) struct RunnerSupervisor {
 }
 
 struct ManagedRunner {
-  record: daemon_proto::Runner,
+  record: runtime_proto::Runner,
   runtime: ManagedRunnerRuntime,
   channel: Channel,
   display_name: String,
@@ -112,9 +113,9 @@ impl RunnerSupervisor {
 
   pub(crate) async fn create(
     &self,
-    request: daemon_proto::CreateRunnerRequest,
+    request: runtime_proto::CreateRunnerRequest,
     initial_run_affinities: u64,
-  ) -> Result<daemon_proto::CreateRunnerResponse, RunnerError> {
+  ) -> Result<runtime_proto::CreateRunnerResponse, RunnerError> {
     let runner_class = request
       .runner_class
       .as_ref()
@@ -122,14 +123,14 @@ impl RunnerSupervisor {
       .filter(|runner_class| !runner_class.is_empty())
       .ok_or(RunnerError::InvalidArgument("runner_class is required"))?;
     let provider = self.providers.get(runner_class).cloned().ok_or_else(|| RunnerError::ProviderUnavailable(runner_class.to_string()))?;
-    let lifecycle =
-      daemon_proto::RunnerLifecycle::try_from(request.lifecycle).map_err(|_| RunnerError::InvalidArgument("runner lifecycle is unknown"))?;
+    let lifecycle = runtime_proto::RunnerLifecycle::try_from(request.lifecycle)
+      .map_err(|_| RunnerError::InvalidArgument("runner lifecycle is unknown"))?;
     match lifecycle {
-      daemon_proto::RunnerLifecycle::Ephemeral | daemon_proto::RunnerLifecycle::UnlessShutdown => {}
-      daemon_proto::RunnerLifecycle::UnlessIdle => {
+      runtime_proto::RunnerLifecycle::Ephemeral | runtime_proto::RunnerLifecycle::UnlessShutdown => {}
+      runtime_proto::RunnerLifecycle::UnlessIdle => {
         validate_idle_timeout(request.idle_timeout.as_ref())?;
       }
-      daemon_proto::RunnerLifecycle::Unspecified => return Err(RunnerError::InvalidArgument("runner lifecycle is required")),
+      runtime_proto::RunnerLifecycle::Unspecified => return Err(RunnerError::InvalidArgument("runner lifecycle is required")),
     }
     let runner_id = crate::resource_id::generate().map_err(RunnerError::Start)?;
     let ready = match spawn_ready(&provider, self.parent_context.as_ref(), &runner_id).await {
@@ -142,8 +143,8 @@ impl RunnerSupervisor {
     tracing::info!(runner_id = %runner_id, runner_class, process_id = ready.process_id, lifecycle = ?lifecycle, "Runner started");
     let mut labels = ready.labels.clone();
     labels.extend(request.labels);
-    let record = daemon_proto::Runner {
-      r#ref: Some(daemon_proto::RunnerRef {
+    let record = runtime_proto::Runner {
+      r#ref: Some(runtime_proto::RunnerRef {
         runner_id: runner_id.clone(),
       }),
       device: Some(self.local_device.clone()),
@@ -151,7 +152,7 @@ impl RunnerSupervisor {
       labels,
       lifecycle: request.lifecycle,
       idle_timeout: request.idle_timeout,
-      phase: daemon_proto::RunnerPhase::Ready as i32,
+      phase: runtime_proto::RunnerPhase::Ready as i32,
       created_at: Some(timestamp_from_system_time(std::time::SystemTime::now())),
       process_id: ready.process_id,
       active_operations: 0,
@@ -165,17 +166,17 @@ impl RunnerSupervisor {
       run_affinities: initial_run_affinities,
     };
     self.runners.lock().expect("Runner registry lock poisoned").insert(runner_id, managed);
-    Ok(daemon_proto::CreateRunnerResponse {
+    Ok(runtime_proto::CreateRunnerResponse {
       runner: Some(record),
     })
   }
 
-  pub(crate) fn find_routable(&self, device_id: &str, runner_class: &str) -> Option<daemon_proto::Runner> {
+  pub(crate) fn find_routable(&self, device_id: &str, runner_class: &str) -> Option<runtime_proto::Runner> {
     let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
     refresh_exited(&mut runners);
     runners.values().find_map(|managed| {
       let record = &managed.record;
-      (record.phase == daemon_proto::RunnerPhase::Ready as i32
+      (record.phase == runtime_proto::RunnerPhase::Ready as i32
         && record.device.as_ref().is_some_and(|device| device.device_id == device_id)
         && record.runner_class.as_ref().is_some_and(|class| class.runner_class == runner_class))
       .then(|| record.clone())
@@ -208,7 +209,7 @@ impl RunnerSupervisor {
     let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
     refresh_exited(&mut runners);
     let managed = runners.get_mut(runner_id).ok_or_else(|| RunnerError::Unknown(runner_id.to_string()))?;
-    if managed.record.phase != daemon_proto::RunnerPhase::Ready as i32 {
+    if managed.record.phase != runtime_proto::RunnerPhase::Ready as i32 {
       return Err(RunnerError::Call("Runner is not ready for operation admission".to_string()));
     }
     // Registration approves the complete endpoint. The daemon routes the
@@ -239,9 +240,9 @@ impl RunnerSupervisor {
     Ok(())
   }
 
-  pub(crate) fn list_classes(&self) -> daemon_proto::ListRunnerClassesResponse {
+  pub(crate) fn list_classes(&self) -> runtime_proto::ListRunnerClassesResponse {
     let runners = self.runners.lock().expect("Runner registry lock poisoned");
-    daemon_proto::ListRunnerClassesResponse {
+    runtime_proto::ListRunnerClassesResponse {
       runner_classes: self
         .providers
         .values()
@@ -250,28 +251,28 @@ impl RunnerSupervisor {
     }
   }
 
-  pub(crate) fn get_class(&self, runner_class: &str) -> Result<daemon_proto::GetRunnerClassResponse, RunnerError> {
+  pub(crate) fn get_class(&self, runner_class: &str) -> Result<runtime_proto::GetRunnerClassResponse, RunnerError> {
     let provider = self.providers.get(runner_class).ok_or_else(|| RunnerError::ProviderUnavailable(runner_class.to_string()))?;
     let runners = self.runners.lock().expect("Runner registry lock poisoned");
-    Ok(daemon_proto::GetRunnerClassResponse {
+    Ok(runtime_proto::GetRunnerClassResponse {
       runner_class: Some(runner_class_record(provider, self.local_device.clone(), runners.values())),
     })
   }
 
-  pub(crate) fn list(&self) -> daemon_proto::ListRunnersResponse {
+  pub(crate) fn list(&self) -> runtime_proto::ListRunnersResponse {
     let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
     refresh_exited(&mut runners);
     let mut records = runners.values().map(|runner| runner.record.clone()).collect::<Vec<_>>();
     records.sort_by(|left, right| runner_id(left).cmp(runner_id(right)));
-    daemon_proto::ListRunnersResponse { runners: records }
+    runtime_proto::ListRunnersResponse { runners: records }
   }
 
-  pub(crate) fn get(&self, runner_id: &str) -> Result<daemon_proto::GetRunnerResponse, RunnerError> {
+  pub(crate) fn get(&self, runner_id: &str) -> Result<runtime_proto::GetRunnerResponse, RunnerError> {
     let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
     refresh_exited(&mut runners);
     runners
       .get(runner_id)
-      .map(|runner| daemon_proto::GetRunnerResponse {
+      .map(|runner| runtime_proto::GetRunnerResponse {
         runner: Some(runner.record.clone()),
       })
       .ok_or_else(|| RunnerError::Unknown(runner_id.to_string()))
@@ -280,7 +281,7 @@ impl RunnerSupervisor {
   pub(crate) fn has_live(&self) -> bool {
     let mut runners = self.runners.lock().expect("Runner registry lock poisoned");
     refresh_exited(&mut runners);
-    runners.values().any(|runner| runner.record.phase == daemon_proto::RunnerPhase::Ready as i32)
+    runners.values().any(|runner| runner.record.phase == runtime_proto::RunnerPhase::Ready as i32)
   }
 
   pub(crate) async fn delete(
@@ -288,7 +289,7 @@ impl RunnerSupervisor {
     runner_id: &str,
     grace_period: Option<prost_types::Duration>,
     force: bool,
-  ) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
+  ) -> Result<runtime_proto::DeleteRunnerResponse, RunnerError> {
     let grace_period = grace_period.map(validate_grace_period).transpose()?;
     // Resolve the deadline before claiming ownership. A clock-range error
     // must neither strand a Draining entry nor poison the registry lock.
@@ -306,10 +307,10 @@ impl RunnerSupervisor {
         return Err(RunnerError::Stop("daemon shutdown has closed Runner deletion admission".to_string()));
       }
       let managed = runners.get_mut(runner_id).ok_or_else(|| RunnerError::Unknown(runner_id.to_string()))?;
-      if managed.record.phase == daemon_proto::RunnerPhase::Draining as i32 {
+      if managed.record.phase == runtime_proto::RunnerPhase::Draining as i32 {
         return Err(RunnerError::Deleting(runner_id.to_string()));
       }
-      managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
+      managed.record.phase = runtime_proto::RunnerPhase::Draining as i32;
       managed.run_affinities = 0;
       managed.record.idle_deadline = None;
       let drain = matches!(&managed.runtime, ManagedRunnerRuntime::RemoteGrpc) && !force;
@@ -373,7 +374,7 @@ async fn delete_runner_task(
   deadline: Option<tokio::time::Instant>,
   force: bool,
   drain: bool,
-) -> Result<daemon_proto::DeleteRunnerResponse, RunnerError> {
+) -> Result<runtime_proto::DeleteRunnerResponse, RunnerError> {
   if drain {
     loop {
       // notify_waiters reaches a Notified from its creation, even before its
@@ -402,7 +403,7 @@ async fn delete_runner_task(
   let mut managed =
     { runners.lock().expect("Runner registry lock poisoned").remove(&runner_id) }.ok_or_else(|| RunnerError::Unknown(runner_id.clone()))?;
   match stop_managed_in_place(&mut managed, deadline, force).await {
-    Ok(()) => Ok(daemon_proto::DeleteRunnerResponse {
+    Ok(()) => Ok(runtime_proto::DeleteRunnerResponse {
       runner: Some(managed.record),
     }),
     Err(error) => {
@@ -417,7 +418,7 @@ async fn delete_runner_task(
 /// later DeleteRunner can retry, instead of leaking an unmanaged process.
 /// During shutdown, the supervisor collects this entry after its owner exits.
 fn record_stop_failure(runners: &Arc<Mutex<HashMap<String, ManagedRunner>>>, runner_id: String, mut managed: ManagedRunner) {
-  managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
+  managed.record.phase = runtime_proto::RunnerPhase::Failed as i32;
   tracing::warn!(runner_id = %runner_id, "Runner did not stop cleanly; retained as Failed for a retry");
   runners.lock().expect("Runner registry lock poisoned").insert(runner_id, managed);
 }
@@ -426,25 +427,25 @@ fn runner_class_record<'a>(
   provider: &RegisteredRunnerProvider,
   device: daemon_proto::DeviceRef,
   runners: impl Iterator<Item = &'a ManagedRunner>,
-) -> daemon_proto::RunnerClass {
+) -> runtime_proto::RunnerClass {
   let observed = runners.filter(|runner| {
     runner.record.runner_class.as_ref().is_some_and(|class| class.runner_class == provider.runner_class)
-      && runner.record.phase == daemon_proto::RunnerPhase::Ready as i32
+      && runner.record.phase == runtime_proto::RunnerPhase::Ready as i32
   });
   let mut display_name = provider.runner_class.clone();
   for runner in observed {
     display_name = runner.display_name.clone();
   }
-  daemon_proto::RunnerClass {
-    r#ref: Some(daemon_proto::RunnerClassRef {
+  runtime_proto::RunnerClass {
+    r#ref: Some(runtime_proto::RunnerClassRef {
       runner_class: provider.runner_class.clone(),
     }),
     device: Some(device),
     display_name,
     supported_lifecycles: vec![
-      daemon_proto::RunnerLifecycle::Ephemeral as i32,
-      daemon_proto::RunnerLifecycle::UnlessIdle as i32,
-      daemon_proto::RunnerLifecycle::UnlessShutdown as i32,
+      runtime_proto::RunnerLifecycle::Ephemeral as i32,
+      runtime_proto::RunnerLifecycle::UnlessIdle as i32,
+      runtime_proto::RunnerLifecycle::UnlessShutdown as i32,
     ],
     available: true,
   }
@@ -508,15 +509,15 @@ fn decrement_activity_locked(
   if managed.run_affinities != 0 || managed.record.active_operations != 0 {
     return Ok((None, None));
   }
-  if managed.record.phase != daemon_proto::RunnerPhase::Ready as i32 {
+  if managed.record.phase != runtime_proto::RunnerPhase::Ready as i32 {
     // A Draining Runner is owned by its in-flight delete; a Failed Runner is
     // retained stop-failure evidence. Lifecycle auto-stop only applies to
     // Ready Runners so it can never race the delete owner.
     return Ok((None, None));
   }
-  match daemon_proto::RunnerLifecycle::try_from(managed.record.lifecycle).unwrap_or_default() {
-    daemon_proto::RunnerLifecycle::Ephemeral => Ok((runners.remove(runner_id), None)),
-    daemon_proto::RunnerLifecycle::UnlessIdle => {
+  match runtime_proto::RunnerLifecycle::try_from(managed.record.lifecycle).unwrap_or_default() {
+    runtime_proto::RunnerLifecycle::Ephemeral => Ok((runners.remove(runner_id), None)),
+    runtime_proto::RunnerLifecycle::UnlessIdle => {
       let timeout = validate_idle_timeout(managed.record.idle_timeout.as_ref())?;
       let deadline = std::time::SystemTime::now() + timeout;
       managed.record.idle_deadline = Some(timestamp_from_system_time(deadline));
@@ -537,7 +538,7 @@ fn schedule_idle_stop(
     let managed = {
       let mut runners = runners.lock().expect("Runner registry lock poisoned");
       let should_stop = runners.get(&runner_id).is_some_and(|managed| {
-        managed.record.phase == daemon_proto::RunnerPhase::Ready as i32
+        managed.record.phase == runtime_proto::RunnerPhase::Ready as i32
           && managed.run_affinities == 0
           && managed.record.active_operations == 0
           && managed.record.idle_deadline.as_ref() == Some(&timestamp_from_system_time(deadline))
@@ -558,7 +559,7 @@ async fn stop_managed(mut managed: ManagedRunner) -> Result<(), RunnerError> {
 }
 
 async fn stop_managed_in_place(managed: &mut ManagedRunner, deadline: Option<tokio::time::Instant>, force: bool) -> Result<(), RunnerError> {
-  managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
+  managed.record.phase = runtime_proto::RunnerPhase::Draining as i32;
   let channel = std::mem::replace(&mut managed.channel, Channel::from_static("http://[::]:1").connect_lazy());
   match &mut managed.runtime {
     ManagedRunnerRuntime::RemoteGrpc => {
@@ -586,7 +587,7 @@ async fn stop_managed_in_place(managed: &mut ManagedRunner, deadline: Option<tok
       }
     }
   }
-  managed.record.phase = daemon_proto::RunnerPhase::Stopped as i32;
+  managed.record.phase = runtime_proto::RunnerPhase::Stopped as i32;
   tracing::info!(runner_id = runner_id(&managed.record), force, "Runner stopped");
   Ok(())
 }
@@ -920,12 +921,12 @@ fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
       // approved. Ordinary RPCs already surface endpoint unavailability.
       ManagedRunnerRuntime::RemoteGrpc => false,
     };
-    if managed.record.phase == daemon_proto::RunnerPhase::Ready as i32 && exited {
+    if managed.record.phase == runtime_proto::RunnerPhase::Ready as i32 && exited {
       // TODO(runner-restart-policy): crashed children are retained as FAILED
       // evidence and a later routed request may create a replacement.
       // Automatic restart/backoff is deferred until the owner approves
       // attempt limits, crash-loop visibility, and Run-affinity reassignment.
-      managed.record.phase = daemon_proto::RunnerPhase::Failed as i32;
+      managed.record.phase = runtime_proto::RunnerPhase::Failed as i32;
       tracing::warn!(
         runner_id = %runner_id,
         process_id = managed.record.process_id,
@@ -936,7 +937,7 @@ fn refresh_exited(runners: &mut HashMap<String, ManagedRunner>) {
   }
 }
 
-fn runner_id(runner: &daemon_proto::Runner) -> &str {
+fn runner_id(runner: &runtime_proto::Runner) -> &str {
   runner.r#ref.as_ref().map(|runner| runner.runner_id.as_str()).unwrap_or_default()
 }
 

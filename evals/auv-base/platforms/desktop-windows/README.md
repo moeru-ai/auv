@@ -29,10 +29,10 @@ tasks/probe.rs                   `probe`, `freshness` and `geometry`: diagnostic
                                  other programs.
 tasks/window_commands.rs         `window`: the `window.*` invoke commands, as the real `auv` binary, against a
                                  covered receiver and judged against what the receiver knows.
-tasks/screen_commands.rs         `screen`: `screen.findText` and `screen.waitForText`, as the real `auv` binary, against an
+tasks/screen_commands.rs         `screen`: `display.findText` and `display.waitForText`, as the real `auv` binary, against an
                                  uncovered receiver, placed against the controls that draw the text.
-tasks/foreground_commands.rs     `foreground`: `display.*`, `screen.captureRegion`, `input.moveMouse`,
-                                 `input.clickPoint`, `input.drag`, the keyboard commands and
+tasks/foreground_commands.rs     `foreground`: `display.*`, `display.captureRegion`, `input.moveMouse`,
+                                 `input.clickPoint`, `input.dragMouse`, the keyboard commands and
                                  `input.pasteText`, as the real `auv` binary, judged by the
                                  receiver's text box, key log and drag pad (`--foreground-input`).
 tasks/apps.rs                    `apps`: real applications, one per toolkit, covered and in the
@@ -116,7 +116,7 @@ scenario does not claim Ctrl+A selects text in every application.
 No input action is retried. OCR readiness gets at most three observations. Before dispatch,
 OCR must select a single candidate inside the expected owned control, the user must have
 been idle for two seconds, and keyboard input requires the correct foreground and control
-focus. Every workflow `screen.clickText` passes a `--within` fence for the exact preflight point.
+focus. Every workflow `display.clickText` passes a `--within` fence for the exact preflight point.
 Local Invoke and selected Runner reject a different OCR point before they send input.
 The direct Rust route checks the same fence. OCR jitter can therefore stop the workflow safely.
 The returned click point is checked independently. Wrong-focus and wrong-window controls

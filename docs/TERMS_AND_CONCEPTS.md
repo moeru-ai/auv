@@ -587,9 +587,11 @@ independent decisions:
   one. Discovery is this local descriptor, not network service discovery.
 
 The daemon control protobuf package is `auv.api.daemon.v1`. It owns Device,
-pairing, discovery, Run, RunnerClass, and Runner services and messages. It
-replaced the experimental `auv.api.core.v1` package before stabilization so the
-wire identity names its actual owner. Capability packages do not import daemon resource
+user session, device-local, pairing, discovery and health services and
+messages. Run, RunnerClass and Runner services and messages live in
+`auv.api.runtime.v1`, the package of their `/apis/auv/runtime/v1` REST group.
+`auv.api.daemon.v1` replaced the experimental `auv.api.core.v1` package before
+stabilization so the wire identity names its actual owner. Capability packages do not import daemon resource
 references for routing; routing context belongs to transport metadata. A
 generic `meta.v1` package is intentionally deferred until a genuinely shared
 wire concept exists that is not owned by the daemon or a capability domain.
@@ -871,16 +873,20 @@ optional Run association is also independent.
 
 **Method presentation** (*provisional*) is how a method describes itself to
 people and tools. The `presentation` annotation carries three fields:
-- an API name in dotted lower_snake_case that follows the SDK path, such as
-  `window.find_text`, with other casings derived from it;
+- an **operation id**: `<service resource>.<rpc without the resource noun>` in
+  lower camelCase, such as `window.findText` for `WindowService.FindWindowText`
+  or `input.clickPoint` for `InputService.ClickPoint`. The invoke command and
+  the MCP tool use the same id;
 - a short title;
 - a one-paragraph, plain-text description that can become a JSDoc comment or
   a Python docstring.
 
-Long-form **method docs** are Markdown files named by that API name. The
+Long-form **method docs** are Markdown files named by that operation id. The
 fenced blocks in their `## Examples` section are examples, one per language. A
 Runner serves the docs on request through `MethodDocsService`. See
-`docs/ai/references/session-api/2026-10-09-method-presentation-and-docs.md`.
+`docs/ai/references/session-api/2026-10-09-method-presentation-and-docs.md`
+and, for the naming rules,
+`docs/ai/references/session-api/2026-11-02-driver-api-naming-normalization.md`.
 
 ## Driver API
 
@@ -888,8 +894,12 @@ The Driver API is the typed protobuf projection of `auv-driver` capabilities.
 Portable services use the `auv.api.driver.v1` package. Platform-specific
 services use `auv.api.driver.<platform>.v1`, such as
 `auv.api.driver.macos.v1`; they extend the available service set rather than
-inherit from or reinterpret a portable service. Device, Run, and Runner
-control-plane resources remain in `auv.api.daemon.v1`.
+inherit from or reinterpret a portable service. Device control-plane
+resources remain in `auv.api.daemon.v1`; Run, Runner and RunnerClass live in
+`auv.api.runtime.v1`, matching their `/apis/auv/runtime/v1` REST group. A
+service is named after the resource it acts on (`WindowService.CaptureWindow`,
+`DisplayService.FindDisplayText`); input that takes any position stays in
+`InputService`.
 
 A Runner advertises the exact portable and platform Driver services/methods it
 implements. Calling a method that the selected Runner or platform does not
@@ -1044,16 +1054,15 @@ on macOS, the AT-SPI `AccessibleId` on Linux, and the executable file name on Wi
 example `notepad.exe`, matched ignoring ASCII case), each as `window.list` shows it. See the
 [Windows window commands reference](ai/references/invoke-cli/2026-10-11-windows-window-commands.md).
 
-`app.activate` reports the kind of id it activated: `bundle_id` on macOS and
+`application.activate` reports the kind of id it activated: `bundle_id` on macOS and
 `process_name` (the executable name) on Windows. The Linux Wayland kind
 `desktop_app_id` (the AT-SPI application id) is defined, but Wayland activation
 is not implemented yet.
 
 Each command definition declares whether a target is forbidden, optional, or
 required and which resource types it accepts. CLI help and MCP metadata derive
-from that same declaration. `input.key`, `input.keys`, `input.keyboard`,
-`input.typeText`, and `input.pasteText`
-accept application/window targets on macOS. The target selects a running
+from that same declaration. `input.pressKeys`, `input.performKeyboardInputs`,
+`input.typeText`, and `input.pasteText` accept application/window targets on macOS. The target selects a running
 application or exact observed window; input policy separately controls foreground
 preparation. Foreground policy confirms application focus and, for window
 targets, exact window focus. Background policy does not activate. Events remain
@@ -1118,7 +1127,7 @@ These three words name three different positions. Do not use one for another.
 
 | Term | What it is | Owner | Read through |
 | --- | --- | --- | --- |
-| Pointer | The OS pointer position, in logical screen space | The platform | `InputService/GetPointerPosition`, `auv invoke input.pointerPosition` |
+| Pointer | The OS pointer position, in logical screen space | The platform | `InputService/GetPointerPosition`, `auv invoke input.getPointerPosition` |
 | Logical mouse | AUV's own position and held-button state for one mouse identity | `input` (`MouseCoordinator`) | Not readable yet (`TODO(logical-mouse-state)`) |
 | Cursor | A visual layer that an overlay draws, such as the AUV cursor; a [live overlay](#live-overlay) moves it between points drivers reported | `overlay` | Overlay requests only |
 
@@ -1170,10 +1179,12 @@ keeps the hold uncertain and available for explicit retry; a successful native
 post still does not verify an application effect. Only one combination is held
 per local driver process. See the [keyboard hold contract](ai/references/driver/2026-09-24-keyboard-hold-contract.md).
 
-`InputKeyboard` executes an ordered list of typed keyboard actions (press,
-Unicode text, or clipboard paste). `PressKey` and `PressKeys` are conveniences
-that use this interpreter. The released PressKey shortcut spelling remains a
-compatibility input. Target identity and per-action input policy remain separate
+`PerformKeyboardInputs` (the driver's `input_keyboard`) executes an ordered
+list of typed keyboard actions (press, Unicode text, or clipboard paste).
+`PressKeys` is a convenience that uses this interpreter. The driver's
+`press_key` shortcut spelling remains a local compatibility input; the
+`PressKey` RPC and `input.key` were removed by the 2026-11-02 naming
+normalization. Target identity and per-action input policy remain separate
 from control selection and semantic verification.
 
 The entire list is validated before driver activation or delivery. A delivery
@@ -1671,7 +1682,7 @@ on every frontend and Runner.
 Only a foreground step restores a minimized window. That means:
 
 - `foreground_preferred` delivery;
-- an activation command such as `app.activate`;
+- an activation command such as `application.activate`;
 - a `background_preferred` action that fell back to foreground input.
 
 `background_only` never restores. It refuses a minimized target or reports it skipped, as the
@@ -1727,7 +1738,7 @@ viewport toward later content (down) and positive `delta_x` moving it right,
 matching DOM `WheelEvent` and Playwright `mouse.wheel`. Platform adapters
 convert to native wheel units and signs; the user's natural-scrolling
 preference does not apply to synthetic input. The same convention crosses the
-Runner protocol (`InputService/ScrollWindowPoint`), `auv invoke input.scroll`,
+Runner protocol (`WindowService/ScrollWindow`), `auv invoke window.scroll`,
 and the SDKs; see the
 [scroll delta contract](ai/references/driver/2026-10-06-scroll-delta-contract.md)
 for per-platform evidence.
@@ -1792,8 +1803,8 @@ Scroll until is a bounded observation loop:
   exists. A slow lazy load, an occluded window, or capture failure can look
   like an end. Only `end_by_no_visual_progress` is reported as one, because
   it needs motion before the stillness.
-- **Where it runs:** on the Runner (`InputService/ScrollUntil`), so captures
-  stay local. It is reachable through `auv invoke input.scrollUntil` and the
+- **Where it runs:** on the Runner (`WindowService/ScrollWindowUntil`), so captures
+  stay local. It is reachable through `auv invoke window.scrollUntil` and the
   Rust and JS clients.
 
 See the
@@ -1840,7 +1851,7 @@ The result has no focus-disturbance field, because activation changes focus by
 definition. It has no attempts or fallback reasons yet, because every platform
 has one strategy.
 
-The CLI command is `app.activate`. The Runner API is
+The CLI command is `application.activate`. The Runner API is
 `auv.api.driver.v1.ApplicationService/ActivateApplication`. The SDKs call it as
 `runner.applications().activate(...)` in Rust and
 `auv.applications.activate({ applicationId })` in JavaScript. A platform

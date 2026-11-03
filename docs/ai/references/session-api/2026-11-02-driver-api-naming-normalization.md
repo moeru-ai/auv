@@ -229,3 +229,46 @@ through the daemon on macOS, luoling-windows-11 and neko-gpu-1 for
   must update every `.auv.api.daemon.v1.*` attribute path in `build.rs` by
   hand, and the review must confirm the `EnrollRequest.credential`
   `#[serde(skip)]` still applies.
+
+## Implementation notes (2026-11-03)
+
+Decisions taken while applying the tables above:
+
+- **Service files.** `WindowService` and `DisplayService` are declared in
+  `window_service.proto` and `display_service.proto`. Their request messages
+  stay next to the capability types they share (capture, text, input), and
+  `window.proto` / `display.proto` are imported by those files, so declaring
+  the services there would be an import cycle (`NOTICE(service-files)`). Other
+  file names are unchanged (`text_recognition.proto` holds `TextService`,
+  `recent_frames.proto` holds `FrameBufferService`, `media_control.proto`
+  holds `MediaService`).
+- **Message names follow the RPC** (`buf lint` STANDARD):
+  `CaptureDisplayRegionRequest`, `ScrollWindowRequest`,
+  `ScrollWindowWithMotionRequest`, `StreamWindowScrollRequest`,
+  `ScrollWindowUntilRequest`, `CreateFrameBufferRequest`,
+  `ListRecentFramesRequest`, `DeleteFrameBufferRequest`, `DeleteMouseRequest`,
+  `PerformKeyboardInputsRequest`, `PlayMediaRequest` (and the other media
+  verbs), `CreateEnrollmentRequest`, `DeleteEnrollmentRequest`,
+  `ListAuditEntriesRequest`, with matching responses. Event and option
+  messages (`ScrollUntilBegin`, `StreamScrollBegin`, …) keep their names.
+  The `build.rs` credential path is now
+  `.auv.api.daemon.v1.CreateEnrollmentRequest.credential`; the existing
+  `local_enrollment_credential_is_excluded_from_daemon_json` test covers it.
+- **`UserSessionService`** and its messages live in
+  `daemon/v1/user_session.proto`. It has no HTTP bindings
+  (`TODO(device-entry-http)`), so it is not in the OpenAPI `types` list.
+- **Invoke groups.** Help groups follow the operation id prefix: `display`
+  (now with `captureRegion`, `findText`, `waitForText`, `clickText`), `window`
+  (now with `scroll`, `scrollUntil`), `input`, `accessibility`, `application`,
+  `permission`, `media`. The `app` namespace stays for app-local commands
+  such as `app.textedit.document.write`. `input.axFocusText` and the
+  `input.keys` alias are removed, so the registry has no alias.
+- **Enforcement.** `proto/api-linter.yaml` enables only api-linter's naming
+  rules (synonyms, verb-noun, prepositions, method and service case) with the
+  recorded exceptions disabled per file, and CI runs it (`proto-naming` in
+  `.github/workflows/check.yml`). api-linter has no rule for rule 5, so
+  `presentation_name_is_derived_from_the_service_and_rpc` in
+  `crates/auv-api-proto/src/lib_test.rs` checks it. The "every discoverable
+  RPC has an invoke command or an SDK-only marker" check is not added
+  (`TODO(api-linter)` at the test): the invoke registry lives in
+  `auv-cli-invoke`.

@@ -15,10 +15,10 @@ fn is_false(value: &bool) -> bool {
 pub(crate) mod json {
   tonic_rest::define_enum_serde!(api_resource_operation, crate::auv::api::daemon::v1::ApiResourceOperation);
   tonic_rest::define_enum_serde!(device_platform, crate::auv::api::daemon::v1::DevicePlatform);
-  tonic_rest::define_enum_serde!(run_phase, crate::auv::api::daemon::v1::RunPhase);
-  tonic_rest::define_enum_serde!(run_outcome, crate::auv::api::daemon::v1::RunOutcome);
-  tonic_rest::define_enum_serde!(runner_lifecycle, crate::auv::api::daemon::v1::RunnerLifecycle);
-  tonic_rest::define_enum_serde!(runner_phase, crate::auv::api::daemon::v1::RunnerPhase);
+  tonic_rest::define_enum_serde!(run_phase, crate::auv::api::runtime::v1::RunPhase);
+  tonic_rest::define_enum_serde!(run_outcome, crate::auv::api::runtime::v1::RunOutcome);
+  tonic_rest::define_enum_serde!(runner_lifecycle, crate::auv::api::runtime::v1::RunnerLifecycle);
+  tonic_rest::define_enum_serde!(runner_phase, crate::auv::api::runtime::v1::RunnerPhase);
 
   pub fn is_zero_i32(value: &i32) -> bool {
     *value == 0
@@ -142,6 +142,12 @@ pub mod auv {
     pub mod daemon {
       pub mod v1 {
         tonic::include_proto!("auv.api.daemon.v1");
+      }
+    }
+
+    pub mod runtime {
+      pub mod v1 {
+        tonic::include_proto!("auv.api.runtime.v1");
       }
     }
 

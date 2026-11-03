@@ -12,15 +12,17 @@ use std::sync::Arc;
 use crate::authentication::Authenticator;
 use crate::control::{Control, Pairing};
 use crate::protocol::grpc::daemon::v1::{
-  DeviceServiceGrpc, DiscoveryServiceGrpc, HealthServiceGrpc, PairingServiceGrpc, RunServiceGrpc, RunnerClassServiceGrpc, RunnerServiceGrpc,
+  DeviceServiceGrpc, DiscoveryServiceGrpc, HealthServiceGrpc, PairingServiceGrpc, UserSessionServiceGrpc,
 };
+use crate::protocol::grpc::runtime::v1::{RunServiceGrpc, RunnerClassServiceGrpc, RunnerServiceGrpc};
 use auv_api_proto::auv::api::daemon::v1::device_service_server::DeviceServiceServer;
 use auv_api_proto::auv::api::daemon::v1::discovery_service_server::DiscoveryServiceServer;
 use auv_api_proto::auv::api::daemon::v1::health_service_server::HealthServiceServer;
 use auv_api_proto::auv::api::daemon::v1::pairing_service_server::PairingServiceServer;
-use auv_api_proto::auv::api::daemon::v1::run_service_server::RunServiceServer;
-use auv_api_proto::auv::api::daemon::v1::runner_class_service_server::RunnerClassServiceServer;
-use auv_api_proto::auv::api::daemon::v1::runner_service_server::RunnerServiceServer;
+use auv_api_proto::auv::api::daemon::v1::user_session_service_server::UserSessionServiceServer;
+use auv_api_proto::auv::api::runtime::v1::run_service_server::RunServiceServer;
+use auv_api_proto::auv::api::runtime::v1::runner_class_service_server::RunnerClassServiceServer;
+use auv_api_proto::auv::api::runtime::v1::runner_service_server::RunnerServiceServer;
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
@@ -263,6 +265,7 @@ async fn serve_listener(
   let discovery_service = DiscoveryServiceGrpc::new(Arc::clone(&daemon));
   let health_service = HealthServiceGrpc { id: id.clone() };
   let device_service = DeviceServiceGrpc::new(Arc::clone(&daemon));
+  let user_session_service = UserSessionServiceGrpc::new(Arc::clone(&daemon));
   let runner_service = RunnerServiceGrpc::new(Arc::clone(&daemon));
   let runner_class_service = RunnerClassServiceGrpc::new(Arc::clone(&daemon));
   let run_service = RunServiceGrpc::new(Arc::clone(&daemon));
@@ -270,6 +273,7 @@ async fn serve_listener(
     .add_service(DiscoveryServiceServer::new(discovery_service))
     .add_service(HealthServiceServer::new(health_service))
     .add_service(DeviceServiceServer::new(device_service))
+    .add_service(UserSessionServiceServer::new(user_session_service))
     .add_service(RunnerServiceServer::new(runner_service))
     .add_service(RunnerClassServiceServer::new(runner_class_service))
     .add_service(RunServiceServer::new(run_service))

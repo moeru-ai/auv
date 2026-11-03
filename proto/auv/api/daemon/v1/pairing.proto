@@ -24,19 +24,19 @@ service PairingService {
   }
   rpc RevokeDeviceCredential(RevokeDeviceCredentialRequest) returns (RevokeDeviceCredentialResponse) {
     option (google.api.http) = {
-      post: "/apis/auv/daemon/v1/pairing/credentials/revoke"
+      post: "/apis/auv/daemon/v1/pairing/credentials:revoke"
       body: "*"
     };
   }
   rpc SetPairedDeviceEnabled(SetPairedDeviceEnabledRequest) returns (SetPairedDeviceEnabledResponse) {
     option (google.api.http) = {
-      post: "/apis/auv/daemon/v1/pairing/devices/enabled"
+      post: "/apis/auv/daemon/v1/pairing/devices:setEnabled"
       body: "*"
     };
   }
   rpc UnpairDevice(UnpairDeviceRequest) returns (UnpairDeviceResponse) {
     option (google.api.http) = {
-      post: "/apis/auv/daemon/v1/pairing/devices/unpair"
+      post: "/apis/auv/daemon/v1/pairing/devices:unpair"
       body: "*"
     };
   }

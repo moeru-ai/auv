@@ -12,14 +12,9 @@ fn aliases_name_a_registered_canonical_command_and_share_its_support() {
     })
     .collect::<Vec<_>>();
   aliases.sort_unstable();
-  // A third alias must be a decision, not an accident: it changes how the registry counts commands.
-  assert_eq!(
-    aliases,
-    [
-      ("input.axFocusText", "input.focusText"),
-      ("input.pressKeys", "input.keys")
-    ]
-  );
+  // An alias must be a decision, not an accident: it changes how the registry
+  // counts commands. The 2026-11-02 naming normalization removed the last ones.
+  assert_eq!(aliases, Vec::<(&str, &str)>::new());
 
   for (alias, canonical) in aliases {
     let alias = registry.resolve(alias).expect("alias is registered");

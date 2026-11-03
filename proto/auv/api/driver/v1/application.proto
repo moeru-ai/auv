@@ -14,9 +14,9 @@ service ApplicationService {
     // Foreground activation changes the focus context used by later input.
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
     option (auv.api.annotations.v1.presentation) = {
-      name: "applications.activate"
+      name: "application.activate"
       title: "Activate an application"
-      description: "Brings an application to the front by the application ID that windows.list reports (a bundle ID on macOS, a process image name on Windows) and reports whether it became active."
+      description: "Brings an application to the front by the application ID that window.list reports (a bundle ID on macOS, a process image name on Windows) and reports whether it became active."
     };
   }
 }
@@ -26,7 +26,7 @@ message ActivateApplicationRequest {
   // Runner's platform. The Runner's platform decides its kind, which the
   // response reports in `application_id_kind`.
   string application_id = 1;
-  // Absence uses the owning app.activate default of 150 ms.
+  // Absence uses the owning application.activate default of 150 ms.
   google.protobuf.Duration settle = 2;
 }
 

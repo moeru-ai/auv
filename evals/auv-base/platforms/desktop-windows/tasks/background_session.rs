@@ -113,7 +113,7 @@ fn main() -> std::process::ExitCode {
       #[arg(long, default_value = "target/debug/auv.exe")]
       auv: PathBuf,
     },
-    /// `screen.findText` and `screen.waitForText`, run as the real `auv` binary against an uncovered receiver.
+    /// `display.findText` and `display.waitForText`, run as the real `auv` binary against an uncovered receiver.
     Screen {
       #[arg(long)]
       output: PathBuf,

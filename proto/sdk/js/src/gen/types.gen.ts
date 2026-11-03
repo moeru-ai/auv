@@ -368,7 +368,7 @@ export type PairingServiceRevokeDeviceCredentialData = {
     body: V1RevokeDeviceCredentialRequest;
     path?: never;
     query?: never;
-    url: '/apis/auv/daemon/v1/pairing/credentials/revoke';
+    url: '/apis/auv/daemon/v1/pairing/credentials:revoke';
 };
 
 export type PairingServiceRevokeDeviceCredentialResponses = {
@@ -400,7 +400,7 @@ export type PairingServiceSetPairedDeviceEnabledData = {
     body: V1SetPairedDeviceEnabledRequest;
     path?: never;
     query?: never;
-    url: '/apis/auv/daemon/v1/pairing/devices/enabled';
+    url: '/apis/auv/daemon/v1/pairing/devices:setEnabled';
 };
 
 export type PairingServiceSetPairedDeviceEnabledResponses = {
@@ -416,7 +416,7 @@ export type PairingServiceUnpairDeviceData = {
     body: V1UnpairDeviceRequest;
     path?: never;
     query?: never;
-    url: '/apis/auv/daemon/v1/pairing/devices/unpair';
+    url: '/apis/auv/daemon/v1/pairing/devices:unpair';
 };
 
 export type PairingServiceUnpairDeviceResponses = {

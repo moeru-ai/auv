@@ -8,7 +8,7 @@ use std::{
 };
 
 use auv_api_proto::auv::api::driver::v1 as proto;
-use auv_api_proto::auv::api::driver::v1::recent_frames_service_server::RecentFramesService;
+use auv_api_proto::auv::api::driver::v1::frame_buffer_service_server::FrameBufferService;
 use tonic::{Request, Response, Status};
 
 use super::local_driver;
@@ -155,7 +155,7 @@ impl History {
     pause.skipped_captures += 1;
   }
 
-  fn recent(&self, after_sequence: u64) -> Result<proto::GetRecentFramesResponse, Status> {
+  fn recent(&self, after_sequence: u64) -> Result<proto::ListRecentFramesResponse, Status> {
     if after_sequence > self.latest_sequence {
       return Err(Status::invalid_argument(format!(
         "after_sequence {after_sequence} is newer than latest_sequence {}",
@@ -168,7 +168,7 @@ impl History {
     {
       return Err(Status::unavailable(format!("recent-frame producer stopped: {reason}")));
     }
-    Ok(proto::GetRecentFramesResponse {
+    Ok(proto::ListRecentFramesResponse {
       frames,
       latest_sequence: self.latest_sequence,
       dropped_frames: self.dropped_frames,
@@ -302,11 +302,11 @@ fn resize_capture(mut capture: auv_driver::Capture, output_size: Option<PixelSiz
 }
 
 #[tonic::async_trait]
-impl RecentFramesService for Service {
-  async fn open_frame_buffer(
+impl FrameBufferService for Service {
+  async fn create_frame_buffer(
     &self,
-    request: Request<proto::OpenFrameBufferRequest>,
-  ) -> Result<Response<proto::OpenFrameBufferResponse>, Status> {
+    request: Request<proto::CreateFrameBufferRequest>,
+  ) -> Result<Response<proto::CreateFrameBufferResponse>, Status> {
     let (target, target_fps, capacity, output_size) = validate_open(request.into_inner())?;
     if self.buffers.lock().expect("recent-frame buffers mutex poisoned").len() >= MAX_ACTIVE_BUFFERS {
       return Err(Status::resource_exhausted(format!("at most {MAX_ACTIVE_BUFFERS} recent-frame buffers may be active")));
@@ -332,17 +332,17 @@ impl RecentFramesService for Service {
       active.stop().await?;
       return Err(Status::resource_exhausted(format!("at most {MAX_ACTIVE_BUFFERS} recent-frame buffers may be active")));
     }
-    Ok(Response::new(proto::OpenFrameBufferResponse {
+    Ok(Response::new(proto::CreateFrameBufferResponse {
       frame_buffer: Some(proto::FrameBufferRef {
         frame_buffer_id: id,
       }),
     }))
   }
 
-  async fn get_recent_frames(
+  async fn list_recent_frames(
     &self,
-    request: Request<proto::GetRecentFramesRequest>,
-  ) -> Result<Response<proto::GetRecentFramesResponse>, Status> {
+    request: Request<proto::ListRecentFramesRequest>,
+  ) -> Result<Response<proto::ListRecentFramesResponse>, Status> {
     let request = request.into_inner();
     let reference = validate_reference(request.frame_buffer)?;
     let history = {
@@ -353,10 +353,10 @@ impl RecentFramesService for Service {
     Ok(Response::new(history.recent(request.after_sequence)?))
   }
 
-  async fn close_frame_buffer(
+  async fn delete_frame_buffer(
     &self,
-    request: Request<proto::CloseFrameBufferRequest>,
-  ) -> Result<Response<proto::CloseFrameBufferResponse>, Status> {
+    request: Request<proto::DeleteFrameBufferRequest>,
+  ) -> Result<Response<proto::DeleteFrameBufferResponse>, Status> {
     let reference = validate_reference(request.into_inner().frame_buffer)?;
     let active = self
       .buffers
@@ -365,11 +365,11 @@ impl RecentFramesService for Service {
       .remove(&reference.frame_buffer_id)
       .ok_or_else(|| Status::not_found("unknown frame buffer"))?;
     active.stop().await?;
-    Ok(Response::new(proto::CloseFrameBufferResponse {}))
+    Ok(Response::new(proto::DeleteFrameBufferResponse {}))
   }
 }
 
-fn validate_open(request: proto::OpenFrameBufferRequest) -> Result<(CaptureTarget, u32, usize, Option<PixelSize>), Status> {
+fn validate_open(request: proto::CreateFrameBufferRequest) -> Result<(CaptureTarget, u32, usize, Option<PixelSize>), Status> {
   if request.target_fps == 0 || request.target_fps > MAX_TARGET_FPS {
     return Err(Status::invalid_argument(format!("target_fps must be within 1..={MAX_TARGET_FPS}")));
   }

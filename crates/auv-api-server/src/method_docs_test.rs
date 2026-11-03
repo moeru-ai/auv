@@ -23,21 +23,21 @@ async fn docs_are_served_by_grpc_path_for_methods_the_runner_serves() {
   // Docs are named by `presentation.name`, but clients only know the gRPC path
   // of the call they made. The Runner's own descriptor set maps one to the
   // other, so a Runner serves docs only for methods it serves.
-  let served = ["auv.api.driver.v1.TextRecognitionService"];
+  let served = ["auv.api.driver.v1.WindowService"];
   let descriptor_set = auv_api_proto::descriptor_set_for_services(&served).expect("descriptor set");
   let docs = Service::new(
     &descriptor_set,
     &served,
     &[
-      ("window.find_text", DOC),
-      ("windows.list", "# List windows"),
+      ("window.findText", DOC),
+      ("capture.getImage", "# Get capture pixels"),
     ],
   )
   .expect("docs service");
 
   let found = docs
     .get_method_docs(Request::new(GetMethodDocsRequest {
-      method: "/auv.api.driver.v1.TextRecognitionService/FindWindowText".to_string(),
+      method: "/auv.api.driver.v1.WindowService/FindWindowText".to_string(),
     }))
     .await
     .expect("docs for a served method")
@@ -45,11 +45,11 @@ async fn docs_are_served_by_grpc_path_for_methods_the_runner_serves() {
   assert!(found.markdown.starts_with("# Find text"));
   assert_eq!(found.examples.len(), 2);
 
-  // WindowService is in the descriptor set (a dependency of text
-  // recognition) but not served here, so its docs are not either.
+  // CaptureService is in the descriptor set (a dependency of the window
+  // service) but not served here, so its docs are not either.
   let missing = docs
     .get_method_docs(Request::new(GetMethodDocsRequest {
-      method: "/auv.api.driver.v1.WindowService/ListWindows".to_string(),
+      method: "/auv.api.driver.v1.CaptureService/GetCaptureImage".to_string(),
     }))
     .await
     .expect_err("an unserved method has no docs");

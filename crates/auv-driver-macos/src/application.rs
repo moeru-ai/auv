@@ -91,7 +91,7 @@ impl ApplicationApi<'_> {
 /// LaunchServices launch.
 ///
 /// NOTICE: `open -b` returns before a launched application reaches the
-/// front, so one check right after the 150 ms `app.activate` settle reported
+/// front, so one check right after the 150 ms `application.activate` settle reported
 /// `foreground_mismatch` for an activation that succeeded. Only a foreground
 /// mismatch keeps checking; a verified foreground or an unavailable
 /// observation returns at once.
@@ -150,7 +150,7 @@ fn activation_script(bundle_id: &str) -> DriverResult<String> {
     });
   }
 
-  // Bound the AppleEvent: the default two-minute timeout stalled app.activate
+  // Bound the AppleEvent: the default two-minute timeout stalled application.activate
   // when the application did not answer while launching.
   Ok(format!("with timeout of 10 seconds\ntell application id \"{}\" to activate\nend timeout", escape_applescript(bundle_id)))
 }

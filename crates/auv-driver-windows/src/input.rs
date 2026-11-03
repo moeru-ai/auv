@@ -1049,7 +1049,7 @@ mod native {
   }
 
   pub(super) fn scroll(_point: Point, _units: super::WheelUnits) -> DriverResult<()> {
-    Err(DriverError::unsupported("input.scroll"))
+    Err(DriverError::unsupported("input.scrollPoint"))
   }
 
   pub(super) fn type_text(_text: &str, _options: &TypeTextOptions, _submit_key: Option<u16>) -> DriverResult<()> {

@@ -11,7 +11,7 @@ pub fn render_help_index(registry: &InvokeRegistry) -> String {
   let command_width = commands.iter().map(|command| command.id.len()).chain(["help".len()]).max().unwrap_or(0) + 2;
 
   let mut help = String::from(
-    "Invoke typed computer-use operations through AUV's shared local and remote execution model.\n\nEach invocation creates or joins a Run, calls one registered operation, and records its result and artifacts through the same execution path used by other frontends.\n\nExamples:\n  # List displays on the local Device\n  auv invoke display.list\n\n  # Run the same operation on a paired Device\n  auv --device node1 invoke display.list\n\n  # Inspect command-specific arguments and examples\n  auv invoke screen.findText --help\n\nUsage:\n  auv invoke <COMMAND> [OPTIONS]\n\nCommands:\n",
+    "Invoke typed computer-use operations through AUV's shared local and remote execution model.\n\nEach invocation creates or joins a Run, calls one registered operation, and records its result and artifacts through the same execution path used by other frontends.\n\nExamples:\n  # List displays on the local Device\n  auv invoke display.list\n\n  # Run the same operation on a paired Device\n  auv --device node1 invoke display.list\n\n  # Inspect command-specific arguments and examples\n  auv invoke display.findText --help\n\nUsage:\n  auv invoke <COMMAND> [OPTIONS]\n\nCommands:\n",
   );
   let mut header = format!("  {:<command_width$}", "");
   for platform in Platform::ALL {
@@ -129,8 +129,8 @@ impl InvokeCommand {
       let Some(tokens) = shlex::split(line) else {
         continue;
       };
-      // Aliases share one argument struct (input.keys and input.pressKeys),
-      // so an example may name either id; it parses against this command.
+      // An alias shares its canonical command's argument struct, so an example
+      // may name either id; it parses against this command.
       let Some(position) = tokens.iter().position(|token| token == "invoke") else {
         continue;
       };

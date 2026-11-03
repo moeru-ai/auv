@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 
 use crate::client::Client;
 use crate::error::ClientError;
@@ -117,7 +118,7 @@ impl Runs {
       .client
       .grpc_client()
       .runs()
-      .create_run(proto::CreateRunRequest {
+      .create_run(runtime_proto::CreateRunRequest {
         devices: request
           .devices
           .into_iter()
@@ -206,20 +207,20 @@ impl Run {
   }
 }
 
-impl TryFrom<proto::Run> for Run {
+impl TryFrom<runtime_proto::Run> for Run {
   type Error = RunError;
 
-  fn try_from(run: proto::Run) -> Result<Self, Self::Error> {
+  fn try_from(run: runtime_proto::Run) -> Result<Self, Self::Error> {
     let id = RunId::from_str(&run.r#ref.ok_or(RunError::MissingIdentity)?.run_id)?;
     Ok(Self {
       id,
-      phase: match proto::RunPhase::try_from(run.phase).unwrap_or(proto::RunPhase::Unspecified) {
-        proto::RunPhase::Unspecified => RunPhase::Unspecified,
-        proto::RunPhase::Pending => RunPhase::Pending,
-        proto::RunPhase::Running => RunPhase::Running,
-        proto::RunPhase::Succeeded => RunPhase::Succeeded,
-        proto::RunPhase::Failed => RunPhase::Failed,
-        proto::RunPhase::Canceled => RunPhase::Canceled,
+      phase: match runtime_proto::RunPhase::try_from(run.phase).unwrap_or(runtime_proto::RunPhase::Unspecified) {
+        runtime_proto::RunPhase::Unspecified => RunPhase::Unspecified,
+        runtime_proto::RunPhase::Pending => RunPhase::Pending,
+        runtime_proto::RunPhase::Running => RunPhase::Running,
+        runtime_proto::RunPhase::Succeeded => RunPhase::Succeeded,
+        runtime_proto::RunPhase::Failed => RunPhase::Failed,
+        runtime_proto::RunPhase::Canceled => RunPhase::Canceled,
       },
       devices: run.devices.into_iter().map(|device| DeviceId::from_str(&device.device_id)).collect::<Result<_, _>>()?,
       labels: run.labels,
@@ -229,7 +230,7 @@ impl TryFrom<proto::Run> for Run {
   }
 }
 
-impl From<RunOutcome> for proto::RunOutcome {
+impl From<RunOutcome> for runtime_proto::RunOutcome {
   fn from(value: RunOutcome) -> Self {
     match value {
       RunOutcome::Succeeded => Self::Succeeded,

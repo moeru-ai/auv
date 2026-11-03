@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 
 use crate::client::Client;
 use crate::error::ClientError;
@@ -148,15 +149,15 @@ impl Runners {
       .client
       .grpc_client()
       .runners()
-      .create_runner(proto::CreateRunnerRequest {
+      .create_runner(runtime_proto::CreateRunnerRequest {
         device: request.device.map(|id| proto::DeviceRef {
           device_id: id.to_string(),
         }),
-        runner_class: Some(proto::RunnerClassRef {
+        runner_class: Some(runtime_proto::RunnerClassRef {
           runner_class: request.class.to_string(),
         }),
         labels: request.labels,
-        lifecycle: proto::RunnerLifecycle::from(request.lifecycle) as i32,
+        lifecycle: runtime_proto::RunnerLifecycle::from(request.lifecycle) as i32,
         idle_timeout: request.idle_timeout.map(duration_to_proto).transpose()?,
       })
       .await
@@ -264,11 +265,11 @@ fn duration_to_proto(value: Duration) -> Result<prost_types::Duration, RunnerErr
   })
 }
 
-impl TryFrom<proto::Runner> for Runner {
+impl TryFrom<runtime_proto::Runner> for Runner {
   type Error = RunnerError;
 
-  fn try_from(runner: proto::Runner) -> Result<Self, Self::Error> {
-    let lifecycle = proto::RunnerLifecycle::try_from(runner.lifecycle).unwrap_or(proto::RunnerLifecycle::Unspecified);
+  fn try_from(runner: runtime_proto::Runner) -> Result<Self, Self::Error> {
+    let lifecycle = runtime_proto::RunnerLifecycle::try_from(runner.lifecycle).unwrap_or(runtime_proto::RunnerLifecycle::Unspecified);
     Ok(Self {
       id: RunnerId::from_str(&runner.r#ref.ok_or(RunnerError::MissingField("canonical ID"))?.runner_id)?,
       device: DeviceId::from_str(&runner.device.ok_or(RunnerError::MissingField("Device"))?.device_id)?,
@@ -276,13 +277,13 @@ impl TryFrom<proto::Runner> for Runner {
       labels: runner.labels,
       lifecycle: RunnerLifecycle::try_from(lifecycle)?,
       idle_timeout: runner.idle_timeout.map(|value| Duration::new(value.seconds.max(0) as u64, value.nanos.max(0) as u32)),
-      phase: match proto::RunnerPhase::try_from(runner.phase).unwrap_or(proto::RunnerPhase::Unspecified) {
-        proto::RunnerPhase::Unspecified => RunnerPhase::Unspecified,
-        proto::RunnerPhase::Starting => RunnerPhase::Starting,
-        proto::RunnerPhase::Ready => RunnerPhase::Ready,
-        proto::RunnerPhase::Draining => RunnerPhase::Draining,
-        proto::RunnerPhase::Stopped => RunnerPhase::Stopped,
-        proto::RunnerPhase::Failed => RunnerPhase::Failed,
+      phase: match runtime_proto::RunnerPhase::try_from(runner.phase).unwrap_or(runtime_proto::RunnerPhase::Unspecified) {
+        runtime_proto::RunnerPhase::Unspecified => RunnerPhase::Unspecified,
+        runtime_proto::RunnerPhase::Starting => RunnerPhase::Starting,
+        runtime_proto::RunnerPhase::Ready => RunnerPhase::Ready,
+        runtime_proto::RunnerPhase::Draining => RunnerPhase::Draining,
+        runtime_proto::RunnerPhase::Stopped => RunnerPhase::Stopped,
+        runtime_proto::RunnerPhase::Failed => RunnerPhase::Failed,
       },
       created_at: runner.created_at.map(Into::into),
       process_id: (runner.process_id != 0).then_some(runner.process_id),
@@ -292,10 +293,10 @@ impl TryFrom<proto::Runner> for Runner {
   }
 }
 
-impl TryFrom<proto::RunnerClass> for RunnerClass {
+impl TryFrom<runtime_proto::RunnerClass> for RunnerClass {
   type Error = RunnerError;
 
-  fn try_from(class: proto::RunnerClass) -> Result<Self, Self::Error> {
+  fn try_from(class: runtime_proto::RunnerClass) -> Result<Self, Self::Error> {
     Ok(Self {
       id: RunnerClassId::from_str(&class.r#ref.ok_or(RunnerError::MissingField("RunnerClass ID"))?.runner_class)?,
       device: class.device.map(|device| DeviceId::from_str(&device.device_id)).transpose()?,
@@ -303,7 +304,7 @@ impl TryFrom<proto::RunnerClass> for RunnerClass {
       supported_lifecycles: class
         .supported_lifecycles
         .into_iter()
-        .filter_map(|value| proto::RunnerLifecycle::try_from(value).ok())
+        .filter_map(|value| runtime_proto::RunnerLifecycle::try_from(value).ok())
         .filter_map(|value| RunnerLifecycle::try_from(value).ok())
         .collect(),
       available: class.available,
@@ -311,20 +312,20 @@ impl TryFrom<proto::RunnerClass> for RunnerClass {
   }
 }
 
-impl TryFrom<proto::RunnerLifecycle> for RunnerLifecycle {
+impl TryFrom<runtime_proto::RunnerLifecycle> for RunnerLifecycle {
   type Error = RunnerError;
 
-  fn try_from(value: proto::RunnerLifecycle) -> Result<Self, Self::Error> {
+  fn try_from(value: runtime_proto::RunnerLifecycle) -> Result<Self, Self::Error> {
     match value {
-      proto::RunnerLifecycle::Ephemeral => Ok(Self::Ephemeral),
-      proto::RunnerLifecycle::UnlessIdle => Ok(Self::UnlessIdle),
-      proto::RunnerLifecycle::UnlessShutdown => Ok(Self::UnlessShutdown),
-      proto::RunnerLifecycle::Unspecified => Err(RunnerError::MissingField("Runner lifecycle")),
+      runtime_proto::RunnerLifecycle::Ephemeral => Ok(Self::Ephemeral),
+      runtime_proto::RunnerLifecycle::UnlessIdle => Ok(Self::UnlessIdle),
+      runtime_proto::RunnerLifecycle::UnlessShutdown => Ok(Self::UnlessShutdown),
+      runtime_proto::RunnerLifecycle::Unspecified => Err(RunnerError::MissingField("Runner lifecycle")),
     }
   }
 }
 
-impl From<RunnerLifecycle> for proto::RunnerLifecycle {
+impl From<RunnerLifecycle> for runtime_proto::RunnerLifecycle {
   fn from(value: RunnerLifecycle) -> Self {
     match value {
       RunnerLifecycle::Ephemeral => Self::Ephemeral,

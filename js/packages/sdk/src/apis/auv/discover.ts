@@ -79,7 +79,8 @@ export interface MethodDocs {
 
 /**
  * How a method presents itself (`auv.api.annotations.v1.presentation`).
- * `name` is dotted lower_snake_case, e.g. `window.find_text`; see `camelCaseName`.
+ * `name` is the operation id in lower camelCase, e.g. `window.findText`, the
+ * same id as the invoke command and MCP tool.
  */
 export interface MethodPresentation {
   /** One plain-text paragraph. */
@@ -98,7 +99,11 @@ type ReflectedFileDescriptor = ReturnType<typeof fromBinary<typeof FileDescripto
 // projection is deferred until a concrete tool host defines incremental input
 // and cancellation UX. Callers can still use the typed invoke.duplex surface.
 
-/** `window.find_text` → `window.findText`: a presentation name as JavaScript spells it. */
+/**
+ * `window.find_text` → `window.findText`. Presentation names are already lower
+ * camelCase operation ids, so this is the identity for them; it remains for
+ * callers that still hold older snake_case names.
+ */
 export function camelCaseName(name: string): string {
   return name.replace(/_([a-z0-9])/g, (_, letter: string) => letter.toUpperCase())
 }

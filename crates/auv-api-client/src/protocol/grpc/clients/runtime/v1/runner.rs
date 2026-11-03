@@ -1,7 +1,7 @@
 //! runner gRPC service implementation.
 
-use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
-use auv_api_proto::auv::api::daemon::v1::runner_service_client::RunnerServiceClient;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
+use auv_api_proto::auv::api::runtime::v1::runner_service_client::RunnerServiceClient;
 
 use crate::protocol::grpc::client::ApiTransport;
 
@@ -16,7 +16,7 @@ impl Client {
     Self { inner }
   }
 
-  pub async fn create_runner(&mut self, request: daemon_proto::CreateRunnerRequest) -> Result<daemon_proto::Runner, tonic::Status> {
+  pub async fn create_runner(&mut self, request: runtime_proto::CreateRunnerRequest) -> Result<runtime_proto::Runner, tonic::Status> {
     self
       .inner
       .create_runner(request)
@@ -26,15 +26,15 @@ impl Client {
       .ok_or_else(|| tonic::Status::internal("CreateRunner response omitted Runner"))
   }
 
-  pub async fn list_runners(&mut self) -> Result<Vec<daemon_proto::Runner>, tonic::Status> {
-    Ok(self.inner.list_runners(daemon_proto::ListRunnersRequest {}).await?.into_inner().runners)
+  pub async fn list_runners(&mut self) -> Result<Vec<runtime_proto::Runner>, tonic::Status> {
+    Ok(self.inner.list_runners(runtime_proto::ListRunnersRequest {}).await?.into_inner().runners)
   }
 
-  pub async fn get_runner(&mut self, runner_id: impl Into<String>) -> Result<daemon_proto::Runner, tonic::Status> {
+  pub async fn get_runner(&mut self, runner_id: impl Into<String>) -> Result<runtime_proto::Runner, tonic::Status> {
     self
       .inner
-      .get_runner(daemon_proto::GetRunnerRequest {
-        runner: Some(daemon_proto::RunnerRef {
+      .get_runner(runtime_proto::GetRunnerRequest {
+        runner: Some(runtime_proto::RunnerRef {
           runner_id: runner_id.into(),
         }),
       })
@@ -44,7 +44,7 @@ impl Client {
       .ok_or_else(|| tonic::Status::internal("GetRunner response omitted Runner"))
   }
 
-  pub async fn delete_runner(&mut self, runner_id: impl Into<String>) -> Result<daemon_proto::Runner, tonic::Status> {
+  pub async fn delete_runner(&mut self, runner_id: impl Into<String>) -> Result<runtime_proto::Runner, tonic::Status> {
     self.delete_runner_with_options(runner_id, None, false).await
   }
 
@@ -53,11 +53,11 @@ impl Client {
     runner_id: impl Into<String>,
     grace_period: Option<prost_types::Duration>,
     force: bool,
-  ) -> Result<daemon_proto::Runner, tonic::Status> {
+  ) -> Result<runtime_proto::Runner, tonic::Status> {
     self
       .inner
-      .delete_runner(daemon_proto::DeleteRunnerRequest {
-        runner: Some(daemon_proto::RunnerRef {
+      .delete_runner(runtime_proto::DeleteRunnerRequest {
+        runner: Some(runtime_proto::RunnerRef {
           runner_id: runner_id.into(),
         }),
         grace_period,

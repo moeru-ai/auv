@@ -15,7 +15,7 @@ mod error;
 pub mod output;
 
 // The now-playing state and transport commands are the shared media contract in
-// `auv-driver-common`, so every platform's `mediaControl.*` reports one shape. They are
+// `auv-driver-common`, so every platform's `media.*` reports one shape. They are
 // re-exported here at their original paths.
 pub use auv_driver_common::media::{MediaCommand, NowPlayingState};
 pub use cli::OutputFormat;

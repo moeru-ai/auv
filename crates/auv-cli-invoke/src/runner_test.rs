@@ -4,7 +4,7 @@ use super::*;
 async fn selected_pointer_position_dry_run_never_resolves_a_daemon_or_observes_input() {
   let output = invoke(
     crate::InvokeCommandInput {
-      command_id: "input.pointerPosition".to_string(),
+      command_id: "input.getPointerPosition".to_string(),
       target: None,
       inputs: Default::default(),
       typed_args: None,
@@ -22,7 +22,7 @@ async fn selected_pointer_position_dry_run_never_resolves_a_daemon_or_observes_i
 async fn selected_now_playing_rejects_application_target_before_daemon_resolution() {
   let error = invoke(
     crate::InvokeCommandInput {
-      command_id: "mediaControl.nowPlaying".to_string(),
+      command_id: "media.getNowPlaying".to_string(),
       target: Some(crate::ExecutionTarget::Application {
         id: "com.example.Player".to_string(),
       }),
@@ -41,11 +41,11 @@ async fn selected_now_playing_rejects_application_target_before_daemon_resolutio
 #[tokio::test]
 async fn selected_media_commands_reject_application_target_before_daemon_resolution() {
   for command_id in [
-    "mediaControl.play",
-    "mediaControl.pause",
-    "mediaControl.togglePlayPause",
-    "mediaControl.next",
-    "mediaControl.previous",
+    "media.play",
+    "media.pause",
+    "media.togglePlayback",
+    "media.skipToNextTrack",
+    "media.skipToPreviousTrack",
   ] {
     let error = invoke(
       crate::InvokeCommandInput {
@@ -116,7 +116,7 @@ async fn text_wait_rejects_cancellation_before_observation() {
   cancellation.cancel();
   let calls = std::cell::Cell::new(0);
   let error = wait_for_selected_text(
-    "screen.waitForText",
+    "display.waitForText",
     "Ready",
     Default::default(),
     &cancellation,
@@ -141,7 +141,7 @@ async fn text_wait_cancels_during_the_poll_interval_without_another_observation(
   let cancellation = crate::InvokeCancellation::new();
   let calls = std::cell::Cell::new(0);
   let waiting = wait_for_selected_text(
-    "screen.waitForText",
+    "display.waitForText",
     "Ready",
     auv_driver::WaitOptions {
       timeout: std::time::Duration::from_secs(30),
@@ -170,7 +170,7 @@ async fn text_wait_cancels_during_the_poll_interval_without_another_observation(
 async fn text_wait_preserves_observation_errors_without_retry() {
   let calls = std::cell::Cell::new(0);
   let error = wait_for_selected_text(
-    "screen.waitForText",
+    "display.waitForText",
     "Ready",
     Default::default(),
     &Default::default(),
@@ -193,7 +193,7 @@ async fn selected_text_wait_retries_until_the_first_matching_response() {
   let mut responses = std::collections::VecDeque::from([Vec::<u8>::new(), vec![1]]);
   let calls = std::cell::Cell::new(0);
   let response = wait_for_selected_text(
-    "screen.waitForText",
+    "display.waitForText",
     "Ready",
     auv_driver::WaitOptions {
       timeout: std::time::Duration::from_secs(1),
@@ -273,11 +273,11 @@ fn runner_step_failures_keep_the_rpc_name_and_typed_code() {
 
   // Placement steps keep their context prefix through the same conversion.
   let routed = step_failure(
-    "route core Runner for input.key",
+    "route core Runner for input.pressKeys",
     auv::client::PlacementError::Capability(auv::client::runner::CapabilityError::NotFound("hold id 777".to_string())),
   );
   assert_eq!(routed.code, crate::FailureCode::NotFound);
-  assert_eq!(routed.message, "route core Runner for input.key failed: hold id 777 was not found");
+  assert_eq!(routed.message, "route core Runner for input.pressKeys failed: hold id 777 was not found");
 }
 
 #[tokio::test]
@@ -292,7 +292,7 @@ async fn text_wait_surfaces_typed_runner_observation_failures() {
       calls.set(calls.get() + 1);
       async {
         Err::<bool, _>(step_failure(
-          "TextRecognitionService/FindWindowText",
+          "WindowService/FindWindowText",
           auv::client::runner::CapabilityError::NotFound("window 777".to_string()),
         ))
       }
@@ -303,7 +303,7 @@ async fn text_wait_surfaces_typed_runner_observation_failures() {
   .expect_err("observation failure");
 
   assert_eq!(error.code, crate::FailureCode::NotFound);
-  assert_eq!(error.message, "TextRecognitionService/FindWindowText failed: window 777 was not found");
+  assert_eq!(error.message, "WindowService/FindWindowText failed: window 777 was not found");
   assert_eq!(calls.get(), 1);
 }
 
@@ -369,7 +369,7 @@ fn selected_screen_point_preserves_logical_coordinates() {
 #[test]
 fn selected_screen_text_click_defaults_to_foreground_input() {
   let input = crate::InvokeCommandInput {
-    command_id: "screen.clickText".to_string(),
+    command_id: "display.clickText".to_string(),
     target: None,
     inputs: std::collections::BTreeMap::new(),
     typed_args: None,
@@ -465,7 +465,7 @@ async fn selected_commands_without_a_runner_route_are_refused_before_daemon_reso
 //
 // If an MCP or Runner caller passed an input key that the command does not
 // declare, serde dropped it and the command ran with its defaults. OSWorld
-// agents sent `timeout` to screen.waitForText 49 times and got the fixed wait.
+// agents sent `timeout` to display.waitForText 49 times and got the fixed wait.
 //
 // Before the fix, the unknown key was ignored. The fix rejects it as
 // invalid_input and names the accepted inputs; declared keys, the `target`
@@ -558,27 +558,30 @@ fn runner_platform_gate_refuses_only_explicitly_unsupported_cells() {
   use auv::devices::DevicePlatform;
 
   // Linux has no backend; Windows query focus is partial; macOS is supported.
-  let focus_text = registry.resolve("input.focusText").unwrap();
+  let focus_text = registry.resolve("accessibility.focusText").unwrap();
   for (platform, label) in [(DevicePlatform::Linux, "Linux")] {
-    let error = runner_platform_gate("input.focusText", focus_text, Some(platform)).unwrap_err();
+    let error = runner_platform_gate("accessibility.focusText", focus_text, Some(platform)).unwrap_err();
     assert_eq!(error.code, crate::FailureCode::Unsupported);
-    assert_eq!(error.message, format!("input.focusText has no {label} Runner path; the declared Runner support for {label} is unsupported"));
+    assert_eq!(
+      error.message,
+      format!("accessibility.focusText has no {label} Runner path; the declared Runner support for {label} is unsupported")
+    );
   }
-  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Macos)).is_ok());
-  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Windows)).is_ok());
+  assert!(runner_platform_gate("accessibility.focusText", focus_text, Some(DevicePlatform::Macos)).is_ok());
+  assert!(runner_platform_gate("accessibility.focusText", focus_text, Some(DevicePlatform::Windows)).is_ok());
 
   // Partial proceeds: nowPlaying is Partial on Windows.
-  let now_playing = registry.resolve("mediaControl.nowPlaying").unwrap();
-  assert!(runner_platform_gate("mediaControl.nowPlaying", now_playing, Some(DevicePlatform::Windows)).is_ok());
+  let now_playing = registry.resolve("media.getNowPlaying").unwrap();
+  assert!(runner_platform_gate("media.getNowPlaying", now_playing, Some(DevicePlatform::Windows)).is_ok());
 
   // Direct shorthand: pointerPosition is Unsupported on Linux only.
-  let pointer = registry.resolve("input.pointerPosition").unwrap();
-  assert!(runner_platform_gate("input.pointerPosition", pointer, Some(DevicePlatform::Linux)).is_err());
-  assert!(runner_platform_gate("input.pointerPosition", pointer, Some(DevicePlatform::Windows)).is_ok());
+  let pointer = registry.resolve("input.getPointerPosition").unwrap();
+  assert!(runner_platform_gate("input.getPointerPosition", pointer, Some(DevicePlatform::Linux)).is_err());
+  assert!(runner_platform_gate("input.getPointerPosition", pointer, Some(DevicePlatform::Windows)).is_ok());
 
   // A missing or unreported platform never refuses.
-  assert!(runner_platform_gate("input.focusText", focus_text, None).is_ok());
-  assert!(runner_platform_gate("input.focusText", focus_text, Some(DevicePlatform::Unspecified)).is_ok());
+  assert!(runner_platform_gate("accessibility.focusText", focus_text, None).is_ok());
+  assert!(runner_platform_gate("accessibility.focusText", focus_text, Some(DevicePlatform::Unspecified)).is_ok());
 
   // Fixtures have no Runner route; their upstream refusal owns that case.
   let fixture = registry.resolve("scan.frame").unwrap();
@@ -592,23 +595,23 @@ fn runner_platform_gate_refuses_only_explicitly_unsupported_cells() {
 // RPC and surfaced the backend's refusal (before the typed-failure phase,
 // flattened to `command_failed`).
 //
-// Before the fix, input.focusText against a Linux Runner reached the Runner
+// Before the fix, accessibility.focusText against a Linux Runner reached the Runner
 // and failed remotely. The fix refuses the dispatch pre-RPC as a typed
 // `unsupported` failure that names the command and the Runner platform.
 #[tokio::test]
 async fn selected_dispatch_refuses_a_declared_unsupported_runner_platform_before_resolution() {
-  let error = invoke(gate_input_targeted("input.focusText", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+  let error = invoke(gate_input_targeted("accessibility.focusText", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
     .await
     .expect_err("a Linux Runner has no focusText path");
   assert_eq!(error.code, crate::FailureCode::Unsupported);
-  assert_eq!(error.message, "input.focusText has no Linux Runner path; the declared Runner support for Linux is unsupported");
+  assert_eq!(error.message, "accessibility.focusText has no Linux Runner path; the declared Runner support for Linux is unsupported");
 }
 
 #[tokio::test]
 async fn selected_dispatch_without_a_platform_fact_reaches_placement() {
   // No platform fact in the context: the gate stays open and the dispatch
   // proceeds until the (deliberately invalid) endpoint fails placement.
-  let error = invoke(gate_input_targeted("input.focusText", false), gate_context_past_the_gate(None))
+  let error = invoke(gate_input_targeted("accessibility.focusText", false), gate_context_past_the_gate(None))
     .await
     .expect_err("the invalid endpoint must fail placement");
   assert_eq!(error.code, crate::FailureCode::CommandFailed);
@@ -619,25 +622,25 @@ async fn selected_dispatch_without_a_platform_fact_reaches_placement() {
 async fn selected_dispatch_decides_on_the_runner_platform_not_the_local_os() {
   // Runs on a Windows host: the Linux cell refuses while the Partial Windows
   // cell proceeds, so only the Runner's reported platform drives the gate.
-  let refused = invoke(gate_input("mediaControl.nowPlaying", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
+  let refused = invoke(gate_input("media.getNowPlaying", false), gate_context(Some(auv::devices::DevicePlatform::Linux)))
     .await
     .expect_err("a Linux Runner has no now-playing path");
   assert_eq!(refused.code, crate::FailureCode::Unsupported);
   assert!(refused.message.contains("has no Linux Runner path"));
 
-  let proceeded =
-    invoke(gate_input("mediaControl.nowPlaying", false), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Windows)))
-      .await
-      .expect_err("the Partial Windows cell must proceed to placement");
+  let proceeded = invoke(gate_input("media.getNowPlaying", false), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Windows)))
+    .await
+    .expect_err("the Partial Windows cell must proceed to placement");
   assert_eq!(proceeded.code, crate::FailureCode::CommandFailed);
   assert!(!proceeded.message.contains("Runner path"), "{}", proceeded.message);
 }
 
 #[tokio::test]
 async fn selected_dry_runs_bypass_the_platform_gate() {
-  let error = invoke(gate_input_targeted("input.focusText", true), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Linux)))
-    .await
-    .expect_err("a dry run proceeds past the gate and fails at the invalid endpoint");
+  let error =
+    invoke(gate_input_targeted("accessibility.focusText", true), gate_context_past_the_gate(Some(auv::devices::DevicePlatform::Linux)))
+      .await
+      .expect_err("a dry run proceeds past the gate and fails at the invalid endpoint");
   assert_eq!(error.code, crate::FailureCode::CommandFailed);
   assert!(!error.message.contains("Runner path"), "{}", error.message);
 }

@@ -1,10 +1,11 @@
 // EXPERIMENTAL / UNSTABLE
-// auv.api.daemon.v1 is not a long-term public compatibility promise.
+// auv.api.runtime.v1 is not a long-term public compatibility promise.
 syntax = "proto3";
 
-package auv.api.daemon.v1;
+package auv.api.runtime.v1;
 
 import "auv/api/daemon/v1/resource.proto";
+import "auv/api/runtime/v1/resource.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -54,7 +55,7 @@ service RunnerClassService {
 
 message RunnerClass {
   RunnerClassRef ref = 1;
-  DeviceRef device = 2;
+  auv.api.daemon.v1.DeviceRef device = 2;
   string display_name = 3;
   repeated RunnerLifecycle supported_lifecycles = 4;
   reserved 5;
@@ -80,7 +81,7 @@ enum RunnerPhase {
 
 message Runner {
   RunnerRef ref = 1;
-  DeviceRef device = 2;
+  auv.api.daemon.v1.DeviceRef device = 2;
   RunnerClassRef runner_class = 3;
   map<string, string> labels = 4;
   RunnerLifecycle lifecycle = 5;
@@ -104,7 +105,7 @@ message Runner {
 
 message CreateRunnerRequest {
   // Absence selects the implicit local Device.
-  DeviceRef device = 1;
+  auv.api.daemon.v1.DeviceRef device = 1;
   RunnerClassRef runner_class = 2;
   map<string, string> labels = 3;
   RunnerLifecycle lifecycle = 4;
@@ -146,7 +147,7 @@ message DeleteRunnerResponse {
 
 message ListRunnerClassesRequest {
   // Absence selects the implicit local Device.
-  DeviceRef device = 1;
+  auv.api.daemon.v1.DeviceRef device = 1;
 }
 
 message ListRunnerClassesResponse {
@@ -155,7 +156,7 @@ message ListRunnerClassesResponse {
 
 message GetRunnerClassRequest {
   // Absence selects the implicit local Device.
-  DeviceRef device = 1;
+  auv.api.daemon.v1.DeviceRef device = 1;
   RunnerClassRef runner_class = 2;
 }
 

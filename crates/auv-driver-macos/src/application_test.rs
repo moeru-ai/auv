@@ -65,7 +65,7 @@ fn activation_script_escapes_applescript_string_content() {
 
 // ROOT CAUSE:
 //
-// If app.activate had to launch an application through `open -b` (AppleScript
+// If application.activate had to launch an application through `open -b` (AppleScript
 // cannot launch some apps, such as Calculator: error -600), the single
 // frontmost check ran 150 ms later, before the application reached the
 // front, so a successful activation reported a foreground mismatch.

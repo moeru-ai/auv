@@ -101,7 +101,7 @@ fn region_takes_two_of_start_end_and_size_per_axis_with_percentages() {
 
 // ROOT CAUSE:
 //
-// If screen.captureRegion received an OCR box (385.5, 152.5, 160.5 x 13.5),
+// If display.captureRegion received an OCR box (385.5, 152.5, 160.5 x 13.5),
 // the macOS and Windows capture backends failed with "region x must be an
 // integer in backend capture units", because they address whole units.
 //

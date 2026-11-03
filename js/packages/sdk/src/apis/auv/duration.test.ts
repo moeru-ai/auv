@@ -3,7 +3,7 @@ import type { UnaryCall } from '../../transport/types'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 
-import { ClickPointRequestSchema, ClickPointResponseSchema, PressKeyRequestSchema, PressKeyResponseSchema, ScrollUntilBeginSchema, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickPointRequestSchema, ClickPointResponseSchema, PressKeysRequestSchema, PressKeysResponseSchema, ScrollUntilBeginSchema, ScrollUntilStopReason, ScrollWindowUntilRequestSchema, ScrollWindowUntilResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
@@ -44,7 +44,7 @@ describe('millisecond durations', () => {
             close() {},
             async halfClose() {},
             responses: (async function* () {
-              yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+              yield toBinary(ScrollWindowUntilResponseSchema, create(ScrollWindowUntilResponseSchema, {
                 event: { case: 'completed', value: { reason: ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS, steps: 1 } },
               }))
             })(),
@@ -56,8 +56,8 @@ describe('millisecond durations', () => {
           switch (call.method) {
             case '/auv.api.driver.v1.InputService/ClickPoint':
               return toBinary(ClickPointResponseSchema, create(ClickPointResponseSchema))
-            case '/auv.api.driver.v1.InputService/PressKey':
-              return toBinary(PressKeyResponseSchema, create(PressKeyResponseSchema))
+            case '/auv.api.driver.v1.InputService/PressKeys':
+              return toBinary(PressKeysResponseSchema, create(PressKeysResponseSchema))
             case '/auv.api.driver.v1.WindowService/ResolveWindow':
               return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
                 window: { ref: { windowId: 'w-1' } },
@@ -77,9 +77,11 @@ describe('millisecond durations', () => {
 
     const click = fromBinary(ClickPointRequestSchema, calls.find(call => call.method.endsWith('/ClickPoint'))!.body)
     expect(click.options?.click?.interval).toMatchObject({ nanos: 80_000_000, seconds: 0n })
-    const press = fromBinary(PressKeyRequestSchema, calls.find(call => call.method.endsWith('/PressKey'))!.body)
-    expect(press.settle).toMatchObject({ nanos: 120_000_000, seconds: 0n })
-    const begin = fromBinary(ScrollUntilRequestSchema, sent[0]!).event
+    const press = fromBinary(PressKeysRequestSchema, calls.find(call => call.method.endsWith('/PressKeys'))!.body)
+    expect(press.options?.settle).toMatchObject({ nanos: 120_000_000, seconds: 0n })
+    expect(press.options?.keys).toEqual(['return'])
+    expect(press.target?.recipient).toEqual({ case: 'foreground', value: true })
+    const begin = fromBinary(ScrollWindowUntilRequestSchema, sent[0]!).event
     expect(begin.case === 'begin' && begin.value.settle).toMatchObject({ nanos: 300_000_000, seconds: 0n })
   })
 })

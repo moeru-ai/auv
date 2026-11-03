@@ -720,15 +720,15 @@ fn serve_help_explains_listener_authentication_and_registration() {
 
 #[test]
 fn invoke_command_help_uses_typed_arguments_and_inline_examples() {
-  let output = run(&["invoke", "screen.findText", "--help"]);
+  let output = run(&["invoke", "display.findText", "--help"]);
 
   assert_eq!(output.status.code(), Some(0), "invoke help must exit 0; stderr={}", stderr(&output));
   let help = stdout(&output);
-  assert!(help.contains("Usage: auv invoke screen.findText [OPTIONS] <TEXT>"), "unexpected invoke help:\n{help}");
+  assert!(help.contains("Usage: auv invoke display.findText [OPTIONS] <TEXT>"), "unexpected invoke help:\n{help}");
   assert!(help.contains("Arguments:"), "unexpected invoke help:\n{help}");
   assert!(help.contains("<TEXT>"), "unexpected invoke help:\n{help}");
   assert!(help.contains("Examples:"), "unexpected invoke help:\n{help}");
-  assert!(help.contains("auv invoke screen.findText \"Settings\""), "unexpected invoke help:\n{help}");
+  assert!(help.contains("auv invoke display.findText \"Settings\""), "unexpected invoke help:\n{help}");
   assert!(!help.contains("--target com.apple.TextEdit"), "help must not claim unsupported target activation:\n{help}");
 }
 
@@ -963,7 +963,7 @@ fn plugin_list_reports_non_executable_candidates_and_empty_paths() {
 fn typed_invoke_values_are_rejected_before_execution() {
   let output = run(&[
     "invoke",
-    "screen.captureRegion",
+    "display.captureRegion",
     "--x",
     "not-a-number",
     "--y",
@@ -1020,7 +1020,7 @@ fn click_point_dry_run_reports_the_validated_coordinate() {
 fn drag_dry_run_reports_both_screen_endpoints() {
   let output = run(&[
     "invoke",
-    "input.drag",
+    "input.dragMouse",
     "--duration-ms",
     "0",
     "--dry-run",
@@ -1092,10 +1092,9 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
   #[cfg(windows)]
   let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
   for arguments in [
-    vec!["input.key", "escape"],
-    vec!["input.keys", "escape"],
+    vec!["input.pressKeys", "escape"],
     vec![
-      "input.keyboard",
+      "input.performKeyboardInputs",
       "--actions",
       r#"[{"kind":"press","keys":["escape"]}]"#,
     ],

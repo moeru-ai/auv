@@ -165,7 +165,7 @@ fn sdk_calls_become_steps_and_remote_command_calls_stay_inside_their_command() {
   });
   let remote =
     dispatcher::with_default(&runner, || Context::from_remote(auv_tracing::RemoteContext::new(run_id, Some(command_span_id))).unwrap());
-  let nested = remote.in_scope(|| auv_tracing::start_span(rpc("auv.api.driver.v1.CaptureService", "CaptureDisplay")));
+  let nested = remote.in_scope(|| auv_tracing::start_span(rpc("auv.api.driver.v1.DisplayService", "CaptureDisplay")));
   nested.in_scope(|| drop(auv_tracing::emit_artifact(capture(Some("cap-1")))));
   drop(nested);
   command_span.in_scope(|| {
@@ -274,10 +274,10 @@ fn a_drag_records_where_it_started_and_ended_on_the_screenshot() {
     span.in_scope(|| drop(auv_tracing::emit_artifact(capture(None))));
     drop(span);
     sleep();
-    let span = auv_tracing::start_span(command("input.drag"));
+    let span = auv_tracing::start_span(command("input.dragMouse"));
     span.in_scope(|| {
       auv_tracing::emit_event!(Finished(json!({
-        "command_id": "input.drag",
+        "command_id": "input.dragMouse",
         "status": "succeeded",
         "result": { "screen_start": { "x": 1010.0, "y": 520.0 }, "screen_end": { "x": 1150.0, "y": 590.0 } },
       })));

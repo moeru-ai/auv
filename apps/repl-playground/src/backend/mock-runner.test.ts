@@ -74,7 +74,7 @@ describe('mock Runner', () => {
     const run = await auv.runs.create({ deviceIds: [MOCK_DEVICE.id] })
     expect(run.phase).toBe('running')
     const discovered = await discoverRunner(connection, { runnerClass: 'auv.core.local' })
-    expect(discovered.apis.find(api => api.method === 'ClickPoint')?.presentation?.name).toBe('input.click')
+    expect(discovered.apis.find(api => api.method === 'ClickPoint')?.presentation?.name).toBe('input.clickPoint')
     await connection.close()
   })
 })

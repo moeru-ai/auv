@@ -1,11 +1,11 @@
-import type { RunPhase as ProtoRunPhase } from '../../gen/auv/api/daemon/v1/run_pb'
+import type { RunPhase as ProtoRunPhase } from '../../gen/auv/api/runtime/v1/run_pb'
 import type { Transport } from '../../web/index'
 
 import { create, toBinary } from '@bufbuild/protobuf'
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
-import { CreateRunResponseSchema } from '../../gen/auv/api/daemon/v1/run_pb'
+import { CreateRunResponseSchema } from '../../gen/auv/api/runtime/v1/run_pb'
 import { createRunner, deleteRunner, listRunnerClasses } from '../../node/index'
 import { setupPairedAuvDaemon } from '../../tutils/auv-daemon'
 import { AuvProtocolError, connect, createRun } from '../../web/index'
