@@ -173,15 +173,30 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
   let logger = DecisionLogger::new();
   let mut catalog = OperationCatalog::new();
 
+  if args.operation.trim().is_empty() {
+    return Err("Requested operation name cannot be empty or whitespace-only".to_string());
+  }
+
   // 1. Admit the operation file. `auv-cli` ships no app operations: app
   // workflows such as QQ Music live with their app under `supported/`.
   let file_path = &args.file;
   let content = std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read operation file '{}': {}", file_path.display(), e))?;
-  catalog
+  let admitted_op = catalog
     .admit_operation_json(&content, &file_path.display().to_string())
     .map_err(|e| format!("Failed to admit operation from '{}': [{}]: {}", file_path.display(), e.reason_code.as_str(), e.message))?;
 
+  if args.operation != admitted_op.name {
+    return Err(format!(
+      "Requested operation '{}' does not match declared operation '{}' in '{}'",
+      args.operation,
+      admitted_op.name,
+      file_path.display()
+    ));
+  }
+
   // 2. Build TaskRequest with target app and context
+  // NOTE: app_name is derived from the admitted operation target metadata (declared_target),
+  // not from an independent live OS process observation (observed_target).
   let (app_name, task_name) = parse_operation_target(&args.operation, &catalog);
   let mut current_context = HashMap::new();
   current_context.insert("App.ProcessName".to_string(), serde_json::json!(app_name));
@@ -197,7 +212,7 @@ pub fn run_with_executor_inner<E: OperationExecutor + ?Sized>(args: &OpRunArgs, 
 
   // 3. Fast loop scheduler routing
   let scheduler = FastLoopScheduler::new(&logger);
-  let outcome = scheduler.schedule(&req, &catalog);
+  let outcome = scheduler.schedule_exact(&args.operation, &req, &catalog);
 
   let Some(op) = outcome.selected_operation else {
     let out = OpRunOutput {
@@ -499,5 +514,312 @@ pub(crate) mod tests {
     assert_eq!(output.reason_code, "GATE_FAILED");
     assert!(!output.confirmed);
     assert_eq!(fake_executor.calls_count(), 1);
+  }
+
+  #[test]
+  fn test_run_operation_name_mismatch_returns_err_and_zero_executor_calls() {
+    let fake_executor = FakeOperationExecutor::new();
+    let args = OpRunArgs {
+      operation: "unrelated.task".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: example_operation_file("example-prepare.json"),
+      json: true,
+    };
+
+    // run_with_executor_inner must return Err directly (not an Ok OpRunOutput)
+    let err = run_with_executor_inner(&args, &fake_executor).expect_err("mismatched operation name must return Err");
+    assert!(
+      err.contains("unrelated.task") && err.contains("example.prepare"),
+      "error message must describe the requested vs declared mismatch: {err}"
+    );
+    assert_eq!(fake_executor.calls_count(), 0, "FakeExecutor must NOT be called on name mismatch");
+
+    // run_with_executor (CLI entrypoint) must also fail non-zero
+    let cli_err = run_with_executor(args, &fake_executor).expect_err("CLI must exit with Err");
+    assert!(cli_err.contains("unrelated.task"));
+  }
+
+  #[test]
+  fn test_run_prefix_mismatch_single_file_cli_path_exact_match_success() {
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("custom-prefix.json");
+
+    let custom_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "custom_prefix.prepare",
+      "description": "Prefix mismatch operation with Example.exe target",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test single-file prefix mismatch"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&custom_op).unwrap()).unwrap();
+
+    let args = OpRunArgs {
+      operation: "custom_prefix.prepare".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path,
+      json: true,
+    };
+
+    let (exit_code, output) = run_with_executor_inner(&args, &fake_executor).expect("single file exact match must succeed");
+    assert_eq!(exit_code, 0);
+    assert_eq!(output.status, "success");
+    assert_eq!(output.execution_mode, "verified");
+    assert_eq!(output.reason_code, "GATE_PASSED");
+    assert!(output.confirmed);
+    assert_eq!(fake_executor.calls_count(), 1, "FakeExecutor must be called exactly once");
+  }
+
+  #[test]
+  fn test_run_single_file_custom_prefix_targeting_qqmusic_scheduling_exact_match_success() {
+    // Note: This test explicitly validates the CLI and scheduler layer resolution
+    // of nonstandard operation prefixes declaring QQMusic targets. It verifies that
+    // schedule_exact matches by explicit operation name without prefix normalization
+    // and invokes the executor. It does NOT assert end-to-end Windows production
+    // driver step execution (which requires supported action types like smtc_query/wgc_capture).
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("qqmusic-custom-prefix.json");
+
+    // File declares nonstandard prefix 'custom_prefix.prepare', with target 'QQMusic.exe'
+    let custom_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "custom_prefix.prepare",
+      "description": "Custom prefix op targeting QQMusic.exe",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-02",
+        "crux_goal": "test nonstandard prefix scheduling resolution with QQMusic target"
+      },
+      "target": {
+        "app_name": "QQMusic.exe",
+        "backend": "windows.smtc+coreaudio+wgc"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&custom_op).unwrap()).unwrap();
+
+    let args = OpRunArgs {
+      operation: "custom_prefix.prepare".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path,
+      json: true,
+    };
+
+    let (exit_code, output) =
+      run_with_executor_inner(&args, &fake_executor).expect("single file exact match scheduling resolution must succeed");
+    assert_eq!(exit_code, 0);
+    assert_eq!(output.status, "success");
+    assert_eq!(output.execution_mode, "verified");
+    assert_eq!(output.reason_code, "GATE_PASSED");
+    assert!(output.confirmed);
+    assert_eq!(fake_executor.calls_count(), 1, "FakeExecutor must be called exactly once");
+  }
+
+  #[test]
+  fn test_run_precondition_mismatch_returns_failure_and_zero_executor_calls() {
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("precondition-op.json");
+
+    // Target is Example.exe, but precondition requires App.ProcessName to be SpecificApp.exe
+    let pre_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "precondition.op",
+      "description": "Precondition test",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test precondition interception"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "preconditions": [
+        {
+          "key": "App.ProcessName",
+          "expected_value": "SpecificApp.exe"
+        }
+      ],
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&pre_op).unwrap()).unwrap();
+
+    let args = OpRunArgs {
+      operation: "precondition.op".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path,
+      json: true,
+    };
+
+    let (exit_code, output) = run_with_executor_inner(&args, &fake_executor).expect("precondition failure handled cleanly");
+    assert_eq!(exit_code, 1);
+    assert_eq!(output.status, "failed");
+    assert_eq!(output.reason_code, "PRECONDITION_MISMATCH");
+    assert_eq!(fake_executor.calls_count(), 0, "FakeExecutor must NOT be called on precondition failure");
+  }
+
+  #[test]
+  fn test_run_empty_or_whitespace_operation_name_rejected_and_zero_executor_calls() {
+    let fake_executor = FakeOperationExecutor::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("valid-op.json");
+
+    let op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "valid.operation",
+      "description": "Valid op",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test empty name rejection"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    std::fs::write(&file_path, serde_json::to_string(&op).unwrap()).unwrap();
+
+    // 1. Empty operation name rejected before admission/execution
+    let args_empty = OpRunArgs {
+      operation: "".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path.clone(),
+      json: true,
+    };
+    let err_empty = run_with_executor_inner(&args_empty, &fake_executor).unwrap_err();
+    assert!(err_empty.contains("cannot be empty or whitespace-only"), "{err_empty}");
+    assert_eq!(fake_executor.calls_count(), 0);
+
+    // 2. Whitespace-only operation name rejected
+    let args_space = OpRunArgs {
+      operation: "   ".to_string(),
+      mode: ExecutionModeArg::Verified,
+      file: file_path.clone(),
+      json: true,
+    };
+    let err_space = run_with_executor_inner(&args_space, &fake_executor).unwrap_err();
+    assert!(err_space.contains("cannot be empty or whitespace-only"), "{err_space}");
+    assert_eq!(fake_executor.calls_count(), 0);
+
+    // 3. Operation JSON file declaring empty or whitespace name rejected at catalog admission
+    let empty_name_op = serde_json::json!({
+      "schema_version": "auv.operation.v2",
+      "name": "  ",
+      "description": "Empty name op",
+      "execution_mode": "verified",
+      "compilation_metadata": {
+        "compiler": "test",
+        "source_record": "none",
+        "date": "2026-11-01",
+        "crux_goal": "test admission empty name rejection"
+      },
+      "target": {
+        "app_name": "Example.exe",
+        "backend": "test"
+      },
+      "steps": [
+        {
+          "id": "step_1",
+          "name": "Noop",
+          "description": "Noop",
+          "action": { "type": "noop" },
+          "verification_gate": {
+            "type": "custom_assertion",
+            "expression": "true",
+            "timeout_ms": 100,
+            "escalate_on_mismatch": "none"
+          }
+        }
+      ]
+    });
+    let file_empty_name = temp_dir.path().join("empty-name-op.json");
+    std::fs::write(&file_empty_name, serde_json::to_string(&empty_name_op).unwrap()).unwrap();
+
+    let mut catalog = OperationCatalog::new();
+    let raw_empty_json = serde_json::to_string(&empty_name_op).unwrap();
+    let err_admit = catalog.admit_operation_json(&raw_empty_json, "test_file.json").unwrap_err();
+    assert_eq!(err_admit.reason_code, auv_auto_loop::models::ReasonCode::RejectInvalidOperationName);
+    assert!(err_admit.message.contains("missing, empty, or whitespace-only"), "{}", err_admit.message);
+
+    // 4. Direct register_active with whitespace/empty name rejected with RejectInvalidOperationName
+    let mut catalog_direct = OperationCatalog::new();
+    let mut constructed_op: auv_auto_loop::models::OperationDef = serde_json::from_value(op).unwrap();
+    constructed_op.name = "   ".to_string();
+    let err_direct = catalog_direct.register_active(constructed_op).unwrap_err();
+    assert_eq!(err_direct.reason_code, auv_auto_loop::models::ReasonCode::RejectInvalidOperationName);
+    assert!(err_direct.message.contains("cannot be empty or whitespace-only"), "{}", err_direct.message);
+    assert_eq!(catalog_direct.active_operations().len(), 0, "No operation must be added to active catalog");
   }
 }

@@ -144,6 +144,15 @@ impl OperationCatalog {
   /// - If the operation has already been isolated, registration is rejected
   ///   to prevent reviving a faulty operation.
   pub fn register_active(&mut self, op: OperationDef) -> Result<bool, AdmissionFailure> {
+    if op.name.trim().is_empty() {
+      return Err(AdmissionFailure {
+        operation_key: "unknown".to_string(),
+        location: "register_active".to_string(),
+        reason_code: ReasonCode::RejectInvalidOperationName,
+        message: "Operation rejected: required field 'name' cannot be empty or whitespace-only".to_string(),
+      });
+    }
+
     if op.schema_version != OPERATION_SCHEMA_VERSION {
       return Err(AdmissionFailure {
         operation_key: op.name.clone(),
@@ -276,9 +285,21 @@ pub fn validate_and_parse_operation(raw_json: &str, location: &str) -> Result<Op
     message: format!("Failed to parse operation JSON at {}: {}", location, e),
   })?;
 
-  let op_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+  // 1. Fail-closed: operation name MUST be present, non-empty, and non-whitespace
+  let name_str = match val.get("name").and_then(|v| v.as_str()) {
+    Some(s) if !s.trim().is_empty() => s,
+    _ => {
+      return Err(AdmissionFailure {
+        operation_key: "unknown".to_string(),
+        location: location.to_string(),
+        reason_code: ReasonCode::RejectInvalidOperationName,
+        message: format!("Operation rejected at {}: required field 'name' is missing, empty, or whitespace-only", location),
+      });
+    }
+  };
+  let op_name = name_str.to_string();
 
-  // 1. Fail-closed: execution_mode MUST be present
+  // 2. Fail-closed: execution_mode MUST be present
   if val.get("execution_mode").is_none() || val.get("execution_mode").and_then(|v| v.as_str()).is_none() {
     return Err(AdmissionFailure {
       operation_key: op_name.clone(),
