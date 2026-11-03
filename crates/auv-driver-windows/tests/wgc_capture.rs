@@ -62,6 +62,9 @@ fn create_test_window(
   height: i32,
   color_bgr: u32,
 ) -> (TestWindow, Window) {
+  // This test binary has no manifest; like `auv.exe`, it must see physical pixels on a scaled
+  // display. Before its first window. See NOTICE(windows-dpi-awareness).
+  assert!(auv_driver_windows::dpi::set_process_per_monitor_aware(), "the test process is per-monitor DPI aware");
   auv_driver_windows::desktop::ensure_input_desktop();
   let brush = unsafe { CreateSolidBrush(COLORREF(color_bgr)) };
 
@@ -373,9 +376,10 @@ fn test_wgc_worker_concurrent_with_capture_wgc_no_deadlock() {
 // the DPI-virtualized `GetWindowRect` while the crop used the physical DWM frame bounds.
 //
 // Before the fix, a 1858x1364 Notepad frame at 200% gave a blank 486x446 capture.
-// The fix keeps the driver's process per-monitor aware (`auv_driver_windows::dpi`), so the capture
-// covers the whole visible frame in physical pixels at any scale. At 100% this test passes either
-// way; it guards the fix only on a scaled display.
+// The fix runs the driver in a per-monitor-aware process (`auv.exe` by its manifest, this test by
+// `dpi::set_process_per_monitor_aware` in `create_test_window`), so the capture covers the whole
+// visible frame in physical pixels at any scale. At 100% this test passes either way; it guards
+// the fix only on a scaled display.
 #[test]
 fn issue_460_window_capture_covers_visible_frame_on_scaled_display() {
   use windows::Win32::Foundation::RECT;

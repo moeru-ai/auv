@@ -34,10 +34,10 @@ impl Driver for WindowsDriver {
   }
 
   fn open_local(&self) -> DriverResult<Self::Session> {
-    // A library host that did not call it first in `main` still gets physical pixels; see
-    // NOTICE(windows-dpi-awareness).
+    // The host owns its DPI awareness; the driver only reports a host that would get
+    // virtualized coordinates. See NOTICE(windows-dpi-awareness).
     #[cfg(target_os = "windows")]
-    crate::dpi::set_process_per_monitor_aware();
+    crate::dpi::warn_if_not_per_monitor_aware();
     Ok(WindowsDriverSession { _private: () })
   }
 }

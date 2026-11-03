@@ -9,7 +9,7 @@ use TypeScript. Raw run output stays local.
 
 Count: **85**
 
-- [`2026-11-03-windows-dpi-awareness.md`](2026-11-03-windows-dpi-awareness.md): issue #460 fix: the Windows driver runs per-monitor DPI aware; `PrintWindow` bitmap sized at the window DPI; before/after live numbers at 150%.
+- [`2026-11-03-windows-dpi-awareness.md`](2026-11-03-windows-dpi-awareness.md): issue #460 fix: `auv.exe` declares per-monitor-v2 DPI awareness in its manifest, the driver never changes a host's awareness (warns instead), tests and evals opt in; `PrintWindow` bitmap sized at the window DPI; before/after live numbers at 150%.
 
 - [`2026-11-02-window-management-api-v1-design.md`](2026-11-02-window-management-api-v1-design.md): approved window management v1: read model (state, stacking, desktop), main window selection, `SetWindowFrame` / `SetWindowState` / `FocusWindow`, `WatchWindows` with resume tokens, Linux `Unsupported` for now.
 
