@@ -393,6 +393,52 @@ message WindowRemoved {
 case) and retention (rule 8) follow. The wire contract is final from the
 first version.
 
+### Alternatives considered
+
+Decided with the owner on 2026-11-02 and 2026-11-03.
+
+- **No resume; a reconnect relists.** The first proposal followed
+  `TODO(pointer-watch)` ("no replay or resume in the first version"). Rejected:
+  without a token the client cannot tell what changed while it was away, so
+  `onClosed` and similar listeners would miss windows that closed during the
+  gap unless every client diffed by hand. The resume token keeps that
+  diffing in one place.
+- **Initial state as one `added` per window, then a `synced` marker**
+  (Kubernetes informer style, and the `WatchRunners` sketch in
+  `2026-07-31-device-run-runner-aggregated-api-design.md`). Rejected in favor
+  of one `snapshot` message: a single message is an atomic replace for the
+  client, and the same message doubles as the `RESET` answer to a token that
+  cannot resume, so clients have one code path. Changes still use the
+  `added` / `modified` / `removed` vocabulary.
+- **An error for an unusable token** (Kubernetes `410 Gone`, MongoDB's error
+  after oplog rollover). Rejected in favor of a `snapshot(RESET)` event
+  (Firestore `RESET`): the client never needs an error branch that relists
+  and watches again.
+- **Replaying an event log on resume** (MongoDB change streams, etcd
+  revisions). Rejected: the Runner would have to keep a bounded log with
+  compaction rules. Windows are OS state, so the net difference between the
+  last state sent and the current state is enough for state sync; history
+  belongs to trace recording (rule 3).
+- **A resource name or sequence number as the token.** Rejected for an
+  opaque token (Kubernetes `resourceVersion`, AIP-158 page tokens): the
+  Runner can change what it encodes, and the token can carry the Runner
+  instance id, filter fingerprint and caller binding that make "cannot
+  resume" detectable without a lookup (rules 4 and 5).
+- **Partial updates** (only the changed fields). Rejected: every change
+  carries the full `Window` plus `changed_fields`, so applying a message twice
+  is harmless (rule 6) and listeners such as `onMoved` need no client-side
+  diff.
+- **Drop events under backpressure.** Rejected: lifecycle events must not be
+  lost. Merging pending events per window bounds the backlog by the number of
+  windows instead (rule 9).
+- **A cache before the watch.** Per-pid app info caching and parallel AX
+  reads were considered for the slow macOS `list()`; deferred so that the
+  watcher's model becomes the one window cache (`TODO(window-list-cache)`).
+- **JS reactivity in the SDK core.** Rejected: alien-signals lives in the
+  `@auv-js/sdk/signals` subpath with an optional peer dependency, driven by
+  the async iterator; the core SDK exposes `watch()` and Tauri-style `on*`
+  listeners only.
+
 ### Driver side
 
 ```text
