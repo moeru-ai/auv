@@ -47,6 +47,47 @@ fn serve_exits_cleanly_when_its_owner_closes_stdin() {
   assert!(status.success(), "{status}");
 }
 
+// A daemon the CLI starts must not outlive its use: with --idle-exit-after
+// it stops on its own, through the normal shutdown path, once no request has
+// been in flight for the quiet period (in-flight accounting is unit-tested in
+// `auv-api-server`).
+#[test]
+fn serve_exits_cleanly_after_the_idle_exit_period() {
+  let directory = tempfile::tempdir().unwrap();
+  let started = Instant::now();
+  let mut daemon = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "serve",
+      "--no-register",
+      "--idle-exit-after",
+      "2",
+      "--store-root",
+    ])
+    .arg(directory.path().join("store"))
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .unwrap();
+  let mut ready = String::new();
+  std::io::BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+  assert!(ready.starts_with("auv serve: "), "{ready}");
+
+  let deadline = Instant::now() + Duration::from_secs(20);
+  let status = loop {
+    if let Some(status) = daemon.try_wait().unwrap() {
+      break status;
+    }
+    if Instant::now() > deadline {
+      let _ = daemon.kill();
+      panic!("daemon kept running after the idle exit period");
+    }
+    std::thread::sleep(Duration::from_millis(25));
+  };
+  assert!(status.success(), "{status}");
+  assert!(started.elapsed() >= Duration::from_secs(2), "the daemon stopped before its quiet period");
+}
+
 // ROOT CAUSE:
 //
 // Local IPC admitted every process of the daemon's OS user, so any process

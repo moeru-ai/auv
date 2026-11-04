@@ -21,7 +21,7 @@ use crate::commands::setup::SetupArgs;
   version,
   about = "Invoke and inspect core computer-use capabilities",
   long_about = "AUV turns computer-use operations into command-like, inspectable, and recorded runs.\n\nThe root CLI owns core invoke, doctor, API-server, Device/Run/Runner control, and MCP frontends. Installed auv-* executables extend it with application-owned commands.",
-  after_long_help = "Examples:\n  # Inspect available core invoke commands\n  auv invoke --help\n\n  # Diagnose local automation readiness\n  auv doctor\n\n  # Run an installed application plugin\n  auv balatro --help\n\nUse `auv plugin list` to inspect external commands visible on PATH."
+  after_long_help = "Examples:\n  # Inspect available core invoke commands\n  auv invoke --help\n\n  # List displays through the local daemon (started on first use)\n  auv invoke display.list\n\n  # Run the same command in this process, without a daemon\n  auv --no-daemon invoke display.list\n\n  # Diagnose local automation readiness\n  auv doctor\n\n  # Run an installed application plugin\n  auv balatro --help\n\nUse `auv plugin list` to inspect external commands visible on PATH."
 )]
 struct RootArgs {
   /// Increase connection and RPC diagnostics. Repeat for more detail.
@@ -50,6 +50,13 @@ struct RootArgs {
   /// the same user can read.
   #[arg(long)]
   credential_stdin: bool,
+
+  /// Run `invoke` and `mcp` commands in this process instead of through the
+  /// local daemon's Runner. Without a selection they otherwise use the
+  /// registered local daemon (`AUV_ENDPOINT` first), starting one if none runs.
+  // NOTICE: the flag name is provisional (invoke local Runner design).
+  #[arg(long, conflicts_with_all = ["device", "device_id", "run"])]
+  no_daemon: bool,
 
   #[command(subcommand)]
   command: Option<RootCommand>,
@@ -140,6 +147,9 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     device_id: parsed.device_id,
     run_id: parsed.run,
   };
+  if parsed.no_daemon && !matches!(parsed.command, Some(RootCommand::Invoke(_) | RootCommand::Mcp(_))) {
+    return Err("--no-daemon applies only to invoke and mcp".to_string());
+  }
   let project_root = std::env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   if let Some(Xtask::GenerateSwiftBridge) = parsed.xtask {
     let outputs = crate::xtask::generate_swift_bridge_for_ide(&project_root)?;
@@ -155,7 +165,7 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
       Ok(0)
     }
     Some(RootCommand::Doctor(args)) => crate::commands::doctor::run(args).await,
-    Some(RootCommand::Invoke(args)) => crate::commands::invoke::run(args, &selection, &project_root).await,
+    Some(RootCommand::Invoke(args)) => crate::commands::invoke::run(args, &selection, parsed.no_daemon, &project_root).await,
     Some(RootCommand::Serve(args)) => crate::commands::serve::run(args, &project_root).await,
     Some(RootCommand::Setup(args)) => {
       if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
@@ -167,7 +177,7 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Devices(args)) => crate::commands::devices::run(args, &selection, &project_root).await,
     Some(RootCommand::Runner(args)) => crate::commands::runner::run(args, &selection).await,
     Some(RootCommand::Run(args)) => crate::commands::run::run(args, &selection).await,
-    Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &selection, &project_root).await,
+    Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &selection, parsed.no_daemon, &project_root).await,
     Some(RootCommand::Op(args)) => crate::commands::op::run(args).await,
     Some(RootCommand::Plugin(args)) => crate::commands::plugin::run(args).await,
     Some(RootCommand::External(mut arguments)) => {
@@ -224,6 +234,22 @@ mod tests {
     .unwrap();
     assert_eq!(parsed.device_id.as_deref(), Some("abc"));
     assert_eq!(parsed.run.as_deref(), Some("def"));
+  }
+
+  #[test]
+  fn no_daemon_conflicts_with_a_root_selection() {
+    for selector in [
+      ["--device", "desk"],
+      ["--device-id", "abc"],
+      ["--run", "def"],
+    ] {
+      let mut arguments = vec!["auv", "--no-daemon"];
+      arguments.extend(selector);
+      arguments.extend(["invoke", "display.list"]);
+      let error = RootArgs::try_parse_from(&arguments).unwrap_err();
+      assert_eq!(error.kind(), ErrorKind::ArgumentConflict, "{selector:?}");
+    }
+    assert!(RootArgs::try_parse_from(["auv", "--no-daemon", "invoke", "display.list"]).unwrap().no_daemon);
   }
 
   #[test]

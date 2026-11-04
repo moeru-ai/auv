@@ -2752,8 +2752,11 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   super::recording::install()?;
   let rpc_layer = super::recording::RpcLayer::new()?;
 
-  let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
-  let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
+  // Portal restore tokens live in the user's state directory for the direct
+  // path and every Runner, so switching between `--no-daemon` and the daemon
+  // never asks for portal consent again. `AUV_RUNNER_STATE_ROOT` is not used
+  // for them.
+  let driver = auv::local::driver(None).map_err(|error| error.to_string())?;
   let session = driver.open_local().map_err(|error| format!("failed to open local driver: {error}"))?;
   let captures = CaptureStore::new(CaptureStoreOptions::from_env());
   // Expiry also runs on inserts and reads; the sweep frees an idle Runner.

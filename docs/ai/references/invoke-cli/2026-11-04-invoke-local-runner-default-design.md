@@ -1,7 +1,10 @@
 # Invoke Uses The Local Runner By Default
 
-Status: **proposal, decisions taken with the owner on 2026-11-04**; not
-implemented. Names marked *provisional* may still change.
+Status: **implemented** (decisions taken with the owner on 2026-11-04;
+socket hardening in #473, Windows logon task in #474, routing, auto-start and
+idle exit in the "Implementation" section below). Names marked *provisional*
+may still change: `--no-daemon`, `auv serve --idle-exit-after`, and the
+`AUV Daemon` task name.
 
 ## Problem
 
@@ -203,6 +206,51 @@ Windows Session 0 behavior (unit-level), concurrent auto-start.
 - **Keep the direct path and persist its state to disk** (e.g. the maximize
   record). Rejected: it duplicates Runner state handling and still loses AX
   connections, portal sessions and the future window cache.
+
+## Implementation
+
+- **Routing** — `commands::invoke::invoke_route` (`crates/auv-cli/src/commands/invoke.rs`)
+  is the one rule for `auv invoke` and `auv mcp`: a root selection keeps the
+  selected route; `--no-daemon`, `RunnerSupport::NoRoute` and the
+  `TODO(selected-invoke-dry-run)` dry runs stay direct; everything else is the
+  local Runner route. That route is an empty selection on the local daemon:
+  `resolve_invoke_context` resolves the endpoint (`AUV_ENDPOINT`, then
+  discovery) and creates the implicit Run on the daemon's local Device, like a
+  selected call. `--no-daemon` conflicts with `--device`, `--device-id` and
+  `--run`, and other commands refuse it.
+- **Auto-start** — `crates/auv-cli/src/local_daemon.rs`. With `AUV_ENDPOINT`
+  set nothing is started. Otherwise a descriptor whose endpoint accepts a
+  connection is used; else the CLI spawns
+  `auv serve --store-root <user state dir> --idle-exit-after 300` (setsid on
+  Unix, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on Windows, stdio to
+  `<log dir>/daemon-autostart.log`) and waits up to 10 s for a reachable
+  descriptor. A concurrent loser's daemon exits on the socket or discovery
+  lock, and its CLI keeps waiting 2 s for the winner's descriptor. In Windows
+  Session 0 the CLI runs the logon task instead; without it the call fails and
+  names `auv setup windows-helper install` and `--no-daemon`.
+- **Traces** — the local Runner route records CLI-side traces in the
+  daemon's store (descriptor `store_root`, else the user state dir);
+  `--store-root` still wins. Human output prints `Store: <path>` under the Run
+  line and JSON adds `store_root`. REVIEW: an `AUV_ENDPOINT` daemon that is
+  not the registered one (an app's private daemon) has no discoverable store,
+  so its CLI-side traces go to the user state dir unless `--store-root` is set.
+- **Idle exit** — `auv serve --idle-exit-after <SECONDS>` (`auv_daemon::Config::idle_exit_after`).
+  A middleware inside authentication (`crates/auv-api-server/src/middleware/activity.rs`)
+  counts each admitted request until its response body ends, so streams and
+  proxied Runner calls keep the daemon alive; the exit uses the normal graceful
+  shutdown, which stops the Runners. `--daemon-idle-timeout` is unchanged. The
+  Windows logon task passes the same flag; a task registered by #474 compares
+  as stale and `auv setup windows-helper install` repairs it.
+- **Portal grants** — the local Runner passes no portal directory to
+  `auv::local::driver`, so it uses the same user-state `portal` directory as
+  the direct path. A daemon started with its own store (for example a systemd
+  `auv serve`) asks for portal consent once after upgrading, because its old
+  tokens are under `<store>/runner-state/auv.core.local/portal`.
+- **MCP** — `auv mcp serve` enables the route (`McpServer::with_local_runner`)
+  unless `--no-daemon` is set. REVIEW: library embedders
+  (`serve_stdio_with_registry`) keep the direct path by default.
+- **Deferred** — `TODO(doctor-daemon-tcc-attribution)`: `auv doctor` still
+  probes its own process, not the shared daemon's TCC attribution.
 
 ## Out of scope
 

@@ -236,6 +236,18 @@ implicit local fallback. A higher-level operation may implement an explicit,
 domain-visible fallback policy, but the operation interface does not silently change the
 Device on which an operation executes.
 
+The `auv invoke` and `auv mcp` frontends route a call without `--device`,
+`--device-id`, or `--run` to the current user's local daemon and its local
+Runner (the *default invoke route*): the daemon `AUV_ENDPOINT` names (never
+started by the CLI), else the registered local daemon, else one the CLI starts
+for the user (registered, local listener only, store in the user state
+directory, exiting 5 minutes after its last request). `--no-daemon`
+(*provisional*), commands without a Runner route, and dry runs that cannot
+resolve a selection yet run on the direct local path in the calling process. A
+registered daemon that does not answer is replaced or reported, never skipped
+for the direct path. See the
+[invoke local Runner design](ai/references/invoke-cli/2026-11-04-invoke-local-runner-default-design.md).
+
 The `auv-core` package also owns process/client context resolution: `AuvContext`,
 profile selection, environment parsing, local daemon endpoint discovery, and
 their precedence rules. These concerns are shared by CLI plugins, executable

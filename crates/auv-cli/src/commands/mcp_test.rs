@@ -587,7 +587,7 @@ async fn mcp_pr430_flush_failure_preserves_result_without_advertising_image_rece
     store: store.clone(),
   };
   let mut server = image_server(directory.path());
-  server.invoke_dispatch = Arc::new(move |_| Ok(authority.clone()));
+  server.invoke_dispatch = Arc::new(move |_, _| Ok(authority.clone()));
   let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
   assert_ne!(result.is_error, Some(true));
   let output = result.structured_content.unwrap();
@@ -1317,9 +1317,13 @@ async fn mcp_invoke_device_fields_select_a_device_per_call() {
   assert_eq!(result.is_error, Some(true), "{result:?}");
 }
 
+// `auv mcp serve` turns the local Runner route on unless `--no-daemon` is set
+// (`serve_stdio`); an embedded server and `--no-daemon` keep the direct path,
+// and the shared rule itself is unit-tested as `commands::invoke::invoke_route`.
 #[tokio::test]
-async fn mcp_invoke_without_a_selection_still_runs_the_local_adapter() {
+async fn mcp_invoke_without_a_selection_or_the_local_runner_runs_the_local_adapter() {
   let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+  let server = server.with_local_runner(false);
 
   let result = call_invoke(server, serde_json::json!({ "command_id": "display.list" })).await;
 

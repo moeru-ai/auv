@@ -16,9 +16,14 @@ pub enum McpCommand {
   Serve,
 }
 
-pub async fn run(args: McpArgs, selection: &auv::selection::RootSelection, project_root: &std::path::Path) -> Result<i32, String> {
+pub async fn run(
+  args: McpArgs,
+  selection: &auv::selection::RootSelection,
+  no_daemon: bool,
+  project_root: &std::path::Path,
+) -> Result<i32, String> {
   match args.command {
-    McpCommand::Serve => frontend::serve_stdio(project_root.to_path_buf(), selection.clone()).await?,
+    McpCommand::Serve => frontend::serve_stdio(project_root.to_path_buf(), selection.clone(), no_daemon).await?,
   }
   Ok(0)
 }
@@ -58,7 +63,9 @@ mod frontend {
   }
 
   type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<McpInvokeSuccess, auv_cli_invoke::InvokeFailure>> + Send + 'static>>;
-  type InvokeDispatch = Arc<dyn Fn(Option<String>) -> Result<McpFrontendAuthority, String> + Send + Sync>;
+  /// Opens the trace store for one call: its `store_root`, else the store of
+  /// the daemon the call routes to, else `<project_root>/.auv/store`.
+  type InvokeDispatch = Arc<dyn Fn(Option<String>, Option<PathBuf>) -> Result<McpFrontendAuthority, String> + Send + Sync>;
 
   #[derive(Clone, Debug)]
   pub struct McpInvokeInput {
@@ -153,6 +160,9 @@ mod frontend {
     op_executor: Arc<dyn OperationExecutor>,
     /// Root `--device`, `--device-id`, and `--run` for `invoke` calls that select no Device.
     default_selection: auv::selection::RootSelection,
+    /// Whether `invoke` calls without a selection use the local daemon's
+    /// Runner (`auv mcp serve` without `--no-daemon`) instead of this process.
+    local_runner: bool,
     /// Image receipts returned by this MCP server instance, shared with its worker threads.
     image_artifacts: Arc<super::artifact_image::ImageArtifacts>,
     /// Shared admission slots for queued or running image workers.
@@ -175,7 +185,7 @@ mod frontend {
         project_root,
         invoke_registry,
         invoke_adapters,
-        Arc::new(move |store_root| build_mcp_authority(dispatch_project_root.clone(), store_root)),
+        Arc::new(move |store_root, daemon_store_root| build_mcp_authority(dispatch_project_root.clone(), store_root, daemon_store_root)),
       )
     }
 
@@ -193,6 +203,7 @@ mod frontend {
         invoke_dispatch,
         op_executor: default_executor(),
         default_selection: auv::selection::RootSelection::default(),
+        local_runner: false,
         image_artifacts: Arc::new(super::artifact_image::ImageArtifacts::default()),
         image_read_slots: Arc::new(tokio::sync::Semaphore::new(MAX_IMAGE_READS)),
       })
@@ -201,6 +212,17 @@ mod frontend {
     /// Routes `invoke` calls without their own Device fields through `selection`.
     pub fn with_default_selection(mut self, selection: auv::selection::RootSelection) -> Self {
       self.default_selection = selection;
+      self
+    }
+
+    /// Routes `invoke` calls without a selection through the local daemon's
+    /// Runner, starting the daemon when none runs, like `auv invoke`.
+    // REVIEW: library embedders (`serve_stdio_with_registry`, plugin MCP
+    // frontends) keep the direct path by default: their commands may have no
+    // Runner route, and auto-starting a daemon from a library is a separate
+    // decision. Only `auv mcp serve` turns this on.
+    pub fn with_local_runner(mut self, enabled: bool) -> Self {
+      self.local_runner = enabled;
       self
     }
 
@@ -280,13 +302,17 @@ mod frontend {
     store: Arc<auv_tracing::FileTracingStore>,
   }
 
-  fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
+  fn build_mcp_authority(
+    project_root: PathBuf,
+    store_root: Option<String>,
+    daemon_store_root: Option<PathBuf>,
+  ) -> Result<McpFrontendAuthority, String> {
     // NOTICE(mcp-path-authority): invoke paths use the server's filesystem authority.
     // Workspace confinement needs a separately approved frontend policy covering
     // store roots and resolved fixture image paths. See
     // docs/ai/references/invoke-cli/2026-10-27-mcp-image-artifacts.md.
     let explicit_store_root = store_root.map(PathBuf::from);
-    let root = explicit_store_root.unwrap_or_else(|| project_root.join(".auv").join("store"));
+    let root = explicit_store_root.or(daemon_store_root).unwrap_or_else(|| project_root.join(".auv").join("store"));
     let store = auv_tracing::FileTracingStore::open(&root)
       .map(Arc::new)
       .map_err(|error| format!("failed to open MCP tracing store {}: {error}", root.display()))?;
@@ -440,7 +466,6 @@ mod frontend {
         .cloned()
         .ok_or_else(|| invalid_params(format!("unknown invoke command: {}", req.command_id)))?;
       let selection = self.invoke_selection(req.device_name, req.device_id)?;
-      let authority = (self.invoke_dispatch)(req.store_root).map_err(invalid_params)?;
       let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
       let command = self.invoke_registry.resolve(&req.command_id).cloned();
       let input = McpInvokeInput {
@@ -449,19 +474,20 @@ mod frontend {
         dry_run: req.dry_run,
         cancellation: cancellation.clone(),
       };
-      // Same selection rule as `auv invoke`: a selected Device always runs the
-      // command remotely; only dry runs that need no Device stay local.
-      let wants_device = !selection.is_empty()
-        && (!input.dry_run
-          || command.as_ref().is_some_and(|command| command.target == auv_cli_invoke::command::TargetPolicy::OptionalKeyboard));
-      let selected = if wants_device {
-        match crate::commands::plugin::resolve_invoke_context(&selection).await {
-          Ok(selected) => Some(selected),
-          Err(failure) => return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(failure), None, &authority),
+      // Same route rule as `auv invoke`, see `commands::invoke::invoke_route`.
+      // A command id outside the registry has no route and fails below.
+      let route = command.as_ref().map_or(crate::commands::invoke::InvokeRoute::Direct, |command| {
+        crate::commands::invoke::invoke_route(&selection, !self.local_runner, command, input.dry_run)
+      });
+      let (selected, daemon_store_root) = match crate::commands::invoke::resolve_route(route, &selection).await {
+        Ok(Some((selected, daemon_store_root))) => (Some(selected), daemon_store_root),
+        Ok(None) => (None, None),
+        Err(failure) => {
+          let authority = (self.invoke_dispatch)(req.store_root, None).map_err(invalid_params)?;
+          return invoke_tool_result(auv_tracing::RunId::new(), req.command_id, Err(failure), None, &authority);
         }
-      } else {
-        None
       };
+      let authority = (self.invoke_dispatch)(req.store_root, daemon_store_root).map_err(invalid_params)?;
       let run_id = crate::commands::invoke::tracing_run_id(selected.as_ref()).map_err(invalid_params)?;
       let remote_daemon = selected.as_ref().map(|selected| auv_cli_invoke::runner::SelectedDaemon {
         context: selected.context.clone(),
@@ -1158,8 +1184,8 @@ mod frontend {
     McpError::invalid_params(message.to_string(), None::<Value>)
   }
 
-  pub async fn serve_stdio(project_root: PathBuf, selection: auv::selection::RootSelection) -> Result<(), String> {
-    serve_server(McpServer::new(project_root)?.with_default_selection(selection)).await
+  pub async fn serve_stdio(project_root: PathBuf, selection: auv::selection::RootSelection, no_daemon: bool) -> Result<(), String> {
+    serve_server(McpServer::new(project_root)?.with_default_selection(selection).with_local_runner(!no_daemon)).await
   }
 
   /// Serve MCP stdio with explicit invoke metadata and shared typed commands.

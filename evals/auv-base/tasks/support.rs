@@ -190,7 +190,9 @@ impl Process {
 }
 
 pub async fn invoke(executable: &Path, directory: &Path, args: &[String]) -> Result<Value> {
-  let mut command = vec!["invoke".into()];
+  // These evals measure the direct path in this process; plain `auv invoke`
+  // would route through (and possibly start) the user's local daemon.
+  let mut command = vec!["--no-daemon".into(), "invoke".into()];
   command.extend_from_slice(args);
   command.extend([
     "--json".into(),

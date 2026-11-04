@@ -30,6 +30,8 @@ pub struct InvokeResult {
   pub run_id: RunId,
   pub command_id: String,
   pub command_description: String,
+  /// Trace store that holds this Run's records, when the frontend knows it.
+  pub store_root: Option<PathBuf>,
   terminal: InvokeTerminal,
 }
 
@@ -53,6 +55,7 @@ impl InvokeResult {
         run_id,
         command_id: command.id.to_string(),
         command_description: command.description.to_string(),
+        store_root: None,
         terminal: InvokeTerminal::Completed {
           result: output.result().cloned(),
           report: output.report.clone(),
@@ -63,6 +66,7 @@ impl InvokeResult {
         run_id,
         command_id: command.id.to_string(),
         command_description: command.description.to_string(),
+        store_root: None,
         terminal: InvokeTerminal::Failed { failure: error },
       },
     }
@@ -100,6 +104,14 @@ impl InvokeResult {
     self
   }
 
+  /// Names the trace store the frontend recorded this Run in. The default
+  /// invoke route records in its daemon's store, not the working directory,
+  /// so callers are told where to look.
+  pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
+    self.store_root = Some(store_root);
+    self
+  }
+
   pub fn failure(&self) -> Option<&str> {
     match &self.terminal {
       InvokeTerminal::Completed { .. } => None,
@@ -112,6 +124,7 @@ impl InvokeResult {
       run_id: &self.run_id,
       status: self.status().as_str(),
       command_id: &self.command_id,
+      store_root: self.store_root.as_deref(),
       result: self.result(),
       artifacts: self.artifacts(),
       failure: self.failure(),
@@ -130,6 +143,9 @@ impl InvokeResult {
       InvokeStatus::Failed => "ERROR",
     };
     writeln!(writer, "{}. {}: {}", terminal_status, label("Run", color), self.run_id).map_err(write_error)?;
+    if let Some(store_root) = &self.store_root {
+      writeln!(writer, "{}: {}", label("Store", color), store_root.display()).map_err(write_error)?;
+    }
     writeln!(writer).map_err(write_error)?;
     writeln!(writer, "● {} - {}", self.command_id, self.command_description).map_err(write_error)?;
 
@@ -207,6 +223,8 @@ struct InvokeResultJsonOutput<'a> {
   run_id: &'a RunId,
   status: &'a str,
   command_id: &'a str,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  store_root: Option<&'a std::path::Path>,
   result: Option<&'a serde_json::Value>,
   #[serde(skip_serializing_if = "<[InvokeArtifactResult]>::is_empty")]
   artifacts: &'a [InvokeArtifactResult],

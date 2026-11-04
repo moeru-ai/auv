@@ -141,7 +141,7 @@ fn remove_expired(directory: &Path, retention: Duration, now: SystemTime) -> std
   Ok(removed)
 }
 
-fn log_directory() -> Result<PathBuf, String> {
+pub(crate) fn log_directory() -> Result<PathBuf, String> {
   if let Some(directory) = std::env::var_os(LOG_DIR_ENV) {
     return Ok(PathBuf::from(directory));
   }
@@ -151,7 +151,7 @@ fn log_directory() -> Result<PathBuf, String> {
   Ok(directory.join("logs"))
 }
 
-fn create_private_directory(directory: &Path) -> Result<(), String> {
+pub(crate) fn create_private_directory(directory: &Path) -> Result<(), String> {
   std::fs::create_dir_all(directory).map_err(|error| format!("failed to create log directory {}: {error}", directory.display()))?;
   // Logs name paths, apps, and Device ids; keep them to the owning user.
   #[cfg(unix)]
