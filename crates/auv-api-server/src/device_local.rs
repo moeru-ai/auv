@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+#[cfg(unix)]
+use crate::unix_socket::current_euid;
 use auv::devices::EnrollmentState;
 use auv_api_proto::auv::api::daemon::v1 as proto;
 use auv_api_proto::auv::api::daemon::v1::device_local_service_server::DeviceLocalService;
@@ -311,7 +313,10 @@ pub async fn serve_unix(
     return Err("DeviceLocalService socket parent must be an owned directory without group/other write permission".into());
   }
 
-  clear_stale_socket(path).await?;
+  // NOTICE(device-local-stale-socket): A process killed without Drop leaves a
+  // socket inode. The owned parent is not group/other writable, and the
+  // metadata store's process lock excludes another daemon using this root.
+  crate::unix_socket::clear_stale(path, "DeviceLocalService socket").await?;
   let listener = tokio::net::UnixListener::bind(path).map_err(|error| format!("cannot bind DeviceLocalService Unix socket: {error}"))?;
   let cleanup = SocketCleanup::new(path)?;
   std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))
@@ -325,48 +330,6 @@ pub async fn serve_unix(
     .map_err(|error| format!("DeviceLocalService Unix server failed: {error}"));
   drop(cleanup);
   result
-}
-
-#[cfg(unix)]
-async fn clear_stale_socket(path: &std::path::Path) -> Result<(), String> {
-  use std::os::unix::fs::{FileTypeExt, MetadataExt};
-  let existing = match std::fs::symlink_metadata(path) {
-    Ok(metadata) => metadata,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-    Err(error) => return Err(format!("cannot inspect DeviceLocalService socket path: {error}")),
-  };
-
-  if !existing.file_type().is_socket() || existing.uid() != current_euid() {
-    return Err("DeviceLocalService socket path is not an owned socket".into());
-  }
-
-  match tokio::time::timeout(std::time::Duration::from_millis(250), tokio::net::UnixStream::connect(path)).await {
-    Ok(Ok(_)) => return Err("DeviceLocalService socket already has a live listener".into()),
-    Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
-    Ok(Err(_)) | Err(_) => return Err("DeviceLocalService socket liveness could not be established".into()),
-  }
-
-  // NOTICE(device-local-stale-socket): A process killed without Drop leaves a
-  // socket inode. The owned parent is not group/other writable, and the
-  // metadata store's process lock excludes another daemon using this root.
-  // Recheck the inode before removing the refused listener's pathname.
-  let current = std::fs::symlink_metadata(path).map_err(|_| "DeviceLocalService socket changed during stale recovery".to_string())?;
-
-  if !current.file_type().is_socket()
-    || current.uid() != existing.uid()
-    || current.dev() != existing.dev()
-    || current.ino() != existing.ino()
-  {
-    return Err("DeviceLocalService socket changed during stale recovery".into());
-  }
-
-  std::fs::remove_file(path).map_err(|error| format!("cannot remove stale DeviceLocalService socket: {error}"))
-}
-
-#[cfg(unix)]
-fn current_euid() -> u32 {
-  // SAFETY: geteuid has no pointers, allocation, or preconditions.
-  unsafe { libc::geteuid() }
 }
 
 #[cfg(unix)]

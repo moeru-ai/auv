@@ -17,7 +17,9 @@ impl PublishedDescriptor {
     let parent = path.parent().ok_or_else(|| format!("daemon descriptor path has no parent: {}", path.display()))?;
     let parent_existed = parent.exists();
     fs::create_dir_all(parent).map_err(|error| format!("failed to create daemon state directory {}: {error}", parent.display()))?;
-    if !parent_existed {
+    if parent_existed {
+      secure_existing_directory(parent)?;
+    } else {
       set_private_directory(parent)?;
     }
 
@@ -80,6 +82,42 @@ fn set_private_directory(path: &Path) -> Result<(), String> {
 
 #[cfg(not(unix))]
 fn set_private_directory(_path: &Path) -> Result<(), String> {
+  Ok(())
+}
+
+/// Secures a pre-existing state directory: another user's directory is
+/// refused, and group/other write is removed from this user's own. A user who
+/// can write the directory could swap the descriptor, lock, or owner socket.
+// NOTICE(discovery-directory-mode): an owned directory is tightened instead of
+// refused because umask 002 (user-private groups, the Debian/Ubuntu default)
+// makes directories 0775, and earlier AUV versions created this one with the
+// umask before publishing. Only group/other write is removed; read and
+// traverse stay, since the descriptor, lock and socket are each 0600.
+#[cfg(unix)]
+fn secure_existing_directory(path: &Path) -> Result<(), String> {
+  use std::os::unix::fs::{MetadataExt, PermissionsExt};
+  let metadata = fs::metadata(path).map_err(|error| format!("failed to inspect daemon state directory {}: {error}", path.display()))?;
+  // SAFETY: geteuid has no pointers, allocation, or preconditions.
+  let euid = unsafe { libc::geteuid() };
+  if metadata.uid() != euid {
+    return Err(format!(
+      "daemon state directory {} is owned by uid {}, not the current user (uid {euid}); use a directory you own (--discovery-file)",
+      path.display(),
+      metadata.uid()
+    ));
+  }
+  let mode = metadata.permissions().mode() & 0o7777;
+  if mode & 0o022 == 0 {
+    return Ok(());
+  }
+  fs::set_permissions(path, fs::Permissions::from_mode(mode & !0o022))
+    .map_err(|error| format!("failed to remove group/other write from daemon state directory {}: {error}", path.display()))
+}
+
+// NOTICE(windows-discovery-directory): the descriptor lives under the user
+// profile, whose ACL already excludes other users; there is no mode to check.
+#[cfg(not(unix))]
+fn secure_existing_directory(_path: &Path) -> Result<(), String> {
   Ok(())
 }
 

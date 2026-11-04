@@ -20,5 +20,7 @@ mod rest;
 pub mod runner_transport;
 pub mod server;
 pub mod termination;
+#[cfg(unix)]
+mod unix_socket;
 #[cfg(windows)]
 pub mod windows_pipe;
