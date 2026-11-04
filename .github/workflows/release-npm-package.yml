@@ -74,7 +74,9 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      # Publishes only versions missing from crates.io and waits out the
+      # rate limit, so rerunning a failed release resumes it.
       - name: Publish Rust crates
-        run: cargo publish --workspace --locked
+        run: scripts/publish-crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
