@@ -260,7 +260,10 @@ auv setup windows-helper status
 > `AuvHelper` service. The Helper does not listen on the network. Lock and
 > unlock work through an ordinary `auv serve` that runs as the logged-in user.
 > To accept paired Devices from the network, start that daemon with
-> `--remote-bind 0.0.0.0:9847`. If a 0.0.28 Helper is installed, run
+> `--remote-bind 0.0.0.0:9847`. Setup also registers the `AUV Daemon`
+> scheduled task for the user who runs it. The task starts a local-only
+> `auv serve` at that user's logon, in the interactive session and with
+> limited privileges. If a 0.0.28 Helper is installed, run
 > `auv setup windows-helper uninstall` first, then install again and pair
 > clients again.
 >

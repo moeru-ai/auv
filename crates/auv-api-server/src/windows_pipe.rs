@@ -54,7 +54,9 @@ pub fn client_process_id(pipe: &NamedPipeServer) -> io::Result<u32> {
   Ok(process_id)
 }
 
-fn current_user_sid() -> io::Result<String> {
+/// String SID of the user this process runs as, the same identity the
+/// owner-only pipe DACL names.
+pub fn current_user_sid() -> io::Result<String> {
   let mut raw_token = HANDLE::default();
   // SAFETY: The pseudo-handle is always valid; the output token is owned and
   // closed by the guard.

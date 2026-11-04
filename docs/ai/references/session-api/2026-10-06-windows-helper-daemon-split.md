@@ -55,9 +55,15 @@ AUV Helper Host: `auv-helper.exe --service` (LocalSystem, Session 0)
   same executable is the one-shot worker that the host starts in the selected
   console session. The host has no network listener, pairing store, policy, or
   audit.
-- **Lifecycle.** `auv setup windows-helper install|status|uninstall` manages only
-  the Helper. A separate daemon lifecycle (for example a provisional
-  `auv daemon install`) is not part of this slice.
+- **Lifecycle.** `auv setup windows-helper install|status|uninstall` manages the
+  Helper and, since 2026-11-04, the installing user's *provisional* `AUV Daemon`
+  scheduled task (`crates/auv-cli/src/windows_daemon_task.rs`). The task starts
+  `auv serve --store-root <user state dir>` at that user's logon with the
+  limited interactive token (`InteractiveToken`, `LeastPrivilege`), registered
+  in discovery and with no remote listener; `start_user_daemon_task` runs it on
+  demand from Session 0. Setup never runs the daemon as a service. Uninstall
+  removes the task but leaves a running daemon to exit on its own. Design:
+  [invoke local Runner default](../invoke-cli/2026-11-04-invoke-local-runner-default-design.md#windows).
 
 ## Scope decision
 
