@@ -1,5 +1,5 @@
 {
-    "version": "0.0.41",
+    "version": "0.0.43",
     "description": "Invoke and inspect core computer-use capabilities",
     "homepage": "https://github.com/moeru-ai/auv",
     "license": "Apache-2.0",
@@ -9,12 +9,12 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.41/auv-x86_64-pc-windows-msvc.zip",
-            "hash": "65a3d78092228924122847009313dd67e97041be430961600b3842a071293d0f"
+            "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.43/auv-x86_64-pc-windows-msvc.zip",
+            "hash": "571ea73dfdfd5a034e3f1753a8c868e2d99402a9c48245300563e209cfbad52c"
         },
         "arm64": {
-            "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.41/auv-aarch64-pc-windows-msvc.zip",
-            "hash": "88e7516f3f797560d9f25196fb50ad0976ca62361c96c83989ebc9c1b8daf26c"
+            "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.43/auv-aarch64-pc-windows-msvc.zip",
+            "hash": "9ade3cb9c75750b0fcd27802bdef36a743641525b365c1585264e29a4d7b4394"
         }
     },
     "bin": "auv.exe",
