@@ -179,9 +179,11 @@ impl DaemonTask {
     // interface is live for these synchronous property reads.
     let (enabled, state, last_result) =
       unsafe { (task.Enabled().map_err(read)?.as_bool(), task.State().map_err(read)?, task.LastTaskResult().map_err(read)?) };
+    let (owned, current) = self.compare(&task).map_err(read)?;
     Ok(TaskStatus {
       registered: true,
-      owned: self.matches(&task).map_err(read)?,
+      owned,
+      current,
       enabled,
       state: state_name(state),
       last_run_result: (last_result != TASK_HAS_NOT_RUN).then(|| format!("0x{:08X}", last_result as u32)),
@@ -203,16 +205,27 @@ impl DaemonTask {
     }
   }
 
-  /// Whether a registered task is this one: one exec action with exactly this
-  /// user's daemon arguments, run with the limited interactive token. The
-  /// executable path is not compared, so an `auv.exe` from another install
-  /// location can still manage the task.
-  fn matches(&self, task: &IRegisteredTask) -> windows::core::Result<bool> {
+  /// Compare a registered task with this one. Returns whether its principal
+  /// is this user (`owned`) and whether it is also exactly this task
+  /// (`current`): one exec action with this user's daemon arguments, run with
+  /// the limited interactive token. The executable path is not compared, so an
+  /// `auv.exe` from another install location can still manage the task.
+  fn compare(&self, task: &IRegisteredTask) -> windows::core::Result<(bool, bool)> {
     // SAFETY: COM is initialized for this thread by the caller's `Scheduler`;
     // every out pointer is a live local for its synchronous call.
     unsafe {
       let definition = task.Definition()?;
       let principal = definition.Principal()?;
+      let mut user_id = BSTR::new();
+      principal.UserId(&mut user_id)?;
+      // NOTICE: `register` passes the SID, and Task Scheduler stores and
+      // returns the principal as given (`schtasks /query /xml` on the Windows
+      // test host shows the SID). A task registered with an account name is
+      // treated as another user's; resolving names to SIDs is not needed for
+      // tasks this module registers.
+      if !user_id.to_string().eq_ignore_ascii_case(&self.user_sid) {
+        return Ok((false, false));
+      }
       let mut logon_type = TASK_LOGON_TYPE::default();
       principal.LogonType(&mut logon_type)?;
       let mut run_level = TASK_RUNLEVEL_TYPE::default();
@@ -221,14 +234,14 @@ impl DaemonTask {
       let mut count = 0;
       actions.Count(&mut count)?;
       if logon_type != TASK_LOGON_INTERACTIVE_TOKEN || run_level != TASK_RUNLEVEL_LUA || count != 1 {
-        return Ok(false);
+        return Ok((true, false));
       }
       let Ok(exec) = actions.get_Item(1)?.cast::<IExecAction>() else {
-        return Ok(false);
+        return Ok((true, false));
       };
       let mut arguments = BSTR::new();
       exec.Arguments(&mut arguments)?;
-      Ok(arguments.to_string() == self.arguments)
+      Ok((true, arguments.to_string() == self.arguments))
     }
   }
 }
@@ -237,8 +250,13 @@ impl DaemonTask {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TaskStatus {
   pub registered: bool,
-  /// The registered task is this user's AUV daemon task.
+  /// The registered task runs as this user, so this user may replace or
+  /// delete it.
   pub owned: bool,
+  /// The registered task is also exactly this user's current AUV daemon task;
+  /// an owned task that is not current has a stale action or principal
+  /// settings and is repaired by registering it again.
+  pub current: bool,
   pub enabled: bool,
   pub state: &'static str,
   /// `LastTaskResult` as an HRESULT or exit code; `None` before the first run.
