@@ -58,7 +58,6 @@ prost-reflect = { version = "0.16", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-directories = "6"
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 thumbhash = "0.1"
 
@@ -78,8 +77,9 @@ swift-bridge-build = "0.1.59"
 [target.'cfg(windows)'.dependencies]
 auv-device-helper-windows = { version = "0.0.40", path = "../auv-device-helper-windows", default-features = false }
 auv-driver-windows = { version = "0.0.40", path = "../auv-driver-windows" }
+directories = "6"
 windows-service = "0.8.1"
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_RemoteDesktop", "Win32_UI_Shell"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Memory", "Win32_System_TaskScheduler", "Win32_System_Threading", "Win32_System_RemoteDesktop", "Win32_UI_Shell"] }
 zeroize = "1"
 
 # Embeds `auv.exe.manifest` (build.rs). A host `cfg`: build scripts run on the host.

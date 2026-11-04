@@ -147,8 +147,8 @@ fn log_directory() -> Result<PathBuf, String> {
   }
   // The same per-user root as discovery and the Linux portal state
   // (`auv::discovery::default_path`); XDG puts logs under the state directory.
-  let directories = directories::ProjectDirs::from("ai", "moeru", "auv").ok_or("cannot resolve the AUV user state directory for logs")?;
-  Ok(directories.state_dir().unwrap_or_else(|| directories.data_local_dir()).join("logs"))
+  let directory = auv::discovery::user_state_directory().map_err(|_| "cannot resolve the AUV user state directory for logs")?;
+  Ok(directory.join("logs"))
 }
 
 fn create_private_directory(directory: &Path) -> Result<(), String> {

@@ -7,4 +7,6 @@ pub mod cli;
 pub mod commands;
 mod logging;
 pub mod runner;
+#[cfg(windows)]
+pub mod windows_daemon_task;
 pub mod xtask;
