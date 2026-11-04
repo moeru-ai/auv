@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod commands;
+mod local_daemon;
 mod logging;
 pub mod runner;
 #[cfg(windows)]

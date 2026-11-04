@@ -370,7 +370,8 @@ impl Entry<'_> {
       process
     } else {
       let mut process = Command::new(self.auv);
-      process.stdin(Stdio::null()).creation_flags(0x0800_0000);
+      // The direct path: plain `auv invoke` routes through the local daemon.
+      process.stdin(Stdio::null()).creation_flags(0x0800_0000).arg("--no-daemon");
       process
     };
     process.args(["invoke", command]).args(args).args(["--json", "--no-overlay", "--store-root"]).arg(self.store);

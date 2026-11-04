@@ -271,6 +271,19 @@ auv setup windows-helper status
 > This is not a general support claim. See the
 > [Windows Helper and daemon split](docs/ai/references/session-api/2026-10-06-windows-helper-daemon-split.md#evidence).
 
+#### Local daemon
+
+`auv invoke` and `auv mcp serve` run commands through your local AUV daemon
+and its Runner, so state such as a window maximize record stays between calls.
+If no daemon runs, the first command starts one. It runs as you, accepts only
+local connections, keeps its store and traces in your AUV state directory, and
+stops 5 minutes after the last command. The command output names the Run and
+the store. To run a command in the calling process instead, use
+`auv --no-daemon invoke <command-id>`. `AUV_ENDPOINT` selects another daemon;
+the CLI never starts one for it. On Windows over SSH (Session 0), the CLI
+starts the `AUV Daemon` task in your interactive session instead, so run
+`auv setup windows-helper install` first.
+
 ### Uninstall
 
 Use the instructions that match your installation method. If a platform Helper

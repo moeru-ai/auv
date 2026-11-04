@@ -59,16 +59,16 @@ impl DaemonTask {
 
   fn new(name: &str, user_sid: String, executable: &Path, working_directory: PathBuf, store_root: &Path) -> Self {
     // Registered in discovery (no `--no-register`), local named pipe only (no
-    // `--remote-bind`), `os-user` local authentication by default.
-    // TODO(auto-daemon-idle-from-last-request): pass the 5-minute idle exit
-    // once `auv serve` counts idle from the last admitted request (design
-    // "Lifecycle"). Today's `--daemon-idle-timeout` counts only "no live
-    // Runners", so a logon-started daemon would exit 5 minutes after logon
-    // and nothing restarts it before the CLI auto-start lands.
+    // `--remote-bind`), `os-user` local authentication by default, and the
+    // same idle exit as a daemon the CLI starts: the CLI runs the task again
+    // on demand. A task registered before the idle exit compares as stale
+    // (`current: false`), and `install` repairs it.
     let arguments = [
       "serve".into(),
       "--store-root".into(),
       store_root.as_os_str().to_owned(),
+      "--idle-exit-after".into(),
+      crate::local_daemon::IDLE_EXIT_AFTER_SECONDS.to_string().into(),
     ];
     Self {
       name: name.into(),
@@ -466,7 +466,7 @@ mod tests {
   fn daemon_task_runs_registered_local_serve_with_the_user_store() {
     let task = task();
 
-    assert_eq!(task.arguments, r#"serve --store-root "C:\Users\A & B\AppData\Local\moeru\auv\data""#);
+    assert_eq!(task.arguments, r#"serve --store-root "C:\Users\A & B\AppData\Local\moeru\auv\data" --idle-exit-after 300"#);
     for flag in [
       "--no-register",
       "--remote-bind",
@@ -477,7 +477,9 @@ mod tests {
     }
     let xml = task.definition_xml();
     assert!(xml.contains(r"<Command>C:\Users\A &amp; B\scoop\apps\auv\current\auv.exe</Command>"));
-    assert!(xml.contains(r#"<Arguments>serve --store-root &quot;C:\Users\A &amp; B\AppData\Local\moeru\auv\data&quot;</Arguments>"#));
+    assert!(xml.contains(
+      r#"<Arguments>serve --store-root &quot;C:\Users\A &amp; B\AppData\Local\moeru\auv\data&quot; --idle-exit-after 300</Arguments>"#
+    ));
     assert!(xml.contains(r"<WorkingDirectory>C:\Users\A &amp; B</WorkingDirectory>"));
   }
 
