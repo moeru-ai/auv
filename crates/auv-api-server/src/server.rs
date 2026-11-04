@@ -75,6 +75,10 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
+  /// Optional quiet period after which the server stops: no admitted request
+  /// (any listener, including proxied Runner traffic and open streams) has
+  /// been in flight for this long. Independent of `daemon_idle_timeout`.
+  pub idle_exit_after: Option<std::time::Duration>,
   /// How callers of the Unix socket or named-pipe listeners may prove
   /// themselves.
   pub local_auth_methods: Vec<crate::LocalAuthMethod>,
@@ -132,6 +136,7 @@ pub struct Server {
   listeners: Vec<BoundListenerState>,
   daemon: Arc<dyn Control>,
   daemon_idle_timeout: Option<std::time::Duration>,
+  idle_exit_after: Option<std::time::Duration>,
 }
 
 struct BoundListenerState {
@@ -177,6 +182,7 @@ impl Server {
       listeners,
       daemon,
       daemon_idle_timeout: config.daemon_idle_timeout,
+      idle_exit_after: config.idle_exit_after,
     })
   }
 
@@ -202,12 +208,17 @@ impl Server {
     let daemon = self.daemon;
     let idle_shutdown =
       self.daemon_idle_timeout.map(|timeout| tokio::spawn(shutdown_when_daemon_idle(Arc::clone(&daemon), shutdown.clone(), timeout)));
+    let activity = crate::middleware::activity::Activity::new();
+    let quiet_shutdown = self
+      .idle_exit_after
+      .map(|timeout| tokio::spawn(crate::middleware::activity::shutdown_when_quiet(Arc::clone(&activity), shutdown.clone(), timeout)));
     let mut servers = tokio::task::JoinSet::new();
     for listener in self.listeners {
       let daemon = Arc::clone(&daemon);
       let id = self.id.clone();
       let listener_shutdown = shutdown.clone();
-      servers.spawn(async move { serve_listener(listener, daemon, id, listener_shutdown).await });
+      let activity = Arc::clone(&activity);
+      servers.spawn(async move { serve_listener(listener, daemon, id, activity, listener_shutdown).await });
     }
 
     let mut errors = Vec::new();
@@ -235,6 +246,11 @@ impl Server {
     {
       errors.push(format!("daemon idle task failed: {error}"));
     }
+    if let Some(quiet_shutdown) = quiet_shutdown
+      && let Err(error) = quiet_shutdown.await
+    {
+      errors.push(format!("daemon idle exit task failed: {error}"));
+    }
     if errors.is_empty() {
       Ok(())
     } else {
@@ -258,6 +274,7 @@ async fn serve_listener(
   listener: BoundListenerState,
   daemon: Arc<dyn Control>,
   id: String,
+  activity: Arc<crate::middleware::activity::Activity>,
   shutdown: CancellationToken,
 ) -> Result<(), String> {
   let authenticator = listener.authenticator;
@@ -294,6 +311,8 @@ async fn serve_listener(
 
   let routes = crate::rest::router(Arc::clone(&daemon), authenticator, id)
     .fallback_service(grpc_routes)
+    // Inside authentication: only admitted requests count as activity.
+    .layer(axum::middleware::from_fn_with_state(activity, crate::middleware::activity::track))
     .layer(axum::middleware::from_fn_with_state(authentication, crate::middleware::authentication::authenticate))
     .layer(tower_http::cors::CorsLayer::permissive());
 

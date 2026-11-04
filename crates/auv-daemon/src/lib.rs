@@ -47,6 +47,8 @@ pub struct Config {
   pub register: bool,
   /// Optional shutdown deadline after all Runners become idle.
   pub daemon_idle_timeout: Option<std::time::Duration>,
+  /// Optional shutdown deadline after the last admitted request finished.
+  pub idle_exit_after: Option<std::time::Duration>,
   /// Operator-trusted custom Runner providers.
   pub runner_providers: Vec<runner_provider::RunnerProviderConfig>,
   /// First-party Runner runtime definitions.
@@ -69,6 +71,7 @@ impl Config {
       discovery_file: None,
       register: false,
       daemon_idle_timeout: None,
+      idle_exit_after: None,
       runner_providers: Vec::new(),
       first_party_runners: runner_provider::FirstPartyRunnerRuntimes::default(),
     })
@@ -109,6 +112,15 @@ impl Config {
   /// Stops the daemon after this long without live Runners.
   pub fn daemon_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
     self.daemon_idle_timeout = Some(timeout);
+    self
+  }
+
+  /// Stops the daemon after this long with no admitted request in flight,
+  /// counted from the end of the last one. Long streams, including Runner
+  /// traffic the daemon proxies, count as in flight. On exit the daemon drains
+  /// and stops its Runners like any graceful shutdown.
+  pub fn idle_exit_after(mut self, timeout: std::time::Duration) -> Self {
+    self.idle_exit_after = Some(timeout);
     self
   }
 
@@ -328,6 +340,7 @@ impl Server {
         additional_listeners: listeners.collect(),
         pairing,
         daemon_idle_timeout: config.daemon_idle_timeout,
+        idle_exit_after: config.idle_exit_after,
         local_auth_methods: config.local.allowed_auth_methods,
         remote_auth_methods: config.remote.allowed_auth_methods,
       },
