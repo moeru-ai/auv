@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Publishes every publishable workspace crate whose current version is not on
+# crates.io yet, so a failed or rate-limited release can simply be rerun.
+#
+# NOTICE: crates.io allows one account a burst of 30 updates to existing crates,
+# then 1 per minute (`PublishUpdate` in rust-lang/crates.io
+# `src/rate_limiter.rs`). The workspace publishes more than 30 crates, so a
+# single `cargo publish --workspace` always ends in 429, and rerunning it fails
+# because cargo refuses versions that already exist (rust-lang/cargo#13397).
+# Each round publishes only what is missing; after a 429 it waits for the
+# bucket to refill. Remove the rounds when cargo backs off on 429 itself
+# (rust-lang/cargo#13530).
+#
+# Usage: scripts/publish-crates [extra cargo publish arguments, e.g. --dry-run]
+
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd -P)
+cd "$repo_root"
+
+# NOTICE: 10 rounds 65 s apart cover 9 crates beyond the burst; the extra 5 s
+# absorbs clock skew against the refill time.
+max_rounds=10
+retry_seconds=65
+
+# Path of a crate in the sparse index: https://doc.rust-lang.org/cargo/reference/registry-index.html#index-files
+index_path() {
+  local name
+  name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case ${#name} in
+    1) printf '1/%s' "$name" ;;
+    2) printf '2/%s' "$name" ;;
+    3) printf '3/%s/%s' "${name:0:1}" "$name" ;;
+    *) printf '%s/%s/%s' "${name:0:2}" "${name:2:2}" "$name" ;;
+  esac
+}
+
+is_published() {
+  local name=$1 version=$2 status entries
+  entries=$(mktemp)
+  status=$(curl --silent --show-error --retry 3 --output "$entries" --write-out '%{http_code}' "https://index.crates.io/$(index_path "$name")")
+  case $status in
+    200) jq --exit-status --arg version "$version" 'select(.vers == $version)' "$entries" > /dev/null && rm -f "$entries" && return 0 ;;
+    404) ;;
+    *) rm -f "$entries" && echo "error: crates.io index returned HTTP $status for $name" >&2 && exit 1 ;;
+  esac
+  rm -f "$entries"
+  return 1
+}
+
+for round in $(seq 1 "$max_rounds"); do
+  # `publish: null` means publishable anywhere; `[]` is `publish = false`.
+  missing=()
+  while IFS=$'\t' read -r name version; do
+    is_published "$name" "$version" || missing+=("$name")
+  done < <(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null) | [.name, .version] | @tsv')
+
+  if [ ${#missing[@]} -eq 0 ]; then
+    echo "every publishable crate is on crates.io"
+    exit 0
+  fi
+  echo "round $round: publishing ${missing[*]}"
+
+  # cargo orders the selected packages by dependency and waits for each to
+  # reach the index before publishing its dependents.
+  log=$(mktemp)
+  if cargo publish --locked "${missing[@]/#/--package=}" "$@" 2>&1 | tee "$log"; then
+    rm -f "$log"
+    case " $* " in *" --dry-run "*) exit 0 ;; esac
+    continue
+  fi
+  if ! grep -q '429 Too Many Requests' "$log"; then
+    rm -f "$log"
+    exit 1
+  fi
+  rm -f "$log"
+  echo "rate limited by crates.io; retrying in ${retry_seconds}s"
+  sleep "$retry_seconds"
+done
+
+echo "error: crates are still unpublished after $max_rounds rounds" >&2
+exit 1

@@ -131,8 +131,9 @@ jobs:
   # `auv-cli` `include_str!`ed docs outside the crate (#456).
   crate-packages:
     name: crates.io package verification
-    # Same runner and command as "Publish crates.io packages" in
-    # release-npm-package.yml, plus --dry-run.
+    # Same runner as "Publish crates.io packages" in release-npm-package.yml.
+    # The release runs scripts/publish-crates, which publishes the crates
+    # missing from crates.io; this checks all of them.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
