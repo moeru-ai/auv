@@ -1,0 +1,93 @@
+# Windows foreground activation admission
+
+Status: all three native regressions reproduced before repair. Scoped repair passed isolated Windows acceptance.
+
+Classification: bug fix from the owner's Windows Phase 2 input-delivery goal.
+Base: `main@7a0a7839e64203871faa9b7eee3d8b3af217f6a1` (rebased from `main@d9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3`).
+The [#429 closure decision](https://github.com/moeru-ai/auv/pull/429#issuecomment-6481267529)
+explicitly identifies activation-failure refusal as useful independently of the rejected screenshot predicate.
+This work does not depend on #429's capture store, RPC, pixels, or input precondition.
+
+## Reproduction and intended behavior
+
+Before the repair, `WindowApi` foreground click, scroll, and drag recorded an activation failure as an attempt, then continued with global input.
+Global `SendInput` has no window recipient.
+A different window can therefore receive input aimed at a target that could not be activated.
+
+Four ignored native regressions use the public Driver APIs and the existing foreground button receiver:
+- Three `ForegroundPreferred` regressions covering click, scroll, and drag.
+- One `BackgroundPreferred` scroll regression with `ScrollDeliveryStrategy::foreground_hid()`.
+Each creates and destroys an owned target window whose old rectangle overlaps the still-live receiver.
+The receiver must hold the foreground before the measured operation.
+The record retains the Driver result, received mouse-button/wheel messages, pointer positions, and final foreground check.
+Each operation must fail with `DriverError::Backend` indicating that `SetForegroundWindow was refused`, deliver no messages to the receiver, and leave the pointer and foreground unchanged.
+The fixture attempts pointer/foreground restoration and owned-window cleanup during teardown, including on an assertion failure.
+The tests run only when explicitly selected on an isolated interactive desktop.
+Local validation compiles them without execution.
+
+The repair returns the original activation error before global click, wheel, or drag delivery.
+Following the driver input contract, successful activation is recorded as an input preparation (`focus_disturbance = Foreground`), and delivery attempts record only the actual delivery paths without injecting a synthetic activation attempt.
+Posted-message delivery remains unchanged.
+For scrolling, every selected `ForegroundHid` candidate requires successful activation, including an explicit candidate under `BackgroundPreferred`.
+Negative tests verify that both `ForegroundPreferred` and `BackgroundPreferred` with `ForegroundHid` strategy refuse delivery on activation failure and lock the `DriverError::Backend` error source.
+No public method, command, RPC, SDK, result schema, or new retry is needed.
+
+## Boundaries
+
+This is an activation-error boundary, not a cross-call input lease or a screenshot predicate.
+Successful activation does not prevent another process from taking foreground afterward.
+For `drag`, activation precedes `MouseCoordinator::motion()` queue admission; any queue wait time between activation and gesture delivery introduces a window where foreground could shift before injection starts.
+The common `InputPreparationLease` currently holds only a restored flag; it does not provide an exact Windows recipient guard.
+The macOS preparation path also refuses an unimplemented focus guard.
+Those placeholders cannot establish an existing lease implementation to copy.
+Recipient identity, continuous focus-loss admission, and replacement state subscriptions need their own contract and evidence.
+
+Activation can itself change presentation before it returns an error; this repair does not promise activation rollback.
+The closed-target regression measures the separate claim that no global input follows the activation failure.
+
+## Native reproduction
+
+The [test-only native run](https://github.com/moeru-ai/auv/actions/runs/40920335771)
+used source `e1010ab3bac156819b366c8e23b68fbb5444e19e` and workflow `d24bf7a12029ae294662eeec4328bc37e7aac7d1`.
+All three calls returned successful foreground-delivery results after recording failed activation attempts.
+The independent receiver confirmed the following events:
+
+| Operation | Receiver messages | Shared pointer before / after |
+| --- | --- | --- |
+| Click | `WM_LBUTTONDOWN`, `WM_LBUTTONUP` | `(512, 384)` / `(250, 250)` |
+| Scroll | `WM_MOUSEWHEEL` | `(512, 384)` / `(250, 250)` |
+| Drag | `WM_LBUTTONDOWN`, `WM_LBUTTONUP` | `(512, 384)` / `(250, 250)` |
+
+Each named regression failed its required-refusal assertion.
+The workflow required all three exact failures and successful Driver results; setup errors cannot count as reproduction.
+The [raw artifact](https://github.com/moeru-ai/auv/actions/runs/40920335771/artifacts/12917647940)
+matched SHA-256 `c3ea698398e7536b7932cd93c6d8bd55027805982150bf28aadf7880a18bf09f` after download.
+Retention ends 2026-11-12.
+
+## Repair acceptance
+
+The historical [repaired native run](https://github.com/moeru-ai/auv/actions/runs/40921807996)
+used source `8656b95aa42ee38f91d02b29eb67f9d92bf2bc3b` and workflow `874c111f6ece18196b66d014d69fbe68bc93d3c9`.
+The three negative regressions are unchanged from the test-only reproduction; the later test change adds a positive control.
+
+Evidence status across test variants:
+
+| Check / Evidence | Status and evidence boundary |
+| --- | --- |
+| Closed-target click, scroll, drag (3 negative regressions) | **Verified on native Windows desktop (Run 40921807996)**: all returned `DriverError::Backend` with `SetForegroundWindow was refused`, empty receiver messages, unchanged pointer `(512, 384)`, and receiver retained foreground. |
+| Valid-window click, scroll, drag (positive control) | **Verified under historical contract (Run 40921807996)**: reached owned receiver with expected messages; recorded `attempts: 2 successful` and `focus_disturbance: Unknown`. |
+| Single delivery attempt & foreground disturbance assertion | **Compiled locally, pending native execution**: positive control was updated to conform to main's input contract (`attempts.len() == 1`, `focus_disturbance == Foreground`), verified locally by unit and compilation checks. |
+| BackgroundPreferred scroll with ForegroundHid candidate | **Compiled locally, pending native execution**: added negative regression ensuring `BackgroundPreferred` + `ForegroundHid` fails closed on activation error without leaking wheel messages. |
+| Existing global-input control | **Verified on native Windows desktop (Run 40921807996)**: all 18 button/count/modifier cases passed their exact message and flag assertions. |
+| Local workspace validation | Workspace all-targets compilation (`cargo check --workspace --all-targets`), native-test compilation without execution (`cargo test -p auv-driver-windows --test click_buttons --no-run`), library tests (255 passed), and formatting passed. |
+
+Both native runs recorded Windows Server 2025 build 26100, hosted image `20261021.278.1`, interactive session 2, and an accessible input desktop.
+Each had one 1024 by 768 display; the owned per-monitor-v2 DPI probe reported 96 DPI and restored its own context.
+Independent inspection of the downloaded repair logs confirmed all three empty receiver receipts, unchanged pointer/foreground checks, three valid-window receipts, and 18 existing control receipts.
+The [repair artifact](https://github.com/moeru-ai/auv/actions/runs/40921807996/artifacts/12919061447)
+matched SHA-256 `7d381a995b6c57b523da0610256f1c992bd86402db778f341e0cb9918384ad37` after download.
+Retention ends 2026-11-12.
+
+The receipt scope is the operation interval. There is no dedicated full-desktop teardown receipt in this test binary.
+Standard PR CI is separate from the isolated run.
+This evidence does not complete the input-lease contract, general toolkit compatibility, the DPI coordinate matrix, or live MCP parity.

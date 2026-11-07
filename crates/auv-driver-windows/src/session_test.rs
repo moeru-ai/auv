@@ -301,7 +301,7 @@ fn successful_activation_is_a_focus_disturbance_not_a_delivery_attempt() {
   };
 
   let mut result = delivered();
-  record_activation(&mut result, Ok(()), "pointer delivery");
+  record_activation(&mut result);
   assert_eq!(
     result.attempts,
     vec![InputAttempt::success(
@@ -310,11 +310,4 @@ fn successful_activation_is_a_focus_disturbance_not_a_delivery_attempt() {
   );
   assert_eq!(result.focus_disturbance, DisturbanceLevel::Foreground);
   assert_eq!(result.validate(), Ok(()));
-
-  let mut result = delivered();
-  record_activation(&mut result, Err(crate::error::backend("SetForegroundWindow was refused")), "pointer delivery");
-  assert_eq!(result.attempts.len(), 2);
-  assert_eq!(result.attempts[0].path, InputDeliveryPath::ForegroundSystemEvents);
-  assert!(!result.attempts[0].succeeded);
-  assert_eq!(result.focus_disturbance, DisturbanceLevel::Unknown);
 }
