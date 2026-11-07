@@ -276,6 +276,10 @@ false). These rounds fail the run as measured; they are not takeovers by the ses
 
 ### One-shot WGC capture returns an older frame
 
+NOTICE (2026-10-30): this section and the deferred-work list below describe the older on-demand FIFO implementation.
+The [image-capture repair](2026-10-30-wgc-on-demand-freshness.md) reuses the continuously drained stream and records new isolated evidence.
+The historical measurements remain unchanged; the separate health sampler retains its existing policy.
+
 `capture_window_wgc` reads the frame pool in order (two buffers) from one global capture session.
 After an action the first read returned the window as it was before the action, and reads
 converged after two or three calls; switching targets tore the session down. In `five`, after a burst of clicks the first one-shot

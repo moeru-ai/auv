@@ -7,12 +7,14 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **87**
+Count: **88**
 
 - [`2026-11-03-windows-dpi-awareness.md`](2026-11-03-windows-dpi-awareness.md): issue #460 fix: `auv.exe` declares per-monitor-v2 DPI awareness in its manifest, the driver never changes a host's awareness (warns instead), tests and evals opt in; `PrintWindow` bitmap sized at the window DPI; before/after live numbers at 150%.
 
 - [`2026-11-02-window-management-api-v1-design.md`](2026-11-02-window-management-api-v1-design.md): approved window management v1: read model (state, stacking, desktop), `SetWindowFrame` / `SetWindowState` / `FocusWindow`, `WatchWindows` with resume tokens, Linux `Unsupported` for now. Mutations and `GetWindow` are wired end to end (implementation notes in the doc); watch is next.
 - [`2026-11-03-window-management-v1-evidence.md`](2026-11-03-window-management-v1-evidence.md): live-probe scenario of window management v1 on macOS, Windows 11 (150%) and GNOME 48 through the JS SDK, with per-step values, three macOS fixes, the gaps found and fixed, and a 2026-11-04 re-run at the API PR head (19/19, 21/21, 14/14) plus the `evals/auv-base` window-management cases.
+
+- [`2026-10-30-wgc-on-demand-freshness.md`](2026-10-30-wgc-on-demand-freshness.md): On-demand WGC queued-frame reproduction and the private stream-reuse repair boundary.
 
 - [`2026-10-28-windows-core-convergence.md`](2026-10-28-windows-core-convergence.md): Windows baseline, capture guard review, semantic focus, cancellation, and shared failure progress with explicit evidence boundaries.
 

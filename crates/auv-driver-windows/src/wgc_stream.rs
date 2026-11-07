@@ -1,19 +1,18 @@
-//! A continuously drained Windows.Graphics.Capture stream for one window.
+//! A continuously drained Windows.Graphics.Capture stream for one capture item.
 //!
-//! `capture_window_wgc` reads a frame pool on demand. A pool is a FIFO: it hands out its *oldest*
-//! queued frame, and once its buffers are full the compositor drops newer frames. So a caller that
-//! captures once after acting sees an older state of the window than the one on screen, and a
-//! caller that has not captured for a while sees a frame from the start of that while. Both were
-//! measured: after a click, the first captures return the pre-click and intermediate frames and
-//! only the third converges.
+//! A frame pool is a FIFO: it hands out its oldest queued frame, and once its buffers are full
+//! the compositor drops newer frames. The former on-demand pool returned pre-click and intermediate
+//! frames before converging on the third read. See `2026-10-10-windows-background-session.md`.
+//! Both background sessions and on-demand window/display images now use this continuously drained
+//! stream, so an idle caller does not fill the pool with old frames.
 //!
-//! A [`FrameStream`] instead drains its pool the moment each frame arrives, keeps only the newest
+//! A [`FrameStream`] drains its pool the moment each frame arrives, keeps only the newest
 //! frame as a GPU texture, and counts it. A read copies that newest frame to the CPU, or answers
 //! [`FrameUpdate::Unchanged`] when nothing has arrived since the previous read and copies nothing.
-//! The window keeps being observed whether or not anyone is reading, covered or not, so a
-//! session that watches five windows never serves a stale frame and never renegotiates a capture
-//! session when it switches between them. Minimized windows deliver no frames; the caller checks
-//! for that before reading and never restores them.
+//! This is the latest received frame; it does not prove that a pending application action has
+//! already painted or that a frame was produced after a request began. A background session keeps
+//! one stream per window and need not renegotiate when switching readers. Minimized windows deliver
+//! no frames; the caller checks for that before reading and never restores them.
 //!
 //! A stream is bound to the window's capture region as it was when the stream opened. When that
 //! region changes size, the stream stops with [`StreamError::Resized`] and its owner opens a new
@@ -26,7 +25,7 @@ use std::time::{Duration, Instant};
 use auv_driver_common::error::DriverResult;
 use image::RgbaImage;
 use windows::Foundation::TypedEventHandler;
-use windows::Graphics::Capture::{Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureSession};
+use windows::Graphics::Capture::{Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::HWND;
@@ -154,6 +153,7 @@ impl Shared {
     let mut description = D3D11_TEXTURE2D_DESC::default();
     // SAFETY: a live texture and a writable description.
     unsafe { source.GetDesc(&mut description) };
+    // HDR tonemapping guard: fail explicitly on non-B8G8R8A8 formats.
     if description.Format != DXGI_FORMAT_B8G8R8A8_UNORM {
       return Err(format!("unsupported pixel format {:?}: window frames are expected as B8G8R8A8", description.Format));
     }
@@ -197,6 +197,12 @@ impl FrameStream {
   pub fn open(hwnd: HWND) -> DriverResult<Self> {
     let d3d = get_or_init_d3d_context()?;
     let item = item_for_window(hwnd)?;
+    Self::open_item(d3d, &item)
+  }
+
+  /// Shares pool draining and GPU/CPU staging with on-demand window and display capture.
+  /// The context is resolved before taking the on-demand cache lock, preserving reset lock order.
+  pub(super) fn open_item(d3d: Arc<D3dContext>, item: &GraphicsCaptureItem) -> DriverResult<Self> {
     let size = item.Size().map_err(|error| backend(format!("failed to read the capture item size: {error}")))?;
     if size.Width <= 0 || size.Height <= 0 {
       return Err(invalid_input(format!("target has zero or invalid dimensions ({}x{}); target may be minimized", size.Width, size.Height)));
@@ -241,7 +247,7 @@ impl FrameStream {
       .map_err(|error| backend(format!("failed to register the Closed handler: {error}")))?;
 
     let session =
-      frame_pool.CreateCaptureSession(&item).map_err(|error| backend(format!("failed to create the capture session: {error}")))?;
+      frame_pool.CreateCaptureSession(item).map_err(|error| backend(format!("failed to create the capture session: {error}")))?;
     let _ = session.SetIsBorderRequired(false);
     let _ = session.SetIsCursorCaptureEnabled(false);
     session.StartCapture().map_err(|error| backend(format!("failed to start the capture session: {error}")))?;
