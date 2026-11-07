@@ -40,6 +40,32 @@ impl TestWindow {
       DwmFlush().expect("compositor flush failed");
     }
   }
+
+  /// Replaces the class brush and invalidates the client area WITHOUT synchronous
+  /// update (no RDW_UPDATENOW) and WITHOUT compositor flush (no DwmFlush).
+  /// This models an asynchronous UI repaint request whose update has not yet been
+  /// presented to DWM or delivered to WGC, creating a genuine unsynchronized capture race.
+  fn request_repaint_unsynchronized(&mut self, color_bgr: u32) {
+    // SAFETY: replace class brush and invalidate without forcing a synchronous paint or flush.
+    unsafe {
+      let brush = CreateSolidBrush(COLORREF(color_bgr));
+      assert!(!brush.is_invalid(), "failed to create replacement brush");
+      let previous = SetClassLongPtrW(self.hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
+      assert_eq!(previous, self.brush.0 as usize, "window class brush changed unexpectedly");
+      let previous = std::mem::replace(&mut self.brush, brush);
+      assert!(RedrawWindow(self.hwnd, None, None, RDW_INVALIDATE | RDW_ERASE).as_bool());
+      let _ = DeleteObject(previous);
+    }
+  }
+
+  /// Synchronously finishes window redrawing and flushes the compositor.
+  fn flush_sync(&self) {
+    // SAFETY: synchronously paints pending regions and flushes DWM compositing turns.
+    unsafe {
+      assert!(RedrawWindow(self.hwnd, None, None, RDW_UPDATENOW).as_bool());
+      DwmFlush().expect("compositor flush failed");
+    }
+  }
 }
 
 impl Drop for TestWindow {
@@ -222,6 +248,88 @@ fn one_shot_wgc_reads_latest_completed_paint_after_idle() {
   assert_eq!(center_rgb(&captured.image), [255, 255, 0], "one-shot WGC returned an older queued paint");
   let unchanged = session.window().capture_wgc(&window).expect("unchanged capture failed");
   assert_eq!(center_rgb(&unchanged.image), [255, 255, 0]);
+}
+
+// CONTRACT AND TIMING BOUNDARY:
+//
+// In the legacy WGC implementation, subsequent captures with an existing cached frame waited on a
+// wake-up channel with a 15ms timeout (`recv_timeout(Duration::from_millis(15))`). The FrameStream-based
+// implementation eliminates this artificial wait and immediately returns `FrameUpdate::Unchanged`
+// when no new frame has arrived.
+//
+// This test verifies that timing and convergence contract:
+// 1. Back-to-back capture without repaint returns immediately and retains the prior frame.
+//    Durations are recorded for diagnostics; we deliberately avoid hard timing assertions to prevent
+//    flakiness from virtualization/CI scheduling jitter.
+// 2. An in-flight repaint request racing with an immediate read delivers a valid completed frame
+//    (either the prior frame or the newly painted frame, depending on compositor/message queue race)
+//    without blocking or panic.
+// 3. Once the compositor finishes presenting the new paint, the subsequent WGC capture promptly converges
+//    to the new pixels without requiring a stream restart.
+#[test]
+fn one_shot_wgc_immediate_capture_timing_and_convergence() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+  let (mut fixture, window) =
+    create_test_window("AUV WGC Timing Convergence Test", w!("AuvWgcTimingConvergenceTest"), 220, 200, 400, 300, 0x00FF_0000);
+  let session = WindowsDriver::default().open_local().expect("failed to open driver session");
+  let control = FrameStream::open(fixture.hwnd).expect("failed to open independent paint control");
+  wait_for_painted_color(&control, [0, 0, 255]);
+
+  // 1. Initial capture returns fresh blue frame.
+  let initial = session.window().capture_wgc(&window).expect("initial capture failed");
+  assert_eq!(center_rgb(&initial.image), [0, 0, 255]);
+
+  // 2. Back-to-back capture without new paint retains the frame and avoids artificial delays.
+  // We record the average duration over multiple reads for diagnostic visibility, but avoid
+  // a brittle upper-bound assertion that could flake on loaded virtualized runners.
+  let sample_count = 5;
+  let started = Instant::now();
+  for _ in 0..sample_count {
+    let unchanged = session.window().capture_wgc(&window).expect("back-to-back capture failed");
+    assert_eq!(center_rgb(&unchanged.image), [0, 0, 255]);
+  }
+  let total_elapsed = started.elapsed();
+  let average_elapsed = total_elapsed / sample_count;
+  println!("back-to-back capture x{sample_count}: total {total_elapsed:?}, average {average_elapsed:?}");
+
+  // 3. In-flight repaint race to Red (0x0000_00FF -> RGB [255, 0, 0]).
+  // `request_repaint_unsynchronized` replaces the class brush and invalidates the client area
+  // without synchronous update (no RDW_UPDATENOW) or compositor flush (no DwmFlush).
+  fixture.request_repaint_unsynchronized(0x0000_00FF);
+  let immediate_start = Instant::now();
+  let immediate = session.window().capture_wgc(&window).expect("immediate capture during in-flight repaint failed");
+  let immediate_elapsed = immediate_start.elapsed();
+  let immediate_color = center_rgb(&immediate.image);
+  println!("unsynchronized capture during repaint: color {immediate_color:?}, elapsed {immediate_elapsed:?}");
+  // The immediate capture must deliver a valid, complete frame without blocking or failing.
+  // Depending on whether the compositor has already picked up the invalidation, it may be the
+  // prior blue frame or the newly rendered red frame.
+  assert!(
+    immediate_color == [0, 0, 255] || immediate_color == [255, 0, 0],
+    "immediate capture must return a valid frame (either prior [0, 0, 255] or new [255, 0, 0]), got {immediate_color:?}"
+  );
+
+  // 4. Synchronously flush the compositor and verify convergence to Red.
+  fixture.flush_sync();
+  let frame = wait_for_painted_color(&control, [255, 0, 0]);
+  println!("paint receipt for red: frame {frame}");
+  let converged = session.window().capture_wgc(&window).expect("converged capture failed");
+  assert_eq!(center_rgb(&converged.image), [255, 0, 0], "one-shot WGC failed to converge to latest paint");
+
+  // 5. Verify the in-flight cycle again with Green (0x0000_FF00 -> RGB [0, 255, 0]).
+  fixture.request_repaint_unsynchronized(0x0000_FF00);
+  let immediate_green = session.window().capture_wgc(&window).expect("immediate green capture failed");
+  let green_color = center_rgb(&immediate_green.image);
+  assert!(
+    green_color == [255, 0, 0] || green_color == [0, 255, 0],
+    "immediate green capture must return a valid frame (either prior [255, 0, 0] or new [0, 255, 0]), got {green_color:?}"
+  );
+
+  fixture.flush_sync();
+  let frame_green = wait_for_painted_color(&control, [0, 255, 0]);
+  println!("paint receipt for green: frame {frame_green}");
+  let converged_green = session.window().capture_wgc(&window).expect("converged green capture failed");
+  assert_eq!(center_rgb(&converged_green.image), [0, 255, 0], "one-shot WGC failed to converge to green paint");
 }
 
 #[test]

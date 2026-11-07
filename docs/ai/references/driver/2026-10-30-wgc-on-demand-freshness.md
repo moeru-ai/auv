@@ -2,8 +2,7 @@
 
 Status: native regression reproduced before repair. Scoped image-capture repair passed isolated Windows acceptance.
 
-Classification: bug fix from the owner's Windows Phase 2 capture-freshness goal.
-Base: `main@d9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3`.
+Base: `main@fc68c802b545d625d2ea9965da8ee71cf31e5f8f` (rebased from `main@d9d2bdcc6a27da0c1a70a17c4b265c56cbd0f7f3`).
 This work is independent of closed PR #429 and its retired screenshot predicate.
 
 ## Problem and regression
@@ -36,6 +35,10 @@ A stream read error clears its image cache and returns the failure; device-loss 
 
 This contract means latest received frame, not a frame produced after the request started.
 It does not establish that the compositor has painted a pending application action.
+In contrast to the legacy implementation which waited on a wake-up channel with up to a 15ms timeout on unchanged reads,
+back-to-back captures without new compositor frames return immediately without artificial delays (durations are recorded as diagnostic output; hard latency assertions are deliberately omitted to avoid virtualized runner scheduling jitter).
+An in-flight repaint request racing with an immediate read delivers a valid completed frame (either prior or newly painted) without blocking,
+and converges cleanly once the compositor presents the new paint.
 It does not make capture and input atomic or validate a click's decision premise.
 The [#429 closure decision](https://github.com/moeru-ai/auv/pull/429#issuecomment-6481267529) remains in effect.
 
@@ -74,7 +77,7 @@ These individual timings are diagnostic samples, not a performance comparison or
 
 | Check | Recorded result |
 | --- | --- |
-| Native WGC capture suite | Seven passed: the queued-paint regression, pixels, occlusion, resize, display, health/liveness, and capture concurrent with the health worker. |
+| Native WGC capture suite | Seven passed in recorded native run (queued-paint regression, pixels, occlusion, resize, display, health/liveness, capture concurrent with health worker). The eighth test (`one_shot_wgc_immediate_capture_timing_and_convergence`) is compiled locally and in PR CI, pending execution in the next isolated interactive Windows desktop run. |
 | Pixel comparison | All 10,000 sampled pixels matched the fixture color; no sampled difference from PrintWindow. |
 | Occluded window | The target retained cyan pixels behind the red covering window. |
 | Resize | Capture dimensions changed from 386 by 293 to 536 by 413. This does not validate coordinate mapping. |
@@ -85,7 +88,7 @@ These individual timings are diagnostic samples, not a performance comparison or
 | Local build checks | Workspace all-target compilation, native-test compilation without execution, formatting, and whitespace checks passed. |
 
 Preflight again recorded build 26100, image `20261021.278.1`, interactive session 2, one 1024 by 768 display, and 96 DPI.
-Independent inspection of the downloaded logs confirmed all nineteen native checks and the first-read pixel receipt.
+Independent inspection of the downloaded logs confirmed all nineteen recorded native checks and the first-read pixel receipt.
 The [raw repair artifact](https://github.com/moeru-ai/auv/actions/runs/40916911481/artifacts/12915803148)
 matched SHA-256 `3b5ef713f2348452f433833b75a4d9913757bc86cba6c1ebfbe43565d69c1058` after download.
 Retention ends 2026-11-12.
