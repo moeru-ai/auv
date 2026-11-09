@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use auv_driver_common::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
-use crate::native::portal::{ClipboardSession, RestoreTokenStore, ScreenCastSession};
+use crate::native::portal::{ClipboardSession, RestoreTokenStore};
 
 /// Select the input mechanism explicitly; delivery failures never switch backends.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +58,8 @@ impl LinuxDriver {
 #[derive(Clone, Debug)]
 pub struct LinuxDriverSession {
   pub(crate) state: Arc<Mutex<LinuxDriverSessionState>>,
+  #[cfg(target_os = "linux")]
+  pub(crate) capture: auv_driver_capture::Capturer,
 }
 
 #[derive(Debug, Default)]
@@ -73,7 +75,6 @@ pub(crate) struct LinuxDriverSessionState {
   pub(crate) clipboard_session: Option<ClipboardSession>,
   pub(crate) input_session: Option<Arc<Mutex<crate::input::InputSession>>>,
   pub(crate) input_backend: InputBackend,
-  pub(crate) screencast_session: Option<ScreenCastSession>,
   pub(crate) restore_tokens: Option<RestoreTokenStore>,
   #[cfg(target_os = "linux")]
   pub(crate) portal_app_id: Option<ashpd::AppID>,
@@ -82,6 +83,12 @@ pub(crate) struct LinuxDriverSessionState {
 }
 
 impl LinuxDriverSession {
+  /// Returns the independent capture provider shared by this session's callers.
+  #[cfg(target_os = "linux")]
+  pub fn capture(&self) -> &auv_driver_capture::Capturer {
+    &self.capture
+  }
+
   pub fn linux_descriptor(&self) -> LinuxDriverDescriptor {
     linux_driver_descriptor()
   }
@@ -96,6 +103,8 @@ impl Driver for LinuxDriver {
 
   fn open_local(&self) -> DriverResult<Self::Session> {
     Ok(LinuxDriverSession {
+      #[cfg(target_os = "linux")]
+      capture: auv_driver_capture::Capturer::new(self.portal_app_id.as_ref().map(ToString::to_string), self.portal_state_root.clone())?,
       state: Arc::new(Mutex::new(LinuxDriverSessionState {
         input_backend: self.input_backend,
         restore_tokens: self.portal_state_root.clone().map(RestoreTokenStore::new),

@@ -36,8 +36,8 @@ use std::error::Error;
 use std::thread::sleep;
 use std::time::Duration;
 
+use auv_driver_capture_common::CaptureOptions;
 use auv_driver_common::Driver;
-use auv_driver_common::capture::CaptureOptions;
 use auv_driver_common::geometry::{Point, RelativeRect, Size, WindowPoint};
 use auv_driver_common::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
 use auv_driver_common::window::{Window, WindowMutationOptions, WindowStateTarget};

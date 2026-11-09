@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use auv_driver_common::error::DriverResult;
 use fs2::FileExt;
 
-use crate::error::backend;
+use auv_driver_common::error::backend;
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RestoreTokenKind {
+pub enum RestoreTokenKind {
   ScreenCast,
   RemoteDesktopInput,
 }
@@ -29,16 +29,16 @@ impl RestoreTokenKind {
 /// atomically. Portal tokens are single-use, so the lock intentionally spans
 /// the restore request and the durable rotation.
 #[derive(Clone, Debug)]
-pub(crate) struct RestoreTokenStore {
+pub struct RestoreTokenStore {
   root: PathBuf,
 }
 
 impl RestoreTokenStore {
-  pub(crate) fn new(root: PathBuf) -> Self {
+  pub fn new(root: PathBuf) -> Self {
     Self { root }
   }
 
-  pub(super) fn rotate<T>(
+  pub fn rotate<T>(
     &self,
     kind: RestoreTokenKind,
     operation: impl FnOnce(Option<&str>) -> DriverResult<(T, Option<String>)>,

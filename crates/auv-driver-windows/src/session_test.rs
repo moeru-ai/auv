@@ -1,5 +1,5 @@
+use auv_driver_capture_common::{Activation, CaptureOptions};
 use auv_driver_common::Driver;
-use auv_driver_common::capture::{Activation, CaptureOptions};
 #[cfg(target_os = "windows")]
 use auv_driver_common::geometry::RelativeRect;
 use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};

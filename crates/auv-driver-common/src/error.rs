@@ -3,6 +3,27 @@ use std::fmt;
 
 pub type DriverResult<T> = Result<T, DriverError>;
 
+/// Records a native backend failure without changing its diagnostic message.
+pub fn backend(message: impl Into<String>) -> DriverError {
+  DriverError::Backend {
+    message: message.into(),
+  }
+}
+
+/// Rejects an invalid operation argument before native execution.
+pub fn invalid_input(message: impl Into<String>) -> DriverError {
+  DriverError::InvalidInput {
+    message: message.into(),
+  }
+}
+
+/// Reports a missing native target.
+pub fn not_found(target: impl Into<String>) -> DriverError {
+  DriverError::NotFound {
+    target: target.into(),
+  }
+}
+
 #[derive(Debug)]
 pub enum DriverError {
   Unsupported {

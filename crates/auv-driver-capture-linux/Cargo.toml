@@ -1,0 +1,26 @@
+[package]
+name = "auv-driver-capture-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Linux Portal and PipeWire capture for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
+auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
+auv-driver-desktop-linux = { version = "0.0.43", path = "../auv-driver-desktop-linux" }
+auv-driver-portal-linux = { version = "0.0.43", path = "../auv-driver-portal-linux" }
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "screencast", "screenshot"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+pipewire = "0.8"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

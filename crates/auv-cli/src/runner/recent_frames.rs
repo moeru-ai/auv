@@ -28,7 +28,11 @@ impl Service {
   pub(super) fn new(session: auv_driver::LocalDriverSession) -> Self {
     Self {
       buffers: Arc::new(Mutex::new(HashMap::new())),
-      source_factory: Arc::new(DriverFrameSourceFactory { session }),
+      source_factory: Arc::new(DriverFrameSourceFactory {
+        #[cfg(target_os = "linux")]
+        capture: session.capture().clone(),
+        session,
+      }),
     }
   }
 
@@ -207,6 +211,8 @@ trait FrameSource: Send + 'static {
 
 struct DriverFrameSourceFactory {
   session: auv_driver::LocalDriverSession,
+  #[cfg(target_os = "linux")]
+  capture: auv_driver_capture::Capturer,
 }
 
 impl FrameSourceFactory for DriverFrameSourceFactory {
@@ -218,6 +224,8 @@ impl FrameSourceFactory for DriverFrameSourceFactory {
     };
     Ok(Box::new(DriverFrameSource {
       session: self.session.clone(),
+      #[cfg(target_os = "linux")]
+      capture: self.capture.clone(),
       target,
     }))
   }
@@ -234,6 +242,8 @@ enum DriverCaptureTarget {
 
 struct DriverFrameSource {
   session: auv_driver::LocalDriverSession,
+  #[cfg(target_os = "linux")]
+  capture: auv_driver_capture::Capturer,
   target: DriverCaptureTarget,
 }
 
@@ -241,23 +251,29 @@ impl FrameSource for DriverFrameSource {
   fn capture(&mut self) -> Result<auv_driver::Capture, auv_driver::DriverError> {
     match &self.target {
       DriverCaptureTarget::Window(window) => self.session.window().capture(window),
-      DriverCaptureTarget::Display(display) => self
-        .session
-        .display()
-        .capture(auv_driver::CaptureOptions {
+      DriverCaptureTarget::Display(display) => {
+        let options = auv_driver_capture::CaptureOptions {
           display: display.clone(),
           ..Default::default()
-        })
-        .map(|captured| captured.capture),
-      DriverCaptureTarget::Region { region, display } => self
-        .session
-        .display()
-        .capture_region(auv_driver::CaptureOptions {
+        };
+        #[cfg(target_os = "linux")]
+        let captured = self.capture.capture_display(options);
+        #[cfg(not(target_os = "linux"))]
+        let captured = self.session.display().capture(options);
+        captured.map(|captured| captured.capture)
+      }
+      DriverCaptureTarget::Region { region, display } => {
+        let options = auv_driver_capture::CaptureOptions {
           display: display.clone(),
           region: Some(*region),
           ..Default::default()
-        })
-        .map(|captured| captured.capture),
+        };
+        #[cfg(target_os = "linux")]
+        let captured = self.capture.capture_region(options);
+        #[cfg(not(target_os = "linux"))]
+        let captured = self.session.display().capture_region(options);
+        captured.map(|captured| captured.capture)
+      }
     }
   }
 }

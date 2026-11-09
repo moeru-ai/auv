@@ -1,0 +1,20 @@
+[package]
+name = "auv-driver-desktop-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Linux desktop topology for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }

@@ -33,26 +33,29 @@ name = "release_pipewire_probe"
 path = "examples/release_pipewire_probe.rs"
 
 [dependencies]
+auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture" }
+auv-driver-desktop-linux = { version = "0.0.43", path = "../auv-driver-desktop-linux" }
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
 auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+auv-driver-portal-linux = { version = "0.0.43", path = "../auv-driver-portal-linux" }
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "remote_desktop", "screencast", "clipboard", "screenshot"] }
 async-io = "2"
 evdev = "0.13.2"
-fs2 = "0.4"
 futures-lite = "2"
 leptess = "0.14"
 libc = "0.2"
-pipewire = "0.8"
 reis = "0.7.1"
-url = "2"
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 xkbcommon = { version = "0.9", default-features = false }
 zbus = "5.15"
 
 [dev-dependencies]
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+pipewire = "0.8"

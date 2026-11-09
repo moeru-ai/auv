@@ -184,9 +184,16 @@ Platform adapter crates own native behavior. Shared driver contracts retain
 one owner in `auv-driver-common`, including canonical input-delivery evidence.
 Most other capabilities still use the existing platform driver aggregates.
 
+Capture contracts and pixel resolution logic live in `auv-driver-capture-common`.
+The `auv-driver-capture` facade exposes the independent Linux capture provider.
+Linux display discovery lives in `auv-driver-desktop-linux`. Portal request and
+token persistence logic live in `auv-driver-portal-linux`. macOS and Windows
+retain their existing native capture backends with the canonical capture types.
+
 See the [capability crate split design](ai/references/driver/2026-11-09-capability-crate-split-design.md)
 for accepted capabilities, dependency direction, and extraction boundaries.
-The note records source inspection, not implemented platform support.
+The note distinguishes implemented extraction, automated evidence, and remaining
+design. Crate extraction does not establish new platform support.
 
 ## AUV operation interface / auv
 
@@ -1601,8 +1608,9 @@ image result before it is persisted as an artifact. A capture frame carries
 image data plus coordinate metadata, capture source, backend, scale, and timing
 information.
 
-In process, driver crates produce capture frames (`auv_driver::Capture`) with
-their pixels, and the caller or configured instrumentation path decides whether
+In process, driver crates produce capture frames
+(`auv_driver_capture_common::Capture`, also exported as `auv_driver::Capture`)
+with their pixels. The caller or configured instrumentation path decides whether
 to persist them as artifacts. This keeps the operation path from requiring
 synchronous filename allocation or image writes when the caller only needs
 pixels for OCR, recognition, or immediate interaction logic.

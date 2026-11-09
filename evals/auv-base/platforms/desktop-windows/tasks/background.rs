@@ -426,7 +426,7 @@ fn rgb(hex: &str) -> [u8; 3] {
 
 /// What a capture shows: how much of it is the receiver's own background color (so it is this
 /// window and not whatever covers it), how much is black, and a content hash.
-pub fn describe_capture(capture: &auv_driver_common::capture::Capture, color: &str) -> Value {
+pub fn describe_capture(capture: &auv_driver_capture_common::Capture, color: &str) -> Value {
   let target = rgb(color);
   let (mut matching, mut black) = (0usize, 0usize);
   let mut hash: u64 = 0xcbf2_9ce4_8422_2325;

@@ -17,10 +17,8 @@ use pw::properties::properties;
 use pw::spa;
 use spa::pod::Pod;
 
-use crate::error::backend;
-
-use super::persistence::{RestoreTokenKind, RestoreTokenStore};
-use super::request::{run, run_with_consent, session_connection};
+use auv_driver_common::error::backend;
+use auv_driver_portal_linux::{RestoreTokenKind, RestoreTokenStore, run, run_with_consent, session_connection};
 
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 // NOTICE: GNOME's mutter honors the negotiated `maxFramerate` and re-records a

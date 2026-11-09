@@ -5,7 +5,7 @@
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
-use auv_driver_common::capture::CaptureOptions;
+use auv_driver_capture_common::CaptureOptions;
 use auv_driver_common::geometry::RelativeRect;
 use auv_driver_common::input::{InputPolicy, KeyPressOptions, Scroll, ScrollOptions, TypeTextOptions, WindowInput};
 use auv_driver_common::window::Window;

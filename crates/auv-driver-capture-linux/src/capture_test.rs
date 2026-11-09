@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn standalone_display_capture_rejects_region_before_native_capture() {
+  let error = Capturer::default()
+    .capture_display(CaptureOptions {
+      region: Some(Rect::new(0.0, 0.0, 10.0, 10.0)),
+      ..Default::default()
+    })
+    .unwrap_err();
+
+  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
+  assert_eq!(error.to_string(), "display.capture does not accept window or region capture options");
+}
+
+#[test]
+fn standalone_region_capture_requires_region_before_native_capture() {
+  let error = Capturer::default().capture_region(CaptureOptions::default()).unwrap_err();
+
+  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
+  assert_eq!(error.to_string(), "display.capture_region requires CaptureOptions.region");
+}
+
+#[test]
+fn standalone_capture_rejects_activation_without_an_application_target() {
+  let error = Capturer::default()
+    .capture_display(CaptureOptions {
+      activation: auv_driver_capture_common::Activation::ActivateFirst {
+        settle: std::time::Duration::ZERO,
+      },
+      ..Default::default()
+    })
+    .unwrap_err();
+
+  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
+  assert_eq!(error.to_string(), "display.capture cannot activate an application without an application target");
+}
+
 #[cfg(target_os = "linux")]
 fn screenshot_target() -> display::DisplayTarget {
   display::DisplayTarget {

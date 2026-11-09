@@ -4,7 +4,7 @@
 //! while this module owns crop math and projection from cropped-image pixels
 //! back into capture coordinates.
 
-use auv_driver_common::capture::Capture;
+use auv_driver_capture_common::Capture;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Rect, RelativeRect};
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};

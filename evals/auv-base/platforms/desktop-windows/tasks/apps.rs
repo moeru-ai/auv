@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use auv_driver_capture_common::Capture;
 use auv_driver_common::Driver;
-use auv_driver_common::capture::Capture;
 use auv_driver_common::geometry::WindowPoint;
 use auv_driver_common::input::{Click, Scroll};
 use auv_driver_common::window::Window;

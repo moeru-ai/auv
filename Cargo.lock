@@ -494,6 +494,7 @@ name = "auv-base-evals"
 version = "0.0.43"
 dependencies = [
  "anyhow",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -536,6 +537,7 @@ dependencies = [
  "auv-device-helper-macos",
  "auv-device-helper-windows",
  "auv-driver",
+ "auv-driver-capture",
  "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
@@ -757,6 +759,7 @@ dependencies = [
 name = "auv-driver"
 version = "0.0.43"
 dependencies = [
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -765,13 +768,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-driver-capture"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-capture-common",
+ "auv-driver-capture-linux",
+]
+
+[[package]]
+name = "auv-driver-capture-common"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "image",
+ "serde_json",
+]
+
+[[package]]
+name = "auv-driver-capture-linux"
+version = "0.0.43"
+dependencies = [
+ "ashpd",
+ "auv-driver-capture-common",
+ "auv-driver-common",
+ "auv-driver-desktop-linux",
+ "auv-driver-portal-linux",
+ "image",
+ "pipewire",
+ "tempfile",
+ "url",
+]
+
+[[package]]
 name = "auv-driver-common"
 version = "0.0.43"
 dependencies = [
- "image",
  "serde",
  "serde_json",
  "xkeysym",
+]
+
+[[package]]
+name = "auv-driver-desktop-linux"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "wayland-client 0.31.15",
+ "wayland-protocols 0.32.13",
 ]
 
 [[package]]
@@ -780,9 +823,12 @@ version = "0.0.43"
 dependencies = [
  "ashpd",
  "async-io",
+ "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
+ "auv-driver-desktop-linux",
+ "auv-driver-portal-linux",
  "evdev",
- "fs2",
  "futures-lite",
  "image",
  "leptess",
@@ -792,9 +838,7 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror 2.0.21",
- "url",
  "wayland-client 0.31.15",
- "wayland-protocols 0.32.13",
  "xkbcommon",
  "zbus",
 ]
@@ -803,6 +847,7 @@ dependencies = [
 name = "auv-driver-macos"
 version = "0.0.43"
 dependencies = [
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
@@ -856,10 +901,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-driver-portal-linux"
+version = "0.0.43"
+dependencies = [
+ "ashpd",
+ "async-io",
+ "auv-driver-common",
+ "fs2",
+ "futures-lite",
+ "tempfile",
+ "zbus",
+]
+
+[[package]]
 name = "auv-driver-windows"
 version = "0.0.43"
 dependencies = [
  "auv-auto-loop",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",

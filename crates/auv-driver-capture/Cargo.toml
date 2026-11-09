@@ -1,0 +1,19 @@
+[package]
+name = "auv-driver-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Platform-selecting capture capability for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+auv-driver-capture-linux = { version = "0.0.43", path = "../auv-driver-capture-linux" }

@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use auv_driver_common::capture::{Capture, DisplayCapture};
+use auv_driver_capture_common::{Capture, DisplayCapture};
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::window::Window;
 use serde::{Deserialize, Serialize};

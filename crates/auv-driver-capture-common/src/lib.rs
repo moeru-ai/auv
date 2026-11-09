@@ -1,11 +1,10 @@
+//! Capture contracts, pixel resolution, and coordinate origins shared by backends.
+
 use std::time::Duration;
 
 use image::{RgbaImage, SubImage};
 
-use crate::display::Display;
-use crate::geometry::{Point, Position, Positional, Rect};
-use crate::window::WindowRef;
-use crate::{DriverError, DriverResult};
+use auv_driver_common::{Display, DriverError, DriverResult, Point, Position, Positional, Rect, WindowRef};
 
 pub type ImageView<'a> = SubImage<&'a RgbaImage>;
 
@@ -37,6 +36,32 @@ pub struct CaptureOptions {
   pub window: Option<WindowRef>,
   pub region: Option<Rect>,
   pub resolution: CaptureResolution,
+}
+
+impl CaptureOptions {
+  /// Rejects options that target something other than a display.
+  pub fn validate_display(&self) -> DriverResult<()> {
+    if self.window.is_some() || self.region.is_some() {
+      return Err(auv_driver_common::error::invalid_input("display.capture does not accept window or region capture options"));
+    }
+    if let Activation::ActivateFirst { .. } = self.activation {
+      return Err(auv_driver_common::error::invalid_input("display.capture cannot activate an application without an application target"));
+    }
+    Ok(())
+  }
+
+  /// Validates a display-region request and returns its required logical bounds.
+  pub fn validate_region(&self) -> DriverResult<Rect> {
+    if self.window.is_some() {
+      return Err(auv_driver_common::error::invalid_input("display.capture_region does not accept nested window capture options"));
+    }
+    if let Activation::ActivateFirst { .. } = self.activation {
+      return Err(auv_driver_common::error::invalid_input(
+        "display.capture_region cannot activate an application without an application target",
+      ));
+    }
+    self.region.ok_or_else(|| auv_driver_common::error::invalid_input("display.capture_region requires CaptureOptions.region"))
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,7 +119,7 @@ impl Capture {
 }
 
 /// A display capture. `C` is how the capture is held: in-process pixels
-/// (`Capture`), or a Runner-held reference in the `auv-core` client.
+/// (`Capture`), or a Runner-held reference in the `auv` client.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayCapture<C = Capture> {
   pub display: Display,

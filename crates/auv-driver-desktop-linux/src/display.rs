@@ -1,12 +1,20 @@
 use auv_driver_common::display::Display;
+use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
 use auv_driver_common::geometry::CoordinateSpace;
 use auv_driver_common::geometry::Rect;
 
-use crate::error::{backend, not_found};
+use auv_driver_common::error::{backend, not_found};
 
 const WAYLAND_DISPLAY_BACKEND: &str = "wayland.xdg-output";
+
+/// Lists the desktop outputs without opening a capture or input session.
+pub fn list() -> DriverResult<ObservedDisplays> {
+  Ok(ObservedDisplays {
+    displays: list_targets()?.into_iter().map(|target| target.display).collect(),
+  })
+}
 
 #[cfg(target_os = "linux")]
 use wayland_client::globals::GlobalListContents;
