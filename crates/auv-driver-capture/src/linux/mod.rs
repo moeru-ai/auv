@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use auv_driver_capture_common::{Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use crate::{Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::error::{backend, invalid_input};
 use auv_driver_common::{CoordinateSpace, Display, DriverResult, Rect};
 use auv_driver_desktop_linux::display::{self, list_targets, resolve_for_region, selected_target_or_none};

@@ -172,20 +172,20 @@ platform implementation, and required resource lifetime.
 
 A capability can execute directly from Rust or through a Runner adapter.
 A capability can expose several APIs. Window and display are APIs of one
-capability, provisionally named `desktop`, with one owning crate family.
+capability, provisionally named `desktop`.
 A Runner can host several capabilities. A capability boundary does not require
 a separate RunnerClass, public Session resource, or Protobuf service.
 
 The accepted map contains input, capture, overlay, desktop, clipboard,
-accessibility, and vision. The crate split follows the existing
-`auv-driver-overlay` family. Crate names and API details remain provisional.
-Capability facade and common crates expose the portable API and shared logic.
-Platform adapter crates own native behavior. Shared driver contracts retain
-one owner in `auv-driver-common`, including canonical input-delivery evidence.
+accessibility, and vision. Capture uses one crate with internal platform modules
+and target-specific dependencies. The existing `auv-driver-overlay` family retains
+its package split. Other package layouts and unimplemented API details remain
+provisional. Shared driver contracts retain one owner in `auv-driver-common`,
+including canonical input-delivery evidence.
 Most other capabilities still use the existing platform driver aggregates.
 
-Capture contracts and pixel resolution logic live in `auv-driver-capture-common`.
-The `auv-driver-capture` facade exposes the independent Linux capture provider.
+Capture contracts, pixel resolution logic, and the independent Linux capture
+provider live in `auv-driver-capture`. Platform implementations share this crate.
 Linux display discovery lives in `auv-driver-desktop-linux`. Portal request and
 token persistence logic live in `auv-driver-portal-linux`. macOS and Windows
 retain their existing native capture backends with the canonical capture types.
@@ -1609,7 +1609,7 @@ image data plus coordinate metadata, capture source, backend, scale, and timing
 information.
 
 In process, driver crates produce capture frames
-(`auv_driver_capture_common::Capture`, also exported as `auv_driver::Capture`)
+(`auv_driver_capture::Capture`, also exported as `auv_driver::Capture`)
 with their pixels. The caller or configured instrumentation path decides whether
 to persist them as artifacts. This keeps the operation path from requiring
 synchronous filename allocation or image writes when the caller only needs

@@ -9,7 +9,7 @@
 #[cfg(target_os = "windows")]
 use crate::error::backend;
 use crate::error::{invalid_input, not_found};
-use auv_driver_capture_common::{Capture, DisplayCapture, RegionCapture};
+use auv_driver_capture::{Capture, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{CoordinateSpace, Rect};

@@ -9,7 +9,7 @@ use TypeScript. Raw run output stays local.
 
 Count: **89**
 
-- [`2026-11-09-capability-crate-split-design.md`](2026-11-09-capability-crate-split-design.md): accepted seven-capability map and first extraction of capture contracts, Linux display/region capture, display discovery, and shared Portal infrastructure. Includes Rust import migration, resource ownership, validation environment, and remaining native boundaries.
+- [`2026-11-09-capability-crate-split-design.md`](2026-11-09-capability-crate-split-design.md): accepted seven-capability map and capture extraction into one crate with internal platform modules. Covers Linux display/region capture, shared native prerequisites, Rust imports, resource ownership, validation, and remaining native boundaries.
 
 - [`2026-11-03-windows-dpi-awareness.md`](2026-11-03-windows-dpi-awareness.md): issue #460 fix: `auv.exe` declares per-monitor-v2 DPI awareness in its manifest, the driver never changes a host's awareness (warns instead), tests and evals opt in; `PrintWindow` bitmap sized at the window DPI; before/after live numbers at 150%.
 

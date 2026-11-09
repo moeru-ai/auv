@@ -1,4 +1,4 @@
-use auv_driver_capture_common::{Activation, CaptureOptions};
+use auv_driver_capture::{Activation, CaptureOptions};
 use auv_driver_common::Driver;
 #[cfg(target_os = "windows")]
 use auv_driver_common::geometry::RelativeRect;

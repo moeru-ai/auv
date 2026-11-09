@@ -4,8 +4,9 @@ Status: capability map accepted by the owner on 2026-11-09. The map contains
 input, capture, overlay, desktop, clipboard, accessibility, and vision.
 Window and display form one capability with distinct APIs. The capability name
 `desktop` remains provisional. The first extraction implements portable capture
-contracts and Linux display/region capture. Remaining crate names, API details,
-and extraction order remain provisional.
+contracts and Linux display/region capture in one `auv-driver-capture` crate.
+The owner confirmed this package boundary after the first extraction.
+Remaining crate names, API details, and extraction order remain provisional.
 
 Change classification: narrow refactor for the first extraction. This note
 distinguishes implemented code from the remaining target. Evidence levels:
@@ -14,53 +15,52 @@ this extraction.
 
 ## Goal
 
-Each capability owns its typed API, reusable logic, platform adapters, and
-resource lifetime. The existing overlay family provides the package pattern.
+Each capability owns its typed API, reusable logic, platform implementations,
+and resource lifetime. Capture uses one crate for all platforms.
 Runner adapters and direct Rust callers use the same capability implementation.
 
 The accepted capability map contains seven capabilities. Desktop combines window
 and display APIs. Clipboard, accessibility, and vision each own a separate
-capability and crate family.
+capability. Their package layouts remain provisional.
 
 ## Existing boundaries
 
 | Source | Current responsibility | Consequence for extraction |
 | --- | --- | --- |
-| [`auv-driver-overlay`](../../../../crates/auv-driver-overlay/src/lib.rs), [`overlay-common`](../../../../crates/auv-driver-overlay-common/src/lib.rs), and platform adapters | Overlay contracts, scene logic, platform selection, and native rendering | Reuse this family structure. |
+| [`auv-driver-overlay`](../../../../crates/auv-driver-overlay/src/lib.rs), [`overlay-common`](../../../../crates/auv-driver-overlay-common/src/lib.rs), and platform adapters | Overlay contracts, scene logic, platform selection, and native rendering | Retain the existing family. It does not require the same package split for new capabilities. |
 | [`auv-driver`](../../../../crates/auv-driver/src/lib.rs) | Platform selection and `LocalDriverSession` access through `Deref` | A capability must work without this aggregate. |
-| [`auv-driver-common`](../../../../crates/auv-driver-common/src/lib.rs) | Shared contracts plus input controllers, motion algorithms, and remaining capability types | Capture contracts and pixel logic now live in `auv-driver-capture-common`. |
+| [`auv-driver-common`](../../../../crates/auv-driver-common/src/lib.rs) | Shared contracts plus input controllers, motion algorithms, and remaining capability types | Capture contracts and pixel logic now live in `auv-driver-capture`. |
 | Platform `session.rs` files | Resource-grouped APIs and reusable operation policy | Linux display capture now delegates to the independent capture provider. |
 | [`LinuxDriverSessionState`](../../../../crates/auv-driver-linux/src/driver.rs) | Input, clipboard, and authorization configuration | The session retains an independent capture handle outside this state container. |
 | [`MacosDriverSession`](../../../../crates/auv-driver-macos/src/driver.rs) | Window restore history | Place this history with window management. |
 | [`WindowsDriverSession`](../../../../crates/auv-driver-windows/src/driver.rs) | An almost empty session aggregate | Do not require an artificial session for each capability. |
 | [`local_driver.rs`](../../../../crates/auv-cli/src/runner/local_driver.rs) | Protocol conversion, service assembly, capture storage, and capability calls | Linux display capture handlers retain the capture provider directly. Other operations still use the session aggregate. |
 
-## Crate family
+## Capability crate
 
-Each extracted capability uses the following pattern. `input` is an example.
+Capture uses one crate with internal platform modules:
 
 ```text
-auv-driver-input
-  Platform-selecting Rust API and capability construction
-
-auv-driver-input-common
-  Portable contracts, invariants, and shared input algorithms
-
-auv-driver-input-linux
-auv-driver-input-macos
-auv-driver-input-windows
-  Native delivery, backend policy, resources, and platform dependencies
+auv-driver-capture/
+  Cargo.toml            Platform dependencies selected by target
+  src/lib.rs            Public contracts, shared pixel logic, and provider export
+  src/linux/            Linux acquisition and native resource lifetime
 ```
 
-Only platforms with an existing implementation receive an adapter crate.
-The facade reports unsupported operations on other targets. Empty platform
-crates do not represent support.
+macOS and Windows implementations will join this crate as internal modules.
+They remain in the old platform drivers until their extraction. The standalone
+provider currently exists only on Linux. Empty modules do not represent support.
 
-The common crate contains shared behavior, such as mouse coordination and
-scroll scheduling. It does not contain platform selection or protocol adapters.
-An input-only dependency must not compile capture, OCR, or overlay backends.
+The initial common/facade/platform package split was too fine grained.
+Its common and Linux capture crates have been folded into `auv-driver-capture`.
+Platform boundaries alone do not require separate packages for future extractions.
+The existing overlay family is unchanged. Native build constraints or a concrete
+consumer need can justify a package split during the owning capability design.
 
-The facade exposes capability operations directly. It does not require callers
+Keep native dependencies under target-specific Cargo sections. An input-only
+dependency must not compile capture, OCR, or overlay backends.
+
+The crate exposes capability operations directly. It does not require callers
 to open a full `DriverSession`. A resource-owning capability can expose an
 owned handle. A stateless capability can expose functions, as overlay does.
 Constructor and handle names remain provisional until their extraction slice.
@@ -70,10 +70,10 @@ Constructor and handle names remain provisional until their extraction slice.
 A capability can expose several related APIs. Window and display are two APIs
 of one capability. The provisional name for this capability is `desktop`.
 
-The proposed `auv-driver-desktop` family owns this capability. Its distinct
+The proposed `auv-driver-desktop` crate owns this capability. Its distinct
 `window` and `display` modules share target discovery and desktop geometry.
 The proposal also places existing application resolution and activation in an
-`application` module. This placement avoids a separate application family.
+`application` module. This placement avoids a separate application capability.
 
 The desktop crate owns window management and display topology. Capture owns
 pixel acquisition. Input owns pointer and keyboard delivery. A desktop API can
@@ -81,9 +81,9 @@ describe a target without capturing pixels or delivering input.
 
 ## Capability inventory
 
-All new family names in this table are provisional.
+All unimplemented crate names in this table are provisional.
 
-| Capability and proposed crate family | Owns | Existing code to move or classify |
+| Capability and proposed crate | Owns | Existing code to move or classify |
 | --- | --- | --- |
 | `auv-driver-input` | Pointer and keyboard delivery, window-targeted input, fallback policy, holds, cancellation, timed motion, and delivery progress | The executable parts of common `input`, `keyboard`, `keyboard_input`, `mouse`, `mouse_input`, `input_cancellation`, `scroll_motion`, and `scroll_stream`. Platform input modules and input methods from `session.rs`. |
 | `auv-driver-capture` | Window/display/region pixels, resolution conversion, capture origins, backend fallback, and native frame sources | Capture contracts and Linux display/region capture are extracted. macOS/Windows capture and Linux window binding remain in the platform drivers. |
@@ -107,13 +107,13 @@ Clipboard, accessibility, and vision have distinct responsibilities:
   lifetime remain separate from capture resources.
 
 These responsibilities already exist in the platform modules. This design
-records their accepted extraction into separate capability families.
+records their accepted extraction into separate capability crates.
 The [historical API design](2026-05-25-driver-platform-api-crates-design.md)
 describes namespaces, not these crate boundaries.
 
 Permission probes stay with the capability or native boundary that owns the
 permission. Combined permission and readiness reports belong to operation
-composition. This proposal adds no permission or readiness family.
+composition. This proposal adds no permission or readiness capability.
 A `PermissionService` can retain its existing public shape.
 
 OS login-session listing, lock, unlock, enrollment, and helper authority remain
@@ -141,21 +141,19 @@ The error boundary needs particular care.
 [`DriverError::InputAction`](../../../../crates/auv-driver-common/src/error.rs)
 contains `InputActionProgress`. Accessibility actions also return delivery
 evidence. Keeping this evidence in the shared contract avoids a dependency
-cycle between common errors and the input family.
+cycle between common errors and the input capability.
 
 ```mermaid
 flowchart TD
-  Host[Runner adapters or direct Rust host] --> Facade[Capability facade]
-  Facade --> Platform[Capability platform adapter]
-  Facade --> Contracts[Capability common]
-  Platform --> Contracts
-  Platform --> Shared[auv-driver-common]
-  Contracts --> Shared
+  Host[Runner adapters or direct Rust host] --> Capability[Capability crate]
+  Capability --> Shared[auv-driver-common]
+  Capability --> Native[Target-specific native dependencies]
 ```
 
-Capability common crates never depend on platform adapters, Runner types,
-Protobuf, `tonic`, `auv`, or CLI crates. Platform adapters never depend on the
-aggregate `auv-driver` or the old platform aggregate for their implementation.
+Capability crates never depend on Runner types, Protobuf, `tonic`, `auv`, or CLI
+crates. Their platform modules share portable contracts within the crate.
+Platform implementations never depend on the aggregate `auv-driver` or the old
+platform aggregate for their implementation.
 Otherwise, extraction only adds another wrapper around the existing dependency.
 
 Native providers can use another capability for an actual external boundary.
@@ -172,7 +170,7 @@ back to capture.
 Native accessibility and desktop dependencies also need explicit direction.
 Linux window discovery uses AT-SPI, while Windows accessibility currently uses
 window resolution. The extraction must separate target resolution from node
-operations without dependencies back to the aggregate. A family name alone does
+operations without dependencies back to the aggregate. A capability name alone does
 not settle that native dependency graph.
 
 Shared native infrastructure needs a concrete producer and consumer.
@@ -216,7 +214,7 @@ such handles.
 | Linux clipboard connection and transfer resources | Clipboard provider |
 | Portal identity and token persistence | Shared native infrastructure, with existing identity and storage policy |
 | macOS maximize/restore history | Desktop provider, within its window API |
-| Keyboard holds, mouse holds, and delivery arbitration | Input family, preserving current process-wide coordination |
+| Keyboard holds, mouse holds, and delivery arbitration | Input capability, preserving current process-wide coordination |
 | Overlay controller and animation resources | Overlay family |
 | Retained capture pixels, `CaptureRef` lookup, and derived caches | Runner capture store |
 | Recent-frame request history and buffer control | Runner frame-buffer service, using native capture sources |
@@ -227,7 +225,7 @@ Dropping one RPC object must not release another operation's keys.
 Input teardown releases holds while their original native backend remains usable.
 
 Linux capture now owns its synchronization in
-[`Capturer`](../../../../crates/auv-driver-capture-linux/src/lib.rs).
+[`Capturer`](../../../../crates/auv-driver-capture/src/linux/mod.rs).
 Before extraction, a frame wait held the aggregate session lock. Input and
 clipboard no longer need that capture lock to obtain their connections.
 
@@ -264,9 +262,9 @@ The sequence does not require empty crates for the complete inventory.
 1. Establish shared contract ownership and the concrete dependency graph for
    the selected capability.
 2. Extract only the native prerequisites that capability actually uses.
-3. Move its portable contracts and algorithms into its common crate.
-4. Move platform logic and native resources into capability adapters.
-5. Connect direct callers and Runner adapters to the same facade.
+3. Move its portable contracts and algorithms into the capability crate.
+4. Move platform logic and native resources into internal platform modules.
+5. Connect direct callers and Runner adapters to the same capability API.
 6. Remove the migrated implementation from the old aggregate.
 
 Capture is the first extraction. Its producer/consumer path is concrete:
@@ -289,13 +287,12 @@ bridge files and a SwiftPM build, in addition to Rust validation.
 
 ## First extraction: capture contracts and Linux display/region capture
 
-The first extraction moves production logic into five crates:
+The first extraction moves production logic into three crates. Capture has one
+owning crate; its native prerequisites have other existing consumers.
 
 | Crate | Implemented responsibility |
 | --- | --- |
-| [`auv-driver-capture-common`](../../../../crates/auv-driver-capture-common/src/lib.rs) | Canonical capture types, logical resolution conversion, capture origins, and display/region argument rules |
-| [`auv-driver-capture`](../../../../crates/auv-driver-capture/src/lib.rs) | Capture contracts and platform selection, with a standalone provider on Linux |
-| [`auv-driver-capture-linux`](../../../../crates/auv-driver-capture-linux/src/lib.rs) | Display/region acquisition, Screenshot fallback, native ScreenCast sessions, and persistent PipeWire receivers |
+| [`auv-driver-capture`](../../../../crates/auv-driver-capture/src/lib.rs) | Canonical types, resolution conversion, capture origins, argument rules, and Linux display/region acquisition, including Screenshot fallback and native ScreenCast/PipeWire resources |
 | [`auv-driver-desktop-linux`](../../../../crates/auv-driver-desktop-linux/src/display.rs) | Display discovery and selection, shared by capture, uinput, and existing display APIs |
 | [`auv-driver-portal-linux`](../../../../crates/auv-driver-portal-linux/src/lib.rs) | Connection identity, request timeouts, consent waits, and atomic restore-token rotation |
 
@@ -324,13 +321,12 @@ use auv_driver_common::capture::{Capture, CaptureOptions, CaptureResolution};
 After extraction:
 
 ```rust
-use auv_driver_capture_common::{Capture, CaptureOptions, CaptureResolution};
+use auv_driver_capture::{Capture, CaptureOptions, CaptureResolution};
 ```
 
-The facade also exports these canonical types. The aggregate `auv-driver`
-retains its existing root type paths during capability migration. This re-export
-has no second implementation. Its removal condition is migration of aggregate
-driver callers to capability APIs.
+The aggregate `auv-driver` retains its existing root type paths during capability
+migration. This re-export has no second implementation. Its removal condition is
+migration of aggregate driver callers to capability APIs.
 
 `auv-driver-common` cannot re-export capture types without a dependency cycle.
 Its former `capture` module and root capture exports are removed. All workspace
@@ -357,7 +353,7 @@ Linux window capture still owns its AT-SPI target checks and crop binding in
 provider. Moving that binding requires the desktop reader extraction.
 
 macOS and Windows use the extracted capture contracts but retain their existing
-native backends. The capture facade exposes a standalone provider only on Linux.
+native backends. The capture crate exposes a standalone provider only on Linux.
 No Swift sources or FFI declarations change in this slice.
 
 Input, clipboard, accessibility, and vision retain their existing implementations.
@@ -379,7 +375,6 @@ LIBCLANG_PATH=/tmp/auv-clang18 cargo check --offline
 LIBCLANG_PATH=/tmp/auv-clang18 cargo test --offline \
   -p auv-cli -p auv-core -p auv-cli-invoke -p auv-scan \
   -p auv-driver -p auv-driver-common -p auv-driver-capture \
-  -p auv-driver-capture-common -p auv-driver-capture-linux \
   -p auv-driver-desktop-linux -p auv-driver-portal-linux \
   -p auv-driver-linux -p auv-driver-macos -p auv-driver-windows
 LIBCLANG_PATH=/tmp/auv-clang18 cargo check --offline -p auv-driver-capture --no-default-features --all-targets
@@ -402,7 +397,7 @@ tree excludes the aggregate driver, Runner, input backends, OCR, and overlay.
 
 ## Acceptance criteria
 
-- The capability facade works without opening `LocalDriverSession`.
+- The capability API works without opening `LocalDriverSession`.
 - Its native logic lives in capability crates, outside the old aggregates.
 - Its dependency graph excludes unrelated capability backends and Runner code.
 - Direct and Runner callers use the same implementation and canonical types.
@@ -430,8 +425,8 @@ Linux display/region capture. Each slice must resolve its platform scope and
 native dependencies before moving code.
 
 TODO(capability-desktop-application): application resolution and activation
-share the desktop family in this proposal. Final placement depends on the
-owner's review of that family, before implementation.
+share the desktop capability in this proposal. Final placement depends on the
+owner's review of that capability, before implementation.
 
 TODO(capability-native-sharing): finalize macOS bridge boundaries during its
 platform extraction. Portal infrastructure now lives in `auv-driver-portal-linux`.

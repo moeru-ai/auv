@@ -2,7 +2,7 @@
 use crate::atspi;
 use crate::driver::LinuxDriverSession;
 use crate::error::{invalid_input, not_found};
-use auv_driver_capture_common::Capture;
+use auv_driver_capture::Capture;
 use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
 use auv_driver_common::geometry::Rect;

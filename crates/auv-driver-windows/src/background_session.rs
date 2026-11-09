@@ -24,7 +24,7 @@
 //!   continuously and keeps only the newest frame, so a capture is never an older state of the
 //!   window and watching five windows never renegotiates a capture session.
 
-use auv_driver_capture_common::Capture;
+use auv_driver_capture::Capture;
 use auv_driver_common::Position;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, Rect, WindowPoint};

@@ -25,7 +25,7 @@ fn standalone_region_capture_requires_region_before_native_capture() {
 fn standalone_capture_rejects_activation_without_an_application_target() {
   let error = Capturer::default()
     .capture_display(CaptureOptions {
-      activation: auv_driver_capture_common::Activation::ActivateFirst {
+      activation: crate::Activation::ActivateFirst {
         settle: std::time::Duration::ZERO,
       },
       ..Default::default()

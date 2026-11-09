@@ -5,7 +5,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use auv_driver_capture_common::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
+use auv_driver_capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{CoordinateSpace, Point, Positional, Rect, RelativeRect, ScreenPoint, Size, WindowPoint};

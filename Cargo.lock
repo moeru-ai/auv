@@ -494,7 +494,7 @@ name = "auv-base-evals"
 version = "0.0.43"
 dependencies = [
  "anyhow",
- "auv-driver-capture-common",
+ "auv-driver-capture",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -759,7 +759,7 @@ dependencies = [
 name = "auv-driver"
 version = "0.0.43"
 dependencies = [
- "auv-driver-capture-common",
+ "auv-driver-capture",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -771,30 +771,13 @@ dependencies = [
 name = "auv-driver-capture"
 version = "0.0.43"
 dependencies = [
- "auv-driver-capture-common",
- "auv-driver-capture-linux",
-]
-
-[[package]]
-name = "auv-driver-capture-common"
-version = "0.0.43"
-dependencies = [
- "auv-driver-common",
- "image",
- "serde_json",
-]
-
-[[package]]
-name = "auv-driver-capture-linux"
-version = "0.0.43"
-dependencies = [
  "ashpd",
- "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop-linux",
  "auv-driver-portal-linux",
  "image",
  "pipewire",
+ "serde_json",
  "tempfile",
  "url",
 ]
@@ -824,7 +807,6 @@ dependencies = [
  "ashpd",
  "async-io",
  "auv-driver-capture",
- "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop-linux",
  "auv-driver-portal-linux",
@@ -847,7 +829,7 @@ dependencies = [
 name = "auv-driver-macos"
 version = "0.0.43"
 dependencies = [
- "auv-driver-capture-common",
+ "auv-driver-capture",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
@@ -918,7 +900,7 @@ name = "auv-driver-windows"
 version = "0.0.43"
 dependencies = [
  "auv-auto-loop",
- "auv-driver-capture-common",
+ "auv-driver-capture",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
