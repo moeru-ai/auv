@@ -164,6 +164,30 @@ create tracing contexts and flush recording. `auv-tracing` persists emitted
 events and artifacts without executing operations. AUV does not have or require
 an `auv-runtime` package that aggregates these responsibilities.
 
+## Driver Capability
+
+A driver capability is a typed native ability, such as input delivery, capture,
+or overlay presentation. Its owner provides the contracts, reusable logic,
+platform implementation, and required resource lifetime.
+
+A capability can execute directly from Rust or through a Runner adapter.
+A capability can expose several APIs. Window and display are APIs of one
+capability, provisionally named `desktop`, with one owning crate family.
+A Runner can host several capabilities. A capability boundary does not require
+a separate RunnerClass, public Session resource, or Protobuf service.
+
+The accepted map contains input, capture, overlay, desktop, clipboard,
+accessibility, and vision. The crate split follows the existing
+`auv-driver-overlay` family. Crate names and API details remain provisional.
+Capability facade and common crates expose the portable API and shared logic.
+Platform adapter crates own native behavior. Shared driver contracts retain
+one owner in `auv-driver-common`, including canonical input-delivery evidence.
+Most other capabilities still use the existing platform driver aggregates.
+
+See the [capability crate split design](ai/references/driver/2026-11-09-capability-crate-split-design.md)
+for accepted capabilities, dependency direction, and extraction boundaries.
+The note records source inspection, not implemented platform support.
+
 ## AUV operation interface / auv
 
 The `auv` library crate owns the canonical operation interface used by
