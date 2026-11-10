@@ -1,5 +1,11 @@
 //! Existing macOS xcap and ScreenCaptureKit capture policies.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+#[cfg(all(
+  target_os = "macos",
+  feature = "macos-screencapturekit",
+  feature = "macos-xcap"
+))]
+use auv_driver_capture_common::Activation;
 pub use auv_driver_capture_common::macos::WindowAxSize;
 use auv_driver_capture_common::{Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
