@@ -33,7 +33,8 @@ name = "release_pipewire_probe"
 path = "examples/release_pipewire_probe.rs"
 
 [dependencies]
-auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture" }
+auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture", default-features = false, features = ["linux-screencast", "linux-screenshot"] }
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
 auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
 auv-driver-desktop-linux = { version = "0.0.43", path = "../auv-driver-desktop-linux" }
 image = { version = "0.25", default-features = false, features = ["png"] }

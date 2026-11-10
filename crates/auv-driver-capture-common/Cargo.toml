@@ -1,0 +1,19 @@
+[package]
+name = "auv-driver-capture-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Capture contracts and shared pixel logic for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

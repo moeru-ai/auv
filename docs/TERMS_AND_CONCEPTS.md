@@ -177,18 +177,23 @@ A Runner can host several capabilities. A capability boundary does not require
 a separate RunnerClass, public Session resource, or Protobuf service.
 
 The accepted map contains input, capture, overlay, desktop, clipboard,
-accessibility, and vision. Capture uses one crate with internal platform modules
-and target-specific dependencies. The existing `auv-driver-overlay` family retains
-its package split. Other package layouts and unimplemented API details remain
-provisional. Shared driver contracts retain one owner in `auv-driver-common`,
-including canonical input-delivery evidence.
-Most other capabilities still use the existing platform driver aggregates.
+accessibility, and vision. Each capability has two crates: a common crate for
+contracts and traits, and an implementation crate for selectable native drivers.
+The implementation crate can contain several drivers for the same platform.
+Features control compilation; callers explicitly choose drivers and fallback
+policy. The existing overlay package family remains unchanged in this slice.
 
-Capture contracts, pixel resolution logic, and the independent Linux capture
-provider live in `auv-driver-capture`. Platform implementations share this crate.
-Linux display discovery lives in `auv-driver-desktop-linux`. Portal request and
-token persistence logic live in `auv-driver-portal-linux`. macOS and Windows
-retain their existing native capture backends with the canonical capture types.
+Capture contracts and pixel resolution logic live in `auv-driver-capture-common`.
+`auv-driver-capture` contains the existing Linux, macOS, and Windows capture
+backends behind features. Existing sessions retain their resource ownership,
+synchronization, defaults, authorization, and fallback order. Runner capture
+adapters continue through those session APIs. This extraction changes code
+ownership while preserving execution behavior.
+
+Shared driver contracts retain one owner in `auv-driver-common`, including
+canonical input-delivery evidence. Most other capabilities still use the
+existing platform driver aggregates. Linux display discovery and shared Portal
+plumbing retain their extracted native prerequisite packages.
 
 See the [capability crate split design](ai/references/driver/2026-11-09-capability-crate-split-design.md)
 for accepted capabilities, dependency direction, and extraction boundaries.
@@ -1609,7 +1614,7 @@ image data plus coordinate metadata, capture source, backend, scale, and timing
 information.
 
 In process, driver crates produce capture frames
-(`auv_driver_capture::Capture`, also exported as `auv_driver::Capture`)
+(`auv_driver_capture_common::Capture`, also exported as `auv_driver::Capture`)
 with their pixels. The caller or configured instrumentation path decides whether
 to persist them as artifacts. This keeps the operation path from requiring
 synchronous filename allocation or image writes when the caller only needs

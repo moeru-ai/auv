@@ -3,7 +3,7 @@ pub use auv_driver_common::*;
 // NOTICE(capture-contract-migration): the aggregate retains these public type
 // paths while native backends move. The capture crate owns their implementation;
 // remove these re-exports when aggregate driver callers migrate to capabilities.
-pub use auv_driver_capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
+pub use auv_driver_capture_common::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
 
 #[cfg(feature = "overlay")]
 pub use auv_driver_overlay as overlay;

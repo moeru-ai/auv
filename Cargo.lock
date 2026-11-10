@@ -494,7 +494,7 @@ name = "auv-base-evals"
 version = "0.0.43"
 dependencies = [
  "anyhow",
- "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -537,7 +537,6 @@ dependencies = [
  "auv-device-helper-macos",
  "auv-device-helper-windows",
  "auv-driver",
- "auv-driver-capture",
  "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
@@ -759,7 +758,7 @@ dependencies = [
 name = "auv-driver"
 version = "0.0.43"
 dependencies = [
- "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -772,14 +771,31 @@ name = "auv-driver-capture"
 version = "0.0.43"
 dependencies = [
  "ashpd",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop-linux",
  "auv-driver-portal-linux",
  "image",
  "pipewire",
+ "serde",
  "serde_json",
+ "swift-bridge",
+ "swift-bridge-build",
  "tempfile",
+ "thiserror 2.0.21",
  "url",
+ "windows 0.58.0",
+ "xcap",
+]
+
+[[package]]
+name = "auv-driver-capture-common"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "image",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -807,6 +823,7 @@ dependencies = [
  "ashpd",
  "async-io",
  "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop-linux",
  "auv-driver-portal-linux",
@@ -830,6 +847,7 @@ name = "auv-driver-macos"
 version = "0.0.43"
 dependencies = [
  "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
@@ -839,7 +857,6 @@ dependencies = [
  "serde_json",
  "swift-bridge",
  "swift-bridge-build",
- "xcap",
 ]
 
 [[package]]
@@ -901,6 +918,7 @@ version = "0.0.43"
 dependencies = [
  "auv-auto-loop",
  "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
@@ -908,7 +926,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "windows 0.58.0",
- "xcap",
  "zeroize",
 ]
 

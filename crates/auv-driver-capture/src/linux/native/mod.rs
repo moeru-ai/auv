@@ -1,3 +1,3 @@
 mod screencast;
 
-pub(crate) use screencast::{ScreenCastFrame, ScreenCastSession};
+pub use screencast::{ScreenCastFrame, ScreenCastSession, ScreenCastStream};

@@ -30,42 +30,9 @@ pub fn window_enumerations() -> u64 {
   ENUMERATIONS.load(Ordering::Relaxed)
 }
 
-/// What the OS says about one window handle right now, learned without enumerating windows.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct WindowProbe {
-  pub(crate) exists: bool,
-  pub(crate) process_id: u32,
-  pub(crate) thread_id: u32,
-  pub(crate) class_name: String,
-  pub(crate) minimized: bool,
-  /// Hidden by DWM, for example on another virtual desktop.
-  pub(crate) cloaked: bool,
-  /// The visible frame, as `list_windows` reports it.
-  pub(crate) frame: Option<Rect>,
-}
-
-impl WindowProbe {
-  // Off Windows only the background session's tests describe a closed window.
-  #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-  pub(crate) fn gone() -> Self {
-    Self {
-      exists: false,
-      process_id: 0,
-      thread_id: 0,
-      class_name: String::new(),
-      minimized: false,
-      cloaked: false,
-      frame: None,
-    }
-  }
-}
-
-/// Reads the live state of the window behind `hwnd` (a raw handle value). A handle that no longer
-/// names a window comes back with `exists: false`.
+pub(crate) use auv_driver_capture::windows::target::WindowProbe;
 #[cfg(target_os = "windows")]
-pub(crate) fn probe_window(hwnd: isize) -> WindowProbe {
-  native::probe(hwnd)
-}
+pub(crate) use auv_driver_capture::windows::target::probe_window;
 
 /// Lists every top-level window a user could switch to, front to back: minimized windows (with
 /// the frame they restore to) and windows on other virtual desktops included.
@@ -186,20 +153,8 @@ pub fn activate_window(_window: &Window) -> DriverResult<()> {
   Err(auv_driver_common::error::DriverError::unsupported("window.activate"))
 }
 
-/// Parses the native `HWND` value previously encoded in a [`Window`] reference.
-///
-/// Window references carry the `HWND` as a decimal `isize` string (see
-/// `observe_window`). Mutation and window capture both need to recover the raw
-/// handle, so the parse lives here next to the encoding it mirrors.
 #[cfg(target_os = "windows")]
-pub(crate) fn window_handle(window: &Window) -> DriverResult<windows::Win32::Foundation::HWND> {
-  let raw: isize = window
-    .reference
-    .id
-    .parse()
-    .map_err(|_| invalid_input(format!("window reference {:?} is not a valid window handle", window.reference.id)))?;
-  Ok(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
-}
+pub(crate) use auv_driver_capture::windows::target::window_handle;
 
 /// Whether `window` is a surface a person can switch to: shown, minimized, or on another virtual
 /// desktop. The listing already drops hidden, zero-area and cloaked-on-this-desktop surfaces; this
@@ -323,7 +278,6 @@ fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
 
 #[cfg(target_os = "windows")]
 pub(crate) mod native {
-  use std::ffi::c_void;
   use std::mem::size_of;
   use std::path::Path;
 
@@ -331,7 +285,6 @@ pub(crate) mod native {
   use auv_driver_common::geometry::{CoordinateSpace, Rect};
   use auv_driver_common::window::{Window, WindowDesktop, WindowRef, WindowState};
   use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, SetLastError, TRUE, WIN32_ERROR};
-  use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, MonitorFromWindow,
   };
@@ -341,10 +294,10 @@ pub(crate) mod native {
   };
   use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
   use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowPlacement,
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
-    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement, ShowWindow, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS,
-    WS_CAPTION, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    BringWindowToTop, EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, SW_RESTORE, SW_SHOW,
+    SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement, ShowWindow, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS, WS_CAPTION,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
   };
   use windows::core::{GUID, PWSTR};
 
@@ -401,29 +354,6 @@ pub(crate) mod native {
     let _com = crate::com::init_com();
     let desktops = virtual_desktops();
     read(hwnd, unsafe { GetForegroundWindow() }, desktops.as_ref())
-  }
-
-  pub(super) fn probe(raw: isize) -> super::WindowProbe {
-    let hwnd = HWND(raw as *mut c_void);
-    // SAFETY: read-only queries on a handle that may have been destroyed; each fails harmlessly.
-    unsafe {
-      if !IsWindow(hwnd).as_bool() {
-        return super::WindowProbe::gone();
-      }
-      let mut process_id = 0u32;
-      let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-      let mut name = [0u16; 256];
-      let length = GetClassNameW(hwnd, &mut name).max(0) as usize;
-      super::WindowProbe {
-        exists: true,
-        process_id,
-        thread_id,
-        class_name: String::from_utf16_lossy(&name[..length]),
-        minimized: IsIconic(hwnd).as_bool(),
-        cloaked: is_cloaked(hwnd),
-        frame: window_frame(hwnd).ok(),
-      }
-    }
   }
 
   pub(super) fn activate_window(window: &Window) -> DriverResult<()> {
@@ -663,9 +593,7 @@ pub(crate) mod native {
     })
   }
 
-  fn rect_from(rect: RECT) -> Rect {
-    Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top))
-  }
+  use auv_driver_capture::windows::target::rect_from;
 
   fn window_title(hwnd: HWND) -> Option<String> {
     let len = unsafe { GetWindowTextLengthW(hwnd) };
@@ -681,27 +609,7 @@ pub(crate) mod native {
     (!text.is_empty()).then_some(text)
   }
 
-  /// Reads the visible window rectangle, preferring the DWM extended frame
-  /// bounds and falling back to `GetWindowRect` when DWM is unavailable.
-  pub(crate) fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
-    let mut rect = RECT::default();
-    let dwm =
-      unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32) };
-    if dwm.is_err() {
-      unsafe {
-        GetWindowRect(hwnd, &mut rect).map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
-      }
-    }
-    Ok(rect_from(rect))
-  }
-
-  /// Reports whether DWM has cloaked the window (for example a UWP app on a
-  /// virtual desktop), which `IsWindowVisible` still reports as visible.
-  fn is_cloaked(hwnd: HWND) -> bool {
-    let mut cloaked: u32 = 0;
-    let result = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, size_of::<u32>() as u32) };
-    result.is_ok() && cloaked != 0
-  }
+  pub(crate) use auv_driver_capture::windows::target::{is_cloaked, window_frame};
 
   /// Resolves a process's executable file name for the `app_name` field.
   fn process_name(pid: u32) -> Option<String> {

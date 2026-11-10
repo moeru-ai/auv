@@ -7,24 +7,59 @@ publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Capture contracts and platform capture providers for AUV"
+description = "Selectable native capture drivers for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+linux-screencast = ["dep:auv-driver-desktop-linux", "dep:auv-driver-portal-linux", "dep:ashpd", "ashpd/screencast", "dep:pipewire"]
+linux-screenshot = ["dep:auv-driver-desktop-linux", "dep:auv-driver-portal-linux", "dep:ashpd", "ashpd/screenshot", "dep:url"]
+macos-xcap = ["dep:xcap"]
+macos-screencapturekit = ["dep:swift-bridge", "dep:swift-bridge-build"]
+windows-xcap = ["dep:xcap", "dep:windows"]
+windows-printwindow = ["dep:windows", "windows/Win32_Graphics_Gdi", "windows/Win32_Storage_Xps", "windows/Win32_UI_HiDpi"]
+windows-wgc = [
+  "dep:windows", "windows/Foundation", "windows/Foundation_Collections",
+  "windows/Graphics_Capture", "windows/Graphics_DirectX", "windows/Graphics_DirectX_Direct3D11",
+  "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics_Direct3D11",
+  "windows/Win32_Graphics_Dxgi", "windows/Win32_Graphics_Dxgi_Common", "windows/Win32_Graphics_Gdi",
+  "windows/Win32_System_Com", "windows/Win32_System_WinRT", "windows/Win32_System_WinRT_Graphics_Capture",
+  "windows/Win32_System_WinRT_Direct3D11"
+]
+latency-telemetry = []
+
 [dependencies]
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
 auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-desktop-linux = { version = "0.0.43", path = "../auv-driver-desktop-linux" }
-auv-driver-portal-linux = { version = "0.0.43", path = "../auv-driver-portal-linux" }
-ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "screencast", "screenshot"] }
-pipewire = "0.8"
-url = "2"
+auv-driver-desktop-linux = { version = "0.0.43", path = "../auv-driver-desktop-linux", optional = true }
+auv-driver-portal-linux = { version = "0.0.43", path = "../auv-driver-portal-linux", optional = true }
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io"], optional = true }
+pipewire = { version = "0.8", optional = true }
+url = { version = "2", optional = true }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+xcap = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+swift-bridge = { version = "0.1.59", optional = true }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+serde_json = "1"
+swift-bridge-build = { version = "0.1.59", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", optional = true, features = [
+  "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_StationsAndDesktops",
+  "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"
+] }
 
 [dev-dependencies]
-serde_json = "1"
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile = "3"

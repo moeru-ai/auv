@@ -1,96 +1,42 @@
-//! Linux display and region capture with capability-owned native resources.
+//! Existing Portal capture algorithms. The caller retains native session ownership
+//! and controls synchronization; source discovery and fallback retain their order.
 
-#![cfg(target_os = "linux")]
-
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-use crate::{Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_capture_common::{Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::error::{backend, invalid_input};
 use auv_driver_common::{CoordinateSpace, Display, DriverResult, Rect};
 use auv_driver_desktop_linux::display::{self, list_targets, resolve_for_region, selected_target_or_none};
-use auv_driver_portal_linux::RestoreTokenStore;
 
+#[cfg(feature = "linux-screencast")]
 mod native;
-use native::{ScreenCastFrame, ScreenCastSession};
+#[cfg(feature = "linux-screencast")]
+pub use native::{ScreenCastFrame, ScreenCastSession, ScreenCastStream};
 
-/// A reusable capture provider. Clones share capture resources, independently
-/// of any Runner or aggregate driver session.
-#[derive(Clone, Debug, Default)]
-pub struct Capturer {
-  state: Arc<Mutex<State>>,
+/// Explicit composition policy. A direct ScreenCast driver never selects a
+/// fallback just because another backend feature is enabled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fallback {
+  #[default]
+  None,
+  #[cfg(feature = "linux-screenshot")]
+  Screenshot,
 }
 
-#[derive(Debug, Default)]
-struct State {
-  screencast_session: Option<ScreenCastSession>,
-  restore_tokens: Option<RestoreTokenStore>,
-  portal_app_id: Option<ashpd::AppID>,
-}
-
-impl Capturer {
-  /// Configures Portal identity and token persistence. Native connections open
-  /// lazily on authorization or first capture, and close after the last clone.
-  pub fn new(portal_app_id: Option<String>, portal_state_root: Option<PathBuf>) -> DriverResult<Self> {
-    let portal_app_id =
-      portal_app_id.map(|value| value.parse::<ashpd::AppID>()).transpose().map_err(|error| invalid_input(error.to_string()))?;
-    Ok(Self {
-      state: Arc::new(Mutex::new(State {
-        portal_app_id,
-        restore_tokens: portal_state_root.map(RestoreTokenStore::new),
-        ..Default::default()
-      })),
-    })
-  }
-
-  /// Explicitly establishes capture authorization without taking a frame.
-  pub fn authorize(&self) -> DriverResult<()> {
-    self.state.lock().expect("linux capture state poisoned").screencast()?;
-    Ok(())
-  }
-
-  /// Captures one display and preserves its logical coordinate origin.
-  pub fn capture_display(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
-    options.validate_display()?;
-    let captured = capture_display(self, options.display.as_deref())?;
-    Ok(DisplayCapture {
-      capture: captured.capture.at_resolution(options.resolution),
-      ..captured
-    })
-  }
-
-  /// Captures a display region and maps its logical bounds onto the pixels.
-  pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
-    let region = options.validate_region()?;
-    let captured = capture_region(self, options.display.as_deref(), region)?;
-    Ok(RegionCapture {
-      capture: captured.capture.at_resolution(options.resolution),
-      ..captured
-    })
-  }
-}
-
-impl State {
-  /// Retains the native session for repeated captures and explicit authorization.
-  fn screencast(&mut self) -> DriverResult<&mut ScreenCastSession> {
-    if self.screencast_session.is_none() {
-      self.screencast_session = Some(ScreenCastSession::open_monitor(self.restore_tokens.as_ref(), self.portal_app_id.as_ref())?);
-    }
-    Ok(self.screencast_session.as_mut().expect("screencast session was just initialized"))
-  }
-}
-
-// TODO(capture-window-binding): window source validation and crop binding remain
-// in `auv-driver-linux::window` until the desktop AT-SPI reader is extracted.
-// See `docs/ai/references/driver/2026-11-09-capability-crate-split-design.md`.
-
+#[cfg(any(feature = "linux-screenshot", test))]
 const PORTAL_CAPTURE_BACKEND: &str = "xdg-desktop-portal.screenshot";
+#[cfg(any(feature = "linux-screencast", test))]
 const PORTAL_SCREENCAST_BACKEND: &str = "xdg-desktop-portal.screencast.pipewire";
 
-fn capture_display(capturer: &Capturer, selector: Option<&str>) -> DriverResult<DisplayCapture> {
+#[cfg(feature = "linux-screencast")]
+pub fn capture_display(
+  selector: Option<&str>,
+  primary: impl FnOnce(Option<Rect>) -> DriverResult<ScreenCastFrame>,
+  fallback: Fallback,
+) -> DriverResult<DisplayCapture> {
+  #[cfg(not(feature = "linux-screenshot"))]
+  let _ = fallback;
   let target = selected_target_or_none(selector)?;
   let target_bounds = target.as_ref().map(|target| target.display.frame);
-  match capture_monitor_frame_for_session(capturer, target_bounds) {
+  match primary(target_bounds) {
     Ok(frame) => {
       let display = target.map(|target| target.display).unwrap_or_else(|| display_from_screencast_frame(&frame));
       let scale_factor = capture_scale_factor(&frame.image, display.frame, display.scale_factor);
@@ -104,16 +50,19 @@ fn capture_display(capturer: &Capturer, selector: Option<&str>) -> DriverResult<
       };
       Ok(DisplayCapture { display, capture })
     }
-    Err(error) => {
+    #[cfg(feature = "linux-screenshot")]
+    Err(error) if fallback == Fallback::Screenshot => {
       let captured = capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || match target.as_ref() {
         Some(target) => capture_area(target.display.frame, target),
         None => Err(backend("Screenshot fallback requires known display geometry")),
       })?;
       capture_display_from_captured(target, with_primary_capture_failure(captured, PORTAL_SCREENCAST_BACKEND, &error.to_string()))
     }
+    Err(error) => Err(error),
   }
 }
 
+#[cfg(any(feature = "linux-screenshot", test))]
 fn capture_display_from_captured(target: Option<display::DisplayTarget>, captured: CapturedImage) -> DriverResult<DisplayCapture> {
   // NOTICE: Unbound images and non-native Screenshot pixel layouts cannot prove
   // this display mapping. Accept them only after an owner-approved mapping contract.
@@ -146,20 +95,30 @@ fn capture_display_from_captured(target: Option<display::DisplayTarget>, capture
   Ok(DisplayCapture { display, capture })
 }
 
-fn capture_region(capturer: &Capturer, selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
+#[cfg(feature = "linux-screencast")]
+pub fn capture_region(
+  selector: Option<&str>,
+  region: Rect,
+  primary: impl FnOnce(Option<Rect>) -> DriverResult<ScreenCastFrame>,
+  fallback: Fallback,
+) -> DriverResult<RegionCapture> {
+  #[cfg(not(feature = "linux-screenshot"))]
+  let _ = fallback;
   let targets = list_targets()?;
   let target = resolve_for_region(&targets, selector, region)?;
-  let captured = match capture_monitor_frame_for_session(capturer, Some(target.display.frame)) {
+  let captured = match primary(Some(target.display.frame)) {
     Ok(frame) => CapturedImage {
       image: crop_portal_screenshot_to_region(frame.image, target.display.frame, region)?,
       backend: format!("{PORTAL_SCREENCAST_BACKEND}.crop"),
       fallback_reason: Some("region pixels were cropped from PipeWire screencast using Wayland xdg-output logical bounds".to_string()),
     },
-    Err(error) => with_primary_capture_failure(
+    #[cfg(feature = "linux-screenshot")]
+    Err(error) if fallback == Fallback::Screenshot => with_primary_capture_failure(
       capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || capture_area(region, &target))?,
       PORTAL_SCREENCAST_BACKEND,
       &error.to_string(),
     ),
+    Err(error) => return Err(error),
   };
   let scale_factor = capture_scale_factor(&captured.image, region, target.display.scale_factor);
   let capture = Capture {
@@ -182,6 +141,7 @@ struct CapturedImage {
   fallback_reason: Option<String>,
 }
 
+#[cfg(any(all(feature = "linux-screencast", feature = "linux-screenshot"), test))]
 fn capture_fallback<T>(
   primary_backend: &str,
   primary_error: &auv_driver_common::error::DriverError,
@@ -191,12 +151,7 @@ fn capture_fallback<T>(
     .map_err(|fallback_error| backend(format!("{primary_backend} failed: {primary_error}; fallback capture also failed: {fallback_error}")))
 }
 
-fn capture_monitor_frame_for_session(capturer: &Capturer, target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
-  // Only capture shares this lock. Input and clipboard never wait on frame acquisition.
-  let mut state = capturer.state.lock().expect("linux capture state poisoned");
-  state.screencast()?.capture_monitor_frame(target_bounds)
-}
-
+#[cfg(feature = "linux-screenshot")]
 fn capture_area(region: Rect, target: &display::DisplayTarget) -> DriverResult<CapturedImage> {
   let targets = list_targets()?;
   let source = screenshot_source(&targets, target)?;
@@ -218,6 +173,7 @@ fn capture_area(region: Rect, target: &display::DisplayTarget) -> DriverResult<C
   })
 }
 
+#[cfg(any(feature = "linux-screenshot", test))]
 fn screenshot_source<'a>(
   targets: &'a [display::DisplayTarget],
   target: &display::DisplayTarget,
@@ -237,6 +193,7 @@ fn screenshot_source<'a>(
   Ok(source)
 }
 
+#[cfg(feature = "linux-screencast")]
 fn display_from_screencast_frame(frame: &ScreenCastFrame) -> Display {
   let bounds =
     frame.stream.logical_rect().unwrap_or_else(|| Rect::new(0.0, 0.0, f64::from(frame.image.width()), f64::from(frame.image.height())));
@@ -251,6 +208,7 @@ fn display_from_screencast_frame(frame: &ScreenCastFrame) -> Display {
   }
 }
 
+#[cfg(any(all(feature = "linux-screencast", feature = "linux-screenshot"), test))]
 fn with_primary_capture_failure(mut captured: CapturedImage, primary_backend: &str, primary_error: &str) -> CapturedImage {
   let fallback = captured.fallback_reason.take().unwrap_or_else(|| format!("used {PORTAL_CAPTURE_BACKEND} fallback"));
   captured.fallback_reason = Some(format!("{primary_backend} failed ({primary_error}); {fallback}"));
@@ -296,6 +254,7 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
   Ok(value)
 }
 
+#[cfg(feature = "linux-screenshot")]
 fn portal_screenshot() -> DriverResult<image::RgbaImage> {
   use ashpd::desktop::screenshot::{AvailableTargets, ScreenshotOptions, ScreenshotProxy};
   use auv_driver_portal_linux::run_with_consent;
@@ -329,3 +288,73 @@ fn portal_screenshot() -> DriverResult<image::RgbaImage> {
 #[cfg(test)]
 #[path = "capture_test.rs"]
 mod tests;
+
+pub mod window;
+
+// These are explicit backend implementations. Compiling another backend never
+// changes the fallback policy of this ScreenCast source.
+#[cfg(feature = "linux-screencast")]
+impl auv_driver_capture_common::DisplayCaptureDriver for ScreenCastSession {
+  fn capture_display(&mut self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
+    options.validate_display()?;
+    let captured = capture_display(options.display.as_deref(), |bounds| self.capture_monitor_frame(bounds), Fallback::None)?;
+    Ok(DisplayCapture {
+      capture: captured.capture.at_resolution(options.resolution),
+      ..captured
+    })
+  }
+}
+#[cfg(feature = "linux-screencast")]
+impl auv_driver_capture_common::RegionCaptureDriver for ScreenCastSession {
+  fn capture_region(&mut self, options: CaptureOptions) -> DriverResult<RegionCapture> {
+    let region = options.validate_region()?;
+    let captured = capture_region(options.display.as_deref(), region, |bounds| self.capture_monitor_frame(bounds), Fallback::None)?;
+    Ok(RegionCapture {
+      capture: captured.capture.at_resolution(options.resolution),
+      ..captured
+    })
+  }
+}
+
+/// The Screenshot portal backend. Consent and source geometry rules match the
+/// existing fallback; selecting this driver does not open a ScreenCast session.
+#[cfg(feature = "linux-screenshot")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Screenshot;
+
+#[cfg(feature = "linux-screenshot")]
+impl auv_driver_capture_common::DisplayCaptureDriver for Screenshot {
+  fn capture_display(&mut self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
+    options.validate_display()?;
+    let target =
+      selected_target_or_none(options.display.as_deref())?.ok_or_else(|| backend("Screenshot fallback requires known display geometry"))?;
+    let image = capture_area(target.display.frame, &target)?;
+    let captured = capture_display_from_captured(Some(target), image)?;
+    Ok(DisplayCapture {
+      capture: captured.capture.at_resolution(options.resolution),
+      ..captured
+    })
+  }
+}
+#[cfg(feature = "linux-screenshot")]
+impl auv_driver_capture_common::RegionCaptureDriver for Screenshot {
+  fn capture_region(&mut self, options: CaptureOptions) -> DriverResult<RegionCapture> {
+    let region = options.validate_region()?;
+    let target = resolve_for_region(&list_targets()?, options.display.as_deref(), region)?;
+    let image = capture_area(region, &target)?;
+    let scale_factor = capture_scale_factor(&image.image, region, target.display.scale_factor);
+    let capture = Capture {
+      origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(region.origin))),
+      image: image.image,
+      bounds: region,
+      scale_factor,
+      backend: image.backend,
+      fallback_reason: image.fallback_reason,
+    }
+    .at_resolution(options.resolution);
+    Ok(RegionCapture {
+      display: target.display,
+      capture,
+    })
+  }
+}

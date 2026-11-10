@@ -1,6 +1,6 @@
 use std::thread;
 
-use auv_driver_capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_capture_common::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::application::{ApplicationActivationResult, ApplicationIdKind, unsupported_activation};
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{DriverError, DriverResult};
@@ -15,6 +15,7 @@ use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{Window, WindowMutationOptions, WindowMutationResult, WindowStateTarget, find_window};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
+use crate::capture::{capture_display, capture_region, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::LinuxDriverSession;
 use crate::error::{invalid_input, not_found};
@@ -129,9 +130,10 @@ impl PermissionApi<'_> {
     } else {
       authorization
     };
-    drop(state);
-    #[cfg(target_os = "linux")]
-    self.session.capture.authorize()?;
+    if state.screencast_session.is_none() {
+      state.screencast_session =
+        Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_ref())?);
+    }
     drop(temporary_authorization);
     Ok(())
   }
@@ -149,31 +151,38 @@ impl PermissionApi<'_> {
 impl DisplayApi<'_> {
   pub fn list(&self) -> DriverResult<ObservedDisplays> {
     let _ = self.session;
-    auv_driver_desktop_linux::display::list()
+    list_displays()
   }
 
   pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
-    #[cfg(target_os = "linux")]
-    {
-      self.session.capture.capture_display(options)
+    let _ = self.session;
+    if options.window.is_some() || options.region.is_some() {
+      return Err(invalid_input("display.capture does not accept window or region capture options"));
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-      options.validate_display()?;
-      Err(DriverError::unsupported("display.capture"))
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
+    let resolution = options.resolution;
+    capture_display(&self.session.state, options.display.as_deref()).map(|captured| DisplayCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
-    #[cfg(target_os = "linux")]
-    {
-      self.session.capture.capture_region(options)
+    let _ = self.session;
+    if options.window.is_some() {
+      return Err(invalid_input("display.capture_region does not accept nested window capture options"));
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-      options.validate_region()?;
-      Err(DriverError::unsupported("display.capture_region"))
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
+    let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
+    let resolution = options.resolution;
+    capture_region(&self.session.state, options.display.as_deref(), region).map(|captured| RegionCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 }
 
@@ -231,7 +240,7 @@ impl WindowApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("window.capture_with cannot activate Linux Wayland windows in this slice"));
     }
-    capture_window(self.session, window).map(|capture| capture.at_resolution(options.resolution))
+    capture_window(&self.session.state, window).map(|capture| capture.at_resolution(options.resolution))
   }
 
   pub fn find_text(&self, window: &Window, query: &str, region: RelativeRect, wait: WaitOptions) -> DriverResult<OcrMatches> {

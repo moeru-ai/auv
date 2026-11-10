@@ -8,7 +8,7 @@
 //! consumer code. The crop and coordinate math is host-independent so it stays
 //! unit-testable without a live OCR engine.
 
-use auv_driver_capture::Capture;
+use auv_driver_capture_common::Capture;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Rect, RelativeRect};
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};

@@ -1,6 +1,6 @@
 // File: src/driver/macos/capture/artifact.rs
+use super::AuvResult;
 use super::types::{CaptureContract, CaptureSource, CoordinateSpace};
-use crate::types::AuvResult;
 
 pub fn render_capture_contract_json(contract: &CaptureContract) -> AuvResult<String> {
   let mut rendered = serde_json::to_string_pretty(contract)

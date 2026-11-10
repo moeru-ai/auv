@@ -13,6 +13,7 @@ mod atspi;
 #[cfg(not(target_os = "linux"))]
 mod atspi_stub;
 pub mod bundle;
+mod capture;
 mod clipboard;
 mod descriptor;
 #[cfg(target_os = "linux")]

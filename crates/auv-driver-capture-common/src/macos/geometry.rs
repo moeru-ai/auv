@@ -1,5 +1,5 @@
-use crate::capture::types::{CaptureContract, CoordinateSpace, DisplayDescriptor, Rect, Scale2D, Size, capture_error};
-use crate::types::AuvResult;
+use super::AuvResult;
+use super::types::{CaptureContract, CoordinateSpace, DisplayDescriptor, Rect, Scale2D, Size, capture_error};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedRegion {

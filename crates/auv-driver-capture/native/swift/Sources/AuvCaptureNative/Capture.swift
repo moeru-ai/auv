@@ -217,25 +217,13 @@ func nativeRgbaBytes(from image: CGImage) -> [UInt8]? {
   return bytes
 }
 
-func nativeImageFromRgbaBytes(width: Int, height: Int, bytes: [UInt8]) -> CGImage? {
-  guard width > 0, height > 0, bytes.count == width * height * 4 else {
-    return nil
+
+// One bulk copy into Rust; see NOTICE(swift-bridge-bulk-bytes) in binding.rs.
+func nativeByteVec(_ values: [UInt8]) -> RustVec<UInt8> {
+  values.withUnsafeBufferPointer { buffer in
+    guard let base = buffer.baseAddress else {
+      return RustVec<UInt8>()
+    }
+    return capture_byte_vec_from_raw(base, UInt(buffer.count))
   }
-  let data = Data(bytes)
-  guard let provider = CGDataProvider(data: data as CFData) else {
-    return nil
-  }
-  return CGImage(
-    width: width,
-    height: height,
-    bitsPerComponent: 8,
-    bitsPerPixel: 32,
-    bytesPerRow: width * 4,
-    space: CGColorSpaceCreateDeviceRGB(),
-    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-    provider: provider,
-    decode: nil,
-    shouldInterpolate: false,
-    intent: .defaultIntent
-  )
 }

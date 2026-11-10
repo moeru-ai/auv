@@ -2,7 +2,7 @@
 //! Pixels stay in memory; no screenshots are saved and no overlays are changed.
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  use auv_driver_capture::CaptureOptions;
+  use auv_driver_capture_common::CaptureOptions;
   use auv_driver_common::Driver;
   use auv_driver_macos::MacosDriver;
   use std::time::Instant;

@@ -8,3 +8,6 @@ pub use input::InputSession;
 #[cfg(test)]
 #[path = "identity_test.rs"]
 mod identity_tests;
+
+#[cfg(target_os = "linux")]
+pub use auv_driver_capture::linux::ScreenCastSession;

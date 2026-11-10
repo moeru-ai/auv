@@ -1,42 +1,6 @@
 use super::*;
 
-#[test]
-fn standalone_display_capture_rejects_region_before_native_capture() {
-  let error = Capturer::default()
-    .capture_display(CaptureOptions {
-      region: Some(Rect::new(0.0, 0.0, 10.0, 10.0)),
-      ..Default::default()
-    })
-    .unwrap_err();
-
-  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
-  assert_eq!(error.to_string(), "display.capture does not accept window or region capture options");
-}
-
-#[test]
-fn standalone_region_capture_requires_region_before_native_capture() {
-  let error = Capturer::default().capture_region(CaptureOptions::default()).unwrap_err();
-
-  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
-  assert_eq!(error.to_string(), "display.capture_region requires CaptureOptions.region");
-}
-
-#[test]
-fn standalone_capture_rejects_activation_without_an_application_target() {
-  let error = Capturer::default()
-    .capture_display(CaptureOptions {
-      activation: crate::Activation::ActivateFirst {
-        settle: std::time::Duration::ZERO,
-      },
-      ..Default::default()
-    })
-    .unwrap_err();
-
-  assert!(matches!(error, auv_driver_common::DriverError::InvalidInput { .. }));
-  assert_eq!(error.to_string(), "display.capture cannot activate an application without an application target");
-}
-
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 fn screenshot_target() -> display::DisplayTarget {
   display::DisplayTarget {
     display: Display {
@@ -51,7 +15,7 @@ fn screenshot_target() -> display::DisplayTarget {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_rejects_partial_image_before_binding_screen_coordinates() {
   // ROOT CAUSE:
@@ -74,7 +38,7 @@ fn screenshot_fallback_rejects_partial_image_before_binding_screen_coordinates()
   assert!(error.to_string().contains("3440x1440"), "{error}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_rejects_missing_display_geometry() {
   let result = capture_display_from_captured(
@@ -90,7 +54,7 @@ fn screenshot_fallback_rejects_missing_display_geometry() {
   assert!(error.to_string().contains("known display geometry"), "{error}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_rejects_partial_image_with_matching_aspect_ratio() {
   let error = capture_display_from_captured(
@@ -107,7 +71,7 @@ fn screenshot_fallback_rejects_partial_image_with_matching_aspect_ratio() {
   assert!(error.to_string().contains("3440x1440"), "{error}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_preserves_scaled_display_origin_and_crop_pixels() {
   let mut target = screenshot_target();
@@ -135,7 +99,7 @@ fn screenshot_fallback_preserves_scaled_display_origin_and_crop_pixels() {
   assert_eq!(*crop.get_pixel(0, 0), image::Rgba([1, 2, 3, 255]));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_rejects_multiple_outputs_before_requesting_pixels() {
   let target = screenshot_target();
@@ -147,7 +111,7 @@ fn screenshot_fallback_rejects_multiple_outputs_before_requesting_pixels() {
   assert!(error.to_string().contains("exactly one known display, found 2"), "{error}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 fn screenshot_fallback_rejects_changed_display_geometry() {
   let target = screenshot_target();
@@ -158,7 +122,7 @@ fn screenshot_fallback_rejects_changed_display_geometry() {
   assert_eq!(error.to_string(), "display geometry changed during Screenshot fallback");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 #[test]
 #[ignore = "requires a live single-output Wayland desktop and Screenshot portal consent"]
 fn screenshot_fallback_live_single_display() {

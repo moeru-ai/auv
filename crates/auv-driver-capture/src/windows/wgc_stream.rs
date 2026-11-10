@@ -22,24 +22,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use auv_driver_common::error::DriverResult;
-use image::RgbaImage;
-use windows::Foundation::TypedEventHandler;
-use windows::Graphics::Capture::{Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
-use windows::Graphics::DirectX::DirectXPixelFormat;
-use windows::Graphics::SizeInt32;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::Graphics::Direct3D11::{
+use ::windows::Foundation::TypedEventHandler;
+use ::windows::Graphics::Capture::{Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
+use ::windows::Graphics::DirectX::DirectXPixelFormat;
+use ::windows::Graphics::SizeInt32;
+use ::windows::Win32::Foundation::HWND;
+use ::windows::Win32::Graphics::Direct3D11::{
   D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT,
   D3D11_USAGE_STAGING, ID3D11Texture2D,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
-use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
-use windows::core::{HRESULT, Interface};
+use ::windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use ::windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
+use ::windows::core::{HRESULT, Interface};
+use auv_driver_common::error::DriverResult;
+use image::RgbaImage;
 
 use super::native::{D3dContext, get_or_init_d3d_context, item_for_window};
 use super::{FrameUpdate, StreamError};
-use crate::error::{backend, invalid_input};
+use auv_driver_common::error::{backend, invalid_input};
 
 /// Buffers in the frame pool. The drain keeps the pool nearly empty, so this is headroom for a
 /// frame that arrives while the previous one is still being copied.

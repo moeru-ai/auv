@@ -1,4 +1,4 @@
-use auv_driver_capture::Capture;
+use auv_driver_capture_common::Capture;
 use auv_driver_common::vision::{RecognizedText, TextRecognition};
 use auv_driver_common::{CoordinateSpace, Point, Position, Positional, Positioned, Rect, WindowPoint, WindowRef};
 

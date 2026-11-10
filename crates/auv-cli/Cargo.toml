@@ -19,7 +19,6 @@ name = "auv"
 path = "src/main.rs"
 
 [dependencies]
-auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture" }
 clap = { version = "4.5", features = ["derive", "env"] }
 auv = { package = "auv-core", version = "0.0.43", path = "../auv" }
 auv-auto-loop = { version = "0.0.43", path = "../auv-auto-loop" }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub type AuvResult<T> = Result<T, String>;
+pub use auv_driver_capture_common::macos::AuvResult;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedRect {

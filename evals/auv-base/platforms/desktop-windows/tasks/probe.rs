@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use auv_driver_capture::Capture;
+use auv_driver_capture_common::Capture;
 use auv_driver_common::Driver;
 use auv_driver_common::input::WindowInput;
 use auv_driver_windows::{ClickRequest, FrameRead, Outcome, WindowsDriver};
@@ -173,7 +173,7 @@ pub fn capture_freshness(options: &Options) -> Result<bool> {
     let (window, _) = discover_by_hwnd(&session, receiver.hwnd())?;
     let button = point_in_window(&window, receiver.layout.button_center);
     println!("== {name}");
-    let hash = |capture: auv_driver_common::error::DriverResult<auv_driver_capture::Capture>| -> String {
+    let hash = |capture: auv_driver_common::error::DriverResult<auv_driver_capture_common::Capture>| -> String {
       capture
         .map(|c| describe_capture(&c, "2E6F9E")["hash"].as_str().unwrap_or("?").chars().take(6).collect())
         .unwrap_or_else(|e| format!("err:{e}"))

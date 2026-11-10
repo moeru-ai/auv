@@ -9,6 +9,12 @@ pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<Vec<S
     "crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Generated",
     "auv_driver_macos",
   )?;
+  let capture_generated_dir = generate_one_swift_bridge_for_ide(
+    project_root,
+    "crates/auv-driver-capture/src/macos/binding.rs",
+    "crates/auv-driver-capture/native/swift/Sources/AuvCaptureNative/Generated",
+    "auv_driver_capture",
+  )?;
   let overlay_generated_dir = generate_one_swift_bridge_for_ide(
     project_root,
     "crates/auv-driver-overlay-macos/src/native/binding.rs",
@@ -16,7 +22,11 @@ pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<Vec<S
     "auv_driver_overlay_macos",
   )?;
 
-  Ok(vec![driver_generated_dir, overlay_generated_dir])
+  Ok(vec![
+    driver_generated_dir,
+    capture_generated_dir,
+    overlay_generated_dir,
+  ])
 }
 
 #[cfg(target_os = "macos")]

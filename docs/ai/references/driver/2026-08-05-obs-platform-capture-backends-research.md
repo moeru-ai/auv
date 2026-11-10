@@ -1,5 +1,10 @@
 # OBS platform capture backends and AUV implications
 
+NOTICE(capture-migration): capture source paths moved to `auv-driver-capture`.
+See the [capture extraction](2026-11-09-capability-crate-split-design.md).
+The research and platform evidence below retain their original scope.
+
+
 Date: 2026-08-05
 
 ## Question
@@ -188,7 +193,7 @@ AUV currently uses `SCScreenshotManager.captureSampleBuffer` for a synchronous
 window snapshot on macOS 14+, then converts the sample buffer through
 `CIImage -> CGImage -> RGBA bytes`; display and region capture use one-shot
 `xcap`. The implementation is in
-[`Capture.swift`](../../../../crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Capture.swift).
+[`Capture.swift`](../../../../crates/auv-driver-capture/native/swift/Sources/AuvCaptureNative/Capture.swift).
 That remains useful for `--capture native`, but it repeats content discovery,
 snapshot setup, and CPU materialization. A recording-frame path should instead
 keep `SCStream` alive and retain an IOSurface-backed frame reference until a

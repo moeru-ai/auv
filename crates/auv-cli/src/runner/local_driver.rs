@@ -27,8 +27,6 @@ use auv_driver::{Driver as _, WindowInput as _};
 
 struct LocalDisplayService {
   session: auv_driver::LocalDriverSession,
-  #[cfg(target_os = "linux")]
-  capture: auv_driver_capture::Capturer,
   captures: CaptureStore,
 }
 
@@ -2660,15 +2658,15 @@ impl DisplayService for LocalDisplayService {
   ) -> Result<Response<proto::CaptureDisplayResponse>, Status> {
     let request = request.into_inner();
     let display = display_selector_from_proto(request.selector)?;
-    let options = auv_driver_capture::CaptureOptions {
-      display,
-      resolution: capture_resolution_from_proto(request.resolution)?,
-      ..Default::default()
-    };
-    #[cfg(target_os = "linux")]
-    let captured = self.capture.capture_display(options).map_err(driver_status)?;
-    #[cfg(not(target_os = "linux"))]
-    let captured = self.session.display().capture(options).map_err(driver_status)?;
+    let captured = self
+      .session
+      .display()
+      .capture(auv_driver::CaptureOptions {
+        display,
+        resolution: capture_resolution_from_proto(request.resolution)?,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
     let capture = stored_capture_to_proto(&self.captures, captured.capture);
     record_stored_capture(&self.captures, &capture, "auv.driver.display_capture");
     Ok(Response::new(proto::CaptureDisplayResponse {
@@ -2684,16 +2682,16 @@ impl DisplayService for LocalDisplayService {
     let request = request.into_inner();
     let display = display_selector_from_proto(request.selector)?;
     let region = rect_from_proto(request.region.ok_or_else(|| Status::invalid_argument("region is required"))?, "region")?;
-    let options = auv_driver_capture::CaptureOptions {
-      display,
-      region: Some(region),
-      resolution: capture_resolution_from_proto(request.resolution)?,
-      ..Default::default()
-    };
-    #[cfg(target_os = "linux")]
-    let captured = self.capture.capture_region(options).map_err(driver_status)?;
-    #[cfg(not(target_os = "linux"))]
-    let captured = self.session.display().capture_region(options).map_err(driver_status)?;
+    let captured = self
+      .session
+      .display()
+      .capture_region(auv_driver::CaptureOptions {
+        display,
+        region: Some(region),
+        resolution: capture_resolution_from_proto(request.resolution)?,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
     let capture = stored_capture_to_proto(&self.captures, captured.capture);
     record_stored_capture(&self.captures, &capture, "auv.driver.screen_region_capture");
     Ok(Response::new(proto::CaptureDisplayRegionResponse {
@@ -2711,14 +2709,14 @@ impl DisplayService for LocalDisplayService {
       return Err(Status::invalid_argument("query is required"));
     }
     let display = display_selector_from_proto(request.selector)?;
-    let options = auv_driver_capture::CaptureOptions {
-      display,
-      ..Default::default()
-    };
-    #[cfg(target_os = "linux")]
-    let captured = self.capture.capture_display(options).map_err(driver_status)?;
-    #[cfg(not(target_os = "linux"))]
-    let captured = self.session.display().capture(options).map_err(driver_status)?;
+    let captured = self
+      .session
+      .display()
+      .capture(auv_driver::CaptureOptions {
+        display,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
     let region = image_region_from_proto(request.region, request.screen_region, captured.capture.bounds)?;
     let matches = self
       .session
@@ -2771,8 +2769,6 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     }
   });
   let display = DisplayServiceServer::new(LocalDisplayService {
-    #[cfg(target_os = "linux")]
-    capture: session.capture().clone(),
     session: session.clone(),
     captures: captures.clone(),
   });

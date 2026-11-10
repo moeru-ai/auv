@@ -3,7 +3,7 @@
 //! Pixels are counted in memory; no screenshots are saved and no input is sent.
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  use auv_driver_capture::{CaptureOptions, DisplayCapture};
+  use auv_driver_capture_common::{CaptureOptions, DisplayCapture};
   use auv_driver_common::{Driver, DriverError, Rect, ScreenPoint};
   use auv_driver_macos::MacosDriver;
   use auv_driver_overlay::{
