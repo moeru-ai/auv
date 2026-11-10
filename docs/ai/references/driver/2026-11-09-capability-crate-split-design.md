@@ -244,6 +244,17 @@ Windows GNU target check. Both changed Swift bridges generated with the
 pinned generator, and the capture source passed Swift syntax parsing.
 Native macOS framework builds and live desktop behavior require platform hosts.
 
+Native CI evidence for the final capture implementation:
+
+- [Linux workspace validation](https://github.com/clouds56-contrib/auv/actions/runs/42882621845/job/130063857582): 1,782 passed, zero failed, 17 ignored. Includes independent backend builds and CLI checks.
+- [Windows workspace validation](https://github.com/clouds56-contrib/auv/actions/runs/42882621845/job/130063857389): 1,803 passed, zero failed, 27 ignored. Includes independent backend builds, helper/CLI builds, and CLI checks.
+- [macOS native and SwiftPM validation](https://github.com/clouds56-contrib/auv/actions/runs/42881338748/job/130058786114): capture feature checks, bridge generation, and both touched SwiftPM packages passed. The later aggregate-module alias fix does not change these sources.
+
+At this handoff, the final run's macOS workspace and package-verification jobs
+remain queued. Their status is available in the
+[full CI run](https://github.com/clouds56-contrib/auv/actions/runs/42882621845).
+Live desktop capture was not exercised by these checks.
+
 A source comparison confirms that WGC, desktop attachment, and telemetry are
 unchanged after import, path, and feature-gate substitution. Linux driver state
 and both Runner capture files match the comparison baseline. Linux session code
