@@ -192,7 +192,8 @@ use auv_driver_capture_common::{Capture, CaptureOptions, CaptureResolution};
 ```
 
 Use the implementation crate to construct or call a backend. The aggregate
-`auv-driver` retains its root capture exports while its callers migrate.
+`auv-driver` retains its root capture exports and `capture` module while its
+callers migrate. Existing app and game crates still use that module path.
 Existing macOS and Windows public native paths re-export the moved code.
 Re-exports contain no duplicate implementation and have explicit migration
 markers. `auv-driver-common` cannot re-export capture types without a dependency
