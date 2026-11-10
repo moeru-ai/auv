@@ -361,8 +361,9 @@ fn run_pipewire_receiver(
   // node IDs in favor of `pipewire-serial` plus PW_KEY_TARGET_OBJECT. Keep the
   // current node ID until the minimum portal/PipeWire compatibility boundary
   // is explicitly raised and tested.
-  let mainloop = pw::main_loop::MainLoop::new(None).map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
-  let context = pw::context::Context::new(&mainloop).map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
+  let mainloop = pw::main_loop::MainLoopBox::new(None).map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
+  let context =
+    pw::context::ContextBox::new(mainloop.loop_(), None).map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
   let core = context.connect_fd(fd, None).map_err(|error| backend(format!("failed to connect to portal PipeWire remote: {error}")))?;
   let latest = Rc::new(RefCell::new(LatestFrame::default()));
   let pending = Rc::new(RefCell::new(None));
@@ -373,7 +374,7 @@ fn run_pipewire_receiver(
     pending: Rc::clone(&pending),
     terminal_error: Rc::clone(&terminal_error),
   };
-  let stream = pw::stream::Stream::new(
+  let stream = pw::stream::StreamBox::new(
     &core,
     "auv-screen-capture",
     properties! {
@@ -485,7 +486,7 @@ fn run_pipewire_receiver(
       Ok(PipeWireWorkerCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
       Err(mpsc::TryRecvError::Empty) => {}
     }
-    mainloop.loop_().iterate(Duration::from_millis(20));
+    mainloop.loop_().iterate(pw::loop_::Timeout::Finite(Duration::from_millis(20)));
     if let Some((sender, image)) = take_stale_frame_response(&pending, &latest, Instant::now()) {
       let _ = sender.send(image);
     }

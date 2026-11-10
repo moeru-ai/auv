@@ -12,8 +12,9 @@ fn main() {
   unsafe { auv_driver_linux::bundle::prepare_pipewire_environment() };
   let module_dir = std::env::var_os("PIPEWIRE_MODULE_DIR").unwrap_or_else(|| panic!("the probe is not running from a release bundle"));
   pw::init();
-  let mainloop = pw::main_loop::MainLoop::new(None).unwrap_or_else(|error| panic!("failed to create PipeWire mainloop: {error}"));
-  let context = pw::context::Context::new(&mainloop).unwrap_or_else(|error| panic!("failed to create PipeWire context: {error}"));
+  let mainloop = pw::main_loop::MainLoopBox::new(None).unwrap_or_else(|error| panic!("failed to create PipeWire mainloop: {error}"));
+  let context =
+    pw::context::ContextBox::new(mainloop.loop_(), None).unwrap_or_else(|error| panic!("failed to create PipeWire context: {error}"));
   let _core = context.connect(None).unwrap_or_else(|error| panic!("failed to connect to the host PipeWire daemon: {error}"));
   println!("connected to PipeWire with client modules from {}", module_dir.to_string_lossy());
 }
