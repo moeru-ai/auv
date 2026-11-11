@@ -4,7 +4,7 @@
 use auv_driver_capture_common::{Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::error::{backend, invalid_input};
 use auv_driver_common::{CoordinateSpace, Display, DriverResult, Rect};
-use auv_driver_desktop_linux::display::{self, list_targets, resolve_for_region, selected_target_or_none};
+use auv_driver_desktop::linux::display::{self, list_targets, resolve_for_region, selected_target_or_none};
 
 #[cfg(feature = "linux-screencast")]
 mod native;

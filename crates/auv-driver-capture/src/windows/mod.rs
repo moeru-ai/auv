@@ -2,12 +2,12 @@
 pub mod capture;
 #[cfg(feature = "windows-wgc")]
 pub mod wgc;
-// NOTICE(native-owner-migration): these shared OS/diagnostic helpers retain one
-// process/TLS state for capture and the aggregate driver. Their capability owner
-// is deferred to preserve that state in this capture-only move. Migrate them
-// during an approved desktop/input extraction; do not duplicate their statics.
+// NOTICE(desktop-path-migration): preserve the existing paths while capture and
+// input callers migrate to desktop. These aliases share one native/TLS state.
 #[doc(hidden)]
 pub mod desktop;
+// NOTICE(native-owner-migration): diagnostic ownership remains deferred until
+// an approved diagnostics/input slice; do not duplicate this telemetry buffer.
 #[doc(hidden)]
 pub mod latency;
 #[doc(hidden)]

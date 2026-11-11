@@ -773,7 +773,7 @@ dependencies = [
  "ashpd",
  "auv-driver-capture-common",
  "auv-driver-common",
- "auv-driver-desktop-linux",
+ "auv-driver-desktop",
  "auv-driver-portal-linux",
  "image",
  "pipewire",
@@ -808,12 +808,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "auv-driver-desktop-linux"
+name = "auv-driver-desktop"
 version = "0.0.43"
 dependencies = [
  "auv-driver-common",
+ "auv-driver-desktop-common",
  "wayland-client 0.31.15",
  "wayland-protocols 0.32.13",
+ "windows 0.58.0",
+ "xcap",
+]
+
+[[package]]
+name = "auv-driver-desktop-common"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -825,7 +836,7 @@ dependencies = [
  "auv-driver-capture",
  "auv-driver-capture-common",
  "auv-driver-common",
- "auv-driver-desktop-linux",
+ "auv-driver-desktop",
  "auv-driver-portal-linux",
  "evdev",
  "futures-lite",
@@ -920,6 +931,7 @@ dependencies = [
  "auv-driver-capture",
  "auv-driver-capture-common",
  "auv-driver-common",
+ "auv-driver-desktop",
  "auv-driver-overlay",
  "image",
  "serde",

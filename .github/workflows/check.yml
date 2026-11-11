@@ -110,6 +110,18 @@ jobs:
       # Regression: compile the Git checkout before any proto dependency export.
       # Generating vendor here previously hid missing files from cargo install --git.
       - run: cargo check
+      - name: Check desktop backend features
+        shell: bash
+        run: |
+          cargo check --locked -p auv-driver-desktop --no-default-features --all-targets
+          case "$RUNNER_OS" in
+            Linux) backends="linux-wayland" ;;
+            macOS) backends="macos-xcap" ;;
+            Windows) backends="windows-xcap windows-win32" ;;
+          esac
+          for backend in $backends; do
+            cargo check --locked -p auv-driver-desktop --no-default-features --features "$backend" --all-targets
+          done
       - name: Check capture backend features
         shell: bash
         run: |

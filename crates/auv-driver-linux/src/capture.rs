@@ -7,7 +7,7 @@ use auv_driver_common::{DriverResult, Rect};
 use std::sync::{Arc, Mutex};
 
 pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  auv_driver_desktop_linux::display::list()
+  auv_driver_desktop::linux::display::list()
 }
 
 #[cfg(target_os = "linux")]

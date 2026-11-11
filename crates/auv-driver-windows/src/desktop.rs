@@ -1,4 +1,3 @@
-// NOTICE(native-owner-migration): preserve this public path and one shared
-// thread-local desktop state during the capture-only move. Revisit ownership during
-// the approved desktop/input extraction; see the capability split design note.
-pub use auv_driver_capture::windows::desktop::*;
+// NOTICE(desktop-path-migration): preserve the aggregate driver path while its
+// callers migrate to the capability. Attachment retains one shared TLS state.
+pub use auv_driver_desktop::windows::attachment::*;

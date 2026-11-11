@@ -2,8 +2,9 @@
 
 Status: the owner accepted seven capabilities on 2026-11-09, then clarified the
 package and behavior boundaries on 2026-11-10. This extraction covers existing
-pixel capture on Linux, macOS, and Windows. It does not redesign Runner or
-session execution.
+pixel capture and desktop topology on Linux, macOS, and Windows. The owner
+confirmed the desktop crate pair on 2026-11-11. Runner and session execution
+retain their existing behavior.
 
 Change classification: narrow refactor. Evidence levels are source inspection,
 automated tests, and native build checks where recorded below. Moving code does
@@ -51,8 +52,7 @@ handle were intermediate changes. This note describes their replacement.
 | Accessibility | Native trees, node queries, AX/UIA/AT-SPI actions, and semantic readback |
 | Vision | OCR, text matching, and existing image matching; pixel acquisition remains with capture |
 
-Window and display are one capability. Its provisional crate name is
-`auv-driver-desktop`. Placement of application resolution and activation in its
+Window and display are one capability, named `auv-driver-desktop`. Placement of application resolution and activation in its
 `application` module remains provisional. Media retains its existing owner.
 Permission probes stay with the capability or native boundary that owns them.
 Combined readiness reports remain operation composition responsibilities.
@@ -158,19 +158,56 @@ WGC window capture and frame streams work without xcap. Its existing display
 operation requires `windows-xcap` for target discovery. These dependencies retain
 existing resolver behavior rather than introduce a new discovery backend.
 
+## Desktop contracts and drivers
+
+The desktop extraction replaces `auv-driver-desktop-linux` with two crates.
+There are no platform-specific desktop crates.
+
+- `auv-driver-desktop-common` owns `DisplayDriver`, the enumeration-scoped
+  `DisplayTarget`, and the existing display selector and region-containment rules.
+  It re-exports canonical desktop target and mutation types from
+  `auv-driver-common`. Those types remain there because input evidence also
+  depends on them; moving them would create a dependency cycle.
+- `auv-driver-desktop` contains `linux`, `macos`, and `windows` modules.
+  Its default features are empty. Native dependencies are optional and target-specific.
+
+| Feature | Existing implementation |
+| --- | --- |
+| `linux-wayland` | Wayland xdg-output display discovery |
+| `macos-xcap` | macOS xcap display discovery and monitor mapping |
+| `windows-xcap` | Windows xcap display discovery and monitor mapping |
+| `windows-win32` | Read-only window probes and thread desktop attachment |
+
+`linux::Wayland`, `macos::Xcap`, and `windows::Xcap` implement `DisplayDriver`.
+Capture forwards the feature for its existing discovery backend. Pixel capture
+continues to use the same monitor enumeration snapshot; selection does not add a
+second enumeration. Empty-monitor errors keep their platform-specific behavior,
+including macOS Screen Recording permission recovery text.
+
+Existing capture and aggregate desktop paths re-export the moved implementation
+where callers still need them. No session, Runner, backend policy, or native
+resource lifetime changes as part of this topology move.
+
+TODO(desktop-window-extraction): window listing, selector resolution, mutation,
+and restore history remain with existing platform sessions. Their native
+accessibility dependencies need a separate approved extraction. This crate-pair
+correction moves topology and the already extracted native prerequisites; it
+does not claim that all desktop operations have been extracted.
+
 ## Shared native prerequisites
 
-Linux display discovery remains in `auv-driver-desktop-linux`, shared by capture,
-uinput, and the existing display API. Portal request handling, connection identity,
+Linux display discovery lives in `auv-driver-desktop::linux::display`, shared by
+capture, uinput, and the existing display API. Portal request handling, connection identity,
 and restore-token persistence remain in `auv-driver-portal-linux`, shared by
 capture, input, and clipboard. These packages do not own session orchestration.
 
-Windows read-only target probes, desktop attachment, and telemetry have one
-implementation beside the extracted native backends. Existing driver modules
-re-export them, so input and capture share the same native and diagnostic state.
-A `NOTICE:` marker records their later ownership decision during desktop/input
-extraction. Duplicating their caches, buffers, or thread-local state is not an
-acceptable migration strategy.
+Windows read-only target probes and desktop attachment now live in
+`auv-driver-desktop::windows`. The common crate owns their portable probe and
+error types. Input and capture share the same native implementation and TLS
+state through canonical re-exports. Telemetry retains one buffer in capture;
+its later diagnostic ownership decision remains marked at the code site.
+Duplicating caches, buffers, or thread-local state is not an acceptable migration
+strategy.
 
 The macOS Swift capture package owns capture declarations and image acquisition.
 The aggregate package retains its existing AX window-size reader and OCR's
@@ -215,7 +252,7 @@ LIBCLANG_PATH=/tmp/auv-clang18 cargo test --offline \
   -p auv-cli -p auv-core -p auv-cli-invoke -p auv-scan \
   -p auv-driver -p auv-driver-common \
   -p auv-driver-capture-common -p auv-driver-capture \
-  -p auv-driver-desktop-linux -p auv-driver-portal-linux \
+  -p auv-driver-desktop-common -p auv-driver-desktop -p auv-driver-portal-linux \
   -p auv-driver-linux -p auv-driver-macos -p auv-driver-windows
 cargo check -p auv-driver-capture --no-default-features
 cargo check -p auv-driver-capture --no-default-features --features linux-screencast --all-targets
@@ -250,15 +287,35 @@ Native CI evidence for the final capture implementation:
 - [Windows workspace validation](https://github.com/clouds56-contrib/auv/actions/runs/42882621845/job/130063857389): 1,803 passed, zero failed, 27 ignored. Includes independent backend builds, helper/CLI builds, and CLI checks.
 - [macOS native and SwiftPM validation](https://github.com/clouds56-contrib/auv/actions/runs/42881338748/job/130058786114): capture feature checks, bridge generation, and both touched SwiftPM packages passed. The later aggregate-module alias fix does not change these sources.
 
-At this handoff, the final run's macOS workspace and package-verification jobs
-remain queued. Their status is available in the
-[full CI run](https://github.com/clouds56-contrib/auv/actions/runs/42882621845).
-Live desktop capture was not exercised by these checks.
+The capture baseline's [macOS workspace validation](https://github.com/clouds56-contrib/auv/actions/runs/42882621845/job/130396191530)
+and package verification also passed after the hosted-runner retry. The
+[full capture CI run](https://github.com/clouds56-contrib/auv/actions/runs/42882621845)
+records those results. Live desktop capture was not exercised by these checks.
 
 A source comparison confirms that WGC, desktop attachment, and telemetry are
 unchanged after import, path, and feature-gate substitution. Linux driver state
 and both Runner capture files match the comparison baseline. Linux session code
 differs only in its capture-contract import.
+
+## Desktop follow-up validation
+
+The desktop crate-pair correction passed the Linux workspace check, all 1,782
+workspace tests (zero failures, 17 ignored), formatting, CLI help, and diff checks.
+The 24 focused desktop/common tests also passed with all desktop features enabled.
+The full suite needs native local sockets and signals; the sandbox blocks those
+fixtures, so the successful full run used the host environment.
+
+The empty default feature set and each desktop feature passed isolated host
+checks. Windows GNU target checks passed for desktop with no backend,
+`windows-xcap`, and `windows-win32`; all three capture backends and the aggregate
+Windows driver also passed their target checks, including test compilation.
+Both no-feature desktop and no-feature capture dependency trees exclude native
+backends. CI now checks each desktop backend independently on its native OS.
+
+A source comparison confirms unchanged macOS/Windows monitor conversion and
+unchanged Windows attachment/probe code after canonical type re-exports.
+Driver state, all three platform session files, and both Runner capture adapters
+are unchanged from the preceding capture revision. Live capture was not exercised.
 
 ## Remaining work
 

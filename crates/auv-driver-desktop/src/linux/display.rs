@@ -1,11 +1,14 @@
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use auv_driver_common::display::Display;
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::DriverResult;
-#[cfg(any(target_os = "linux", test))]
-use auv_driver_common::geometry::CoordinateSpace;
-use auv_driver_common::geometry::Rect;
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+use auv_driver_common::geometry::{CoordinateSpace, Rect};
+pub use auv_driver_desktop_common::display::{DisplayTarget, resolve_for_region, resolve_target};
 
-use auv_driver_common::error::{backend, not_found};
+use auv_driver_common::error::backend;
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+use auv_driver_common::error::not_found;
 
 const WAYLAND_DISPLAY_BACKEND: &str = "wayland.xdg-output";
 
@@ -16,11 +19,11 @@ pub fn list() -> DriverResult<ObservedDisplays> {
   })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use wayland_client::globals::GlobalListContents;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use wayland_client::protocol::wl_output::WlOutput;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use wayland_client::{
   Connection, Dispatch, QueueHandle, delegate_noop,
   protocol::{
@@ -28,18 +31,13 @@ use wayland_client::{
     wl_registry::{self, WlRegistry},
   },
 };
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use wayland_protocols::xdg::xdg_output::zv1::client::{
   zxdg_output_manager_v1::ZxdgOutputManagerV1,
   zxdg_output_v1::{self, ZxdgOutputV1},
 };
 
-#[derive(Clone, Debug)]
-pub struct DisplayTarget {
-  pub display: Display,
-}
-
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
   // TODO(wayland-output-cache): output metadata still performs compositor
   // roundtrips per call. Cache it only with an owner-approved hotplug and
@@ -47,31 +45,9 @@ pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
   wayland_display_targets()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", feature = "linux-wayland")))]
 pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
   Err(auv_driver_common::error::DriverError::unsupported("display.list"))
-}
-
-pub fn resolve_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
-  if let Some(selector) = selector {
-    let selector = selector.trim();
-    return targets
-      .iter()
-      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
-      .cloned()
-      .ok_or_else(|| not_found(format!("display {selector:?}")));
-  }
-
-  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
-}
-
-pub fn resolve_for_region(targets: &[DisplayTarget], selector: Option<&str>, region: Rect) -> DriverResult<DisplayTarget> {
-  let selected = if selector.is_some() {
-    vec![resolve_target(targets, selector)?]
-  } else {
-    targets.to_vec()
-  };
-  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
 }
 
 pub fn selected_target_or_none(selector: Option<&str>) -> DriverResult<Option<DisplayTarget>> {
@@ -85,20 +61,13 @@ pub fn selected_target_or_none(selector: Option<&str>) -> DriverResult<Option<Di
   resolve_target(&targets, selector).map(Some)
 }
 
-fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
-  candidate.origin.x >= container.origin.x
-    && candidate.origin.y >= container.origin.y
-    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
-    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height
-}
-
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 #[derive(Debug, Default)]
 struct WaylandDisplayState {
   outputs: Vec<WaylandOutputState>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 #[derive(Debug)]
 struct WaylandOutputState {
   wl_output: WlOutput,
@@ -110,7 +79,7 @@ struct WaylandOutputState {
   scale: i32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 impl Dispatch<WlRegistry, GlobalListContents> for WaylandDisplayState {
   fn event(
     state: &mut Self,
@@ -144,7 +113,7 @@ impl Dispatch<WlRegistry, GlobalListContents> for WaylandDisplayState {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 impl Dispatch<WlOutput, ()> for WaylandDisplayState {
   fn event(state: &mut Self, wl_output: &WlOutput, event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
     let Some(output) = state.outputs.iter_mut().find(|output| output.wl_output == *wl_output) else {
@@ -163,10 +132,10 @@ impl Dispatch<WlOutput, ()> for WaylandDisplayState {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 delegate_noop!(WaylandDisplayState: ignore ZxdgOutputManagerV1);
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 impl Dispatch<ZxdgOutputV1, usize> for WaylandDisplayState {
   fn event(state: &mut Self, _: &ZxdgOutputV1, event: zxdg_output_v1::Event, output_index: &usize, _: &Connection, _: &QueueHandle<Self>) {
     let Some(output) = state.outputs.get_mut(*output_index) else {
@@ -191,7 +160,7 @@ impl Dispatch<ZxdgOutputV1, usize> for WaylandDisplayState {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
   use wayland_client::globals::registry_queue_init;
 
@@ -232,7 +201,7 @@ fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
   state.outputs.into_iter().enumerate().map(output_target).collect()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 fn output_target((index, output): (usize, WaylandOutputState)) -> DriverResult<DisplayTarget> {
   let (x, y) = output.logical_position.ok_or_else(|| backend("Wayland output is missing xdg-output logical_position"))?;
   let (width, height) = output.logical_size.ok_or_else(|| backend("Wayland output is missing xdg-output logical_size"))?;
@@ -252,6 +221,7 @@ fn output_target((index, output): (usize, WaylandOutputState)) -> DriverResult<D
     .unwrap_or_else(|| f64::from(output.scale.max(1)));
 
   Ok(DisplayTarget {
+    index,
     display: Display {
       id,
       name: output.description,
@@ -263,7 +233,3 @@ fn output_target((index, output): (usize, WaylandOutputState)) -> DriverResult<D
     },
   })
 }
-
-#[cfg(test)]
-#[path = "display_test.rs"]
-mod tests;

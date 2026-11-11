@@ -8,12 +8,11 @@
 //! without compositing the whole display.
 
 use auv_driver_capture_common::{Capture, DisplayCapture, RegionCapture};
-use auv_driver_common::display::{Display, ObservedDisplays};
 #[cfg(target_os = "windows")]
 use auv_driver_common::error::backend;
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::error::{invalid_input, not_found};
-use auv_driver_common::geometry::{CoordinateSpace, Rect};
+use auv_driver_common::geometry::Rect;
 use auv_driver_common::window::Window;
 
 /// Capture backend tag recorded on every produced display/region [`Capture`].
@@ -24,26 +23,18 @@ pub const CAPTURE_BACKEND: &str = "xcap.windows";
 #[cfg(target_os = "windows")]
 pub const WINDOW_CAPTURE_BACKEND: &str = "printwindow.windows";
 
-/// Pairs a shared [`Display`] with its `xcap` monitor index.
-#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
-#[derive(Clone, Debug)]
-pub(crate) struct DisplayTarget {
-  pub(crate) index: usize,
-  pub(crate) display: Display,
-}
-
-#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
-pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
-  Ok(ObservedDisplays {
-    displays: display_targets_from_monitors(&monitors)?.into_iter().map(|target| target.display).collect(),
-  })
-}
-
-#[cfg(not(all(target_os = "windows", feature = "windows-xcap")))]
-pub fn list_displays() -> DriverResult<ObservedDisplays> {
+// NOTICE(desktop-path-migration): preserve the existing capture module path
+// while callers migrate to desktop; discovery has one native implementation.
+#[cfg(feature = "windows-xcap")]
+pub use auv_driver_desktop::windows::display::list_displays;
+#[cfg(not(feature = "windows-xcap"))]
+pub fn list_displays() -> DriverResult<auv_driver_common::ObservedDisplays> {
   Err(DriverError::unsupported("display.list"))
 }
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+use auv_driver_desktop::windows::display::resolve_display_for_region;
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+pub(crate) use auv_driver_desktop::windows::display::{display_targets_from_monitors, resolve_display_target};
 
 #[cfg(all(target_os = "windows", feature = "windows-xcap"))]
 pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
@@ -238,71 +229,6 @@ pub fn capture_window(window: &Window) -> DriverResult<Capture> {
 #[cfg(not(all(target_os = "windows", feature = "windows-printwindow")))]
 pub fn capture_window(_window: &Window) -> DriverResult<Capture> {
   Err(DriverError::unsupported("window.capture"))
-}
-
-#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
-pub(crate) fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<DisplayTarget>> {
-  if monitors.is_empty() {
-    return Err(not_found("display"));
-  }
-  monitors
-    .iter()
-    .enumerate()
-    .map(|(index, monitor)| {
-      let x = monitor.x().map_err(|error| backend(format!("failed to read display x: {error}")))? as f64;
-      let y = monitor.y().map_err(|error| backend(format!("failed to read display y: {error}")))? as f64;
-      let width = monitor.width().map_err(|error| backend(format!("failed to read display width: {error}")))? as f64;
-      let height = monitor.height().map_err(|error| backend(format!("failed to read display height: {error}")))? as f64;
-      let scale_factor = monitor.scale_factor().map_err(|error| backend(format!("failed to read display scale: {error}")))? as f64;
-      let native_id = monitor.id().map_err(|error| backend(format!("failed to read display id: {error}")))?.to_string();
-      Ok(DisplayTarget {
-        index,
-        display: Display {
-          id: native_id,
-          name: Some(format!("display_{index}")),
-          frame: Rect::new(x, y, width, height),
-          coordinate_space: CoordinateSpace::Screen,
-          scale_factor,
-          is_primary: monitor.is_primary().map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
-          // NOTICE: xcap exposes `is_builtin` on macOS; on Windows the concept
-          // is not meaningful, so the shared `is_builtin` flag stays None.
-          is_builtin: None,
-        },
-      })
-    })
-    .collect()
-}
-
-#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
-pub(crate) fn resolve_display_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
-  if let Some(selector) = selector {
-    let selector = selector.trim();
-    return targets
-      .iter()
-      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
-      .cloned()
-      .ok_or_else(|| not_found(format!("display {selector:?}")));
-  }
-
-  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
-}
-
-#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
-fn resolve_display_for_region(targets: &[DisplayTarget], selector: Option<&str>, region: Rect) -> DriverResult<DisplayTarget> {
-  let selected = if selector.is_some() {
-    vec![resolve_display_target(targets, selector)?]
-  } else {
-    targets.to_vec()
-  };
-  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
-}
-
-#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
-fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
-  candidate.origin.x >= container.origin.x
-    && candidate.origin.y >= container.origin.y
-    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
-    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height
 }
 
 #[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]

@@ -30,9 +30,9 @@ pub fn window_enumerations() -> u64 {
   ENUMERATIONS.load(Ordering::Relaxed)
 }
 
-pub(crate) use auv_driver_capture::windows::target::WindowProbe;
+pub(crate) use auv_driver_desktop::windows::target::WindowProbe;
 #[cfg(target_os = "windows")]
-pub(crate) use auv_driver_capture::windows::target::probe_window;
+pub(crate) use auv_driver_desktop::windows::target::probe_window;
 
 /// Lists every top-level window a user could switch to, front to back: minimized windows (with
 /// the frame they restore to) and windows on other virtual desktops included.
@@ -154,7 +154,7 @@ pub fn activate_window(_window: &Window) -> DriverResult<()> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) use auv_driver_capture::windows::target::window_handle;
+pub(crate) use auv_driver_desktop::windows::target::window_handle;
 
 /// Whether `window` is a surface a person can switch to: shown, minimized, or on another virtual
 /// desktop. The listing already drops hidden, zero-area and cloaked-on-this-desktop surfaces; this
@@ -593,7 +593,7 @@ pub(crate) mod native {
     })
   }
 
-  use auv_driver_capture::windows::target::rect_from;
+  use auv_driver_desktop::windows::target::rect_from;
 
   fn window_title(hwnd: HWND) -> Option<String> {
     let len = unsafe { GetWindowTextLengthW(hwnd) };
@@ -609,7 +609,7 @@ pub(crate) mod native {
     (!text.is_empty()).then_some(text)
   }
 
-  pub(crate) use auv_driver_capture::windows::target::{is_cloaked, window_frame};
+  pub(crate) use auv_driver_desktop::windows::target::{is_cloaked, window_frame};
 
   /// Resolves a process's executable file name for the `app_name` field.
   fn process_name(pid: u32) -> Option<String> {

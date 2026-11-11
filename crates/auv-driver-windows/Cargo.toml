@@ -40,6 +40,7 @@ name = "measure-settle"
 path = "src/bin/measure_settle.rs"
 
 [dependencies]
+auv-driver-desktop = { version = "0.0.43", path = "../auv-driver-desktop", default-features = false, features = ["windows-xcap", "windows-win32"] }
 auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture", default-features = false, features = ["windows-xcap", "windows-printwindow", "windows-wgc"] }
 auv-auto-loop = { version = "0.0.43", path = "../auv-auto-loop" }
 auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }

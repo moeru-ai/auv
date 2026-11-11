@@ -8,7 +8,7 @@ use auv_driver_common::{
   geometry::{Point, Rect},
   input::{Click, Scroll},
 };
-use auv_driver_desktop_linux::display::list as list_displays;
+use auv_driver_desktop::linux::display::list as list_displays;
 use evdev::{
   AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, PropType, RelativeAxisCode, UinputAbsSetup, uinput::VirtualDevice,
 };

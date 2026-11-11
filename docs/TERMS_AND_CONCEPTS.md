@@ -172,7 +172,7 @@ platform implementation, and required resource lifetime.
 
 A capability can execute directly from Rust or through a Runner adapter.
 A capability can expose several APIs. Window and display are APIs of one
-capability, provisionally named `desktop`.
+capability, named `desktop`.
 A Runner can host several capabilities. A capability boundary does not require
 a separate RunnerClass, public Session resource, or Protobuf service.
 
@@ -192,8 +192,11 @@ ownership while preserving execution behavior.
 
 Shared driver contracts retain one owner in `auv-driver-common`, including
 canonical input-delivery evidence. Most other capabilities still use the
-existing platform driver aggregates. Linux display discovery and shared Portal
-plumbing retain their extracted native prerequisite packages.
+existing platform driver aggregates. `auv-driver-desktop-common` owns portable
+display topology and selection contracts. `auv-driver-desktop` contains Linux,
+macOS, and Windows display discovery, plus shared Win32 desktop attachment and
+window probes. Window resolution and mutation remain in the existing sessions.
+Shared Linux Portal plumbing remains in `auv-driver-portal-linux`.
 
 See the [capability crate split design](ai/references/driver/2026-11-09-capability-crate-split-design.md)
 for accepted capabilities, dependency direction, and extraction boundaries.

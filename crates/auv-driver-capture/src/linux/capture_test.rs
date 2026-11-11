@@ -3,6 +3,7 @@ use super::*;
 #[cfg(all(target_os = "linux", feature = "linux-screenshot"))]
 fn screenshot_target() -> display::DisplayTarget {
   display::DisplayTarget {
+    index: 0,
     display: Display {
       id: "DP-1".into(),
       name: None,

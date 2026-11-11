@@ -8,50 +8,26 @@
 use auv_driver_capture_common::Activation;
 pub use auv_driver_capture_common::macos::WindowAxSize;
 use auv_driver_capture_common::{Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
-use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{backend, invalid_input, not_found};
-use auv_driver_common::{CoordinateSpace, Display, DriverError, DriverResult, Rect, Size, Window};
+use auv_driver_common::{Display, DriverError, DriverResult, Rect, Size, Window};
 use image::RgbaImage;
 use std::{thread, time::Duration};
 
 #[cfg(feature = "macos-screencapturekit")]
 pub mod native;
 
-pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  Ok(ObservedDisplays {
-    displays: list_display_targets()?.into_iter().map(|target| target.display).collect(),
-  })
-}
-
-#[derive(Clone, Debug)]
-struct MacosDisplayTarget {
-  index: usize,
-  display: Display,
-}
-
-fn resolve_display_target(targets: &[MacosDisplayTarget], selector: Option<&str>) -> DriverResult<MacosDisplayTarget> {
-  if let Some(selector) = selector {
-    let selector = selector.trim();
-    return targets
-      .iter()
-      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
-      .cloned()
-      .ok_or_else(|| not_found(format!("display {selector:?}")));
-  }
-
-  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
-}
-
+// NOTICE(desktop-path-migration): keep the aggregate capture path until its
+// callers use the desktop capability directly; the implementation has one owner.
 #[cfg(all(target_os = "macos", feature = "macos-xcap"))]
-fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
-  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
-  display_targets_from_monitors(&monitors)
-}
-
-#[cfg(not(all(target_os = "macos", feature = "macos-xcap")))]
-fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
+use auv_driver_desktop::macos::display::display_targets_from_monitors;
+#[cfg(feature = "macos-xcap")]
+pub use auv_driver_desktop::macos::display::list_displays;
+#[cfg(not(feature = "macos-xcap"))]
+pub fn list_displays() -> DriverResult<auv_driver_common::ObservedDisplays> {
   Err(DriverError::unsupported("display.list"))
 }
+#[cfg(all(target_os = "macos", feature = "macos-xcap"))]
+use auv_driver_desktop::macos::display::{list_display_targets, resolve_display_for_global_region, resolve_display_target};
 
 #[cfg(all(target_os = "macos", feature = "macos-xcap"))]
 fn display_capture(display: Display, image: RgbaImage, scale_factor: f64, backend: &str) -> DisplayCapture {
@@ -122,65 +98,6 @@ pub fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult
 #[cfg(not(all(target_os = "macos", feature = "macos-xcap")))]
 pub fn capture_region_xcap(_selector: Option<&str>, _region: Rect) -> DriverResult<RegionCapture> {
   Err(DriverError::unsupported("display.capture_region"))
-}
-
-#[cfg(all(target_os = "macos", feature = "macos-xcap"))]
-fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<MacosDisplayTarget>> {
-  if monitors.is_empty() {
-    return Err(DriverError::PermissionDenied {
-      permission: "screen_recording",
-      message: None,
-      recovery: Some(
-        "xcap returned no displays; run `auv doctor --json` and grant Screen Recording to the terminal or agent process that launches AUV"
-          .to_string(),
-      ),
-    });
-  }
-  monitors
-    .iter()
-    .enumerate()
-    .map(|(index, monitor)| {
-      let x = monitor.x().map_err(|error| backend(format!("failed to read display x: {error}")))? as f64;
-      let y = monitor.y().map_err(|error| backend(format!("failed to read display y: {error}")))? as f64;
-      let width = monitor.width().map_err(|error| backend(format!("failed to read display width: {error}")))? as f64;
-      let height = monitor.height().map_err(|error| backend(format!("failed to read display height: {error}")))? as f64;
-      let scale_factor = monitor.scale_factor().map_err(|error| backend(format!("failed to read display scale: {error}")))? as f64;
-      let is_builtin = monitor.is_builtin().map_err(|error| backend(format!("failed to read display built-in flag: {error}")))?;
-      let native_id = monitor.id().map_err(|error| backend(format!("failed to read display id: {error}")))?.to_string();
-      Ok(MacosDisplayTarget {
-        index,
-        display: Display {
-          id: native_id,
-          name: Some(format!("display_{index}")),
-          frame: Rect::new(x, y, width, height),
-          coordinate_space: CoordinateSpace::Screen,
-          scale_factor,
-          is_primary: monitor.is_primary().map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
-          is_builtin: Some(is_builtin),
-        },
-      })
-    })
-    .collect()
-}
-
-fn resolve_display_for_global_region(
-  targets: &[MacosDisplayTarget],
-  selector: Option<&str>,
-  region: Rect,
-) -> DriverResult<MacosDisplayTarget> {
-  let selected = if selector.is_some() {
-    vec![resolve_display_target(targets, selector)?]
-  } else {
-    targets.to_vec()
-  };
-  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
-}
-
-fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
-  candidate.origin.x >= container.origin.x
-    && candidate.origin.y >= container.origin.y
-    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
-    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height
 }
 
 fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
