@@ -196,7 +196,7 @@ existing platform driver aggregates. `auv-driver-desktop-common` owns portable
 display topology and selection contracts. `auv-driver-desktop` contains Linux,
 macOS, and Windows display discovery, plus shared Win32 desktop attachment and
 window probes. Window resolution and mutation remain in the existing sessions.
-Shared Linux Portal plumbing remains in `auv-driver-portal-linux`.
+Shared XDG Desktop Portal helpers live in `auv-driver-xdg-desktop-portal`.
 
 See the [capability crate split design](ai/references/driver/2026-11-09-capability-crate-split-design.md)
 for accepted capabilities, dependency direction, and extraction boundaries.

@@ -13,8 +13,8 @@ use crate::input::{combine_release, with_held_keys};
 use crate::native::eis::EisInput;
 use crate::native::keymap::Keymap;
 
-use auv_driver_portal_linux::{RestoreTokenKind, RestoreTokenStore};
-use auv_driver_portal_linux::{run, run_with_consent, session_connection};
+use auv_driver_xdg_desktop_portal::{RestoreTokenKind, RestoreTokenStore};
+use auv_driver_xdg_desktop_portal::{run, run_with_consent, session_connection};
 
 // NOTICE(portal-pointer-settle): games may update hover hit-testing only once
 // per rendered frame. Let an absolute EIS motion survive one 60 Hz frame

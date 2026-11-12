@@ -198,8 +198,11 @@ does not claim that all desktop operations have been extracted.
 
 Linux display discovery lives in `auv-driver-desktop::linux::display`, shared by
 capture, uinput, and the existing display API. Portal request handling, connection identity,
-and restore-token persistence remain in `auv-driver-portal-linux`, shared by
-capture, input, and clipboard. These packages do not own session orchestration.
+and restore-token persistence remain in `auv-driver-xdg-desktop-portal`, shared by
+capture, input, and clipboard. On 2026-11-12, the owner selected
+`auv-driver-xdg-desktop-portal` as the provisional helper crate name. It wraps the external XDG
+Desktop Portal service through `ashpd`; it is shared platform infrastructure.
+These packages do not own session orchestration.
 
 Windows read-only target probes and desktop attachment now live in
 `auv-driver-desktop::windows`. The common crate owns their portable probe and
@@ -252,7 +255,7 @@ LIBCLANG_PATH=/tmp/auv-clang18 cargo test --offline \
   -p auv-cli -p auv-core -p auv-cli-invoke -p auv-scan \
   -p auv-driver -p auv-driver-common \
   -p auv-driver-capture-common -p auv-driver-capture \
-  -p auv-driver-desktop-common -p auv-driver-desktop -p auv-driver-portal-linux \
+  -p auv-driver-desktop-common -p auv-driver-desktop -p auv-driver-xdg-desktop-portal \
   -p auv-driver-linux -p auv-driver-macos -p auv-driver-windows
 cargo check -p auv-driver-capture --no-default-features
 cargo check -p auv-driver-capture --no-default-features --features linux-screencast --all-targets

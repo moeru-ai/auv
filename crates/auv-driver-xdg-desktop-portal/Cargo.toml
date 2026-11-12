@@ -1,5 +1,5 @@
 [package]
-name = "auv-driver-portal-linux"
+name = "auv-driver-xdg-desktop-portal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Shared Linux Portal requests and restore-token persistence for AUV"
+description = "Shared XDG Desktop Portal requests and restore-token persistence for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true

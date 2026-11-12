@@ -17,7 +17,7 @@ use zbus::zvariant::OwnedValue;
 
 use crate::error::backend;
 
-use auv_driver_portal_linux::{run, run_with_consent, session_connection};
+use auv_driver_xdg_desktop_portal::{run, run_with_consent, session_connection};
 
 const TEXT_MIME: &str = "text/plain;charset=utf-8";
 const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);

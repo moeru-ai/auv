@@ -27,7 +27,7 @@ members = [
   "crates/auv-driver-capture",
   "crates/auv-driver-desktop-common",
   "crates/auv-driver-desktop",
-  "crates/auv-driver-portal-linux",
+  "crates/auv-driver-xdg-desktop-portal",
   "crates/auv-driver-linux",
   "crates/auv-driver-macos",
   "crates/auv-device-helper-macos",

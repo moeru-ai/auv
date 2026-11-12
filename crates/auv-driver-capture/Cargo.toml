@@ -14,8 +14,8 @@ repository.workspace = true
 
 [features]
 default = []
-linux-screencast = ["dep:auv-driver-desktop", "auv-driver-desktop/linux-wayland", "dep:auv-driver-portal-linux", "dep:ashpd", "ashpd/screencast", "dep:pipewire"]
-linux-screenshot = ["dep:auv-driver-desktop", "auv-driver-desktop/linux-wayland", "dep:auv-driver-portal-linux", "dep:ashpd", "ashpd/screenshot", "dep:url"]
+linux-screencast = ["dep:auv-driver-desktop", "auv-driver-desktop/linux-wayland", "dep:auv-driver-xdg-desktop-portal", "dep:ashpd", "ashpd/screencast", "dep:pipewire"]
+linux-screenshot = ["dep:auv-driver-desktop", "auv-driver-desktop/linux-wayland", "dep:auv-driver-xdg-desktop-portal", "dep:ashpd", "ashpd/screenshot", "dep:url"]
 macos-xcap = ["dep:xcap", "dep:auv-driver-desktop", "auv-driver-desktop/macos-xcap"]
 macos-screencapturekit = ["dep:auv-driver-desktop", "dep:swift-bridge", "dep:swift-bridge-build"]
 windows-xcap = ["dep:xcap", "dep:windows", "dep:auv-driver-desktop", "auv-driver-desktop/windows-xcap", "auv-driver-desktop/windows-win32"]
@@ -41,7 +41,7 @@ serde_json = "1"
 thiserror = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-portal-linux = { version = "0.0.43", path = "../auv-driver-portal-linux", optional = true }
+auv-driver-xdg-desktop-portal = { version = "0.0.43", path = "../auv-driver-xdg-desktop-portal", optional = true }
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io"], optional = true }
 pipewire = { version = "0.8", optional = true }
 url = { version = "2", optional = true }

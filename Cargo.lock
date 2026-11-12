@@ -774,7 +774,7 @@ dependencies = [
  "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop",
- "auv-driver-portal-linux",
+ "auv-driver-xdg-desktop-portal",
  "image",
  "pipewire",
  "serde",
@@ -837,7 +837,7 @@ dependencies = [
  "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-desktop",
- "auv-driver-portal-linux",
+ "auv-driver-xdg-desktop-portal",
  "evdev",
  "futures-lite",
  "image",
@@ -911,19 +911,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "auv-driver-portal-linux"
-version = "0.0.43"
-dependencies = [
- "ashpd",
- "async-io",
- "auv-driver-common",
- "fs2",
- "futures-lite",
- "tempfile",
- "zbus",
-]
-
-[[package]]
 name = "auv-driver-windows"
 version = "0.0.43"
 dependencies = [
@@ -939,6 +926,19 @@ dependencies = [
  "thiserror 2.0.21",
  "windows 0.58.0",
  "zeroize",
+]
+
+[[package]]
+name = "auv-driver-xdg-desktop-portal"
+version = "0.0.43"
+dependencies = [
+ "ashpd",
+ "async-io",
+ "auv-driver-common",
+ "fs2",
+ "futures-lite",
+ "tempfile",
+ "zbus",
 ]
 
 [[package]]

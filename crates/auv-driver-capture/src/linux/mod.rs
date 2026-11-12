@@ -257,7 +257,7 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
 #[cfg(feature = "linux-screenshot")]
 fn portal_screenshot() -> DriverResult<image::RgbaImage> {
   use ashpd::desktop::screenshot::{AvailableTargets, ScreenshotOptions, ScreenshotProxy};
-  use auv_driver_portal_linux::run_with_consent;
+  use auv_driver_xdg_desktop_portal::run_with_consent;
 
   // NOTICE: this legacy Screenshot fallback can still request user consent;
   // it does not consume the persistent ScreenCast grant. See
