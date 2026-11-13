@@ -505,14 +505,17 @@ Use this root-cause block format in regression tests when relevant:
 - For SourceKit or IDE indexing, run `scripts/generate-swift-bridge` to generate
   ignored files under:
   - `crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Generated/`
+  - `crates/auv-driver-capture/native/swift/Sources/AuvCaptureNative/Generated/`
   - `crates/auv-driver-overlay-macos/native/swift/Sources/AuvMacosOverlayNative/Generated/`
 - After generating those files, use SwiftPM-side checks so generated bridge
   types are visible to the IDE:
   - `cd crates/auv-driver-macos/native/swift && swift build`
+  - `cd crates/auv-driver-capture/native/swift && swift build`
   - `cd crates/auv-driver-overlay-macos/native/swift && swift build`
 - Do not commit generated directories.
 - Regenerate bridge files after changing:
   - `crates/auv-driver-macos/src/native/binding.rs`
+  - `crates/auv-driver-capture/src/macos/binding.rs`
   - `crates/auv-driver-overlay-macos/src/native/binding.rs`
 - When a change touches Rust/Swift FFI declarations or Swift native source
   files, rerun `scripts/generate-swift-bridge` before validating.

@@ -7,7 +7,9 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **88**
+Count: **89**
+
+- [`2026-11-09-capability-crate-split-design.md`](2026-11-09-capability-crate-split-design.md): accepted two-crate capability boundary and extraction of existing Linux, macOS, and Windows capture backends and desktop topology. Covers feature selection, preserved session/Runner behavior, shared native state, Rust imports, and validation.
 
 - [`2026-11-03-windows-dpi-awareness.md`](2026-11-03-windows-dpi-awareness.md): issue #460 fix: `auv.exe` declares per-monitor-v2 DPI awareness in its manifest, the driver never changes a host's awareness (warns instead), tests and evals opt in; `PrintWindow` bitmap sized at the window DPI; before/after live numbers at 150%.
 

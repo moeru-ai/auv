@@ -1,5 +1,11 @@
 pub use auv_driver_common::*;
 
+// NOTICE(capture-contract-migration): the aggregate retains its root and capture
+// module paths while native backends move. The contract crate owns the types;
+// remove these re-exports when aggregate driver callers migrate to capabilities.
+pub use auv_driver_capture_common as capture;
+pub use auv_driver_capture_common::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
+
 #[cfg(feature = "overlay")]
 pub use auv_driver_overlay as overlay;
 

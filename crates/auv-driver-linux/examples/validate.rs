@@ -46,8 +46,8 @@ use auv_driver_common::WindowInput as _;
 
 use std::error::Error;
 
+use auv_driver_capture_common::CaptureOptions;
 use auv_driver_common::Driver;
-use auv_driver_common::capture::CaptureOptions;
 use auv_driver_common::geometry::{Point, Rect, RelativeRect, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, KeyPressOptions, PasteTextOptions, Scroll, ScrollOptions, TypeTextOptions, WaitOptions,

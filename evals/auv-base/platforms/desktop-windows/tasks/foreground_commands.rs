@@ -34,8 +34,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use auv_driver_capture_common::Capture;
 use auv_driver_common::Driver;
-use auv_driver_common::capture::Capture;
 use auv_driver_common::geometry::Rect;
 use auv_driver_windows::{ClickRequest, ClipboardSnapshot, WindowsDriver, clipboard};
 use serde_json::{Value, json};

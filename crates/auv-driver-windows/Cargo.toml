@@ -16,7 +16,7 @@ repository.workspace = true
 [features]
 default = []
 overlay = ["dep:auv-driver-overlay"]
-latency-telemetry = []
+latency-telemetry = ["auv-driver-capture/latency-telemetry"]
 
 [[example]]
 name = "overlay_follow"
@@ -40,7 +40,10 @@ name = "measure-settle"
 path = "src/bin/measure_settle.rs"
 
 [dependencies]
+auv-driver-desktop = { version = "0.0.43", path = "../auv-driver-desktop", default-features = false, features = ["windows-xcap", "windows-win32"] }
+auv-driver-capture = { version = "0.0.43", path = "../auv-driver-capture", default-features = false, features = ["windows-xcap", "windows-printwindow", "windows-wgc"] }
 auv-auto-loop = { version = "0.0.43", path = "../auv-auto-loop" }
+auv-driver-capture-common = { version = "0.0.43", path = "../auv-driver-capture-common" }
 auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.43", path = "../auv-driver-overlay", features = ["windows"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -96,4 +99,3 @@ windows = { version = "0.58", features = [
   "Win32_Media_Audio",
   "Win32_Media_Audio_Endpoints"
 ] }
-xcap = "0.6"

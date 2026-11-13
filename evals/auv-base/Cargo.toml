@@ -47,6 +47,7 @@ name = "linux-window-management"
 path = "platforms/desktop-linux/cases/window_management.rs"
 
 [dependencies]
+auv-driver-capture-common = { path = "../../crates/auv-driver-capture-common" }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = [ "derive" ] }

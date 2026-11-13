@@ -1,12 +1,13 @@
 mod clipboard;
 mod input;
-mod persistence;
-mod request;
-mod screencast;
 
+pub(crate) use auv_driver_xdg_desktop_portal::{RestoreTokenStore, run, session_connection};
 pub use clipboard::{ClipboardSession, PortalClipboard};
 pub use input::InputSession;
-pub(crate) use persistence::RestoreTokenStore;
-pub use screencast::{ScreenCastFrame, ScreenCastSession};
 
-pub(crate) use request::{run, run_with_consent, session_connection};
+#[cfg(test)]
+#[path = "identity_test.rs"]
+mod identity_tests;
+
+#[cfg(target_os = "linux")]
+pub use auv_driver_capture::linux::ScreenCastSession;

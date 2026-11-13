@@ -1,0 +1,17 @@
+[package]
+name = "auv-driver-desktop-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Portable desktop capability contracts for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-driver-common = { version = "0.0.43", path = "../auv-driver-common" }
+thiserror = "2"

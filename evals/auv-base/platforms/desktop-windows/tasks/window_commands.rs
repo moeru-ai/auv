@@ -22,8 +22,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use auv_driver_capture_common::Capture;
 use auv_driver_common::Driver;
-use auv_driver_common::capture::Capture;
 use auv_driver_common::geometry::Rect;
 use auv_driver_windows::{ClickRequest, WindowsDriver};
 use serde_json::{Value, json};

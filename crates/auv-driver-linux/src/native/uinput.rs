@@ -8,13 +8,13 @@ use auv_driver_common::{
   geometry::{Point, Rect},
   input::{Click, Scroll},
 };
+use auv_driver_desktop::linux::display::list as list_displays;
 use evdev::{
   AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, PropType, RelativeAxisCode, UinputAbsSetup, uinput::VirtualDevice,
 };
 
 use super::keymap::Keymap;
 use crate::{
-  capture::list_displays,
   error::{backend, invalid_input},
   input::{combine_release, keysym, with_held_keys},
 };

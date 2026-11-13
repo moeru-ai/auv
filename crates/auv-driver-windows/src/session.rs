@@ -1,6 +1,6 @@
 use std::thread;
 
-use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_capture_common::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{Point, RelativeRect, ScreenPoint, Size, WindowPoint};

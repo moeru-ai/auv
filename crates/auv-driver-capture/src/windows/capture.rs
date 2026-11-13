@@ -1,0 +1,418 @@
+//! Screen and region capture backed by the `xcap` crate.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code, unused_imports))]
+//!
+//! This mirrors the macOS driver's `xcap`-based display capture path, producing
+//! the shared [`Capture`] type so vision and inspection consumers stay
+//! backend-agnostic. Window capture uses Win32 GDI `PrintWindow` against the
+//! resolved `HWND` so a single occluded or background window can be captured
+//! without compositing the whole display.
+
+use auv_driver_capture_common::{Capture, DisplayCapture, RegionCapture};
+#[cfg(target_os = "windows")]
+use auv_driver_common::error::backend;
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::error::{invalid_input, not_found};
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::window::Window;
+
+/// Capture backend tag recorded on every produced display/region [`Capture`].
+#[cfg(target_os = "windows")]
+pub const CAPTURE_BACKEND: &str = "xcap.windows";
+
+/// Capture backend tag recorded on every produced window [`Capture`].
+#[cfg(target_os = "windows")]
+pub const WINDOW_CAPTURE_BACKEND: &str = "printwindow.windows";
+
+// NOTICE(desktop-path-migration): preserve the existing capture module path
+// while callers migrate to desktop; discovery has one native implementation.
+#[cfg(feature = "windows-xcap")]
+pub use auv_driver_desktop::windows::display::list_displays;
+#[cfg(not(feature = "windows-xcap"))]
+pub fn list_displays() -> DriverResult<auv_driver_common::ObservedDisplays> {
+  Err(DriverError::unsupported("display.list"))
+}
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+use auv_driver_desktop::windows::display::resolve_display_for_region;
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+pub(crate) use auv_driver_desktop::windows::display::{display_targets_from_monitors, resolve_display_target};
+
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
+  let start_time = std::time::Instant::now();
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let targets = display_targets_from_monitors(&monitors)?;
+  let target = resolve_display_target(&targets, selector)?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let image = retry_invalid_handle(|| monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}"))))?;
+  let (width, height) = (image.width(), image.height());
+  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+    .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
+  let scale_factor = capture_scale_factor(&image, target.display.frame);
+  let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
+    image,
+    bounds: target.display.frame,
+    scale_factor,
+    backend: CAPTURE_BACKEND.to_string(),
+    fallback_reason: None,
+  };
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  crate::windows::latency::record_latency_event("capture_display", elapsed_ms, Some((width, height)), Some(CAPTURE_BACKEND), selector);
+  Ok(DisplayCapture {
+    display: target.display,
+    capture,
+  })
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-xcap")))]
+pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> {
+  Err(DriverError::unsupported("display.capture"))
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-xcap"))]
+pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let targets = display_targets_from_monitors(&monitors)?;
+  let target = resolve_display_for_region(&targets, selector, region)?;
+  // The backend addresses whole capture units, so cover a fractional region
+  // (an OCR box, a layout rect) with whole units inside the display, and
+  // report the covered rect as the capture bounds.
+  let region = region.round_out().intersect(target.display.frame).ok_or_else(|| not_found("display containing region"))?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
+  let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
+  let width = integral_positive_capture_dimension("width", region.size.width)?;
+  let height = integral_positive_capture_dimension("height", region.size.height)?;
+  let image = retry_invalid_handle(|| {
+    monitor.capture_region(local_x, local_y, width, height).map_err(|error| backend(format!("failed to capture display region: {error}")))
+  })?;
+  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+    .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
+  let scale_factor = capture_scale_factor(&image, region);
+  let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(region.origin))),
+    image,
+    bounds: region,
+    scale_factor,
+    backend: CAPTURE_BACKEND.to_string(),
+    fallback_reason: None,
+  };
+  Ok(RegionCapture {
+    display: target.display,
+    capture,
+  })
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-xcap")))]
+pub fn capture_region(_selector: Option<&str>, _region: Rect) -> DriverResult<RegionCapture> {
+  Err(DriverError::unsupported("display.capture_region"))
+}
+
+/// Retry one observed transient GDI handle failure with fresh capture handles.
+// NOTICE(windows-xcap-e-handle): Repeated paired captures on
+// `luoling-windows-11` returned 0x80070006 while the visible desktop changed
+// between user and lock screens; an immediate next capture succeeded. xcap
+// 0.6.2 creates GDI handles per call in `src/windows/capture.rs`. The exact
+// failing Win32 call is not exposed. Remove this narrow retry when the
+// capture backend handles that transition without a transient error.
+#[cfg(target_os = "windows")]
+fn retry_invalid_handle<T>(mut capture: impl FnMut() -> DriverResult<T>) -> DriverResult<T> {
+  match capture() {
+    Err(DriverError::Backend { message }) if message.contains("0x80070006") => {
+      std::thread::sleep(std::time::Duration::from_millis(40));
+      capture()
+    }
+    result => result,
+  }
+}
+
+/// xcap reports Windows monitor bounds in desktop coordinates and DPI
+/// separately. A capture's scale must describe its actual pixel-to-bound ratio.
+#[cfg(any(target_os = "windows", test))]
+fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect) -> f64 {
+  if bounds.size.width <= 0.0 {
+    return 1.0;
+  }
+
+  f64::from(image.width()) / bounds.size.width
+}
+
+/// Pixels of a window bitmap that belong to the window's visible frame.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PixelCrop {
+  x: u32,
+  y: u32,
+  width: u32,
+  height: u32,
+}
+
+/// The part of a `PrintWindow` bitmap that lies inside `frame`, clipped to the bitmap.
+///
+/// `PrintWindow` renders the whole `GetWindowRect` rectangle. On Windows 10 and 11 that includes
+/// an invisible resize border which the DWM extended frame, and so `Window.frame`, leaves out.
+/// Keeping the whole bitmap under the frame's bounds would shift every pixel by the border and
+/// stretch the scale; cropping makes the image and the bounds the same rectangle. `scale` is
+/// bitmap pixels per screen pixel (see `window_native::render_scale`). `None` when the frame has
+/// no area inside the bitmap.
+#[cfg(any(target_os = "windows", test))]
+fn visible_crop(window_rect: Rect, bitmap: (u32, u32), frame: Rect, scale: f64) -> Option<PixelCrop> {
+  let left = ((frame.origin.x - window_rect.origin.x) * scale).round().max(0.0);
+  let top = ((frame.origin.y - window_rect.origin.y) * scale).round().max(0.0);
+  let right = ((frame.origin.x + frame.size.width - window_rect.origin.x) * scale).round().min(f64::from(bitmap.0));
+  let bottom = ((frame.origin.y + frame.size.height - window_rect.origin.y) * scale).round().min(f64::from(bitmap.1));
+  if right <= left || bottom <= top {
+    return None;
+  }
+  Some(PixelCrop {
+    x: left as u32,
+    y: top as u32,
+    width: (right - left) as u32,
+    height: (bottom - top) as u32,
+  })
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-printwindow"))]
+pub fn capture_window(window: &Window) -> DriverResult<Capture> {
+  let start_time = std::time::Instant::now();
+  // A minimized window has no surface to render: `PrintWindow` answers with its 146x28 title-bar
+  // stub at (-32000, -32000), which is not a picture of the window. It is reported, never
+  // restored to be read.
+  let probe = crate::windows::target::probe_window(crate::windows::target::window_handle(window)?.0 as isize);
+  if !probe.exists {
+    return Err(not_found(format!("window:{}", window.reference.id)));
+  }
+  if probe.minimized {
+    return Err(invalid_input("window is minimized and cannot be captured; AUV does not restore windows"));
+  }
+  let pixels = window_native::capture_window_rgba(window)?;
+  let bitmap = (pixels.width, pixels.height);
+  let image = image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.rgba)
+    .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
+  // NOTICE: `bounds` describes the pixels, read when they were captured, not the `window`
+  // snapshot, which may be older. The frame is the visible window; without it the whole bitmap
+  // is kept under the window rect.
+  let visible = pixels.frame.and_then(|frame| Some((visible_crop(pixels.window_rect, bitmap, frame, pixels.scale)?, frame)));
+  let (image, bounds) = match visible {
+    Some((crop, frame)) => {
+      let bounds = frame.intersect(pixels.window_rect).unwrap_or(frame);
+      (image::imageops::crop_imm(&image, crop.x, crop.y, crop.width, crop.height).to_image(), bounds)
+    }
+    None => (image, pixels.window_rect),
+  };
+  // NOTICE: the scale is image pixels per desktop coordinate, as for display captures. The
+  // per-monitor-aware process (`crate::dpi`) reads `GetWindowRect` and the DWM frame in the same
+  // physical pixels; a DPI-unaware process got a virtualized `GetWindowRect`, a bitmap too small
+  // and a crop of its corner (issue #460). The scale is 1.0 for a per-monitor-aware window and
+  // below 1.0 for a window Windows scales up on screen (see `window_native::render_scale`). The
+  // display's DPI scale is `Display.scale_factor`.
+  let scale_factor = capture_scale_factor(&image, bounds);
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  let target_name = window.app_name.as_deref().or(window.title.as_deref());
+  crate::windows::latency::record_latency_event(
+    "capture_window",
+    elapsed_ms,
+    Some((image.width(), image.height())),
+    Some(WINDOW_CAPTURE_BACKEND),
+    target_name,
+  );
+  Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
+    image,
+    bounds,
+    scale_factor,
+    backend: WINDOW_CAPTURE_BACKEND.to_string(),
+    fallback_reason: None,
+  })
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-printwindow")))]
+pub fn capture_window(_window: &Window) -> DriverResult<Capture> {
+  Err(DriverError::unsupported("window.capture"))
+}
+
+#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
+fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
+  if value.fract() != 0.0 {
+    return Err(invalid_input(format!("region {name} must be an integer in backend capture units")));
+  }
+  if value < 0.0 || value > u32::MAX as f64 {
+    return Err(invalid_input(format!("region {name} is outside the capture backend range")));
+  }
+  Ok(value as u32)
+}
+
+#[cfg(any(test, all(target_os = "windows", feature = "windows-xcap")))]
+fn integral_positive_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
+  let integral = integral_capture_dimension(name, value)?;
+  if integral == 0 {
+    return Err(invalid_input(format!("region {name} must be positive")));
+  }
+  Ok(integral)
+}
+
+/// Win32 GDI window capture via `PrintWindow`.
+///
+/// Kept in a dedicated submodule so the FFI buffer handling and GDI object
+/// lifetimes stay isolated from the cross-platform capture orchestration above.
+#[cfg(all(target_os = "windows", feature = "windows-printwindow"))]
+mod window_native {
+  use std::ffi::c_void;
+  use std::mem::size_of;
+
+  use ::windows::Win32::Foundation::{HWND, RECT};
+  use ::windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC,
+    GetDIBits, HDC, MONITOR_DEFAULTTONEAREST, MonitorFromWindow, ReleaseDC, SelectObject,
+  };
+  use ::windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
+  use ::windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+  use ::windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, PW_RENDERFULLCONTENT};
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::Rect;
+  use auv_driver_common::window::Window;
+
+  use crate::windows::target::window_handle;
+  use auv_driver_common::error::{backend, invalid_input};
+
+  /// Top-down RGBA pixels captured from a single window, with the rectangles they were taken
+  /// against.
+  pub(super) struct WindowPixels {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// `GetWindowRect` when the bitmap was sized: the screen rectangle the bitmap covers.
+    pub window_rect: Rect,
+    /// The visible frame, read right after it, when DWM reports one.
+    pub frame: Option<Rect>,
+    /// Bitmap pixels per screen pixel; see [`render_scale`].
+    pub scale: f64,
+  }
+
+  pub(super) fn capture_window_rgba(window: &Window) -> DriverResult<WindowPixels> {
+    let hwnd = window_handle(window)?;
+    let rect = window_rect(hwnd)?;
+    let frame = crate::windows::target::probe_window(hwnd.0 as isize).frame;
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    let scale = render_scale(hwnd);
+    let (bitmap_width, bitmap_height) = (scaled_length(width, scale), scaled_length(height, scale));
+    let bgra = print_window_bgra(hwnd, bitmap_width, bitmap_height)?;
+    Ok(WindowPixels {
+      width: bitmap_width as u32,
+      height: bitmap_height as u32,
+      rgba: bgra_to_rgba(bgra),
+      window_rect: Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(width), f64::from(height)),
+      frame,
+      scale,
+    })
+  }
+
+  /// Pixels `PrintWindow` draws per screen pixel of the window.
+  ///
+  /// NOTICE(windows-printwindow-dpi): `PrintWindow` renders a window at its own DPI, not at the
+  /// size DWM shows it. A DPI-unaware window (96 DPI) on a 150% monitor (144 DPI) draws 400x300
+  /// pixels for a 600x450 physical rectangle; a bitmap of the physical size came back 56% black
+  /// for a PowerShell WinForms window on luoling-windows-11 (2026-11-03). Per-monitor-aware
+  /// windows (Notepad, most current apps) draw at the monitor DPI, so the scale is 1. See
+  /// `https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows`.
+  /// Falls back to 1 when either DPI cannot be read.
+  fn render_scale(hwnd: HWND) -> f64 {
+    let window_dpi = unsafe { GetDpiForWindow(hwnd) };
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let (mut monitor_dpi, mut unused) = (0u32, 0u32);
+    let read = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut monitor_dpi, &mut unused) };
+    if window_dpi == 0 || read.is_err() || monitor_dpi == 0 {
+      return 1.0;
+    }
+    f64::from(window_dpi) / f64::from(monitor_dpi)
+  }
+
+  fn scaled_length(length: i32, scale: f64) -> i32 {
+    ((f64::from(length) * scale).round() as i32).max(1)
+  }
+
+  fn window_rect(hwnd: HWND) -> DriverResult<RECT> {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }.map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    if width <= 0 || height <= 0 {
+      return Err(invalid_input(format!("window has non-capturable size {width}x{height}")));
+    }
+    Ok(rect)
+  }
+
+  /// Renders the window into an off-screen DIB and reads back the raw BGRA
+  /// pixels. GDI objects are released before any error is propagated.
+  fn print_window_bgra(hwnd: HWND, width: i32, height: i32) -> DriverResult<Vec<u8>> {
+    let window_dc = unsafe { GetDC(hwnd) };
+    if window_dc.is_invalid() {
+      return Err(backend("GetDC returned a null device context"));
+    }
+    let result = render_into_dib(hwnd, window_dc, width, height);
+    unsafe { ReleaseDC(hwnd, window_dc) };
+    result
+  }
+
+  fn render_into_dib(hwnd: HWND, window_dc: HDC, width: i32, height: i32) -> DriverResult<Vec<u8>> {
+    let memory_dc = unsafe { CreateCompatibleDC(window_dc) };
+    if memory_dc.is_invalid() {
+      return Err(backend("CreateCompatibleDC failed"));
+    }
+    let bitmap = unsafe { CreateCompatibleBitmap(window_dc, width, height) };
+    if bitmap.is_invalid() {
+      let _ = unsafe { DeleteDC(memory_dc) };
+      return Err(backend("CreateCompatibleBitmap failed"));
+    }
+    let previous = unsafe { SelectObject(memory_dc, bitmap) };
+
+    // PW_RENDERFULLCONTENT renders DirectComposition/hardware-accelerated
+    // surfaces (e.g. browsers) that a plain PrintWindow would leave blank.
+    let printed = unsafe { PrintWindow(hwnd, memory_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) };
+
+    let mut info = BITMAPINFO {
+      bmiHeader: BITMAPINFOHEADER {
+        biSize: size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: width,
+        // Negative height requests a top-down row order so the buffer matches
+        // the RGBA image layout expected by the shared Capture type.
+        biHeight: -height,
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: BI_RGB.0,
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    let mut buffer = vec![0u8; width as usize * height as usize * 4];
+    let scanlines =
+      unsafe { GetDIBits(memory_dc, bitmap, 0, height as u32, Some(buffer.as_mut_ptr() as *mut c_void), &mut info, DIB_RGB_COLORS) };
+
+    unsafe {
+      SelectObject(memory_dc, previous);
+      let _ = DeleteObject(bitmap);
+      let _ = DeleteDC(memory_dc);
+    }
+
+    if !printed.as_bool() {
+      return Err(backend("PrintWindow reported failure"));
+    }
+    if scanlines == 0 {
+      return Err(backend("GetDIBits returned no scanlines"));
+    }
+    Ok(buffer)
+  }
+
+  /// Converts GDI's little-endian BGRA bytes to RGBA in place. GDI writes the
+  /// alpha byte as 0 for opaque windows, so it is forced to fully opaque.
+  fn bgra_to_rgba(mut buffer: Vec<u8>) -> Vec<u8> {
+    for pixel in buffer.chunks_exact_mut(4) {
+      pixel.swap(0, 2);
+      pixel[3] = 0xff;
+    }
+    buffer
+  }
+}
+
+#[cfg(test)]
+#[path = "capture_test.rs"]
+mod tests;

@@ -494,6 +494,7 @@ name = "auv-base-evals"
 version = "0.0.43"
 dependencies = [
  "anyhow",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -757,6 +758,7 @@ dependencies = [
 name = "auv-driver"
 version = "0.0.43"
 dependencies = [
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-linux",
  "auv-driver-macos",
@@ -765,13 +767,64 @@ dependencies = [
 ]
 
 [[package]]
-name = "auv-driver-common"
+name = "auv-driver-capture"
 version = "0.0.43"
 dependencies = [
+ "ashpd",
+ "auv-driver-capture-common",
+ "auv-driver-common",
+ "auv-driver-desktop",
+ "auv-driver-xdg-desktop-portal",
+ "image",
+ "pipewire",
+ "serde",
+ "serde_json",
+ "swift-bridge",
+ "swift-bridge-build",
+ "tempfile",
+ "thiserror 2.0.21",
+ "url",
+ "windows 0.58.0",
+ "xcap",
+]
+
+[[package]]
+name = "auv-driver-capture-common"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
  "image",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "auv-driver-common"
+version = "0.0.43"
+dependencies = [
+ "serde",
+ "serde_json",
  "xkeysym",
+]
+
+[[package]]
+name = "auv-driver-desktop"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "auv-driver-desktop-common",
+ "wayland-client 0.31.15",
+ "wayland-protocols 0.32.13",
+ "windows 0.58.0",
+ "xcap",
+]
+
+[[package]]
+name = "auv-driver-desktop-common"
+version = "0.0.43"
+dependencies = [
+ "auv-driver-common",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -780,9 +833,12 @@ version = "0.0.43"
 dependencies = [
  "ashpd",
  "async-io",
+ "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
+ "auv-driver-desktop",
+ "auv-driver-xdg-desktop-portal",
  "evdev",
- "fs2",
  "futures-lite",
  "image",
  "leptess",
@@ -792,9 +848,7 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror 2.0.21",
- "url",
  "wayland-client 0.31.15",
- "wayland-protocols 0.32.13",
  "xkbcommon",
  "zbus",
 ]
@@ -803,6 +857,8 @@ dependencies = [
 name = "auv-driver-macos"
 version = "0.0.43"
 dependencies = [
+ "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",
@@ -812,7 +868,6 @@ dependencies = [
  "serde_json",
  "swift-bridge",
  "swift-bridge-build",
- "xcap",
 ]
 
 [[package]]
@@ -860,15 +915,30 @@ name = "auv-driver-windows"
 version = "0.0.43"
 dependencies = [
  "auv-auto-loop",
+ "auv-driver-capture",
+ "auv-driver-capture-common",
  "auv-driver-common",
+ "auv-driver-desktop",
  "auv-driver-overlay",
  "image",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "windows 0.58.0",
- "xcap",
  "zeroize",
+]
+
+[[package]]
+name = "auv-driver-xdg-desktop-portal"
+version = "0.0.43"
+dependencies = [
+ "ashpd",
+ "async-io",
+ "auv-driver-common",
+ "fs2",
+ "futures-lite",
+ "tempfile",
+ "zbus",
 ]
 
 [[package]]
