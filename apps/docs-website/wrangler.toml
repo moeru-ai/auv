@@ -9,6 +9,7 @@ preview_urls = true
 workers_dev = false
 
 # Assets-only Worker. `public/_redirects` defines the `/install.sh` shortcut.
+# `/playground/oauth/callback` is the playground file `oauth/callback.html`.
 # `/playground` redirects to `/playground/` (its index.html); other unknown
 # paths fall back to the docs-website index.html, which routes `/film`,
 # `/render`, and `/export` in the browser.

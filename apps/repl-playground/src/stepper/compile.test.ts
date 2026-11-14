@@ -35,6 +35,15 @@ afterEach(() => {
 })
 
 describe('compileCell', () => {
+  it('records codemode source positions without creating pausable promises in loops', async () => {
+    const cell = compileCell('let total = 0; for (let i = 0; i < 3; i++) total += i; total;', { recordOnly: true })
+    const steps: number[] = []
+    expect(await run(cell, id => void steps.push(id))).toBe(3)
+    expect(steps).toHaveLength(6)
+    expect(cell.steps.every(site => !site.async)).toBe(true)
+    expect(cell.code).not.toContain('await __step(')
+  })
+
   it('fires hooks with editor line numbers, including loop bodies', async () => {
     const cell = compileCell([
       'const apps: string[] = [\'a\', \'bb\']',

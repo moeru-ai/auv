@@ -291,8 +291,8 @@ const hover = hoverTooltip(async (view, pos) => {
   const word = view.state.wordAt(pos)
   const name = word ? view.state.sliceDoc(word.from, word.to) : undefined
   const state = usePlayground.getState()
-  const hasValue = name !== undefined && (name in state.vars || bindHistory(state, name).length > 0)
-  const hasCalls = state.calls.some(call => call.line === line.number)
+  const hasValue = name !== undefined && ((state.run.script?.kind !== 'codemode' && name in state.vars) || bindHistory(state, name, state.run.script?.id).length > 0)
+  const hasCalls = state.calls.some(call => call.line === line.number && call.script.id === state.run.script?.id)
   let info: HoverInfo | null = null
   try {
     info = await language.hover(pos, view.state.doc.toString())
@@ -413,7 +413,7 @@ export function CodeEditor() {
         effects: setRunView.of({
           breakpoints: state.breakpoints,
           currentLine: state.run.currentLine,
-          cursorLine: state.cursor === null ? null : timelineLineAt(state, state.cursor),
+          cursorLine: state.cursor === null ? null : timelineLineAt(state, state.cursor, state.run.script?.id),
           errorLine: state.run.errorLine,
           executedLines: state.executedLines,
           status: state.run.status,

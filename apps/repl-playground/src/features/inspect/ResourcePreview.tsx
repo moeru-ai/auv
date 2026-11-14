@@ -138,11 +138,11 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
           {frame?.kind === 'frame' && <FrameView bounds={frame.handle.bounds} boxes={boxes} image={frame} {...size} />}
           <Meta items={[`${handle.matches.length} match${handle.matches.length === 1 ? '' : 'es'}`, handle.query ? `"${handle.query}"` : 'full OCR']} />
           <ul className="text-[12px] m-0 p-0 list-none max-h-40 overflow-auto">
-            {handle.matches.slice(0, compact ? 5 : 50).map((match, index) => (
+            {handle.matches.slice(0, compact ? 5 : 50).map(match => (
               // Confidence is shown as text opacity; the exact value is in the tooltip.
               <li
                 className="text-fg font-mono py-0.5 cursor-default truncate"
-                key={index}
+                key={`${match.text}@${match.bounds.x},${match.bounds.y},${match.bounds.width}x${match.bounds.height}`}
                 style={{ opacity: confidenceAlpha(match.confidence) }}
                 title={confidenceLabel(match.confidence)}
               >
@@ -193,7 +193,7 @@ function Fields({ items }: { items: [label: string, value: string | undefined][]
 function Meta({ items }: { items: (string | undefined)[] }) {
   return (
     <div className="text-[11.5px] text-fg-subtle font-mono flex flex-wrap gap-x-2 gap-y-0.5">
-      {items.filter(Boolean).map((item, index) => <span key={index}>{item}</span>)}
+      {items.filter(Boolean).map(item => <span key={item}>{item}</span>)}
     </div>
   )
 }

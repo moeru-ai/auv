@@ -21,6 +21,7 @@ export interface BridgedError {
 
 /** Where an encoded RPC came from in the script. */
 interface BridgedCall {
+  executionId?: number
   headers: [string, string][]
   /** gRPC path, `/package.Service/Method`. */
   method: string
@@ -64,12 +65,13 @@ export interface BridgeHost {
   /** Called when a forwarded RPC starts; the returned function when it ends. */
   record?: (call: BridgedCallStart) => ((end: BridgedCallEnd) => void) | Promise<(end: BridgedCallEnd) => void>
   /** The active backend's transport, or why the backend cannot serve SDK calls. */
-  target: () => BridgeTarget | string
+  target: (executionId?: number) => BridgeTarget | string
 }
 
 /** The transport the host forwards to, and the headers it adds (the credential). */
 export interface BridgeTarget {
   headers?: Record<string, string>
+  signal?: AbortSignal
   transport: Transport
 }
 
@@ -90,7 +92,7 @@ export function bridgedError(error: unknown): BridgedError {
  * The SDK transport inside the worker. `currentStep` attributes each call to
  * the statement that made it.
  */
-export function createBridgeTransport(context: AnyContext, currentStep: () => null | number): Transport {
+export function createBridgeTransport(context: AnyContext, currentStep: () => null | number, executionId?: () => number): Transport {
   const unary = defineInvoke(context, unaryRpc)
   const duplex = defineStreamInvoke(context, duplexRpc)
   return {
@@ -104,7 +106,7 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
           frames = controller
         },
       })
-      frames.enqueue({ open: { headers: [...call.headers], method: call.method, stepId: currentStep() } })
+      frames.enqueue({ open: { executionId: executionId?.(), headers: [...call.headers], method: call.method, stepId: currentStep() } })
       const abort = new AbortController()
       call.signal?.addEventListener('abort', () => abort.abort(call.signal?.reason), { once: true })
       const replies = duplex(requests, { signal: abort.signal })
@@ -136,6 +138,7 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
     async unary(call) {
       const reply = await unary({
         body: call.body,
+        executionId: executionId?.(),
         headers: [...call.headers],
         http: call.http,
         jsonBody: call.jsonBody,
@@ -164,9 +167,12 @@ export function remoteError(error: BridgedError): Error {
 /** Serves bridged RPCs on the host by forwarding them to the active backend. */
 export function serveBridge(context: AnyContext, host: BridgeHost): void {
   defineInvokeHandler(context, unaryRpc, async (request, options): Promise<UnaryReply> => {
-    const finish = await host.record?.({ body: request.body, method: request.method, stepId: request.stepId })
+    let finish: ((end: BridgedCallEnd) => void) | undefined
     try {
-      const { headers, transport } = resolveTarget(host)
+      const { headers, signal, transport } = resolveTarget(host, request.executionId)
+      signal?.throwIfAborted()
+      finish = await host.record?.({ body: request.body, method: request.method, stepId: request.stepId })
+      signal?.throwIfAborted()
       // NOTICE(bridge-decode-json): the HTTP transport decodes JSON bindings
       // through `UnaryCall.decodeJson`, which only the worker's SDK can build.
       // Capture the response text here and decode it back in the worker.
@@ -181,7 +187,7 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
         http: request.http,
         jsonBody: request.jsonBody,
         method: request.method,
-        signal: options?.abortController?.signal,
+        signal: signal ? AbortSignal.any([signal, ...(options?.abortController ? [options.abortController.signal] : [])]) : options?.abortController?.signal,
       } satisfies UnaryCall)
       finish?.({ exchange: json === undefined ? [{ request: request.body }, { response: body }] : [{ request: request.body }], json })
       return json === undefined ? { body } : { json }
@@ -204,11 +210,12 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
     let finish: ((end: BridgedCallEnd) => void) | undefined
     let call: DuplexCall | undefined
     try {
-      const { headers, transport } = resolveTarget(host)
+      const { headers, signal, transport } = resolveTarget(host, opened.executionId)
+      signal?.throwIfAborted()
       call = await transport.duplex({
         headers: withHeaders(opened.headers, headers),
         method: opened.method,
-        signal: options?.abortController?.signal,
+        signal: signal ? AbortSignal.any([signal, ...(options?.abortController ? [options.abortController.signal] : [])]) : options?.abortController?.signal,
       })
       const stream = call
       let started = false
@@ -259,8 +266,8 @@ async function* iterateStream<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
   }
 }
 
-function resolveTarget(host: BridgeHost): BridgeTarget {
-  const target = host.target()
+function resolveTarget(host: BridgeHost, executionId?: number): BridgeTarget {
+  const target = host.target(executionId)
   if (typeof target === 'string')
     throw new AuvTransportError(target)
   return target

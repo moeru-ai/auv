@@ -1,0 +1,51 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index aabf0dc8d8d3dab393501d43304fba5eeb2a577c..a061b3ce661d2393931ee59b09b9e9e28653165e 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -1,4 +1,5 @@
+-import { AssistantRuntime } from '@assistant-ui/react';
++import { AssistantRuntime, ExternalStoreSharedOptions } from '@assistant-ui/react';
++import type { AcpThreadController } from './core/index.js';
+ import { A as AcpRuntimeOptions } from './types-CnAtlFKE.js';
+ export { a as AcpAdapterConnectOptions, b as AcpAuthHookState, c as AcpAuthenticationStatus, d as AcpClientAdapter, e as AcpClientConnection, f as AcpClientHandlers, g as AcpClientServices, h as AcpConnectionHookState, i as AcpConnectionSource, j as AcpConnectionStatus, k as AcpFileSystemServices, l as AcpMessagePiece, m as AcpMessageRecord, n as AcpPermissionRecord, o as AcpPermissionsHookState, p as AcpProjectedMessage, q as AcpRuntime, r as AcpRuntimeExtras, s as AcpSessionAccess, t as AcpSessionRunState, u as AcpSessionState, v as AcpStateEvent, w as AcpStreamFactory, x as AcpTerminalServices, y as AcpThreadState, z as AcpToolCallRecord, B as AcpWorkspace, M as MaybePromise } from './types-CnAtlFKE.js';
+ export { A as AcpAuthMethods, a as AcpCommandMenu, b as AcpConfigOptions, c as AcpDataPart, d as AcpDiff, e as AcpModeSelect, f as AcpPermissionList, g as AcpPlan, h as AcpResource, i as AcpTerminal, j as AcpToolArtifact, k as AcpUnsupported, l as AcpUsage, u as useAcpAuth, m as useAcpCommands, n as useAcpConfigOptions, o as useAcpConnection, p as useAcpModes, q as useAcpPermissions, r as useAcpPlan, s as useAcpRuntimeExtras, t as useAcpSession, v as useAcpThreadState, w as useAcpUsage } from './index-DpxvNMl6.js';
+@@ -18,4 +19,7 @@ import 'react';
+  */
+ declare function useAcpRuntime(options: AcpRuntimeOptions): AssistantRuntime;
+ 
+-export { AcpRuntimeOptions, useAcpRuntime };
++/** Projects a caller-owned controller without connecting or disconnecting it. */
++declare function useAcpControllerRuntime(controller: AcpThreadController, options?: ExternalStoreSharedOptions & Pick<AcpRuntimeOptions, 'threadId' | 'onError' | 'adapters'>): AssistantRuntime;
++
++export { AcpRuntimeOptions, useAcpControllerRuntime, useAcpRuntime };
+diff --git a/dist/index.js b/dist/index.js
+index 2b0e09eea13999c5aa79c79b2d3423172fe0d0fd..c4697948de3a13dc9af4bbad1693a2ff77a7aebd 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -22,12 +22,17 @@ function useAcpRuntime(options) {
+       onThreadIdChange: (threadId) => latestOptions.current.onThreadIdChange?.(threadId)
+     })
+   );
+-  const state = useControllerState(controller);
+   useEffect(() => {
+     void controller.connect().catch(() => {
+     });
+     return () => controller.disconnect();
+   }, [controller]);
++  return useAcpControllerRuntime(controller, options);
++}
++function useAcpControllerRuntime(controller, options = {}) {
++  const latestOptions = useRef(options);
++  latestOptions.current = options;
++  const state = useControllerState(controller);
+   useEffect(() => {
+     if (options.threadId && state.connectionStatus === "ready" && state.activeSessionId !== options.threadId) {
+       void controller.selectSession(options.threadId, { notify: false }).catch((error) => latestOptions.current.onError?.(error));
+@@ -114,6 +119,6 @@ function useAcpRuntime(options) {
+   });
+ }
+ 
+-export { useAcpRuntime };
++export { useAcpControllerRuntime, useAcpRuntime };
+ //# sourceMappingURL=index.js.map
+ //# sourceMappingURL=index.js.map

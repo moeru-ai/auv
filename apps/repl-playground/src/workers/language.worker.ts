@@ -39,7 +39,7 @@ let current = ''
 
 function compile(request: CompileRequest): CompileResult {
   try {
-    const compiled = compileCell(request.source, { cellId: request.cellId, startLine: request.startLine })
+    const compiled = compileCell(request.source, { allowReturn: request.allowReturn, cellId: request.cellId, recordOnly: request.recordOnly, startLine: request.startLine })
     return { ok: true, ...compiled }
   }
   catch (error) {

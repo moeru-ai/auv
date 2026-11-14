@@ -2,16 +2,16 @@ import type { CallRecord, PlaygroundState, Resource } from './store'
 
 import { describe, expect, it } from 'vitest'
 
-import { bindingsOf, consumersOf, latestFramesAt } from './timeline'
+import { bindHistory, bindingsOf, consumersOf, latestFramesAt, lineAt, varsAt } from './timeline'
 
-function frame(ref: string, seq: number, run: number): Resource {
+function frame(ref: string, seq: number, timelineId: number): Resource {
   return {
     capturedAt: seq,
     frame: { bounds: { height: 1, width: 1, x: 0, y: 0 }, height: 1, ref: 'cap-1', scale: 1, source: 'window:w-counter', width: 1 },
     handle: { $ref: ref as `frame:${string}`, bounds: { height: 1, width: 1, x: 0, y: 0 }, height: 1, kind: 'frame', scale: 1, source: 'window:w-counter', width: 1 },
     kind: 'frame',
-    run,
     seq,
+    timelineId,
   } as Resource
 }
 
@@ -31,11 +31,28 @@ describe('latestFramesAt', () => {
         'frame:1': frame('frame:1', 25, 1),
         'frame:9': frame('frame:9', 20, 2),
       },
-      runIndex: 2,
+      timelineId: 2,
     } as unknown as PlaygroundState
 
     expect(latestFramesAt(state, 30).map(resource => resource.handle.$ref)).toEqual(['frame:9'])
   })
+})
+
+it('keeps bindings and editor line highlights scoped to their source script', () => {
+  const state = {
+    binds: [
+      { hit: 1, line: 1, scriptId: 1, seq: 1, values: { oldOnly: true, value: 'first' } },
+      { hit: 1, line: 1, scriptId: 2, seq: 3, values: { value: 'second' } },
+    ],
+    steps: [{ line: 1, scriptId: 1, seq: 0 }, { line: 1, scriptId: 2, seq: 2 }],
+  } as unknown as PlaygroundState
+
+  expect(bindHistory(state, 'value', 2).map(sample => sample.value)).toEqual(['second'])
+  expect(lineAt(state, 1, 2)).toBeNull()
+  expect(lineAt(state, 3, 2)).toBe(1)
+  expect(varsAt(state, 1)).toEqual({ oldOnly: true, value: 'first' })
+  expect(varsAt(state, 2)).toEqual({})
+  expect(varsAt(state, 3)).toEqual({ value: 'second' })
 })
 
 describe('lineage by Runner IDs', () => {

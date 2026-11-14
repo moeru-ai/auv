@@ -18,7 +18,7 @@ let nextHandle = 1
 /** A decoded protobuf message (`fromBinary` result), read structurally. */
 type Message = Record<string, unknown> & { $typeName: string }
 
-type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'run' | 'seq'> : never : never
+type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'seq' | 'timelineId'> : never : never
 
 /** Tracks the resource refs one SDK call produced. */
 export class CallScope {
@@ -34,10 +34,10 @@ export class CallScope {
 
   frame(frame: CapturedFrame): FrameHandle {
     // Keyed by the capture ID, so SDK values holding its `CaptureRef` link to
-    // it. A capture seen again in the same run keeps its first producer.
+    // it. A capture seen again in the same timeline keeps its first producer.
     const ref = `frame:${frame.ref}` as const
     const existing = usePlayground.getState().resources[ref]
-    if (existing?.kind === 'frame' && existing.run === usePlayground.getState().runIndex) {
+    if (existing?.kind === 'frame' && existing.timelineId === usePlayground.getState().timelineId) {
       this.refs.push(ref)
       return existing.handle
     }
@@ -109,15 +109,15 @@ export class CallScope {
     // A window ref is stable across calls; keep the first producer for lineage.
     const existing = usePlayground.getState().resources[handle.$ref]
     this.refs.push(handle.$ref)
-    const run = usePlayground.getState().runIndex
-    const sameRun = existing?.run === run
-    actions.putResource(handle.$ref, { callId: sameRun ? existing.callId : this.callId, handle, kind: 'window', run, seq: sameRun ? existing.seq : this.seq })
+    const timelineId = usePlayground.getState().timelineId
+    const sameTimeline = existing?.timelineId === timelineId
+    actions.putResource(handle.$ref, { callId: sameTimeline ? existing.callId : this.callId, handle, kind: 'window', seq: sameTimeline ? existing.seq : this.seq, timelineId })
     return handle
   }
 
   #put(ref: string, resource: ResourceBody): void {
     this.refs.push(ref)
-    actions.putResource(ref, { ...resource, callId: this.callId, run: usePlayground.getState().runIndex, seq: this.seq } as Resource)
+    actions.putResource(ref, { ...resource, callId: this.callId, seq: this.seq, timelineId: usePlayground.getState().timelineId } as Resource)
   }
 }
 
