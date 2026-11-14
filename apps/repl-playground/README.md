@@ -179,8 +179,8 @@ focus(search, { zoom: false }) // pan only, keep the zoom level
 
 `window.scroll(target, { deltaX?, deltaY? })` wheel-scrolls once and
 `window.scrollUntil(target, options, { until })` scrolls in steps, observing
-after each step on the Runner (`InputService/ScrollWindowPoint` and
-`ScrollUntil`). Positive `deltaY` scrolls toward later content (down).
+after each step on the Runner (`WindowService/ScrollWindow` and
+`ScrollWindowUntil`). Positive `deltaY` scrolls toward later content (down).
 
 ```ts
 const results = area(music).region({ bottom: 80, left: '22%', top: 120 })
@@ -196,7 +196,7 @@ const found = await music.scrollUntil(results, {
 
 Omitted `maxSteps`, `noMotionConfirmations` and `settle` take the Runner's
 defaults (50 steps, 2 confirmations, 400 ms), the same as
-`auv invoke input.scrollUntil`. The mock desktop applies
+`auv invoke window.scrollUntil`. The mock desktop applies
 `sdk.SCROLL_UNTIL_DEFAULTS`, the same values.
 
 An `END_BY_NO_VISUAL_PROGRESS` stop means the view moved, then stopped moving;
@@ -219,7 +219,7 @@ await music.findText('Now playing: Remember', { screenRegion: area(music).region
 ### Typing
 
 `window.typeText(text)` and `window.pressKeys('cmd+a')` deliver to that window
-(`InputService/InputKeyboard`): by default the window is brought to the front
+(`InputService/PerformKeyboardInputs`): by default the window is brought to the front
 and focused first, so the text cannot land in another app.
 `auv.input.typeText` and `auv.input.pressKey` go to whichever app has keyboard
 focus when they run, which can be this playground's browser.

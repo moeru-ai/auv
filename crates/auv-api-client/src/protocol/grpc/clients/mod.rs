@@ -5,3 +5,4 @@
 //! should normally enter through [`crate::Client`].
 
 pub mod daemon;
+pub mod runtime;

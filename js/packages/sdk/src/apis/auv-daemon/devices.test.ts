@@ -15,7 +15,7 @@ import {
   ListUserSessionsResponseSchema,
   UserSessionConnectionKind,
   UserSessionLockState,
-} from '../../gen/auv/api/daemon/v1/device_pb'
+} from '../../gen/auv/api/daemon/v1/user_session_pb'
 import { AuvConnection } from '../../transport/connection'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { createAuv } from '../auv/client'
@@ -63,7 +63,7 @@ describe('device user sessions', () => {
         ],
       },
     }))
-    const connection = connectionFor(response, call => expect(call.method).toBe('/auv.api.daemon.v1.DeviceService/ListUserSessions'))
+    const connection = connectionFor(response, call => expect(call.method).toBe('/auv.api.daemon.v1.UserSessionService/ListUserSessions'))
 
     await expect(listUserSessions(connection)).resolves.toEqual([
       { connectionKind: 'physical', isLocked: true, isUnlocked: false, lockState: 'locked', seat: undefined, sessionSelector: 'a', user: 'neko' },
@@ -86,7 +86,7 @@ describe('device user sessions', () => {
     const response = toBinary(GetUserSessionResponseSchema, create(GetUserSessionResponseSchema, {
       session: { lockState: UserSessionLockState.LOCKED, seat: 'console', sessionSelector: 'wts:1', user: 'neko' },
     }))
-    const connection = connectionFor(response, call => expect(call.method).toBe('/auv.api.daemon.v1.DeviceService/GetUserSession'))
+    const connection = connectionFor(response, call => expect(call.method).toBe('/auv.api.daemon.v1.UserSessionService/GetUserSession'))
 
     await expect(createAuv(connection).devices.getUserSession({ sessionSelector: 'wts:1' })).resolves.toMatchObject({
       isLocked: true,
@@ -100,7 +100,7 @@ describe('device user sessions', () => {
       effect: { kind: DeviceEntryEffectKind.UNLOCKED_EXISTING_SESSION, sessionSelector: 'wts:1', user: 'neko' },
     }))
     const connection = connectionFor(response, (call) => {
-      expect(call.method).toBe('/auv.api.daemon.v1.DeviceService/EnsureUserSessionUnlocked')
+      expect(call.method).toBe('/auv.api.daemon.v1.UserSessionService/EnsureUserSessionUnlocked')
       expect(fromBinary(EnsureUserSessionUnlockedRequestSchema, call.body).target).toEqual({ case: 'sessionSelector', value: 'wts:1' })
     })
 

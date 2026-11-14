@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{CoordinateSpace, Point, Rect};
-use auv_driver_common::window::{Window, WindowRef};
+use auv_driver_common::window::{Window, WindowRef, WindowState};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
@@ -524,6 +524,15 @@ fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: b
     coordinate_space: CoordinateSpace::Screen,
     is_main,
     is_visible: rect_has_area(accessible.bounds),
+    // NOTICE(linux-window-management): AT-SPI ACTIVE is the only window state
+    // Linux reads today. Minimized, maximized, fullscreen, always-on-top,
+    // stacking, and desktop stay `None` (cannot tell); see "Linux (not
+    // supported yet)" in
+    // `docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md`.
+    state: WindowState {
+      is_focused: Some(accessible.active),
+      ..WindowState::default()
+    },
   }
 }
 

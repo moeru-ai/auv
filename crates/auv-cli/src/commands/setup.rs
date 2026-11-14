@@ -59,19 +59,21 @@ struct WindowsHelperArgs {
 
 #[derive(Clone, Debug, Subcommand)]
 enum WindowsHelperCommand {
-  /// Report the installed service, binaries, and current readiness.
+  /// Report the installed service, binaries, this user's daemon logon task, and current readiness.
   Status {
     /// Emit a stable machine-readable result.
     #[arg(long)]
     json: bool,
   },
-  /// Extract the embedded auv-helper.exe and register the LocalSystem AUV Helper service.
+  /// Extract the embedded auv-helper.exe, register the LocalSystem AUV Helper service, and register
+  /// the `AUV Daemon` logon task that runs `auv serve` for this user with limited privileges.
   Install {
     /// Emit a stable machine-readable result after installation.
     #[arg(long)]
     json: bool,
   },
-  /// Stop and unregister the service, then remove its installed binary.
+  /// Stop and unregister the service, remove its installed binary, and remove this user's daemon
+  /// logon task. A daemon the task started keeps running.
   Uninstall {
     /// Emit a stable machine-readable result after removal.
     #[arg(long)]

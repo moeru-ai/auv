@@ -44,6 +44,13 @@ pub struct ServeArgs {
   #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
   pub daemon_idle_timeout: Option<u64>,
 
+  /// Stop the daemon this many seconds after the last request finished. Open
+  /// requests and streams, including Runner calls, keep it running; on exit it
+  /// stops its Runners. Daemons that `auv invoke` and `auv mcp` start pass 300.
+  // NOTICE: the flag name is provisional (invoke local Runner design).
+  #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
+  pub idle_exit_after: Option<u64>,
+
   /// Stop the daemon when stdin reaches end of file. An owning process keeps
   /// the write end open, so the daemon follows it out even when it is killed.
   #[arg(long)]
@@ -165,6 +172,9 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
   }
   if let Some(seconds) = args.daemon_idle_timeout {
     config = config.daemon_idle_timeout(std::time::Duration::from_secs(seconds));
+  }
+  if let Some(seconds) = args.idle_exit_after {
+    config = config.idle_exit_after(std::time::Duration::from_secs(seconds));
   }
   for provider in providers {
     config = config.runner_provider(provider);

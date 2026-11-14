@@ -12,7 +12,7 @@ fn inputs(values: [(&str, &str); 4]) -> BTreeMap<String, String> {
 #[test]
 fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   let valid_dry_run = InvokeCommandInput {
-    command_id: "screen.captureRegion".to_string(),
+    command_id: "display.captureRegion".to_string(),
     target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "4")]),
     typed_args: None,
@@ -22,7 +22,7 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   assert!(futures_executor::block_on(capture_region_invoke_command().invoke(valid_dry_run)).is_ok());
 
   let invalid_live = InvokeCommandInput {
-    command_id: "screen.captureRegion".to_string(),
+    command_id: "display.captureRegion".to_string(),
     target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "0"), ("height", "4")]),
     typed_args: None,
@@ -108,7 +108,7 @@ fn click_text_fence_rejects_changed_ocr_target_before_delivery() {
 fn click_text_fence_cli_and_protocol_validate_without_opening_the_desktop() {
   for (within, valid) in [("-100,-50,200,100", true), ("100,200,100,290", false)] {
     let arguments = [
-      "screen.clickText",
+      "display.clickText",
       "Submit",
       "--within",
       within,
@@ -175,7 +175,7 @@ fn screen_text_click_result_keeps_resolution_and_delivery_together() {
 
 // ROOT CAUSE:
 //
-// If `screen.findText` or `screen.waitForText` ran on Windows, each answered "only available on
+// If `display.findText` or `display.waitForText` ran on Windows, each answered "only available on
 // macOS and Linux" before reaching the driver, although the Windows driver already captures the
 // primary display and reads its text with the system OCR.
 //
@@ -186,8 +186,8 @@ fn screen_text_click_result_keeps_resolution_and_delivery_together() {
 #[test]
 fn screen_text_commands_are_not_gated_out_on_windows() {
   let commands = [
-    (find_screen_text_invoke_command(), dry_run_text_input("screen.findText", None)),
-    (wait_for_screen_text_invoke_command(), dry_run_text_input("screen.waitForText", None)),
+    (find_screen_text_invoke_command(), dry_run_text_input("display.findText", None)),
+    (wait_for_screen_text_invoke_command(), dry_run_text_input("display.waitForText", None)),
   ];
 
   for (command, input) in commands {
@@ -198,7 +198,7 @@ fn screen_text_commands_are_not_gated_out_on_windows() {
 
 // ROOT CAUSE:
 //
-// If `screen.clickText` ran on a platform without a click path, the refusal
+// If `display.clickText` ran on a platform without a click path, the refusal
 // reached the caller as `command_failed`,
 // because the handler returned a plain `String` and `InvokeFailure::from(String)` assigns that code.
 //
@@ -207,9 +207,9 @@ fn screen_text_commands_are_not_gated_out_on_windows() {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[test]
 fn screen_click_text_refuses_as_unsupported_without_a_platform_path() {
-  let input = dry_run_text_input("screen.clickText", None);
+  let input = dry_run_text_input("display.clickText", None);
 
-  let error = futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("screen.clickText has no path here");
+  let error = futures_executor::block_on(click_screen_text_invoke_command().invoke(input)).expect_err("display.clickText has no path here");
 
   assert_eq!(error.code, crate::FailureCode::Unsupported, "unexpected refusal: {}", error.message);
   assert!(error.message.contains("only available on macOS and Windows"), "unexpected message: {}", error.message);
@@ -223,7 +223,7 @@ fn screen_click_text_refuses_as_unsupported_without_a_platform_path() {
 #[cfg(target_os = "windows")]
 #[test]
 fn screen_click_text_validates_on_windows() {
-  let output = futures_executor::block_on(click_screen_text_invoke_command().invoke(dry_run_text_input("screen.clickText", None)))
+  let output = futures_executor::block_on(click_screen_text_invoke_command().invoke(dry_run_text_input("display.clickText", None)))
     .expect("Windows must reach screen click validation instead of Unsupported");
   assert_eq!(output.result(), super::super::input::validation_only_output().result());
 }
@@ -232,7 +232,7 @@ fn screen_click_text_validates_on_windows() {
 #[test]
 fn screen_click_text_rejects_target_activation_before_windows_input() {
   let error =
-    futures_executor::block_on(click_screen_text_invoke_command().invoke(dry_run_text_input("screen.clickText", Some("unrelated.exe"))))
+    futures_executor::block_on(click_screen_text_invoke_command().invoke(dry_run_text_input("display.clickText", Some("unrelated.exe"))))
       .expect_err("screen OCR must not silently activate a target");
   assert_eq!(error.code, crate::FailureCode::InvalidTarget);
 }
@@ -265,7 +265,7 @@ fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
 
 fn wait_input(pairs: &[(&str, &str)]) -> InvokeCommandInput {
   InvokeCommandInput {
-    command_id: "screen.waitForText".into(),
+    command_id: "display.waitForText".into(),
     target: None,
     inputs: pairs.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect(),
     typed_args: None,
@@ -276,7 +276,7 @@ fn wait_input(pairs: &[(&str, &str)]) -> InvokeCommandInput {
 
 // ROOT CAUSE:
 //
-// If a page took longer than 5 s to show the text, screen.waitForText
+// If a page took longer than 5 s to show the text, display.waitForText
 // failed: the wait budget was hard-coded. OSWorld agents passed `timeout`
 // keys that did not exist (49 calls, silently ignored) and saw the text
 // appear 10-85 s after failed waits.

@@ -1,4 +1,4 @@
-//! `screen`: `screen.findText` and `screen.waitForText` on Windows, run as the real `auv` binary
+//! `screen`: `display.findText` and `display.waitForText` on Windows, run as the real `auv` binary
 //! against a window this harness owns, while an independent watch checks the user's desktop.
 //!
 //! These commands read the whole primary display, so what they keep is a screenshot of the
@@ -104,16 +104,16 @@ impl Scenario<'_> {
     Ok((measured.value?, facts))
   }
 
-  /// Runs `screen.findText` and returns the match that sits at the control `rect`.
+  /// Runs `display.findText` and returns the match that sits at the control `rect`.
   fn find(&mut self, query: &str, control: &str, rect: [i32; 4], placement: Placement) -> Result<Option<[f64; 4]>> {
-    let (run, facts) = self.run("screen.findText", &[query])?;
+    let (run, facts) = self.run("display.findText", &[query])?;
     let all = match_bounds(&run);
     let belonging = all.iter().copied().find(|found| belongs(placement, *found, rect));
-    self.tally.expect(run.completed(), format!("screen.findText {query:?} failed: {}", run.failure()));
-    self.tally.expect(belonging.is_some(), format!("screen.findText {query:?} put none of its {} match(es) at the {control}", all.len()));
+    self.tally.expect(run.completed(), format!("display.findText {query:?} failed: {}", run.failure()));
+    self.tally.expect(belonging.is_some(), format!("display.findText {query:?} put none of its {} match(es) at the {control}", all.len()));
     // Only the match at the receiver is written down; the rest is the user's screen and is counted.
     self.records.write(
-      "screen.findText",
+      "display.findText",
       json!({"query": query, "control": control, "control_rect": rect, "exit": run.exit, "ms": run.ms, "matches": all.len(),
         "match": belonging, "offset_from_control_corner": belonging.map(|found| [found[0] - f64::from(rect[0]), found[1] - f64::from(rect[1])]),
         "watch": facts}),
@@ -196,7 +196,7 @@ pub fn screen_commands(options: &ScreenCommandsOptions) -> Result<bool> {
       "covered_fraction": covered, "foreground": start.foreground.to_string(), "display_list": facts}),
   )?;
 
-  // screen.findText: text is placed against the control that draws it, in screen coordinates.
+  // display.findText: text is placed against the control that draws it, in screen coordinates.
   // - "clicks 0" starts at the left edge of the label, near its top.
   // - "line 000" is the first line of the edit control, which only has to contain it.
   let label = scenario.find("clicks 0", "label", layout.label_rect, Placement::Corner)?;
@@ -218,7 +218,7 @@ pub fn screen_commands(options: &ScreenCommandsOptions) -> Result<bool> {
     travelled.is_some_and(|travelled| (travelled[0] - wanted[0]).abs() <= 2.0 && (travelled[1] - wanted[1]).abs() <= 2.0),
     format!("the label's text moved {travelled:?} when the receiver moved {wanted:?}"),
   );
-  scenario.records.write("screen.findText.moved", json!({"receiver_moved": wanted, "text_moved": travelled}))?;
+  scenario.records.write("display.findText.moved", json!({"receiver_moved": wanted, "text_moved": travelled}))?;
 
   // Give the receiver text worth waiting for: three clicks, posted to the window.
   let (window, _) = discover_by_hwnd(&driver, hwnd)?;
@@ -230,30 +230,30 @@ pub fn screen_commands(options: &ScreenCommandsOptions) -> Result<bool> {
   let state = target.state()?;
   scenario.tally.expect(delivered == 3 && state.clicks == 3, format!("the receiver counted {} of 3 posted clicks", state.clicks));
 
-  // screen.waitForText: present now, absent for good, and appearing while it waits.
-  let (present, facts) = scenario.run("screen.waitForText", &["clicks 3"])?;
-  scenario.tally.expect(present.completed(), format!("screen.waitForText failed on text that is there: {}", present.failure()));
+  // display.waitForText: present now, absent for good, and appearing while it waits.
+  let (present, facts) = scenario.run("display.waitForText", &["clicks 3"])?;
+  scenario.tally.expect(present.completed(), format!("display.waitForText failed on text that is there: {}", present.failure()));
   scenario.tally.expect(
     match_bounds(&present).iter().any(|found| belongs(Placement::Corner, *found, moved.label_rect)),
-    "screen.waitForText did not place the text at the label",
+    "display.waitForText did not place the text at the label",
   );
-  scenario.records.write("screen.waitForText.present", json!({"exit": present.exit, "ms": present.ms, "watch": facts}))?;
+  scenario.records.write("display.waitForText.present", json!({"exit": present.exit, "ms": present.ms, "watch": facts}))?;
 
-  let (absent, facts) = scenario.run("screen.waitForText", &["clicks 99"])?;
+  let (absent, facts) = scenario.run("display.waitForText", &["clicks 99"])?;
   scenario.tally.expect(
     absent.exit == Some(1) && absent.failure().contains("did not find text"),
-    format!("screen.waitForText on absent text ended {:?}: {}", absent.exit, absent.failure()),
+    format!("display.waitForText on absent text ended {:?}: {}", absent.exit, absent.failure()),
   );
-  scenario.tally.expect(absent.ms >= 4_500.0, format!("screen.waitForText gave up after {:.0} ms, before its timeout", absent.ms));
+  scenario.tally.expect(absent.ms >= 4_500.0, format!("display.waitForText gave up after {:.0} ms, before its timeout", absent.ms));
   scenario
     .records
-    .write("screen.waitForText.absent", json!({"exit": absent.exit, "ms": absent.ms, "failure": absent.failure(), "watch": facts}))?;
+    .write("display.waitForText.absent", json!({"exit": absent.exit, "ms": absent.ms, "failure": absent.failure(), "watch": facts}))?;
 
   // The label reads "clicks 3" until the clicks below arrive, 1.5 s after the command starts.
   let (appearing, _) = scenario.desk.measure(
     || -> Result<(Invocation, usize)> {
       std::thread::scope(|scope| {
-        let waiter = scope.spawn(|| invoke(&auv, &store, "screen.waitForText", &["clicks 6"]));
+        let waiter = scope.spawn(|| invoke(&auv, &store, "display.waitForText", &["clicks 6"]));
         std::thread::sleep(Duration::from_millis(1_500));
         let sent = (0..3).filter(|_| session.click(id, button, ClickRequest::default()).is_done()).count();
         let run = waiter.join().map_err(|_| anyhow::anyhow!("the waiting command panicked"))??;
@@ -266,11 +266,12 @@ pub fn screen_commands(options: &ScreenCommandsOptions) -> Result<bool> {
   let appearing_facts = json!({"invariants": invariants(&appearing, hwnd), "verdict": appearing.verdict});
   let (appearing_run, sent) = appearing.value.as_ref().map_err(|error| anyhow::anyhow!("{error:#}"))?;
   scenario.tally.expect(*sent == 3, format!("{sent} of 3 clicks reached the receiver while the command waited"));
-  scenario
-    .tally
-    .expect(appearing_run.completed(), format!("screen.waitForText missed text that appeared while it waited: {}", appearing_run.failure()));
+  scenario.tally.expect(
+    appearing_run.completed(),
+    format!("display.waitForText missed text that appeared while it waited: {}", appearing_run.failure()),
+  );
   scenario.records.write(
-    "screen.waitForText.appearing",
+    "display.waitForText.appearing",
     json!({"exit": appearing_run.exit, "ms": appearing_run.ms, "clicks_sent": sent, "watch": appearing_facts}),
   )?;
 

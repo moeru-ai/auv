@@ -587,7 +587,7 @@ async fn mcp_pr430_flush_failure_preserves_result_without_advertising_image_rece
     store: store.clone(),
   };
   let mut server = image_server(directory.path());
-  server.invoke_dispatch = Arc::new(move |_| Ok(authority.clone()));
+  server.invoke_dispatch = Arc::new(move |_, _| Ok(authority.clone()));
   let result = call_invoke(server.clone(), serde_json::json!({ "command_id": "display.capture" })).await;
   assert_ne!(result.is_error, Some(true));
   let output = result.structured_content.unwrap();
@@ -764,7 +764,7 @@ async fn mcp_uses_the_same_typed_range_validation_as_cli() {
 
 // ROOT CAUSE:
 //
-// If an MCP host sent the input keys advertised in x-auv-commands, input.drag
+// If an MCP host sent the input keys advertised in x-auv-commands, input.dragMouse
 // failed with `missing field 'start-x'` because serde renamed the positional
 // fields while the metadata advertised their Clap ids.
 //
@@ -777,12 +777,12 @@ async fn drag_mcp_adapter_accepts_advertised_input_keys_with_typed_defaults() {
   let tools = server.tool_router.list_all();
   let invoke = tools.iter().find(|tool| tool.name == "invoke").expect("invoke tool");
   let schema = serde_json::to_value(&invoke.input_schema).unwrap();
-  let metadata = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "input.drag").expect("drag metadata");
+  let metadata = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "input.dragMouse").expect("drag metadata");
   let advertised: Vec<_> = metadata["arguments"].as_array().unwrap().iter().map(|argument| argument["input_key"].as_str().unwrap()).collect();
   assert_eq!(advertised[..4], ["start_x", "start_y", "end_x", "end_y"]);
   let inputs: Vec<_> = advertised[..4].iter().copied().zip(["120", "80", "320", "80"]).collect();
   let adapters = core_invoke_adapters();
-  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.drag").expect("drag adapter");
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.dragMouse").expect("drag adapter");
   let success = adapter
     .invoke(McpInvokeInput {
       target: None,
@@ -826,10 +826,10 @@ fn pairs(values: &[(&str, &str)]) -> BTreeMap<String, String> {
 #[tokio::test]
 async fn keyboard_mcp_rejects_display_with_typed_failure() {
   let adapters = core_invoke_adapters();
-  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.key").unwrap();
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.pressKeys").unwrap();
   let error = adapter.invoke(McpInvokeInput {
     target: Some(auv_cli_invoke::ExecutionTarget::Display { id: "primary".into() }),
-    inputs: pairs(&[("key", "cmd+a")]), dry_run: false, cancellation: Default::default(),
+    inputs: pairs(&[("keys", r#"["cmd","a"]"#)]), dry_run: false, cancellation: Default::default(),
   }).await.unwrap_err();
   assert_eq!(error.code, auv_cli_invoke::FailureCode::InvalidTarget);
 }
@@ -837,12 +837,12 @@ async fn keyboard_mcp_rejects_display_with_typed_failure() {
 #[test]
 fn mcp_target_metadata_comes_from_the_executable_definition() {
   let registry = auv_cli_invoke::default_registry();
-  let keyboard = super::invoke_command_metadata(registry.resolve("input.key").unwrap());
+  let keyboard = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
   assert_eq!(keyboard["target"]["accepted_types"], serde_json::json!(["application", "window"]));
   assert_eq!(keyboard["target"]["required"], false);
-  let media = super::invoke_command_metadata(registry.resolve("mediaControl.play").unwrap());
+  let media = super::invoke_command_metadata(registry.resolve("media.play").unwrap());
   assert_eq!(media["target"]["accepted_types"], serde_json::json!([]));
-  let focus = super::invoke_command_metadata(registry.resolve("input.focusText").unwrap());
+  let focus = super::invoke_command_metadata(registry.resolve("accessibility.focusText").unwrap());
   assert_eq!(focus["target"]["required"], true);
 }
 
@@ -855,7 +855,7 @@ fn mcp_support_metadata_comes_from_the_executable_definition() {
     assert_eq!(metadata["role"], serde_json::to_value(command.role).unwrap(), "role of {}", command.id);
   }
 
-  let click_text = super::invoke_command_metadata(registry.resolve("screen.clickText").unwrap());
+  let click_text = super::invoke_command_metadata(registry.resolve("display.clickText").unwrap());
   assert_eq!(click_text["support"]["linux"], serde_json::json!({ "state": "unsupported" }));
   assert_eq!(click_text["support"]["macos"], serde_json::json!({ "state": "supported" }));
 
@@ -866,7 +866,7 @@ fn mcp_support_metadata_comes_from_the_executable_definition() {
   );
 
   let press_keys = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
-  assert_eq!(press_keys["role"], serde_json::json!({ "kind": "alias", "canonical": "input.keys" }));
+  assert_eq!(press_keys["role"], serde_json::json!({ "kind": "desktop" }));
 }
 
 #[test]
@@ -892,7 +892,7 @@ fn mcp_runner_support_metadata_states_the_route_and_cells() {
 
   // Pins from the 2026-10-25 source audit: the cells where the Runner route
   // differs from the direct path must stay stated as different cells.
-  let click_text = super::invoke_command_metadata(registry.resolve("screen.clickText").unwrap());
+  let click_text = super::invoke_command_metadata(registry.resolve("display.clickText").unwrap());
   assert_eq!(click_text["support"]["linux"], serde_json::json!({ "state": "unsupported" }));
   assert_eq!(click_text["runner_support"]["cells"]["linux"], serde_json::json!({ "state": "supported" }));
 
@@ -902,7 +902,7 @@ fn mcp_runner_support_metadata_states_the_route_and_cells() {
     serde_json::json!({ "state": "partial", "note": "foreground portal delivery only; background_only input policy is rejected" })
   );
 
-  let drag = super::invoke_command_metadata(registry.resolve("input.drag").unwrap());
+  let drag = super::invoke_command_metadata(registry.resolve("input.dragMouse").unwrap());
   assert_eq!(
     drag["runner_support"]["cells"]["macos"],
     serde_json::json!({ "state": "partial", "note": "foreground-preferred input policy is refused; DragMouse carries no window policy" })
@@ -932,7 +932,7 @@ fn mcp_runner_support_metadata_states_the_route_and_cells() {
 //
 // If the CLI help and the MCP `x-auv-commands` metadata rendered support from
 // different sources, one surface could claim a path the other denies; the
-// screen.clickText Linux gap (direct path refuses, Runner route works) is
+// display.clickText Linux gap (direct path refuses, Runner route works) is
 // exactly a cell the two surfaces must state identically.
 //
 // The fix renders both surfaces from one registry declaration. This test
@@ -976,10 +976,10 @@ fn invoke_description_states_runner_support_where_it_differs_from_direct() {
   let registry = auv_cli_invoke::default_registry();
   let description = super::invoke_tool_description(&registry);
 
-  let click_text = description_command_block(&description, "screen.clickText");
+  let click_text = description_command_block(&description, "display.clickText");
   assert!(
     click_text.contains("\n  runner support: macOS supported; Linux supported; Windows partial"),
-    "screen.clickText block:\n{click_text}"
+    "display.clickText block:\n{click_text}"
   );
 
   let type_text = description_command_block(&description, "input.typeText");
@@ -1041,13 +1041,13 @@ fn description_command_block(description: &str, id: &str) -> String {
 #[test]
 fn keyboard_sequence_metadata_exposes_repeat_arguments_and_target_contract() {
   let registry = auv_cli_invoke::default_registry();
-  let keys = super::invoke_command_metadata(registry.resolve("input.keys").unwrap());
+  let keys = super::invoke_command_metadata(registry.resolve("input.pressKeys").unwrap());
   assert_eq!(keys["target"]["accepted_types"], serde_json::json!(["application", "window"]));
   let arguments = keys["arguments"].as_array().unwrap();
   assert_eq!(arguments.iter().find(|arg| arg["input_key"] == "keys").unwrap()["repeated"], true);
   assert!(arguments.iter().any(|arg| arg["input_key"] == "count"));
   assert!(arguments.iter().any(|arg| arg["input_key"] == "interval-ms"));
-  let sequence = super::invoke_command_metadata(registry.resolve("input.keyboard").unwrap());
+  let sequence = super::invoke_command_metadata(registry.resolve("input.performKeyboardInputs").unwrap());
   assert_eq!(sequence["target"], keys["target"]);
 }
 
@@ -1172,6 +1172,22 @@ async fn execute_op_run_unreadable_custom_file_is_invalid_params() {
   assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
   assert_eq!(fake.calls_count(), 0);
 }
+
+#[tokio::test]
+async fn execute_op_run_operation_name_mismatch_is_invalid_params() {
+  let (server, fake) = op_run_server();
+  let request = OpRunToolRequest {
+    operation: "unrelated.task".to_string(),
+    ..op_run_request("example.prepare_fast", ExecutionModeArg::Fast)
+  };
+
+  let error = server.execute_op_run(request).await.expect_err("operation name mismatch must fail as invalid_params");
+
+  assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+  assert!(error.message.contains("unrelated.task") && error.message.contains("example.prepare_fast"));
+  assert_eq!(fake.calls_count(), 0);
+}
+
 
 // Drives the request through the real MCP transport and tool router, so argument deserialization
 // is the code under test rather than a hand-built `OpRunToolRequest`.
@@ -1301,9 +1317,13 @@ async fn mcp_invoke_device_fields_select_a_device_per_call() {
   assert_eq!(result.is_error, Some(true), "{result:?}");
 }
 
+// `auv mcp serve` turns the local Runner route on unless `--no-daemon` is set
+// (`serve_stdio`); an embedded server and `--no-daemon` keep the direct path,
+// and the shared rule itself is unit-tested as `commands::invoke::invoke_route`.
 #[tokio::test]
-async fn mcp_invoke_without_a_selection_still_runs_the_local_adapter() {
+async fn mcp_invoke_without_a_selection_or_the_local_runner_runs_the_local_adapter() {
   let (server, local_calls) = counting_display_list_server(auv::selection::RootSelection::default());
+  let server = server.with_local_runner(false);
 
   let result = call_invoke(server, serde_json::json!({ "command_id": "display.list" })).await;
 
@@ -1337,16 +1357,16 @@ async fn mcp_invoke_dry_run_with_a_device_selection_runs_locally() {
 #[tokio::test]
 async fn mcp_invoke_keyboard_dry_run_still_selects_the_device() {
   // The rule under test decides whether this very command dispatches locally,
-  // so the local `input.key` adapter itself must be the counter. A
+  // so the local `input.pressKeys` adapter itself must be the counter. A
   // `display.list` counter would stay at zero even if a broken selection rule
-  // ran `input.key` locally and the run failed on its missing `key` argument,
+  // ran `input.pressKeys` locally and the run failed on its missing `keys` argument,
   // which would let both assertions below pass with the rule broken.
   let local_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
   let counter = Arc::clone(&local_calls);
   let adapters = core_invoke_adapters()
     .into_iter()
-    .filter(|adapter| adapter.command_id != "input.key")
-    .chain([super::McpInvokeAdapter::new("input.key", move |_input| {
+    .filter(|adapter| adapter.command_id != "input.pressKeys")
+    .chain([super::McpInvokeAdapter::new("input.pressKeys", move |_input| {
       let counter = Arc::clone(&counter);
       async move {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1360,7 +1380,7 @@ async fn mcp_invoke_keyboard_dry_run_still_selects_the_device() {
   let result = call_invoke(
     server,
     serde_json::json!({
-      "command_id": "input.key",
+      "command_id": "input.pressKeys",
       "device_id": "0000000000000000000000000000000000000000000000000000000000000000",
       "dry_run": true,
     }),
@@ -1428,8 +1448,8 @@ async fn invoke_description_lists_inputs_and_example_calls() {
   assert!(description.contains("Send a screen point without `target`, or with `target` and"), "{description}");
   assert!(description.contains(r#"  example: {"command_id":"input.pressKeys","inputs":{"keys":"[\"cmd\",\"shift\",\"p\"]"}}"#), "{description}");
   let schema = serde_json::to_value(&invoke.input_schema).unwrap();
-  let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "screen.waitForText").unwrap();
-  assert_eq!(wait["examples"][0]["call"], serde_json::json!({ "command_id": "screen.waitForText", "inputs": { "query": "Ready" } }));
+  let wait = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "display.waitForText").unwrap();
+  assert_eq!(wait["examples"][0]["call"], serde_json::json!({ "command_id": "display.waitForText", "inputs": { "query": "Ready" } }));
 }
 
 #[test]

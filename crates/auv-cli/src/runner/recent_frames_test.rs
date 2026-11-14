@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use auv_api_proto::auv::api::driver::v1 as proto;
-use auv_api_proto::auv::api::driver::v1::recent_frames_service_server::RecentFramesService as _;
+use auv_api_proto::auv::api::driver::v1::frame_buffer_service_server::FrameBufferService as _;
 use tonic::Request;
 
 use super::*;
@@ -62,7 +62,7 @@ async fn service_applies_caller_size_to_a_generic_region_target() {
     size: (4, 3),
   }));
   let response = service
-    .open_frame_buffer(Request::new(proto::OpenFrameBufferRequest {
+    .create_frame_buffer(Request::new(proto::CreateFrameBufferRequest {
       target: Some(proto::CaptureTarget {
         target: Some(proto::capture_target::Target::Region(proto::RegionCaptureTarget {
           region: Some(proto::ScreenRect {
@@ -86,7 +86,7 @@ async fn service_applies_caller_size_to_a_generic_region_target() {
     .into_inner();
   let reference = response.frame_buffer.expect("frame buffer reference");
   let batch = service
-    .get_recent_frames(Request::new(proto::GetRecentFramesRequest {
+    .list_recent_frames(Request::new(proto::ListRecentFramesRequest {
       frame_buffer: Some(reference.clone()),
       after_sequence: 0,
     }))
@@ -105,7 +105,7 @@ async fn service_applies_caller_size_to_a_generic_region_target() {
   );
 
   service
-    .close_frame_buffer(Request::new(proto::CloseFrameBufferRequest {
+    .delete_frame_buffer(Request::new(proto::DeleteFrameBufferRequest {
       frame_buffer: Some(reference),
     }))
     .await

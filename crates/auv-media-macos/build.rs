@@ -37,6 +37,13 @@ fn build_macos() {
   println!("cargo:rerun-if-changed={}", submodule.join("bin/mediaremote-adapter.pl").display());
 
   let build_dir = out_dir.join("mra-build");
+  // NOTICE: cargo can reuse one OUT_DIR for the same crate built from a
+  // different source path: a target dir shared by two checkouts, or
+  // `cargo publish` verifying a dependent against the crates.io copy after
+  // verifying the local package (v0.0.42 release). CMake then refuses its
+  // cache ("does not match the source ... used to generate cache"), so start
+  // each configure from an empty build dir. The adapter builds in seconds.
+  let _ = std::fs::remove_dir_all(&build_dir);
   std::fs::create_dir_all(&build_dir).expect("create cmake build dir");
 
   run(Command::new("cmake").arg("-S").arg(&submodule).arg("-B").arg(&build_dir), "cmake configure");

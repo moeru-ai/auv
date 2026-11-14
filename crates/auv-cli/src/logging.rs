@@ -141,17 +141,17 @@ fn remove_expired(directory: &Path, retention: Duration, now: SystemTime) -> std
   Ok(removed)
 }
 
-fn log_directory() -> Result<PathBuf, String> {
+pub(crate) fn log_directory() -> Result<PathBuf, String> {
   if let Some(directory) = std::env::var_os(LOG_DIR_ENV) {
     return Ok(PathBuf::from(directory));
   }
   // The same per-user root as discovery and the Linux portal state
   // (`auv::discovery::default_path`); XDG puts logs under the state directory.
-  let directories = directories::ProjectDirs::from("ai", "moeru", "auv").ok_or("cannot resolve the AUV user state directory for logs")?;
-  Ok(directories.state_dir().unwrap_or_else(|| directories.data_local_dir()).join("logs"))
+  let directory = auv::discovery::user_state_directory().map_err(|_| "cannot resolve the AUV user state directory for logs")?;
+  Ok(directory.join("logs"))
 }
 
-fn create_private_directory(directory: &Path) -> Result<(), String> {
+pub(crate) fn create_private_directory(directory: &Path) -> Result<(), String> {
   std::fs::create_dir_all(directory).map_err(|error| format!("failed to create log directory {}: {error}", directory.display()))?;
   // Logs name paths, apps, and Device ids; keep them to the owning user.
   #[cfg(unix)]

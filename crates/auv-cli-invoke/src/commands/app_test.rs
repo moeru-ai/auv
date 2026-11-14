@@ -14,7 +14,7 @@ fn permission_report_groups_readable_statuses() {
     InvokeCommandOutput::from_result(&permissions).expect("permission result should serialize").with_report(permission_report(&permissions));
   assert!(
     output.report.is_some(),
-    "app.probePermissions live path calls this helper after OS probing, so this stable helper test verifies report population without requiring live permission state"
+    "permission.probe live path calls this helper after OS probing, so this stable helper test verifies report population without requiring live permission state"
   );
   let report = output.report.as_ref().expect("report should be set");
   let section = &report.sections[0];
@@ -35,7 +35,7 @@ fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {
 #[test]
 fn permission_probe_rejects_target_before_platform_access() {
   let input = crate::InvokeCommandInput {
-    command_id: "app.probePermissions".to_string(),
+    command_id: "permission.probe".to_string(),
     target: Some(crate::ExecutionTarget::Application {
       id: "com.example.App".to_string(),
     }),
@@ -50,20 +50,20 @@ fn permission_probe_rejects_target_before_platform_access() {
 
 // ROOT CAUSE:
 //
-// If `app.probePermissions` ran where its cell is `Unsupported` (Linux and Windows), the refusal
+// If `permission.probe` ran where its cell is `Unsupported` (Linux and Windows), the refusal
 // reached the caller as `command_failed`, because the handler returned a plain `String` and
 // `InvokeFailure::from(String)` assigns that code.
 //
 // Before the fix, a caller could not tell a platform without a path from a probe that failed. The
 // fix keeps every refusal for an `Unsupported` cell typed as `unsupported`. The refusal does not
-// touch the platform, so the command runs for real here. `app.activate` has a Windows path through
+// touch the platform, so the command runs for real here. `application.activate` has a Windows path through
 // the activation contract; its Linux refusal is covered by
 // `linux_activation_reaches_the_invoke_caller_as_unsupported`.
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn permission_probe_refuses_as_unsupported_off_macos() {
   let input = crate::InvokeCommandInput {
-    command_id: "app.probePermissions".to_string(),
+    command_id: "permission.probe".to_string(),
     target: None,
     inputs: Default::default(),
     typed_args: None,

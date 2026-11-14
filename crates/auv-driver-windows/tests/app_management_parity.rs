@@ -1,4 +1,4 @@
-//! Live empirical verification of `app.activate` and `app.probePermissions`
+//! Live empirical verification of `application.activate` and `permission.probe`
 //! on Windows under `InputPolicy::BackgroundOnly` and foreground policy (#211).
 #![cfg(target_os = "windows")]
 
@@ -189,7 +189,7 @@ fn live_app_management_parity_evaluation() {
 
   let r1 = json!({
     "trial_id": 1,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_background_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -217,7 +217,7 @@ fn live_app_management_parity_evaluation() {
 
   let r2 = json!({
     "trial_id": 2,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_background_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -253,7 +253,7 @@ fn live_app_management_parity_evaluation() {
 
   let r3 = json!({
     "trial_id": 3,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_already_foreground_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -281,7 +281,7 @@ fn live_app_management_parity_evaluation() {
 
   let r4 = json!({
     "trial_id": 4,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_already_foreground_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -327,7 +327,7 @@ fn live_app_management_parity_evaluation() {
 
   let r5 = json!({
     "trial_id": 5,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_minimized_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -369,7 +369,7 @@ fn live_app_management_parity_evaluation() {
 
   let r6 = json!({
     "trial_id": 6,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_minimized_window",
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
     "delivery_result": "success",
@@ -401,7 +401,7 @@ fn live_app_management_parity_evaluation() {
   let err_str_7 = act_res_7.err().unwrap().to_string();
   let r7 = json!({
     "trial_id": 7,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_non_existent_process",
     "api_called": "resolve_window",
     "delivery_result": "aborted_at_resolution",
@@ -430,7 +430,7 @@ fn live_app_management_parity_evaluation() {
   let err_str_8 = act_res_8.err().unwrap().to_string();
   let r8 = json!({
     "trial_id": 8,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "activate_invalid_window_handle",
     "api_called": "activate_window",
     "delivery_result": "rejected",
@@ -483,7 +483,7 @@ fn live_app_management_parity_evaluation() {
 
   let r9 = json!({
     "trial_id": 9,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "rapid_sequential_activates",
     "sequence": ["activate_b", "activate_a"],
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
@@ -528,7 +528,7 @@ fn live_app_management_parity_evaluation() {
 
   let r10 = json!({
     "trial_id": 10,
-    "command": "app.activate",
+    "command": "application.activate",
     "scenario": "rapid_sequential_activates",
     "sequence": ["activate_a", "activate_b"],
     "api_called": "AttachThreadInput + ShowWindow(SW_RESTORE) + BringWindowToTop + SetForegroundWindow",
@@ -546,9 +546,9 @@ fn live_app_management_parity_evaluation() {
   records.push(r10);
 
   // =========================================================================
-  // PART B: app.probePermissions
+  // PART B: permission.probe
   // =========================================================================
-  println!("\n--- PART B: app.probePermissions ---");
+  println!("\n--- PART B: permission.probe ---");
   // Trial 11: Call driver probe_permissions()
   let probe_1 = probe_permissions();
   println!(
@@ -559,7 +559,7 @@ fn live_app_management_parity_evaluation() {
 
   let r11 = json!({
     "trial_id": 11,
-    "command": "app.probePermissions",
+    "command": "permission.probe",
     "scenario": "driver_probe_permissions",
     "api_called": "OpenProcessToken + GetTokenInformation(TokenElevation, TokenUIAccess) + ProcessIdToSessionId",
     "delivery_result": "success",
@@ -582,7 +582,7 @@ fn live_app_management_parity_evaluation() {
 
   let r12 = json!({
     "trial_id": 12,
-    "command": "app.probePermissions",
+    "command": "permission.probe",
     "scenario": "cli_invoke_contract_probe",
     "api_called": "crates/auv-cli-invoke/src/commands/app.rs::read_permissions",
     "delivery_result": "unsupported",
@@ -592,7 +592,7 @@ fn live_app_management_parity_evaluation() {
     "effect_verified": true,
     "semantic_effect": "cli_command_checks_macos_tcc_permissions (screen_recording, accessibility, automation); windows has no equivalent TCC prompts",
     "error_kind": "unsupported_platform_contract",
-    "error_message": "app.probePermissions is only available on macOS"
+    "error_message": "permission.probe is only available on macOS"
   });
   records.push(r12);
 

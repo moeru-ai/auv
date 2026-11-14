@@ -129,6 +129,12 @@ fn run_linux(args: DoctorArgs) -> Result<i32, String> {
   Ok(0)
 }
 
+// TODO(doctor-daemon-tcc-attribution): this probes the `auv doctor` process.
+// The shared auto-started daemon keeps the TCC attribution of whatever
+// terminal or app first started it, so its grants can differ from this
+// report; reporting the daemon's own probe needs a daemon-side permission RPC
+// (a Protobuf change) and stays out of the local Runner default slice. See
+// `docs/ai/references/invoke-cli/2026-11-04-invoke-local-runner-default-design.md`.
 #[cfg(target_os = "macos")]
 fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   let native = auv_driver_macos::native::permission::probe_native_permissions()?;

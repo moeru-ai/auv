@@ -15,6 +15,7 @@ use auv_driver_common::media::{self as shared, MediaCommand, MediaControlOutcome
 use serde::{Deserialize, Serialize};
 
 use crate::error::{backend, not_found};
+use crate::window::without_exe_suffix;
 
 /// Current playback state of an SMTC session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,58 @@ pub struct AudioLookupStats {
   pub session_count: usize,
 }
 
+/// Matches an SMTC session's `SourceAppUserModelId` against an expected process name or ID.
+///
+/// Ensures exact identity matching without loose substring authorization:
+/// - Direct case-insensitive match (e.g. `"QQMusic.exe"` or `"QQMusic"`)
+/// - Windows path ending match (e.g. `r"C:\Program Files\Tencent\QQMusic\QQMusic.exe"`)
+/// - Rejects false positives like `"NotQQMusic.exe"`, `"foo_qqmusic_bar.exe"`.
+pub(crate) fn matches_smtc_app_id(session_app_id: &str, expected: &str) -> bool {
+  let expected_trim = expected.trim();
+  let session_trim = session_app_id.trim();
+  if expected_trim.is_empty() || session_trim.is_empty() {
+    return false;
+  }
+
+  let expected_stem = without_exe_suffix(expected_trim);
+
+  // 1. Direct match on full ID or stem
+  if session_trim.eq_ignore_ascii_case(expected_trim) || session_trim.eq_ignore_ascii_case(expected_stem) {
+    return true;
+  }
+
+  // 2. Trailing executable name if session_app_id is a file path
+  if let Some(file_name) = session_trim.rsplit(&['\\', '/'][..]).next() {
+    if !file_name.is_empty()
+      && (file_name.eq_ignore_ascii_case(expected_trim) || without_exe_suffix(file_name).eq_ignore_ascii_case(expected_stem))
+    {
+      return true;
+    }
+  }
+
+  false
+}
+
+/// Pure helper to select a single matching session from candidate items given an app_id extractor and target.
+///
+/// Semantics match production `find_session`:
+/// - 0 matches: `Ok(None)`
+/// - 1 match: `Ok(Some(item))`
+/// - >1 matches: `Err(InvalidInput)` indicating ambiguous match
+pub(crate) fn select_target_session<T, F>(candidates: Vec<T>, get_app_id: F, expected: &str) -> DriverResult<Option<T>>
+where
+  F: Fn(&T) -> &str,
+{
+  let mut matching: Vec<T> = candidates.into_iter().filter(|item| matches_smtc_app_id(get_app_id(item), expected)).collect();
+  match matching.len() {
+    0 => Ok(None),
+    1 => Ok(matching.pop()),
+    count => Err(auv_driver_common::error::DriverError::InvalidInput {
+      message: format!("Ambiguous match: multiple SMTC sessions (count: {count}) matched target '{expected}'"),
+    }),
+  }
+}
+
 #[cfg(target_os = "windows")]
 mod native {
   use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
@@ -72,7 +125,7 @@ mod native {
     DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceEnumerator,
     ISimpleAudioVolume, MMDeviceEnumerator, eCommunications, eMultimedia, eRender,
   };
-  use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+  use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
   use windows::core::{Interface, PCWSTR};
 
   use super::{AudioLookupStats, AudioLookupStatus, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState};
@@ -278,19 +331,8 @@ mod native {
     }
 
     pub fn find_session(&self, query: &str) -> DriverResult<Option<SmtcSession>> {
-      let lower = query.to_lowercase();
-      if let Ok(Some(current)) = self.current_session()
-        && current.app_id().to_lowercase().contains(&lower)
-      {
-        return Ok(Some(current));
-      }
       let sessions = self.list_sessions()?;
-      for s in sessions {
-        if s.app_id().to_lowercase().contains(&lower) {
-          return Ok(Some(s));
-        }
-      }
-      Ok(None)
+      super::select_target_session(sessions, |s| s.app_id(), query)
     }
 
     pub fn now_playing(&self) -> DriverResult<Option<NowPlayingState>> {
@@ -394,22 +436,7 @@ mod native {
     }
   }
 
-  struct ComGuard {
-    uninit: bool,
-  }
-
-  impl Drop for ComGuard {
-    fn drop(&mut self) {
-      if self.uninit {
-        unsafe { CoUninitialize() };
-      }
-    }
-  }
-
-  fn init_com() -> ComGuard {
-    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    ComGuard { uninit: hr.is_ok() }
-  }
+  use crate::com::init_com;
 
   unsafe fn get_device_id(device: &IMMDevice) -> Option<String> {
     unsafe {

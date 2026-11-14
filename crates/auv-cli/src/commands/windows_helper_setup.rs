@@ -3,8 +3,10 @@
 //! The Helper is `auv-helper.exe --service`, a LocalSystem SCM service with no
 //! network listener, pairing store, or daemon state. The AUV daemon is a
 //! separate, ordinary `auv serve` process that calls the Helper over its
-//! machine-local pipe. Helper setup never installs, starts, or configures the
-//! daemon.
+//! machine-local pipe. Setup also registers the installing user's daemon
+//! logon task (`crate::windows_daemon_task`), which starts that daemon with
+//! the user's limited token in the interactive session; setup never runs a
+//! daemon itself and never configures one as a service.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -14,6 +16,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::windows_daemon_task::{DaemonTask, TaskStatus};
 use auv_device_helper_windows::{SERVICE_ARGUMENT, SERVICE_DISPLAY_NAME, SERVICE_NAME};
 use serde::Serialize;
 use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, HANDLE, HLOCAL, LocalFree};
@@ -113,28 +116,83 @@ struct Status {
   vault_directory: String,
   /// The 0.0.28 `AuvDevice` daemon service, which uninstall removes.
   legacy_service: &'static str,
+  /// This user's daemon logon task: `registered`, `absent`, `stale` when it
+  /// runs as this user but not the current daemon command, or `foreign` when
+  /// a task with its name runs as another user.
+  daemon_task: &'static str,
+  daemon_task_name: String,
+  daemon_task_enabled: bool,
+  /// Task Scheduler state: `ready`, `running`, `queued`, `disabled`, or `unknown`.
+  daemon_task_state: Option<&'static str>,
+  /// Hexadecimal `LastTaskResult`; absent before the first run.
+  daemon_task_last_run_result: Option<String>,
   detail: Option<String>,
 }
 
 pub fn status(json: bool) -> Result<i32, String> {
   let layout = Layout::resolve()?;
-  let status = inspect(&layout)?;
+  let task = DaemonTask::for_current_user()?;
+  let status = inspect(&layout, &task)?;
   print_status(&status, json)?;
   Ok(if status.state == "ready" { 0 } else { 1 })
 }
 
+/// What `install` does, from the existing Helper service and daemon task.
+#[derive(Debug, PartialEq, Eq)]
+enum InstallPlan {
+  /// No Helper service: install the Helper, then register the task.
+  HelperAndTask,
+  /// This installation's Helper exists: leave it untouched and register the
+  /// task, or register it again to repair an owned but stale or disabled one.
+  TaskOnly { repair: bool },
+  /// This installation's Helper and this user's current task both exist.
+  Unchanged,
+}
+
+/// Decide what `install` does. `helper` is `None` when no `AuvHelper` service
+/// exists, else whether it is this installation's Helper (`require_owned`).
+fn plan_install(helper: Option<Result<(), String>>, task_status: &TaskStatus, task: &DaemonTask) -> Result<InstallPlan, String> {
+  // An owned task is replaced; refuse a foreign one before changing anything.
+  require_task_owned(task_status, task)?;
+  match helper {
+    None => Ok(InstallPlan::HelperAndTask),
+    // TODO(windows-helper-upgrade): Replacing an existing AuvHelper in place
+    // needs a stop/replace/start rollback contract; until then reinstall.
+    Some(Err(_)) => Err(format!("{SERVICE_NAME} is already installed; run `auv setup windows-helper uninstall` first to replace it")),
+    Some(Ok(())) if task_status.current && task_status.enabled => Ok(InstallPlan::Unchanged),
+    Some(Ok(())) => Ok(InstallPlan::TaskOnly {
+      repair: task_status.registered,
+    }),
+  }
+}
+
 pub fn install(json: bool) -> Result<i32, String> {
   let layout = Layout::resolve()?;
-  let helper = embedded::EXECUTABLE
-    .ok_or("this auv.exe does not contain the Windows helper; install AUV from an official release, Scoop, or proto before running setup")?;
+  let task = DaemonTask::for_current_user()?;
   let manager = ServiceManager::local_computer(None::<&OsStr>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)
     .map_err(|error| format!("failed to open Windows Service Control Manager (run an elevated terminal): {error}"))?;
 
-  // TODO(windows-helper-upgrade): Replacing an existing AuvHelper in place
-  // needs a stop/replace/start rollback contract; until then reinstall.
-  if open_service(&manager, SERVICE_NAME, ServiceAccess::QUERY_STATUS)?.is_some() {
-    return Err(format!("{SERVICE_NAME} is already installed; run `auv setup windows-helper uninstall` first to replace it"));
+  // An installation from before the daemon task existed has the Helper but no
+  // task; it gains the task here without reinstalling the Helper.
+  let helper_service = open_service(&manager, SERVICE_NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG)?
+    .map(|service| require_owned(&service, SERVICE_NAME, &owned_command(&layout)));
+  let outcome = match plan_install(helper_service, &task.inspect()?, &task)? {
+    InstallPlan::HelperAndTask => None,
+    InstallPlan::TaskOnly { repair } => {
+      task.register()?;
+      Some(if repair { "repaired" } else { "registered" })
+    }
+    InstallPlan::Unchanged => Some("kept the already registered"),
+  };
+  if let Some(outcome) = outcome {
+    eprintln!("{SERVICE_NAME} is already installed; {outcome} {} logon task", task.name());
+    let status = inspect(&layout, &task)?;
+    print_status(&status, json)?;
+    return Ok(if status.state == "ready" { 0 } else { 1 });
   }
+
+  let helper = embedded::EXECUTABLE
+    .ok_or("this auv.exe does not contain the Windows helper; install AUV from an official release, Scoop, or proto before running setup")?;
 
   // The 0.0.28 Helper had no released users, so its daemon service and
   // SYSTEM-only pairing store are not migrated. Uninstall removes the service.
@@ -164,7 +222,10 @@ pub fn install(json: bool) -> Result<i32, String> {
       .set_description("Performs AUV Device lock, unlock, and PIN storage for the logged-in user's own AUV daemon.")
       .map_err(|error| format!("failed to describe {SERVICE_NAME}: {error}"))?;
     service.start::<&OsStr>(&[]).map_err(|error| format!("failed to start {SERVICE_NAME}: {error}"))?;
-    wait_for_state(&service, SERVICE_NAME, ServiceState::Running, Duration::from_secs(30))
+    wait_for_state(&service, SERVICE_NAME, ServiceState::Running, Duration::from_secs(30))?;
+    // Registered last, so a failure here rolls back only the service; the
+    // task does not start the daemon until the next logon or an on-demand run.
+    task.register()
   })();
 
   if let Err(error) = result {
@@ -181,13 +242,15 @@ pub fn install(json: bool) -> Result<i32, String> {
     return Err(error);
   }
 
-  let status = inspect(&layout)?;
+  let status = inspect(&layout, &task)?;
   print_status(&status, json)?;
   Ok(if status.state == "ready" { 0 } else { 1 })
 }
 
 pub fn uninstall(json: bool) -> Result<i32, String> {
   let layout = Layout::resolve()?;
+  let task = DaemonTask::for_current_user()?;
+  require_task_owned(&task.inspect()?, &task)?;
   let manager = ServiceManager::local_computer(None::<&OsStr>, ServiceManagerAccess::CONNECT)
     .map_err(|error| format!("failed to open Windows Service Control Manager (run an elevated terminal): {error}"))?;
   let access = ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG | ServiceAccess::STOP | ServiceAccess::DELETE;
@@ -211,17 +274,27 @@ pub fn uninstall(json: bool) -> Result<i32, String> {
   }
 
   remove_legacy_bootstrap_files(&layout)?;
+  task.unregister()?;
   // Enrolled PINs are durable user state in the Helper-owned vault and are
   // preserved. A 0.0.28 SYSTEM-only `%ProgramData%\AUVDeviceEntry` store is
   // left untouched; nothing reads it any more.
   // TODO(windows-helper-purge): add an explicit, separately confirmed purge
   // command only when the owner approves destructive credential removal.
-  let status = inspect(&layout)?;
+  let status = inspect(&layout, &task)?;
   print_status(&status, json)?;
   Ok(0)
 }
 
-fn inspect(layout: &Layout) -> Result<Status, String> {
+/// Refuse to replace or delete a same-named task that does not run as this
+/// user, such as another user's registration.
+fn require_task_owned(status: &TaskStatus, task: &DaemonTask) -> Result<(), String> {
+  if status.registered && !status.owned {
+    return Err(format!("refusing to manage the {} scheduled task: it does not run as this user", task.name()));
+  }
+  Ok(())
+}
+
+fn inspect(layout: &Layout, task: &DaemonTask) -> Result<Status, String> {
   let helper_installed = regular_file(&layout.helper);
   let manager = ServiceManager::local_computer(None::<&OsStr>, ServiceManagerAccess::CONNECT)
     .map_err(|error| format!("failed to open Windows Service Control Manager: {error}"))?;
@@ -230,7 +303,9 @@ fn inspect(layout: &Layout) -> Result<Status, String> {
   let service_running =
     service.as_ref().and_then(|service| service.query_status().ok()).is_some_and(|status| status.current_state == ServiceState::Running);
   let service_owned = service.as_ref().is_some_and(|service| require_owned(service, SERVICE_NAME, &owned_command(layout)).is_ok());
-  let ready = helper_installed && service_running && service_owned && legacy.is_none();
+  let task_status = task.inspect()?;
+  let task_ready = task_status.current && task_status.enabled;
+  let ready = helper_installed && service_running && service_owned && legacy.is_none() && task_ready;
   let detail = if ready {
     None
   } else if legacy.is_some() {
@@ -241,16 +316,33 @@ fn inspect(layout: &Layout) -> Result<Status, String> {
     Some(format!("{SERVICE_NAME} exists but is not the AUV Helper service owned by this installation"))
   } else if service.is_some() && !service_running {
     Some(format!("{SERVICE_NAME} is installed but not running"))
-  } else if service.is_some() {
+  } else if service.is_some() && !helper_installed {
     Some("auv-helper.exe is missing from the installation directory".into())
-  } else {
+  } else if service.is_none() {
     Some("AUV Helper is not installed".into())
+  } else if task_status.registered && !task_status.owned {
+    Some(format!("the {} scheduled task exists but runs as another user", task.name()))
+  } else if task_status.registered && !task_status.current {
+    Some(format!(
+      "the {} scheduled task does not run this user's current AUV daemon command; run `auv setup windows-helper install` to repair it without touching the Helper",
+      task.name()
+    ))
+  } else if task_status.registered {
+    Some(format!(
+      "the {} scheduled task is disabled; run `auv setup windows-helper install` to enable it without touching the Helper",
+      task.name()
+    ))
+  } else {
+    Some(format!(
+      "the {} logon task is not registered for this user; run `auv setup windows-helper install` to add it without touching the Helper",
+      task.name()
+    ))
   };
 
   Ok(Status {
     state: if ready {
       "ready"
-    } else if service.is_none() && legacy.is_none() && !helper_installed {
+    } else if service.is_none() && legacy.is_none() && !helper_installed && !task_status.registered {
       "not_installed"
     } else {
       "degraded"
@@ -269,6 +361,16 @@ fn inspect(layout: &Layout) -> Result<Status, String> {
     } else {
       "absent"
     },
+    daemon_task: match (task_status.registered, task_status.owned, task_status.current) {
+      (false, ..) => "absent",
+      (true, false, _) => "foreign",
+      (true, true, false) => "stale",
+      (true, true, true) => "registered",
+    },
+    daemon_task_name: task.name().into(),
+    daemon_task_enabled: task_status.enabled,
+    daemon_task_state: task_status.registered.then_some(task_status.state),
+    daemon_task_last_run_result: task_status.last_run_result,
     detail,
   })
 }
@@ -472,6 +574,15 @@ fn print_status(status: &Status, json: bool) -> Result<(), String> {
     println!("install_directory\t{}", status.install_directory);
     println!("vault_directory\t{}", status.vault_directory);
     println!("legacy_service\t{}", status.legacy_service);
+    println!("daemon_task\t{}", status.daemon_task);
+    println!("daemon_task_name\t{}", status.daemon_task_name);
+    println!("daemon_task_enabled\t{}", status.daemon_task_enabled);
+    if let Some(state) = status.daemon_task_state {
+      println!("daemon_task_state\t{state}");
+    }
+    if let Some(result) = &status.daemon_task_last_run_result {
+      println!("daemon_task_last_run_result\t{result}");
+    }
     if let Some(detail) = &status.detail {
       println!("detail\t{detail}");
     }
@@ -534,5 +645,52 @@ mod tests {
     assert_eq!(command_arguments(legacy), Some(layout.legacy_command()));
     assert_ne!(command_arguments(&legacy.replace(":9847", ":9848")), Some(layout.legacy_command()));
     assert_ne!(command_arguments(&legacy.replace("AUVDeviceEntry", "ForeignStore")), Some(layout.legacy_command()));
+  }
+
+  fn task_status(owned: bool, current: bool) -> TaskStatus {
+    TaskStatus {
+      registered: true,
+      owned,
+      current,
+      enabled: true,
+      state: "ready",
+      last_run_result: None,
+    }
+  }
+
+  // ROOT CAUSE:
+  //
+  // If the AuvHelper service already existed, install refused, and status
+  // reported the missing daemon task as degraded. Installs from before the
+  // task existed could only recover by uninstalling the Helper.
+  //
+  // The fix keeps this installation's Helper untouched and registers only
+  // the current user's task.
+  #[test]
+  fn install_with_existing_helper_registers_only_the_missing_task() {
+    let task = DaemonTask::for_current_user().expect("current user task");
+
+    assert_eq!(plan_install(Some(Ok(())), &TaskStatus::default(), &task), Ok(InstallPlan::TaskOnly { repair: false }));
+    assert_eq!(plan_install(Some(Ok(())), &task_status(true, false), &task), Ok(InstallPlan::TaskOnly { repair: true }));
+    assert_eq!(plan_install(Some(Ok(())), &task_status(true, true), &task), Ok(InstallPlan::Unchanged));
+    let disabled = TaskStatus {
+      enabled: false,
+      ..task_status(true, true)
+    };
+    assert_eq!(plan_install(Some(Ok(())), &disabled, &task), Ok(InstallPlan::TaskOnly { repair: true }));
+    assert_eq!(plan_install(None, &TaskStatus::default(), &task), Ok(InstallPlan::HelperAndTask));
+  }
+
+  #[test]
+  fn install_refuses_a_foreign_task_and_a_different_helper() {
+    let task = DaemonTask::for_current_user().expect("current user task");
+    let foreign = task_status(false, false);
+
+    for helper in [None, Some(Ok(())), Some(Err("different".to_string()))] {
+      let error = plan_install(helper, &foreign, &task).expect_err("foreign task");
+      assert!(error.contains("does not run as this user"), "{error}");
+    }
+    let error = plan_install(Some(Err("different".into())), &TaskStatus::default(), &task).expect_err("different helper");
+    assert!(error.contains("uninstall` first to replace it"), "{error}");
   }
 }

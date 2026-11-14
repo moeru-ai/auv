@@ -2,17 +2,17 @@
 
 use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
-use auv_api_proto::auv::api::driver::macos::v1::media_control_service_server::{MediaControlService, MediaControlServiceServer};
+use auv_api_proto::auv::api::driver::macos::v1::media_service_server::{MediaService, MediaServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::permission_service_server::{PermissionService, PermissionServiceServer};
 use auv_api_proto::auv::api::driver::v1 as proto;
 use auv_api_proto::auv::api::driver::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
 use auv_api_proto::auv::api::driver::v1::capture_service_server::{CaptureService, CaptureServiceServer};
 use auv_api_proto::auv::api::driver::v1::display_service_server::{DisplayService, DisplayServiceServer};
+use auv_api_proto::auv::api::driver::v1::frame_buffer_service_server::FrameBufferServiceServer;
 use auv_api_proto::auv::api::driver::v1::input_service_server::{InputService, InputServiceServer};
 use auv_api_proto::auv::api::driver::v1::overlay_service_server::{OverlayService, OverlayServiceServer};
-use auv_api_proto::auv::api::driver::v1::recent_frames_service_server::RecentFramesServiceServer;
-use auv_api_proto::auv::api::driver::v1::text_recognition_service_server::{TextRecognitionService, TextRecognitionServiceServer};
+use auv_api_proto::auv::api::driver::v1::text_service_server::{TextService, TextServiceServer};
 use auv_api_proto::auv::api::driver::v1::window_service_server::{WindowService, WindowServiceServer};
 use std::pin::Pin;
 
@@ -27,25 +27,25 @@ use auv_driver::{Driver as _, WindowInput as _};
 
 struct LocalDisplayService {
   session: auv_driver::LocalDriverSession,
+  captures: CaptureStore,
 }
 
 struct LocalWindowService {
   session: auv_driver::LocalDriverSession,
-}
-
-struct LocalCaptureService {
-  session: auv_driver::LocalDriverSession,
   captures: CaptureStore,
 }
 
-struct LocalTextRecognitionService {
+struct LocalCaptureService {
+  captures: CaptureStore,
+}
+
+struct LocalTextService {
   session: auv_driver::LocalDriverSession,
   captures: CaptureStore,
 }
 
 struct LocalInputService {
   session: auv_driver::LocalDriverSession,
-  captures: CaptureStore,
 }
 
 impl Drop for LocalInputService {
@@ -380,10 +380,10 @@ fn requested_application_id(application_id: &str) -> Result<&str, Status> {
 }
 
 #[derive(Default)]
-struct LocalMediaControlService;
+struct LocalMediaService;
 
 #[tonic::async_trait]
-impl MediaControlService for LocalMediaControlService {
+impl MediaService for LocalMediaService {
   async fn get_now_playing(
     &self,
     _request: Request<macos_proto::GetNowPlayingRequest>,
@@ -394,38 +394,44 @@ impl MediaControlService for LocalMediaControlService {
     }))
   }
 
-  async fn play(&self, _request: Request<macos_proto::PlayRequest>) -> Result<Response<macos_proto::PlayResponse>, Status> {
-    Ok(Response::new(macos_proto::PlayResponse {
+  async fn play_media(&self, _request: Request<macos_proto::PlayMediaRequest>) -> Result<Response<macos_proto::PlayMediaResponse>, Status> {
+    Ok(Response::new(macos_proto::PlayMediaResponse {
       outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::Play)?)?),
     }))
   }
 
-  async fn pause(&self, _request: Request<macos_proto::PauseRequest>) -> Result<Response<macos_proto::PauseResponse>, Status> {
-    Ok(Response::new(macos_proto::PauseResponse {
+  async fn pause_media(
+    &self,
+    _request: Request<macos_proto::PauseMediaRequest>,
+  ) -> Result<Response<macos_proto::PauseMediaResponse>, Status> {
+    Ok(Response::new(macos_proto::PauseMediaResponse {
       outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::Pause)?)?),
     }))
   }
 
-  async fn toggle_play_pause(
+  async fn toggle_media_playback(
     &self,
-    _request: Request<macos_proto::TogglePlayPauseRequest>,
-  ) -> Result<Response<macos_proto::TogglePlayPauseResponse>, Status> {
-    Ok(Response::new(macos_proto::TogglePlayPauseResponse {
+    _request: Request<macos_proto::ToggleMediaPlaybackRequest>,
+  ) -> Result<Response<macos_proto::ToggleMediaPlaybackResponse>, Status> {
+    Ok(Response::new(macos_proto::ToggleMediaPlaybackResponse {
       outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::TogglePlayPause)?)?),
     }))
   }
 
-  async fn next_track(&self, _request: Request<macos_proto::NextTrackRequest>) -> Result<Response<macos_proto::NextTrackResponse>, Status> {
-    Ok(Response::new(macos_proto::NextTrackResponse {
+  async fn skip_to_next_track(
+    &self,
+    _request: Request<macos_proto::SkipToNextTrackRequest>,
+  ) -> Result<Response<macos_proto::SkipToNextTrackResponse>, Status> {
+    Ok(Response::new(macos_proto::SkipToNextTrackResponse {
       outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::NextTrack)?)?),
     }))
   }
 
-  async fn previous_track(
+  async fn skip_to_previous_track(
     &self,
-    _request: Request<macos_proto::PreviousTrackRequest>,
-  ) -> Result<Response<macos_proto::PreviousTrackResponse>, Status> {
-    Ok(Response::new(macos_proto::PreviousTrackResponse {
+    _request: Request<macos_proto::SkipToPreviousTrackRequest>,
+  ) -> Result<Response<macos_proto::SkipToPreviousTrackResponse>, Status> {
+    Ok(Response::new(macos_proto::SkipToPreviousTrackResponse {
       outcome: Some(media_control_outcome_to_proto(control_media(auv_driver::media::MediaCommand::PreviousTrack)?)?),
     }))
   }
@@ -442,7 +448,7 @@ fn read_now_playing() -> Result<auv_driver::media::NowPlayingState, Status> {
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    Err(Status::unimplemented("MediaControlService is unsupported on this platform"))
+    Err(Status::unimplemented("MediaService is unsupported on this platform"))
   }
 }
 
@@ -458,7 +464,7 @@ fn control_media(command: auv_driver::media::MediaCommand) -> Result<auv_driver:
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = command;
-    Err(Status::unimplemented("MediaControlService is unsupported on this platform"))
+    Err(Status::unimplemented("MediaService is unsupported on this platform"))
   }
 }
 
@@ -598,13 +604,15 @@ impl InputService for LocalInputService {
       mouse: self.session.input().create_mouse().map_err(driver_status)?,
     }))
   }
-  async fn remove_mouse(&self, request: Request<proto::RemoveMouseRequest>) -> Result<Response<proto::RemoveMouseResponse>, Status> {
+
+  async fn delete_mouse(&self, request: Request<proto::DeleteMouseRequest>) -> Result<Response<proto::DeleteMouseResponse>, Status> {
     let session = self.session.clone();
     let action = run_input_blocking(move || session.input().remove_mouse(request.into_inner().mouse)).await?;
-    Ok(Response::new(proto::RemoveMouseResponse {
+    Ok(Response::new(proto::DeleteMouseResponse {
       action: Some(input_action_to_proto(action)?),
     }))
   }
+
   async fn mouse_down(&self, request: Request<proto::MouseDownRequest>) -> Result<Response<proto::MouseDownResponse>, Status> {
     let request = request.into_inner();
     let point = screen_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?.point();
@@ -621,6 +629,7 @@ impl InputService for LocalInputService {
       action: Some(input_action_to_proto(action)?),
     }))
   }
+
   async fn mouse_up(&self, request: Request<proto::MouseUpRequest>) -> Result<Response<proto::MouseUpResponse>, Status> {
     let session = self.session.clone();
     let action = run_input_blocking(move || session.input().mouse_up(request.into_inner().mouse)).await?;
@@ -628,6 +637,7 @@ impl InputService for LocalInputService {
       action: Some(input_action_to_proto(action)?),
     }))
   }
+
   async fn drag_mouse(&self, request: Request<proto::DragMouseRequest>) -> Result<Response<proto::DragMouseResponse>, Status> {
     let request = request.into_inner();
     let movement =
@@ -641,9 +651,12 @@ impl InputService for LocalInputService {
     }))
   }
 
-  /// InputService::InputKeyboard -> typed action validation -> InputApi::input_keyboard.
+  /// InputService::PerformKeyboardInputs -> typed action validation -> InputApi::input_keyboard.
   /// Missing targets fail before delivery; driver failures retain partial progress.
-  async fn input_keyboard(&self, request: Request<proto::InputKeyboardRequest>) -> Result<Response<proto::InputKeyboardResponse>, Status> {
+  async fn perform_keyboard_inputs(
+    &self,
+    request: Request<proto::PerformKeyboardInputsRequest>,
+  ) -> Result<Response<proto::PerformKeyboardInputsResponse>, Status> {
     let request = request.into_inner();
     let inputs = request
       .inputs
@@ -666,7 +679,7 @@ impl InputService for LocalInputService {
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
       let actions = self.session.input().input_keyboard(&target, inputs, request.dry_run).map_err(keyboard_input_status)?;
-      Ok(Response::new(proto::InputKeyboardResponse {
+      Ok(Response::new(proto::PerformKeyboardInputsResponse {
         actions: actions.unwrap_or_default().into_iter().map(input_action_to_proto).collect::<Result<_, _>>()?,
       }))
     }
@@ -677,11 +690,11 @@ impl InputService for LocalInputService {
     }
   }
 
-  /// InputService::PressKeys -> one press action -> InputService::InputKeyboard.
+  /// InputService::PressKeys -> one press action -> InputService::PerformKeyboardInputs.
   async fn press_keys(&self, request: Request<proto::PressKeysRequest>) -> Result<Response<proto::PressKeysResponse>, Status> {
     let request = request.into_inner();
     let mut response = self
-      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      .perform_keyboard_inputs(Request::new(proto::PerformKeyboardInputsRequest {
         target: request.target,
         dry_run: request.dry_run,
         inputs: vec![proto::KeyboardInput {
@@ -740,9 +753,7 @@ impl InputService for LocalInputService {
   }
 
   type MoveMouseStream = Pin<Box<dyn Stream<Item = Result<proto::MoveMouseStreamResponse, Status>> + Send>>;
-  type ScrollWindowPointMotionStream = Pin<Box<dyn Stream<Item = Result<proto::ScrollWindowPointMotionResponse, Status>> + Send>>;
-  type StreamScrollStream = Pin<Box<dyn Stream<Item = Result<proto::StreamScrollResponse, Status>> + Send>>;
-  type ScrollUntilStream = Pin<Box<dyn Stream<Item = Result<proto::ScrollUntilResponse, Status>> + Send>>;
+
   type StreamMouseMotionStream = Pin<Box<dyn Stream<Item = Result<proto::StreamMouseMotionResponse, Status>> + Send>>;
 
   async fn click_point(&self, request: Request<proto::ClickPointRequest>) -> Result<Response<proto::ClickPointResponse>, Status> {
@@ -784,141 +795,11 @@ impl InputService for LocalInputService {
     }))
   }
 
-  async fn scroll_window_point(
-    &self,
-    request: Request<proto::ScrollWindowPointRequest>,
-  ) -> Result<Response<proto::ScrollWindowPointResponse>, Status> {
-    let request = request.into_inner();
-    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
-    let scroll = scroll_from_proto(request.scroll)?;
-    let options = scroll_options_from_proto(request.options)?;
-    let window = resolve_window_ref(&self.session, window_ref)?;
-    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
-    require_point_inside_window(&window, point)?;
-    let session = self.session.clone();
-    let target = window.clone();
-    let action = run_input_blocking(move || session.window().scroll(&target, point, scroll, options)).await?;
-    Ok(Response::new(proto::ScrollWindowPointResponse {
-      window: Some(window_to_proto(window)),
-      point: Some(window_point_to_proto(point)),
-      scroll: Some(proto::Scroll {
-        delta_x: scroll.delta_x,
-        delta_y: scroll.delta_y,
-      }),
-      action: Some(input_action_to_proto(action)?),
-    }))
-  }
-
-  async fn scroll_window_point_motion(
-    &self,
-    request: Request<proto::ScrollWindowPointMotionRequest>,
-  ) -> Result<Response<Self::ScrollWindowPointMotionStream>, Status> {
-    let request = request.into_inner();
-    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
-    let motion = scroll_motion_from_proto(request.motion)?;
-    let options = scroll_options_from_proto(request.options)?;
-    let schedule = motion.schedule().map_err(driver_status)?;
-    let window = resolve_window_ref(&self.session, window_ref)?;
-    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
-    require_point_inside_window(&window, point)?;
-    let started = proto::ScrollMotionStarted {
-      window: Some(window_to_proto(window.clone())),
-      point: Some(window_point_to_proto(point)),
-      planned_sample_count: schedule.len(),
-      duration: Some(duration_to_proto(schedule.duration())),
-    };
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let session = self.session.clone();
-    tokio::spawn(async move {
-      let disconnected = sender.clone();
-      let operation = relay_scroll_motion(session, window, point, motion, options, started, sender);
-      tokio::select! {
-        _ = disconnected.closed() => {},
-        _ = operation => {},
-      }
-    });
-    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
-  }
-
-  async fn stream_scroll(
-    &self,
-    request: Request<tonic::Streaming<proto::StreamScrollRequest>>,
-  ) -> Result<Response<Self::StreamScrollStream>, Status> {
-    use proto::stream_scroll_request::Event;
-    let mut requests = request.into_inner();
-    let begin = match requests.next().await.transpose()?.and_then(|request| request.event) {
-      Some(Event::Begin(begin)) => begin,
-      _ => return Err(Status::invalid_argument("begin must be the first StreamScroll event")),
-    };
-    let window_ref = begin.window.ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
-    let position = position_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
-    let options = scroll_options_from_proto(begin.options)?;
-    let stream_options = auv_driver::ScrollStreamOptions {
-      sample_rate_hz: begin.sample_rate_hz,
-      max_acceleration: begin.max_acceleration,
-      lease: duration_from_proto(
-        Some(begin.lease.ok_or_else(|| Status::invalid_argument("begin.lease is required"))?),
-        std::time::Duration::ZERO,
-        "begin.lease",
-      )?,
-    };
-    stream_options.validate().map_err(driver_status)?;
-    let window = resolve_window_ref(&self.session, window_ref)?;
-    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
-    require_point_inside_window(&window, point)?;
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let session = self.session.clone();
-    tokio::spawn(async move {
-      let disconnected = sender.clone();
-      let operation = relay_scroll_stream(session, window, point, stream_options, options, requests, sender);
-      tokio::select! {
-        _ = disconnected.closed() => {},
-        _ = operation => {},
-      }
-    });
-    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
-  }
-
-  async fn scroll_until(
-    &self,
-    request: Request<tonic::Streaming<proto::ScrollUntilRequest>>,
-  ) -> Result<Response<Self::ScrollUntilStream>, Status> {
-    use proto::scroll_until_request::Event;
-    let mut requests = request.into_inner();
-    let begin = match requests.next().await.transpose()?.and_then(|request| request.event) {
-      Some(Event::Begin(begin)) => begin,
-      _ => return Err(Status::invalid_argument("begin must be the first ScrollUntil event")),
-    };
-    let window_ref = begin.window.clone().ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
-    let position = position_from_proto(begin.point.clone().ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
-    let options = scroll_options_from_proto(begin.options.clone())?;
-    let await_decisions = begin.await_decisions;
-    let until = scroll_until_request_from_proto(begin)?;
-    until.validate().map_err(driver_status)?;
-    let window = resolve_window_ref(&self.session, window_ref)?;
-    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
-    require_point_inside_window(&window, point)?;
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let session = self.session.clone();
-    let captures = self.captures.clone();
-    tokio::spawn(async move {
-      let disconnected = sender.clone();
-      let operation = relay_scroll_until(session, window, point, options, until, await_decisions, captures, requests, sender);
-      tokio::select! {
-        _ = disconnected.closed() => {},
-        _ = operation => {},
-      }
-    });
-    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
-  }
-
   async fn scroll_point(&self, request: Request<proto::ScrollPointRequest>) -> Result<Response<proto::ScrollPointResponse>, Status> {
     let request = request.into_inner();
     let position = position_from_proto(request.position.ok_or_else(|| Status::invalid_argument("position is required"))?)?;
     if matches!(position.coordinate_space, auv_driver::CoordinateSpace::Window(_)) {
-      return Err(Status::invalid_argument("a window position needs its window; use ScrollWindowPoint"));
+      return Err(Status::invalid_argument("a window position needs its window; use WindowService.ScrollWindow"));
     }
     let scroll = scroll_from_proto(request.scroll)?;
     let settle = duration_from_proto(request.settle, std::time::Duration::ZERO, "settle")?;
@@ -1026,25 +907,6 @@ impl InputService for LocalInputService {
       Err(Status::unimplemented("PasteText is unavailable on this local Driver platform"))
     }
   }
-
-  async fn press_key(&self, request: Request<proto::PressKeyRequest>) -> Result<Response<proto::PressKeyResponse>, Status> {
-    let request = request.into_inner();
-    if request.key.trim().is_empty() {
-      return Err(Status::invalid_argument("key is required"));
-    }
-    let settle = duration_from_proto(request.settle, std::time::Duration::ZERO, "settle")?;
-    let action = self
-      .session
-      .input()
-      .press_key(auv_driver::KeyPressOptions {
-        key: request.key,
-        settle,
-      })
-      .map_err(driver_status)?;
-    Ok(Response::new(proto::PressKeyResponse {
-      action: Some(input_action_to_proto(action)?),
-    }))
-  }
 }
 
 /// Convert the explicit recipient and bind a window to its observed owner.
@@ -1128,13 +990,10 @@ pub(super) fn resolve_window_ref(
   if window_ref.window_id.trim().is_empty() {
     return Err(Status::invalid_argument("window.window_id is required"));
   }
-  session
-    .window()
-    .list()
-    .map_err(driver_status)?
-    .into_iter()
-    .find(|window| window.reference.id == window_ref.window_id)
-    .ok_or_else(|| Status::not_found(format!("unknown Window: {}", window_ref.window_id)))
+  // NOTICE: every platform's `get` is a full listing plus a lookup today, so
+  // this costs what the former list-and-find did. `TODO(window-list-cache)`:
+  // the watch model becomes the cache; no other cache is added before it.
+  session.window().get(&window_ref.window_id).map_err(driver_status)
 }
 
 /// Window-point input is accepted only inside the freshly resolved Window, so a
@@ -1301,10 +1160,10 @@ async fn relay_scroll_motion(
   motion: auv_driver::ScrollMotion,
   options: auv_driver::ScrollOptions,
   started: proto::ScrollMotionStarted,
-  sender: tokio::sync::mpsc::Sender<Result<proto::ScrollWindowPointMotionResponse, Status>>,
+  sender: tokio::sync::mpsc::Sender<Result<proto::ScrollWindowWithMotionResponse, Status>>,
 ) {
-  use proto::scroll_window_point_motion_response::Event;
-  let response = |event| proto::ScrollWindowPointMotionResponse { event: Some(event) };
+  use proto::scroll_window_with_motion_response::Event;
+  let response = |event| proto::ScrollWindowWithMotionResponse { event: Some(event) };
   if sender.send(Ok(response(Event::Started(started)))).await.is_err() {
     return;
   }
@@ -1356,12 +1215,12 @@ async fn relay_scroll_stream(
   point: auv_driver::WindowPoint,
   stream: auv_driver::ScrollStreamOptions,
   options: auv_driver::ScrollOptions,
-  mut requests: tonic::Streaming<proto::StreamScrollRequest>,
-  sender: tokio::sync::mpsc::Sender<Result<proto::StreamScrollResponse, Status>>,
+  mut requests: tonic::Streaming<proto::StreamWindowScrollRequest>,
+  sender: tokio::sync::mpsc::Sender<Result<proto::StreamWindowScrollResponse, Status>>,
 ) {
-  use proto::stream_scroll_request::Event as Request;
-  use proto::stream_scroll_response::Event;
-  let response = |event| proto::StreamScrollResponse { event: Some(event) };
+  use proto::stream_window_scroll_request::Event as Request;
+  use proto::stream_window_scroll_response::Event;
+  let response = |event| proto::StreamWindowScrollResponse { event: Some(event) };
   let started = response(Event::Started(proto::StreamScrollStarted {
     window: Some(window_to_proto(window.clone())),
     point: Some(window_point_to_proto(point)),
@@ -1397,7 +1256,7 @@ async fn relay_scroll_stream(
       }
       request = requests.next(), if requests_open => {
         match request.transpose() {
-          Ok(Some(proto::StreamScrollRequest { event: Some(Request::SetVelocity(update)) })) => {
+          Ok(Some(proto::StreamWindowScrollRequest { event: Some(Request::SetVelocity(update)) })) => {
             let velocity = update.velocity.unwrap_or_default();
             if let Err(error) = control.set_velocity(auv_driver::ScrollVelocity::new(velocity.delta_x_per_second, velocity.delta_y_per_second)) {
               control.cancel();
@@ -1405,11 +1264,11 @@ async fn relay_scroll_stream(
               return;
             }
           }
-          Ok(Some(proto::StreamScrollRequest { event: Some(Request::Stop(_)) })) => control.stop(),
-          Ok(Some(proto::StreamScrollRequest { event: Some(Request::Cancel(_)) })) => control.cancel(),
+          Ok(Some(proto::StreamWindowScrollRequest { event: Some(Request::Stop(_)) })) => control.stop(),
+          Ok(Some(proto::StreamWindowScrollRequest { event: Some(Request::Cancel(_)) })) => control.cancel(),
           Ok(Some(_)) => {
             control.cancel();
-            let _ = sender.send(Err(Status::invalid_argument("StreamScroll accepts begin once, then set_velocity, stop, or cancel"))).await;
+            let _ = sender.send(Err(Status::invalid_argument("StreamWindowScroll accepts begin once, then set_velocity, stop, or cancel"))).await;
             return;
           }
           // Half-close without an explicit stop: finish gracefully.
@@ -1461,11 +1320,11 @@ async fn relay_scroll_until(
   until: auv_scan::ScrollUntilRequest,
   await_decisions: bool,
   captures: CaptureStore,
-  mut requests: tonic::Streaming<proto::ScrollUntilRequest>,
-  sender: tokio::sync::mpsc::Sender<Result<proto::ScrollUntilResponse, Status>>,
+  mut requests: tonic::Streaming<proto::ScrollWindowUntilRequest>,
+  sender: tokio::sync::mpsc::Sender<Result<proto::ScrollWindowUntilResponse, Status>>,
 ) {
-  use proto::scroll_until_response::Event;
-  let response = |event| proto::ScrollUntilResponse { event: Some(event) };
+  use proto::scroll_window_until_response::Event;
+  let response = |event| proto::ScrollWindowUntilResponse { event: Some(event) };
   let (decision_tx, decision_rx) = std::sync::mpsc::channel::<Result<bool, String>>();
   let forward = async move {
     // Owning the sender here drops it when forwarding ends, which wakes a
@@ -1473,8 +1332,8 @@ async fn relay_scroll_until(
     let decision_tx = decision_tx;
     loop {
       let decision = match requests.next().await {
-        Some(Ok(proto::ScrollUntilRequest {
-          event: Some(proto::scroll_until_request::Event::Decision(decision)),
+        Some(Ok(proto::ScrollWindowUntilRequest {
+          event: Some(proto::scroll_window_until_request::Event::Decision(decision)),
         })) => Ok(decision.stop),
         Some(Ok(_)) => Err("only decision events may follow begin".to_string()),
         Some(Err(status)) => Err(status.message().to_string()),
@@ -2078,7 +1937,7 @@ fn input_action_to_proto(action: auv_driver::InputActionResult) -> Result<proto:
 }
 
 #[tonic::async_trait]
-impl TextRecognitionService for LocalTextRecognitionService {
+impl TextService for LocalTextService {
   async fn recognize_text(&self, request: Request<proto::RecognizeTextRequest>) -> Result<Response<proto::RecognizeTextResponse>, Status> {
     let request = request.into_inner();
     // Results for a held capture are cached on its pixels: OCR is the costly
@@ -2113,85 +1972,6 @@ impl TextRecognitionService for LocalTextRecognitionService {
       self.captures.remember_recognition(&id, cache_key, recognition.clone());
     }
     Ok(Response::new(recognition_to_proto(recognition)))
-  }
-
-  async fn find_window_text(
-    &self,
-    request: Request<proto::FindWindowTextRequest>,
-  ) -> Result<Response<proto::FindWindowTextResponse>, Status> {
-    let request = request.into_inner();
-    if request.query.trim().is_empty() {
-      return Err(Status::invalid_argument("query is required"));
-    }
-    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
-    let capture = self.session.window().capture(&window).map_err(driver_status)?;
-    let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
-    let matches = self
-      .session
-      .vision()
-      .find_text_in_capture_with_options(
-        &capture,
-        &request.query,
-        region,
-        recognition_options(request.custom_words, request.recognition_languages),
-      )
-      .map_err(driver_status)?;
-    Ok(Response::new(proto::FindWindowTextResponse {
-      window: Some(window_to_proto(window)),
-      matches: matches
-        .matches
-        .into_iter()
-        .map(|matched| proto::TextMatch {
-          text: matched.text,
-          bounds: Some(rect_to_proto(matched.bounds)),
-          confidence: matched.confidence,
-        })
-        .collect(),
-      capture: Some(stored_capture_to_proto(&self.captures, capture)),
-    }))
-  }
-
-  async fn find_display_text(
-    &self,
-    request: Request<proto::FindDisplayTextRequest>,
-  ) -> Result<Response<proto::FindDisplayTextResponse>, Status> {
-    let request = request.into_inner();
-    if request.query.trim().is_empty() {
-      return Err(Status::invalid_argument("query is required"));
-    }
-    let display = display_selector_from_proto(request.selector)?;
-    let captured = self
-      .session
-      .display()
-      .capture(auv_driver::CaptureOptions {
-        display,
-        ..Default::default()
-      })
-      .map_err(driver_status)?;
-    let region = image_region_from_proto(request.region, request.screen_region, captured.capture.bounds)?;
-    let matches = self
-      .session
-      .vision()
-      .find_text_in_capture_with_options(
-        &captured.capture,
-        &request.query,
-        region,
-        recognition_options(request.custom_words, request.recognition_languages),
-      )
-      .map_err(driver_status)?;
-    Ok(Response::new(proto::FindDisplayTextResponse {
-      display: Some(display_to_proto(captured.display)),
-      matches: matches
-        .matches
-        .into_iter()
-        .map(|matched| proto::TextMatch {
-          text: matched.text,
-          bounds: Some(rect_to_proto(matched.bounds)),
-          confidence: matched.confidence,
-        })
-        .collect(),
-      capture: Some(stored_capture_to_proto(&self.captures, captured.capture)),
-    }))
   }
 }
 
@@ -2429,67 +2209,6 @@ impl CaptureService for LocalCaptureService {
     }
     Ok(Response::new(response))
   }
-
-  async fn capture_window(&self, request: Request<proto::CaptureWindowRequest>) -> Result<Response<proto::CaptureWindowResponse>, Status> {
-    let request = request.into_inner();
-    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
-    let options = auv_driver::CaptureOptions {
-      resolution: capture_resolution_from_proto(request.resolution)?,
-      ..Default::default()
-    };
-    let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
-    let capture = stored_capture_to_proto(&self.captures, capture);
-    record_stored_capture(&self.captures, &capture, "auv.driver.window_capture");
-    Ok(Response::new(proto::CaptureWindowResponse {
-      window: Some(window_to_proto(window)),
-      capture: Some(capture),
-    }))
-  }
-
-  async fn capture_display(
-    &self,
-    request: Request<proto::CaptureDisplayRequest>,
-  ) -> Result<Response<proto::CaptureDisplayResponse>, Status> {
-    let request = request.into_inner();
-    let display = display_selector_from_proto(request.selector)?;
-    let captured = self
-      .session
-      .display()
-      .capture(auv_driver::CaptureOptions {
-        display,
-        resolution: capture_resolution_from_proto(request.resolution)?,
-        ..Default::default()
-      })
-      .map_err(driver_status)?;
-    let capture = stored_capture_to_proto(&self.captures, captured.capture);
-    record_stored_capture(&self.captures, &capture, "auv.driver.display_capture");
-    Ok(Response::new(proto::CaptureDisplayResponse {
-      display: Some(display_to_proto(captured.display)),
-      capture: Some(capture),
-    }))
-  }
-
-  async fn capture_region(&self, request: Request<proto::CaptureRegionRequest>) -> Result<Response<proto::CaptureRegionResponse>, Status> {
-    let request = request.into_inner();
-    let display = display_selector_from_proto(request.selector)?;
-    let region = rect_from_proto(request.region.ok_or_else(|| Status::invalid_argument("region is required"))?, "region")?;
-    let captured = self
-      .session
-      .display()
-      .capture_region(auv_driver::CaptureOptions {
-        display,
-        region: Some(region),
-        resolution: capture_resolution_from_proto(request.resolution)?,
-        ..Default::default()
-      })
-      .map_err(driver_status)?;
-    let capture = stored_capture_to_proto(&self.captures, captured.capture);
-    record_stored_capture(&self.captures, &capture, "auv.driver.screen_region_capture");
-    Ok(Response::new(proto::CaptureRegionResponse {
-      display: Some(display_to_proto(captured.display)),
-      capture: Some(capture),
-    }))
-  }
 }
 
 fn capture_resolution_from_proto(value: i32) -> Result<auv_driver::CaptureResolution, Status> {
@@ -2511,9 +2230,66 @@ pub(super) fn display_selector_from_proto(selector: Option<proto::DisplaySelecto
 
 #[tonic::async_trait]
 impl WindowService for LocalWindowService {
-  async fn list_windows(&self, _request: Request<proto::ListWindowsRequest>) -> Result<Response<proto::ListWindowsResponse>, Status> {
-    let windows = self.session.window().list().map_err(driver_status)?.into_iter().map(window_to_proto).collect();
+  async fn list_windows(&self, request: Request<proto::ListWindowsRequest>) -> Result<Response<proto::ListWindowsResponse>, Status> {
+    let request = request.into_inner();
+    let filter = auv_driver::WindowListFilter {
+      exclude_minimized: request.exclude_minimized,
+      exclude_other_desktops: request.exclude_other_desktops,
+    };
+    let windows =
+      self.session.window().list().map_err(driver_status)?.into_iter().filter(|window| filter.keeps(window)).map(window_to_proto).collect();
     Ok(Response::new(proto::ListWindowsResponse { windows }))
+  }
+
+  async fn get_window(&self, request: Request<proto::GetWindowRequest>) -> Result<Response<proto::GetWindowResponse>, Status> {
+    let window =
+      resolve_window_ref(&self.session, request.into_inner().window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    Ok(Response::new(proto::GetWindowResponse {
+      window: Some(window_to_proto(window)),
+    }))
+  }
+
+  async fn set_window_frame(
+    &self,
+    request: Request<proto::SetWindowFrameRequest>,
+  ) -> Result<Response<proto::SetWindowFrameResponse>, Status> {
+    let request = request.into_inner();
+    let origin = request.origin.map(|origin| auv_driver::Point::new(origin.x, origin.y));
+    let size = request.size.map(|size| auv_driver::Size::new(size.width, size.height));
+    if origin.is_none() && size.is_none() {
+      return Err(Status::invalid_argument("SetWindowFrame needs an origin, a size, or both"));
+    }
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().set_frame(&window, origin, size, Default::default())).await?;
+    Ok(Response::new(proto::SetWindowFrameResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
+  }
+
+  async fn set_window_state(
+    &self,
+    request: Request<proto::SetWindowStateRequest>,
+  ) -> Result<Response<proto::SetWindowStateResponse>, Status> {
+    let request = request.into_inner();
+    let state = auv::protocol::window::decode_state_target(request.state)
+      .ok_or_else(|| Status::invalid_argument("state must be NORMAL, MINIMIZED or MAXIMIZED"))?;
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().set_state(&window, state, Default::default())).await?;
+    Ok(Response::new(proto::SetWindowStateResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
+  }
+
+  async fn focus_window(&self, request: Request<proto::FocusWindowRequest>) -> Result<Response<proto::FocusWindowResponse>, Status> {
+    let window =
+      resolve_window_ref(&self.session, request.into_inner().window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let session = self.session.clone();
+    let result = run_input_blocking(move || session.window().focus(&window, Default::default())).await?;
+    Ok(Response::new(proto::FocusWindowResponse {
+      result: Some(auv::protocol::window::encode_mutation_result(result)),
+    }))
   }
 
   async fn resolve_window(&self, request: Request<proto::ResolveWindowRequest>) -> Result<Response<proto::ResolveWindowResponse>, Status> {
@@ -2522,6 +2298,191 @@ impl WindowService for LocalWindowService {
     Ok(Response::new(proto::ResolveWindowResponse {
       window: Some(window_to_proto(window)),
     }))
+  }
+
+  async fn capture_window(&self, request: Request<proto::CaptureWindowRequest>) -> Result<Response<proto::CaptureWindowResponse>, Status> {
+    let request = request.into_inner();
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let options = auv_driver::CaptureOptions {
+      resolution: capture_resolution_from_proto(request.resolution)?,
+      ..Default::default()
+    };
+    let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.window_capture");
+    Ok(Response::new(proto::CaptureWindowResponse {
+      window: Some(window_to_proto(window)),
+      capture: Some(capture),
+    }))
+  }
+
+  async fn find_window_text(
+    &self,
+    request: Request<proto::FindWindowTextRequest>,
+  ) -> Result<Response<proto::FindWindowTextResponse>, Status> {
+    let request = request.into_inner();
+    if request.query.trim().is_empty() {
+      return Err(Status::invalid_argument("query is required"));
+    }
+    let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
+    let capture = self.session.window().capture(&window).map_err(driver_status)?;
+    let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
+    let matches = self
+      .session
+      .vision()
+      .find_text_in_capture_with_options(
+        &capture,
+        &request.query,
+        region,
+        recognition_options(request.custom_words, request.recognition_languages),
+      )
+      .map_err(driver_status)?;
+    Ok(Response::new(proto::FindWindowTextResponse {
+      window: Some(window_to_proto(window)),
+      matches: matches
+        .matches
+        .into_iter()
+        .map(|matched| proto::TextMatch {
+          text: matched.text,
+          bounds: Some(rect_to_proto(matched.bounds)),
+          confidence: matched.confidence,
+        })
+        .collect(),
+      capture: Some(stored_capture_to_proto(&self.captures, capture)),
+    }))
+  }
+
+  type ScrollWindowWithMotionStream = Pin<Box<dyn Stream<Item = Result<proto::ScrollWindowWithMotionResponse, Status>> + Send>>;
+
+  type StreamWindowScrollStream = Pin<Box<dyn Stream<Item = Result<proto::StreamWindowScrollResponse, Status>> + Send>>;
+
+  type ScrollWindowUntilStream = Pin<Box<dyn Stream<Item = Result<proto::ScrollWindowUntilResponse, Status>> + Send>>;
+
+  async fn scroll_window(&self, request: Request<proto::ScrollWindowRequest>) -> Result<Response<proto::ScrollWindowResponse>, Status> {
+    let request = request.into_inner();
+    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
+    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let scroll = scroll_from_proto(request.scroll)?;
+    let options = scroll_options_from_proto(request.options)?;
+    let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
+    require_point_inside_window(&window, point)?;
+    let session = self.session.clone();
+    let target = window.clone();
+    let action = run_input_blocking(move || session.window().scroll(&target, point, scroll, options)).await?;
+    Ok(Response::new(proto::ScrollWindowResponse {
+      window: Some(window_to_proto(window)),
+      point: Some(window_point_to_proto(point)),
+      scroll: Some(proto::Scroll {
+        delta_x: scroll.delta_x,
+        delta_y: scroll.delta_y,
+      }),
+      action: Some(input_action_to_proto(action)?),
+    }))
+  }
+
+  async fn scroll_window_with_motion(
+    &self,
+    request: Request<proto::ScrollWindowWithMotionRequest>,
+  ) -> Result<Response<Self::ScrollWindowWithMotionStream>, Status> {
+    let request = request.into_inner();
+    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
+    let position = position_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let motion = scroll_motion_from_proto(request.motion)?;
+    let options = scroll_options_from_proto(request.options)?;
+    let schedule = motion.schedule().map_err(driver_status)?;
+    let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
+    require_point_inside_window(&window, point)?;
+    let started = proto::ScrollMotionStarted {
+      window: Some(window_to_proto(window.clone())),
+      point: Some(window_point_to_proto(point)),
+      planned_sample_count: schedule.len(),
+      duration: Some(duration_to_proto(schedule.duration())),
+    };
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let session = self.session.clone();
+    tokio::spawn(async move {
+      let disconnected = sender.clone();
+      let operation = relay_scroll_motion(session, window, point, motion, options, started, sender);
+      tokio::select! {
+        _ = disconnected.closed() => {},
+        _ = operation => {},
+      }
+    });
+    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+  }
+
+  async fn stream_window_scroll(
+    &self,
+    request: Request<tonic::Streaming<proto::StreamWindowScrollRequest>>,
+  ) -> Result<Response<Self::StreamWindowScrollStream>, Status> {
+    use proto::stream_window_scroll_request::Event;
+    let mut requests = request.into_inner();
+    let begin = match requests.next().await.transpose()?.and_then(|request| request.event) {
+      Some(Event::Begin(begin)) => begin,
+      _ => return Err(Status::invalid_argument("begin must be the first StreamWindowScroll event")),
+    };
+    let window_ref = begin.window.ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
+    let position = position_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
+    let options = scroll_options_from_proto(begin.options)?;
+    let stream_options = auv_driver::ScrollStreamOptions {
+      sample_rate_hz: begin.sample_rate_hz,
+      max_acceleration: begin.max_acceleration,
+      lease: duration_from_proto(
+        Some(begin.lease.ok_or_else(|| Status::invalid_argument("begin.lease is required"))?),
+        std::time::Duration::ZERO,
+        "begin.lease",
+      )?,
+    };
+    stream_options.validate().map_err(driver_status)?;
+    let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
+    require_point_inside_window(&window, point)?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let session = self.session.clone();
+    tokio::spawn(async move {
+      let disconnected = sender.clone();
+      let operation = relay_scroll_stream(session, window, point, stream_options, options, requests, sender);
+      tokio::select! {
+        _ = disconnected.closed() => {},
+        _ = operation => {},
+      }
+    });
+    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+  }
+
+  async fn scroll_window_until(
+    &self,
+    request: Request<tonic::Streaming<proto::ScrollWindowUntilRequest>>,
+  ) -> Result<Response<Self::ScrollWindowUntilStream>, Status> {
+    use proto::scroll_window_until_request::Event;
+    let mut requests = request.into_inner();
+    let begin = match requests.next().await.transpose()?.and_then(|request| request.event) {
+      Some(Event::Begin(begin)) => begin,
+      _ => return Err(Status::invalid_argument("begin must be the first ScrollUntil event")),
+    };
+    let window_ref = begin.window.clone().ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
+    let position = position_from_proto(begin.point.clone().ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
+    let options = scroll_options_from_proto(begin.options.clone())?;
+    let await_decisions = begin.await_decisions;
+    let until = scroll_until_request_from_proto(begin)?;
+    until.validate().map_err(driver_status)?;
+    let window = resolve_window_ref(&self.session, window_ref)?;
+    let point = window_point_for_position(&window, &position, |id| display_origin(&self.session, id))?;
+    require_point_inside_window(&window, point)?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let session = self.session.clone();
+    let captures = self.captures.clone();
+    tokio::spawn(async move {
+      let disconnected = sender.clone();
+      let operation = relay_scroll_until(session, window, point, options, until, await_decisions, captures, requests, sender);
+      tokio::select! {
+        _ = disconnected.closed() => {},
+        _ = operation => {},
+      }
+    });
+    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
   }
 }
 
@@ -2563,23 +2524,7 @@ fn selector_from_proto(selector: proto::WindowSelector) -> Result<auv_driver::Wi
 }
 
 fn window_to_proto(window: auv_driver::Window) -> proto::Window {
-  proto::Window {
-    r#ref: Some(proto::WindowRef {
-      window_id: window.reference.id,
-    }),
-    title: window.title,
-    application_name: window.app_name,
-    application_id: window.application_id,
-    process_id: window.process_id,
-    frame: Some(proto::ScreenRect {
-      x: window.frame.origin.x,
-      y: window.frame.origin.y,
-      width: window.frame.size.width,
-      height: window.frame.size.height,
-    }),
-    is_main: window.is_main,
-    is_visible: window.is_visible,
-  }
+  auv::protocol::window::encode(window)
 }
 
 fn display_to_proto(display: auv_driver::Display) -> proto::Display {
@@ -2692,7 +2637,9 @@ fn driver_status(error: auv_driver::DriverError) -> Status {
     auv_driver::DriverError::NotFound { .. } => Status::not_found(message),
     auv_driver::DriverError::PermissionDenied { .. } => Status::permission_denied(message),
     auv_driver::DriverError::InvalidInput { .. } => Status::invalid_argument(message),
-    auv_driver::DriverError::StaleUiReference { .. } | auv_driver::DriverError::RoleMismatch { .. } => Status::failed_precondition(message),
+    auv_driver::DriverError::StaleUiReference { .. }
+    | auv_driver::DriverError::RoleMismatch { .. }
+    | auv_driver::DriverError::FailedPrecondition { .. } => Status::failed_precondition(message),
     auv_driver::DriverError::Backend { .. } => Status::unavailable(message),
   }
 }
@@ -2704,6 +2651,97 @@ impl DisplayService for LocalDisplayService {
     let displays = observed.displays.into_iter().map(display_to_proto).collect();
     Ok(Response::new(proto::ListDisplaysResponse { displays }))
   }
+
+  async fn capture_display(
+    &self,
+    request: Request<proto::CaptureDisplayRequest>,
+  ) -> Result<Response<proto::CaptureDisplayResponse>, Status> {
+    let request = request.into_inner();
+    let display = display_selector_from_proto(request.selector)?;
+    let captured = self
+      .session
+      .display()
+      .capture(auv_driver::CaptureOptions {
+        display,
+        resolution: capture_resolution_from_proto(request.resolution)?,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, captured.capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.display_capture");
+    Ok(Response::new(proto::CaptureDisplayResponse {
+      display: Some(display_to_proto(captured.display)),
+      capture: Some(capture),
+    }))
+  }
+
+  async fn capture_display_region(
+    &self,
+    request: Request<proto::CaptureDisplayRegionRequest>,
+  ) -> Result<Response<proto::CaptureDisplayRegionResponse>, Status> {
+    let request = request.into_inner();
+    let display = display_selector_from_proto(request.selector)?;
+    let region = rect_from_proto(request.region.ok_or_else(|| Status::invalid_argument("region is required"))?, "region")?;
+    let captured = self
+      .session
+      .display()
+      .capture_region(auv_driver::CaptureOptions {
+        display,
+        region: Some(region),
+        resolution: capture_resolution_from_proto(request.resolution)?,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
+    let capture = stored_capture_to_proto(&self.captures, captured.capture);
+    record_stored_capture(&self.captures, &capture, "auv.driver.screen_region_capture");
+    Ok(Response::new(proto::CaptureDisplayRegionResponse {
+      display: Some(display_to_proto(captured.display)),
+      capture: Some(capture),
+    }))
+  }
+
+  async fn find_display_text(
+    &self,
+    request: Request<proto::FindDisplayTextRequest>,
+  ) -> Result<Response<proto::FindDisplayTextResponse>, Status> {
+    let request = request.into_inner();
+    if request.query.trim().is_empty() {
+      return Err(Status::invalid_argument("query is required"));
+    }
+    let display = display_selector_from_proto(request.selector)?;
+    let captured = self
+      .session
+      .display()
+      .capture(auv_driver::CaptureOptions {
+        display,
+        ..Default::default()
+      })
+      .map_err(driver_status)?;
+    let region = image_region_from_proto(request.region, request.screen_region, captured.capture.bounds)?;
+    let matches = self
+      .session
+      .vision()
+      .find_text_in_capture_with_options(
+        &captured.capture,
+        &request.query,
+        region,
+        recognition_options(request.custom_words, request.recognition_languages),
+      )
+      .map_err(driver_status)?;
+    Ok(Response::new(proto::FindDisplayTextResponse {
+      display: Some(display_to_proto(captured.display)),
+      matches: matches
+        .matches
+        .into_iter()
+        .map(|matched| proto::TextMatch {
+          text: matched.text,
+          bounds: Some(rect_to_proto(matched.bounds)),
+          confidence: matched.confidence,
+        })
+        .collect(),
+      capture: Some(stored_capture_to_proto(&self.captures, captured.capture)),
+    }))
+  }
 }
 
 /// Serves the first-party local driver over daemon-owned private IPC.
@@ -2714,8 +2752,11 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   super::recording::install()?;
   let rpc_layer = super::recording::RpcLayer::new()?;
 
-  let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
-  let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
+  // Portal restore tokens live in the user's state directory for the direct
+  // path and every Runner, so switching between `--no-daemon` and the daemon
+  // never asks for portal consent again. `AUV_RUNNER_STATE_ROOT` is not used
+  // for them.
+  let driver = auv::local::driver(None).map_err(|error| error.to_string())?;
   let session = driver.open_local().map_err(|error| format!("failed to open local driver: {error}"))?;
   let captures = CaptureStore::new(CaptureStoreOptions::from_env());
   // Expiry also runs on inserts and reads; the sweep frees an idle Runner.
@@ -2729,11 +2770,13 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   });
   let display = DisplayServiceServer::new(LocalDisplayService {
     session: session.clone(),
+    captures: captures.clone(),
   });
   let window = WindowServiceServer::new(LocalWindowService {
     session: session.clone(),
+    captures: captures.clone(),
   });
-  let text_recognition = TextRecognitionServiceServer::new(LocalTextRecognitionService {
+  let text_recognition = TextServiceServer::new(LocalTextService {
     session: session.clone(),
     captures: captures.clone(),
   })
@@ -2741,7 +2784,6 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let input = InputServiceServer::new(LocalInputService {
     session: session.clone(),
-    captures: captures.clone(),
   });
   let permission = PermissionServiceServer::new(LocalPermissionService {
     session: session.clone(),
@@ -2752,16 +2794,16 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   let accessibility = AccessibilityServiceServer::new(LocalAccessibilityService {
     session: session.clone(),
   });
-  let media_control = MediaControlServiceServer::new(LocalMediaControlService);
+  let media_control = MediaServiceServer::new(LocalMediaService);
   let overlay = OverlayServiceServer::new(LocalOverlayService {
     session: session.clone(),
     owner_thread: std::thread::current().id(),
   });
   let recent_frames_service = super::recent_frames::Service::new(session.clone());
   // GetCaptureImage can return full-resolution RGBA on explicit request.
-  let capture = CaptureServiceServer::new(LocalCaptureService { session, captures })
-    .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
-  let recent_frames = RecentFramesServiceServer::new(recent_frames_service.clone())
+  let capture =
+    CaptureServiceServer::new(LocalCaptureService { captures }).max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
+  let recent_frames = FrameBufferServiceServer::new(recent_frames_service.clone())
     .max_decoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED)
     .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let (health_reporter, health) = tonic_health::server::health_reporter();
@@ -2771,8 +2813,8 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     .await;
   health_reporter.set_serving::<WindowServiceServer<LocalWindowService>>().await;
   health_reporter.set_serving::<CaptureServiceServer<LocalCaptureService>>().await;
-  health_reporter.set_serving::<RecentFramesServiceServer<super::recent_frames::Service>>().await;
-  health_reporter.set_serving::<TextRecognitionServiceServer<LocalTextRecognitionService>>().await;
+  health_reporter.set_serving::<FrameBufferServiceServer<super::recent_frames::Service>>().await;
+  health_reporter.set_serving::<TextServiceServer<LocalTextService>>().await;
   health_reporter.set_serving::<InputServiceServer<LocalInputService>>().await;
   // Served on every platform: Linux answers with a typed UNIMPLEMENTED until
   // its activation backends land, instead of an absent service.
@@ -2781,15 +2823,15 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   health_reporter.set_serving::<PermissionServiceServer<LocalPermissionService>>().await;
   health_reporter.set_serving::<AccessibilityServiceServer<LocalAccessibilityService>>().await;
   #[cfg(any(target_os = "macos", target_os = "windows"))]
-  health_reporter.set_serving::<MediaControlServiceServer<LocalMediaControlService>>().await;
+  health_reporter.set_serving::<MediaServiceServer<LocalMediaService>>().await;
   #[cfg(target_os = "macos")]
   health_reporter.set_serving::<OverlayServiceServer<LocalOverlayService>>().await;
   let mut served_services = vec![
     "auv.api.driver.v1.DisplayService",
     "auv.api.driver.v1.WindowService",
     "auv.api.driver.v1.CaptureService",
-    "auv.api.driver.v1.RecentFramesService",
-    "auv.api.driver.v1.TextRecognitionService",
+    "auv.api.driver.v1.FrameBufferService",
+    "auv.api.driver.v1.TextService",
     "auv.api.driver.v1.InputService",
     "auv.api.driver.v1.ApplicationService",
     "auv.api.driver.v1.AccessibilityService",
@@ -2797,7 +2839,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.macos.v1.PermissionService");
   #[cfg(any(target_os = "macos", target_os = "windows"))]
-  served_services.push("auv.api.driver.macos.v1.MediaControlService");
+  served_services.push("auv.api.driver.macos.v1.MediaService");
   #[cfg(target_os = "macos")]
   served_services.push("auv.api.driver.v1.OverlayService");
   // Long-form docs for the methods above; the docs service itself is served

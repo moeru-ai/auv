@@ -7,8 +7,9 @@ UIA, and `Windows.Media.Ocr`.
 ## Capabilities
 
 - Display list / capture / region capture
-- Window list, resolve, capture (`GDI PrintWindow`)
-- Window mutation: move, resize, set-frame, minimize, restore, zoom
+- Window list (front to back, with minimized windows at their restore frame and windows on other virtual desktops), get, resolve, capture (`GDI PrintWindow`). Each window carries `state`: minimized, maximized, best-effort full screen, focused, always on top, stacking index and virtual desktop
+- Explicit WGC window/display images (`WindowApi::capture_wgc` / `DisplayApi::capture_wgc`): continuously drained latest-received frames, with [isolated native image-path evidence](../../docs/ai/references/driver/2026-10-30-wgc-on-demand-freshness.md).
+- Window mutation: `set_frame` (visible frame, invisible resize border compensated), `set_state` (normal, minimized, maximized, verified with `IsIconic`/`IsZoomed`), `focus` ([design](../../docs/ai/references/driver/2026-11-02-window-management-api-v1-design.md))
 - Window-targeted click/scroll: `ForegroundPreferred` uses `SendInput`; `BackgroundOnly`/`BackgroundPreferred` post `WM_LBUTTONDOWN`/`WM_LBUTTONUP`/`WM_LBUTTONDBLCLK`/`WM_MOUSEWHEEL` directly to the hit-tested control (`src/background_input.rs`), without raising or focusing the window — best-effort for classic Win32/MFC/WinForms controls, not for Chromium/Electron/WinUI surfaces
 - Global click, scroll, type text, press key, copy, paste (`SendInput`)
 - Clipboard snapshot / restore / set-text (text-only), plus rich (format-preserving) snapshot / restore covering every memory-backed clipboard format
@@ -19,10 +20,23 @@ UIA, and `Windows.Media.Ocr`.
 - Query-focus failures retain original causes and explicit native delivery progress. Unit and transport tests distinguish refused, uncertain, and submitted input ([contract and evidence boundary](../../docs/ai/references/driver/2026-10-28-windows-core-convergence.md#phase-2-failure-progress-in-progress)).
 - Process-level permission probe (elevation, UIAccess, interactive session)
 - Readiness assessment: combines the permission probe with window presence, frontmost, frame-drift, and input-injection-target checks
-- App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke app.activate`)
+- App-level activation by process image name (`ApplicationApi::activate`, served as `auv.api.driver.v1.ApplicationService/ActivateApplication` and `auv invoke application.activate`)
 - Overlay visual adapter (cursor, outline, status layers) via `auv-driver-overlay-windows`, drawn with Direct2D/DirectWrite (real alpha, antialiasing, SVG cursor art, cursor shadows blurred from the art's silhouette)
-- Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window capture stream that never serves a stale frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
+- Background session (`WindowsDriverSession::background`): up to five target windows operated and watched without ever foregrounding them. Window-message click and wheel only (no input policy, no foreground route), cached targets revalidated by one handle probe per operation, typed `done` / `skipped_minimized` / `target_lost` / `unsupported` / `failed` answers, and a continuously drained per-window stream that retains the latest received frame ([reference](../../docs/ai/references/driver/2026-10-10-windows-background-session.md))
 - Live overlay that follows delivered input (`OverlayApi::follow_operations`, `overlay` feature): one cursor per window in its own color that springs to each point, tilting as it moves, click ripples and window marks at 60 fps, drawn from what the driver reports and never sending input, plus a caller-written status beside each window's cursor (`OperationFollower::set_status`) ([reference](../../docs/ai/references/driver/2026-10-10-windows-overlay-motion.md))
+
+## DPI awareness
+
+The driver works in physical pixels and needs a per-monitor DPI aware host
+process. It does not change the host's awareness. `auv.exe` declares
+per-monitor-v2 in its application manifest (`crates/auv-cli/auv.exe.manifest`).
+Any other executable that hosts the driver must declare it too, best in its own
+manifest ([Microsoft guidance](https://learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process)).
+If the host is not per-monitor aware, `WindowsDriver::open_local` prints one
+warning: on a scaled display Windows then virtualizes its coordinates, and
+window frames, captures and clicks can disagree. AUV's own test and evaluation
+executables call `dpi::set_process_per_monitor_aware()` before their first
+window ([reference](../../docs/ai/references/driver/2026-11-03-windows-dpi-awareness.md)).
 
 ## Open TODOs
 
@@ -30,13 +44,14 @@ UIA, and `Windows.Media.Ocr`.
 |---|---|---|
 | `TODO(windows-input-target-lease)` | `src/input.rs` | Typed input lease matching the macOS slice |
 | `TODO(windows-window-mutation-fallback)` | `src/mutation.rs` | Foreground/SendInput fallback for mutation when the Win32 API is blocked |
-| `TODO(windows-window-zoom-verification)` | `src/mutation.rs` | Zoom/maximize state verification after mutation |
-| `TODO(windows-window-capture-dpi)` | `src/capture.rs` | Tighter DPI/border mapping for window capture |
+| `TODO(windows-window-select-other-desktop)` | `src/window.rs` | Selectors never pick a window on another virtual desktop; target it by id |
+| `TODO(windows-window-desktop-pinned)` | `src/window.rs` | Pinned (all-desktop) windows carry no desktop |
 | `TODO(windows-ax-value-write)` | `src/accessibility.rs` | UIA `ValuePattern` writes |
 | `TODO(windows-focus-reference)` | `src/accessibility.rs` | Cross-call focus by a typed element identity; raw child paths are refused |
 | `TODO(windows-uia-cancellation)` | `src/accessibility.rs` | Bounded or cancelable synchronous UIA provider calls |
 | `TODO(windows-focus-progress)` | `src/accessibility.rs` | Shared structured metadata for a readback failure after focus delivery |
 | `TODO(windows-driver)` | `src/descriptor.rs` | Extend capability strings as slices land |
+| `TODO(windows-overlay-dpi)` | `crates/auv-driver-overlay-windows/src/window.rs` | Overlay art and labels are not scaled by the monitor DPI |
 | `TODO(driver-overlay-windows-outline-label)` | `crates/auv-driver-overlay-windows/src/window.rs` | Outline label layout differs from macOS |
 | `TODO(overlay-follow-other-input)` | `src/overlay_follow.rs` | Scroll, key, text and held-button delivery do not report to the live overlay |
 | `TODO(overlay-follow-remote-runner)` | `src/overlay_follow.rs` | Events are reported in the process that delivers input; a remote Runner needs the same hook |
@@ -47,7 +62,8 @@ UIA, and `Windows.Media.Ocr`.
 | `TODO(windows-background-cloaked)` | `src/background_session.rs` | A window DWM cloaks (another virtual desktop) is treated as live; it needs its own typed state and live evidence |
 | `TODO(background-session-wait-for-frame)` | `src/background_session.rs` | A blocking wait for the next frame; callers poll `capture`, which answers `Unchanged` without copying |
 | `TODO(background-session-foreground-grant)` | `src/background_session.rs` | A delivery reports no focus disturbance without observing it; a just-launched process can still take the foreground on its first activation |
-| `TODO(wgc-capture-latest-frame)` | `src/wgc.rs` | `capture_window_wgc` reads the frame pool in order and can return an older state; sessions use `FrameStream` instead |
+| `TODO(wgc-health-latest-frame)` | `src/wgc.rs` | The separate frozen health sampler still polls a FIFO and wake tokens; it needs its own health-baseline slice |
+| `TODO(wgc-capture-identity)` | `src/wgc.rs` | Extend the existing handle/size image-cache key with PID and typed window/display identity receipts in a capture-identity slice |
 | `TODO(driver-overlay-windows-window-owner-thread)` | `crates/auv-driver-overlay-windows/src/animator.rs` | A running animator must be the only presenter in its process |
 
 ## Architecture notes
@@ -78,10 +94,10 @@ and Windows.Graphics.Capture: nothing in it activates, restores, raises or resiz
 cursor, or sends global input, and a request that has no such route (keyboard input, Alt/Meta clicks)
 is answered `unsupported` instead of being sent to whatever has the foreground. All OS access goes
 through one small `Backend` trait, so routing, follow-on-move, minimized skipping, lost-target isolation
-and the no-fallback behavior are unit tested without a desktop. Observation is a `FrameStream`
-(`src/wgc_stream.rs`): the capture pool is drained the moment a frame arrives and only the newest is
-kept, because `capture_window_wgc` reads a two-buffer pool oldest first and can hand back an older
-state, or miss the newest one entirely, after a burst of changes. Whether a posted click makes the
+and the no-fallback behavior are unit tested without a desktop. Captured frames use `FrameStream`
+(`src/wgc_stream.rs`). Both per-window background streams and the one-target on-demand WGC image cache
+drain their pool when frames arrive and retain the latest received GPU texture. Reads do not prove
+that a pending application action has painted. Whether a posted click makes the
 target take the *foreground* is decided by the operating system from the target process, not by this
 driver: an independently launched application that handles a posted click activates itself inside its
 own input queue and the foreground stays with the user, but a process that holds the right to take the
@@ -113,3 +129,35 @@ non-elevated process without UIAccess is the normal automation posture.
 App-level activation resolves the process's most relevant window via the
 `main_visible` selector (foreground → titled → largest), foregrounds it, then
 verifies by re-observing the foreground window's owning process name.
+
+## Operation target validation and context resolution
+
+Mode-aware operations on Windows (`production_executor.rs`) interact with three decoupled OS subsystems:
+1. WinRT System Media Transport Controls (SMTC) via `SourceAppUserModelId`
+2. Desktop top-level windows via Win32 `EnumWindows`
+3. Process audio volume via CoreAudio `ISimpleAudioVolume` (keyed by process ID)
+
+### Admission gating & exact identity matching
+
+Before acquiring COM or driver resources, `validate_supported_target` verifies:
+- `op.target.app_name` matches `QQMusic.exe` (case-insensitively).
+- `request.app_name` is non-empty and matches `op.target.app_name` (case-insensitively).
+- `op.target.backend` strictly equals `"windows.smtc+coreaudio+wgc"`.
+- Each step's `action["app_id"]` (if declared) is a string matching `op.target.app_name`.
+
+Context resolution (`WindowsOperationContext::resolve_for_target`) enforces exact executable and stem matching:
+- `matches_smtc_app_id`: matches full ID, stem (without `.exe`), or file path ending with the executable name. Rejects substring false-positives (e.g. `NotQQMusic.exe`).
+- `matches_target_window_app`: matches window `app_name` or stem. Rejects substring false-positives.
+
+### Ambiguity handling (fail-closed)
+
+If multiple SMTC sessions match the target, `select_target_session` returns `DriverError::InvalidInput("Ambiguous match...")`.
+If multiple windows match the target process, `select_target_window` returns `DriverError::InvalidInput("Ambiguous match...")`. Neither guesses based on transient foreground state (`is_main`).
+
+### Known design boundaries
+
+- **Name-level admission vs. cross-resource identity proof**: Resolution verifies that SMTC and Window each match `QQMusic.exe`, and CoreAudio attaches to the resolved window PID. This provides strict name-level gating rejecting unsupported or mismatched application names, but does not independently establish cryptographic or kernel-level mutual proof that SMTC and HWND belong to the same process instance.
+- **Pre-flight admission rejection (zero side-effects) vs. step-level verification gate failure**:
+  - `validate_supported_target` performs pre-flight validation before any COM acquisition or step execution, ensuring zero side-effects on rejection.
+  - In contrast, step-level gate failures (e.g., Step 4 `wgc_capture` failing when the target window is minimized in Verified mode) occur **after** earlier steps have already executed. Actions dispatched by prior steps (such as CoreAudio volume adjustment in Step 2 or SMTC next-track in Step 3) have already modified live application state; AUV operations do not roll back preceding actions on verification gate failure. Higher-risk operations must distinguish pre-flight refusal from post-execution verification failure.
+- **Multi-window and minimized window contract**: Multiple top-level windows trigger ambiguity rejection. Passing window discovery does not imply operation success; for example, a minimized window resolves cleanly in window discovery, but `wgc_capture` in Verified mode fails the window health gate (`is_still_minimized` with `allow_restore = false`), while Fast mode skips WGC capture and records 3 steps executed.

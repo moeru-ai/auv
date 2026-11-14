@@ -48,7 +48,7 @@ fn command_help_names_the_limit_of_a_partial_platform() {
 #[test]
 fn command_help_shows_an_unsupported_platform_as_no() {
   let registry = default_registry();
-  let help = render_command_help(registry.resolve("screen.clickText").expect("screen.clickText is registered"));
+  let help = render_command_help(registry.resolve("display.clickText").expect("display.clickText is registered"));
   assert!(help.contains("  Linux   no\n"), "{help}");
   assert!(help.contains("  Windows partial: primary display only; foreground pointer input"), "{help}");
   assert!(help.contains("moves the real pointer"), "{help}");
@@ -56,9 +56,14 @@ fn command_help_shows_an_unsupported_platform_as_no() {
 
 #[test]
 fn an_alias_names_its_canonical_command_in_its_help() {
+  // The default registry has no alias since the 2026-11-02 naming
+  // normalization, so mark a registered command as one.
   let registry = default_registry();
-  let help = render_command_help(registry.resolve("input.pressKeys").expect("input.pressKeys is registered"));
-  assert!(help.contains("This command is an alias of input.keys."), "{help}");
+  let command = registry.resolve("input.pressKeys").expect("input.pressKeys is registered").clone().with_role(crate::CommandRole::Alias {
+    canonical: "input.performKeyboardInputs",
+  });
+  let help = render_command_help(&command);
+  assert!(help.contains("This command is an alias of input.performKeyboardInputs."), "{help}");
 }
 
 #[test]
@@ -72,7 +77,7 @@ fn every_command_help_states_its_selected_runner_route() {
 #[test]
 fn command_help_distinguishes_runner_cells_from_direct_cells() {
   let registry = default_registry();
-  let help = render_command_help(registry.resolve("screen.clickText").expect("screen.clickText is registered"));
+  let help = render_command_help(registry.resolve("display.clickText").expect("display.clickText is registered"));
   // The direct path refuses Linux while the Runner route finds display text and
   // clicks through global ClickPoint, so one help must show both facts.
   assert!(help.contains("Platform support:\n  macOS   yes\n  Linux   no\n"), "{help}");
@@ -85,7 +90,7 @@ fn command_help_distinguishes_runner_cells_from_direct_cells() {
 #[test]
 fn command_help_names_the_limit_of_a_partial_runner_cell() {
   let registry = default_registry();
-  let help = render_command_help(registry.resolve("input.drag").expect("input.drag is registered"));
+  let help = render_command_help(registry.resolve("input.dragMouse").expect("input.dragMouse is registered"));
   assert!(
     help.contains(
       "\nSelected Runner support:\n  macOS   partial: foreground-preferred input policy is refused; DragMouse carries no window policy\n"
@@ -143,13 +148,13 @@ fn examples_resolve_to_the_protocol_inputs_mcp_sends() {
   let press_keys = registry.resolve("input.pressKeys").unwrap().examples().unwrap();
   assert_eq!(press_keys[0].inputs.get("keys").map(String::as_str), Some(r#"["cmd","shift","p"]"#));
 
-  let wait = registry.resolve("screen.waitForText").unwrap().examples().unwrap();
+  let wait = registry.resolve("display.waitForText").unwrap().examples().unwrap();
   assert_eq!(wait[0].inputs, BTreeMap::from([("query".to_string(), "Ready".to_string())]));
-  assert_eq!(wait[0].cli, r#"auv invoke screen.waitForText "Ready""#);
+  assert_eq!(wait[0].cli, r#"auv invoke display.waitForText "Ready""#);
 }
 
 #[test]
 fn example_comments_become_summaries() {
-  let examples = default_registry().resolve("screen.findText").unwrap().examples().unwrap();
+  let examples = default_registry().resolve("display.findText").unwrap().examples().unwrap();
   assert_eq!(examples[0].summary.as_deref(), Some("Find text on the current screen"));
 }

@@ -21,39 +21,63 @@ use crate::artifact::{emit_capture, emit_capture_with_receipt};
 pub fn group() -> CommandGroup {
   // TODO(invoke-window-stubs): incomplete window commands stay intentionally
   // unregistered until owner-approved implementations have behavioral evidence.
-  CommandGroup::new("window", "WINDOW")
+  let group = CommandGroup::new("window", "WINDOW")
     .command(list_windows_invoke_command())
+    .command(get_window_invoke_command())
+    .command(set_window_frame_invoke_command())
+    .command(set_window_state_invoke_command())
+    .command(focus_window_invoke_command())
     .command(capture_window_invoke_command())
     .command(find_window_text_invoke_command())
     .command(wait_for_window_text_invoke_command())
-    .command(click_window_text_invoke_command())
+    .command(click_window_text_invoke_command());
+  super::input::window_scroll_commands().into_iter().fold(group, CommandGroup::command)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke window.list --wide")]
-struct ListWindowsArgs {}
+#[command(after_long_help = "Examples:\n  auv invoke window.list --wide\n  auv invoke window.list --exclude-minimized")]
+pub(crate) struct ListWindowsArgs {
+  /// Leave out minimized windows.
+  #[arg(long)]
+  #[serde(rename = "exclude-minimized", default)]
+  exclude_minimized: bool,
+  /// Leave out windows known to be on another virtual desktop.
+  #[arg(long)]
+  #[serde(rename = "exclude-other-desktops", default)]
+  exclude_other_desktops: bool,
+}
+
+impl ListWindowsArgs {
+  pub(crate) fn filter(&self) -> auv_driver::WindowListFilter {
+    auv_driver::WindowListFilter {
+      exclude_minimized: self.exclude_minimized,
+      exclude_other_desktops: self.exclude_other_desktops,
+    }
+  }
+}
 
 #[invoke_command(
   id = "window.list",
   support = { macos: Supported, linux: Supported, windows: Supported },
   runner = Direct,
   group = "window",
-  description = "List visible window candidates using the normalized AUV window selector model.",
+  description = "List the windows a user could switch to, minimized windows and windows on other desktops included, with frames and state.",
   input = ListWindowsArgs,
 )]
-async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> crate::InvokeExecutionResult {
+async fn list_windows(input: InvokeCommandInput, args: ListWindowsArgs) -> crate::InvokeExecutionResult {
   #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let windows = observe_windows().await?;
+    let filter = args.filter();
+    let windows = observe_windows().await?.into_iter().filter(|window| filter.keeps(window)).collect::<Vec<_>>();
     Ok(list_windows_output(&windows)?)
   }
   #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
-    let _ = input;
+    let _ = (input, args);
     Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.list is only available on macOS, Linux and Windows"))
   }
 }
@@ -76,6 +100,292 @@ pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, crate::InvokeF
   {
     Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.list is only available on macOS, Linux and Windows"))
   }
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.get --target window:1234\n  auv invoke window.get --target app:com.apple.TextEdit"
+)]
+pub(crate) struct GetWindowArgs {
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  pub(crate) title: Option<String>,
+}
+
+#[invoke_command(
+  id = "window.get",
+  support = { macos: Supported, linux: Supported, windows: Supported },
+  runner = Direct,
+  target = RequiredWindow,
+  group = "window",
+  description = "Read one window fresh: its frame and state (minimized, maximized, focused, stacking, desktop).",
+  input = GetWindowArgs,
+)]
+async fn get_window(input: InvokeCommandInput, args: GetWindowArgs) -> crate::InvokeExecutionResult {
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+  {
+    if input.dry_run {
+      return Ok(InvokeCommandOutput::completed());
+    }
+    let session = auv::local::open()?;
+    let window = super::input::resolve_local_window(&session, &input, args.title.as_deref())?;
+    Ok(window_output(&window)?)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    let _ = (input, args);
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.get is only available on macOS, Linux and Windows"))
+  }
+}
+
+/// The direct result for `window.get`, shared by the local and Runner routes.
+pub fn window_output(window: &auv_driver::Window) -> InvokeCommandResult {
+  let mut fields = window_report_fields(window);
+  fields.push(InvokeReportField::new("State", window_state_report(&window.state)));
+  Ok(InvokeCommandOutput::from_result(window)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.setFrame --target window:1234 --x 100 --y 80\n  auv invoke window.setFrame --target app:com.apple.TextEdit --width 800 --height 600\n\nCoordinates are the outer frame in logical screen points. An omitted value keeps the window's current one. A maximized window becomes normal at the new frame. A minimized window is refused: call window.setState normal first."
+)]
+pub(crate) struct SetWindowFrameArgs {
+  /// New left edge in logical screen points.
+  #[arg(long, allow_negative_numbers = true)]
+  x: Option<f64>,
+  /// New top edge in logical screen points.
+  #[arg(long, allow_negative_numbers = true)]
+  y: Option<f64>,
+  /// New outer width in logical points.
+  #[arg(long)]
+  width: Option<f64>,
+  /// New outer height in logical points.
+  #[arg(long)]
+  height: Option<f64>,
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  pub(crate) title: Option<String>,
+}
+
+impl SetWindowFrameArgs {
+  /// Fails unless at least one finite value is given and every size is positive.
+  pub(crate) fn validate(&self) -> Result<(), crate::InvokeFailure> {
+    let invalid = |message: &str| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, format!("window.setFrame {message}"));
+    let values = [self.x, self.y, self.width, self.height];
+    if values.iter().all(Option::is_none) {
+      return Err(invalid("needs at least one of --x, --y, --width and --height"));
+    }
+    if values.iter().flatten().any(|value| !value.is_finite()) {
+      return Err(invalid("values must be finite"));
+    }
+    if [self.width, self.height].iter().flatten().any(|value| *value <= 0.0) {
+      return Err(invalid("--width and --height must be positive"));
+    }
+    Ok(())
+  }
+
+  /// The origin and size to request, filling omitted values from `current`.
+  /// A component without any given value stays `None`, so the driver keeps it.
+  pub(crate) fn request(&self, current: auv_driver::Rect) -> (Option<auv_driver::Point>, Option<auv_driver::Size>) {
+    let origin = (self.x.is_some() || self.y.is_some())
+      .then(|| auv_driver::Point::new(self.x.unwrap_or(current.origin.x), self.y.unwrap_or(current.origin.y)));
+    let size = (self.width.is_some() || self.height.is_some())
+      .then(|| auv_driver::Size::new(self.width.unwrap_or(current.size.width), self.height.unwrap_or(current.size.height)));
+    (origin, size)
+  }
+}
+
+#[invoke_command(
+  id = "window.setFrame",
+  support = { macos: Supported, linux: Unsupported("not supported on Linux yet; pull requests are welcome"), windows: Supported },
+  runner = Direct,
+  target = RequiredWindow,
+  group = "window",
+  description = "Move and/or resize one normal window in logical screen points (--x --y --width --height, each optional) and report the frame before and after.",
+  input = SetWindowFrameArgs,
+)]
+async fn set_window_frame(input: InvokeCommandInput, args: SetWindowFrameArgs) -> crate::InvokeExecutionResult {
+  args.validate()?;
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+  {
+    if input.dry_run {
+      return Ok(super::input::validation_only_output());
+    }
+    let session = auv::local::open()?;
+    let window = super::input::resolve_local_window(&session, &input, args.title.as_deref())?;
+    let (origin, size) = args.request(window.frame);
+    let target = window.clone();
+    let result = super::input::run_cancellable_input(&input.cancellation, move || {
+      session.window().set_frame(&target, origin, size, Default::default())
+    })
+    .await?;
+    Ok(window_mutation_output(&window, &result)?)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    let _ = input;
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.setFrame is only available on macOS and Windows"))
+  }
+}
+
+/// A target window state on the command line.
+#[derive(Clone, Copy, Debug, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WindowStateArg {
+  Normal,
+  Minimized,
+  Maximized,
+}
+
+impl From<WindowStateArg> for auv_driver::WindowStateTarget {
+  fn from(state: WindowStateArg) -> Self {
+    match state {
+      WindowStateArg::Normal => Self::Normal,
+      WindowStateArg::Minimized => Self::Minimized,
+      WindowStateArg::Maximized => Self::Maximized,
+    }
+  }
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.setState minimized --target window:1234\n  auv invoke window.setState normal --target window:1234\n\nnormal leaves both minimized and maximized. On macOS, maximized sets the frame to the visible frame of the window's display, and normal restores the frame recorded by the same Runner (each invoke without --run gets a new Runner)."
+)]
+pub(crate) struct SetWindowStateArgs {
+  /// The state to move the window to.
+  #[arg(value_enum, value_name = "STATE")]
+  pub(crate) state: WindowStateArg,
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  pub(crate) title: Option<String>,
+}
+
+#[invoke_command(
+  id = "window.setState",
+  support = { macos: Supported, linux: Unsupported("not supported on Linux yet; pull requests are welcome"), windows: Supported },
+  runner = Direct,
+  target = RequiredWindow,
+  group = "window",
+  description = "Move one window to normal, minimized or maximized and report its state before and after.",
+  input = SetWindowStateArgs,
+)]
+async fn set_window_state(input: InvokeCommandInput, args: SetWindowStateArgs) -> crate::InvokeExecutionResult {
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+  {
+    if input.dry_run {
+      return Ok(super::input::validation_only_output());
+    }
+    let session = auv::local::open()?;
+    let window = super::input::resolve_local_window(&session, &input, args.title.as_deref())?;
+    let (target, state) = (window.clone(), args.state.into());
+    let result =
+      super::input::run_cancellable_input(&input.cancellation, move || session.window().set_state(&target, state, Default::default()))
+        .await?;
+    Ok(window_mutation_output(&window, &result)?)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    let _ = (input, args);
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.setState is only available on macOS and Windows"))
+  }
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.focus --target window:1234\n\nFocus brings the window's application to the front. A minimized window fails: call window.setState normal first."
+)]
+pub(crate) struct FocusWindowArgs {
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  pub(crate) title: Option<String>,
+}
+
+#[invoke_command(
+  id = "window.focus",
+  support = { macos: Supported, linux: Unsupported("not supported on Linux yet; pull requests are welcome"), windows: Supported },
+  runner = Direct,
+  target = RequiredWindow,
+  group = "window",
+  description = "Raise one window and give it keyboard focus, bringing its application to the front; report the focus disturbance and whether it is focused afterwards.",
+  input = FocusWindowArgs,
+)]
+async fn focus_window(input: InvokeCommandInput, args: FocusWindowArgs) -> crate::InvokeExecutionResult {
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+  {
+    if input.dry_run {
+      return Ok(super::input::validation_only_output());
+    }
+    let session = auv::local::open()?;
+    let window = super::input::resolve_local_window(&session, &input, args.title.as_deref())?;
+    let target = window.clone();
+    let result =
+      super::input::run_cancellable_input(&input.cancellation, move || session.window().focus(&target, Default::default())).await?;
+    Ok(window_mutation_output(&window, &result)?)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    let _ = (input, args);
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "window.focus is only available on macOS and Windows"))
+  }
+}
+
+#[derive(serde::Serialize)]
+struct WindowMutationOutput<'a> {
+  window: &'a auv_driver::WindowRef,
+  result: &'a auv_driver::WindowMutationResult,
+}
+
+/// The direct result for `window.setFrame`, `window.setState` and
+/// `window.focus`, shared by the local and Runner routes.
+pub fn window_mutation_output(window: &auv_driver::Window, result: &auv_driver::WindowMutationResult) -> InvokeCommandResult {
+  let mut fields = vec![InvokeReportField::new(
+    "Window ID",
+    window.reference.id.clone(),
+  )];
+  if let Some(title) = &window.title {
+    fields.push(InvokeReportField::new("Window title", title));
+  }
+  let frame = |frame: Option<auv_driver::Rect>| frame.map(|frame| frame.report_value()).unwrap_or_else(|| "unknown".to_string());
+  let state = |state: Option<&auv_driver::WindowState>| state.map(window_state_report).unwrap_or_else(|| "unknown".to_string());
+  fields.extend([
+    InvokeReportField::new("Path", format!("{:?}", result.selected_path)),
+    InvokeReportField::new("Attempts", result.attempts.len().to_string()),
+    InvokeReportField::new("Frame before", frame(result.before_frame)),
+    InvokeReportField::new("Frame after", frame(result.after_frame)),
+    InvokeReportField::new("State before", state(result.before_state.as_ref())),
+    InvokeReportField::new("State after", state(result.after_state.as_ref())),
+    InvokeReportField::new("Adjusted by app", result.adjusted_by_app.to_string()),
+    InvokeReportField::new("Focus disturbance", result.focus_disturbance.as_str()),
+  ]);
+  let output = InvokeCommandOutput::from_result(&WindowMutationOutput {
+    window: &window.reference,
+    result,
+  })?;
+  Ok(output.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+/// `normal`, `minimized`, `maximized` or `fullscreen`, plus `focused`, from
+/// the facts the platform reported; `unknown` when it reported none.
+fn window_state_report(state: &auv_driver::WindowState) -> String {
+  let mut parts = [
+    (state.is_minimized, "minimized"),
+    (state.is_maximized, "maximized"),
+    (state.is_fullscreen, "fullscreen"),
+  ]
+  .into_iter()
+  .filter(|(fact, _)| *fact == Some(true))
+  .map(|(_, name)| name)
+  .collect::<Vec<_>>();
+  if parts.is_empty() && state.is_minimized.is_some() {
+    parts.push("normal");
+  }
+  if state.is_focused == Some(true) {
+    parts.push("focused");
+  }
+  if parts.is_empty() {
+    return "unknown".to_string();
+  }
+  parts.join(",")
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -782,6 +1092,16 @@ fn window_list_report(windows: &[auv_driver::Window]) -> InvokeReport {
       } else {
         "hidden"
       });
+      for (fact, flag) in [
+        (window.state.is_minimized, "minimized"),
+        (window.state.is_maximized, "maximized"),
+        (window.state.is_fullscreen, "fullscreen"),
+        (window.state.is_focused, "focused"),
+      ] {
+        if fact == Some(true) {
+          flags.push(flag);
+        }
+      }
       WindowRow {
         reference: window.reference.id.clone(),
         app: window.app_name.as_deref().report_or("unknown").to_string(),

@@ -46,6 +46,43 @@ fn main_visible_owned_by_bundle_picks_visible_window_without_candidate_display_c
   assert_eq!(resolved.reference.id, "307");
 }
 
+fn minimized_window(window_number: i64, title: &str) -> ObservedWindow {
+  let mut window = observed_window(window_number, 10, "com.apple.TextEdit", "TextEdit", title, 800, 600);
+  window.state.off_screen = true;
+  window.state.minimized = Some(true);
+  window
+}
+
+// `main_visible` runs the shared main-window cascade over a listing with AX
+// state: a shown window beats a minimized one listed in front of it, and an
+// application whose only window is minimized still resolves to it.
+#[test]
+fn main_visible_prefers_a_shown_window_and_falls_back_to_a_minimized_one() {
+  let selector = SelectWindow::main_visible().owned_by(App::id("com.apple.TextEdit"));
+  let shown = observed_window(2, 10, "com.apple.TextEdit", "TextEdit", "Shown", 400, 300);
+
+  let both = observed_windows(vec![minimized_window(1, "Hidden"), shown]);
+  assert_eq!(resolve_from_observed_windows(&both, &selector).unwrap().reference.id, "2");
+
+  let only_minimized = observed_windows(vec![minimized_window(1, "Hidden")]);
+  let resolved = resolve_from_observed_windows(&only_minimized, &selector).unwrap();
+  assert_eq!(resolved.reference.id, "1");
+  assert_eq!(resolved.state.is_minimized, Some(true));
+}
+
+// A menu bar extra or panel above the normal layer is listed in front of the
+// app's windows; it is never chosen over a normal window, only when alone.
+#[test]
+fn main_visible_skips_surfaces_above_the_normal_layer() {
+  let mut panel = observed_window(1, 10, "com.example.app", "App", "Panel", 900, 700);
+  panel.layer = 3;
+  let normal = observed_window(2, 10, "com.example.app", "App", "Document", 400, 300);
+  let selector = SelectWindow::main_visible().owned_by(App::id("com.example.app"));
+
+  assert_eq!(resolve_from_observed_windows(&observed_windows(vec![panel.clone(), normal]), &selector).unwrap().reference.id, "2");
+  assert_eq!(resolve_from_observed_windows(&observed_windows(vec![panel]), &selector).unwrap().reference.id, "1");
+}
+
 #[test]
 fn display_selector_matches_native_id_and_compat_display_ref() {
   let targets = vec![display_target(0, "100", "display_0", false)];
@@ -85,7 +122,7 @@ fn display_region_resolution_requires_contained_global_region() {
 #[ignore = "requires macOS 14+, an awake Retina display and Screen Recording permission"]
 fn self_excluding_capture_honors_logical_resolution() {
   // Regression: this path accepted Logical but returned native Retina pixels.
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let native = session.display().capture_excluding_self(CaptureOptions::default()).unwrap();
   assert!(native.capture.scale_factor > 1.0, "this regression requires a Retina display");
   let logical = session
@@ -139,6 +176,7 @@ fn observed_window(
       width,
       height,
     },
+    state: Default::default(),
   }
 }
 
@@ -175,6 +213,7 @@ mod no_steal_tests {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
+      state: Default::default(),
     }
   }
 
@@ -482,7 +521,7 @@ mod no_steal_tests {
 
   #[test]
   fn prepare_for_input_rejects_unimplemented_focus_guard_without_activation() {
-    let session = MacosDriverSession { _private: () };
+    let session = MacosDriverSession::new();
     let window = sample_window();
     let options = PrepareForInputOptions {
       activation: ActivationPolicy::NoChange,
@@ -496,14 +535,15 @@ mod no_steal_tests {
     assert!(matches!(
       result,
       Err(DriverError::Unsupported {
-        operation: "focus_guard"
+        operation: "focus_guard",
+        ..
       })
     ));
   }
 
   #[test]
   fn foreground_input_with_default_restore_options_is_unsupported() {
-    let session = MacosDriverSession { _private: () };
+    let session = MacosDriverSession::new();
     let window = sample_window();
     let options = PrepareForInputOptions {
       activation: ActivationPolicy::Foreground {
@@ -517,7 +557,8 @@ mod no_steal_tests {
     assert!(matches!(
       result,
       Err(DriverError::Unsupported {
-        operation: "foreground_restore"
+        operation: "foreground_restore",
+        ..
       })
     ));
   }
@@ -533,20 +574,16 @@ mod no_steal_tests {
         WindowMutationCandidate::AxWindowAction,
       ]
     );
-    assert!(candidate_supports_window_mutation(
-      candidates[0],
-      WindowMutationKind::MoveTo {
-        point: Point::new(10.0, 20.0),
-      }
-    ));
-    assert!(!candidate_supports_window_mutation(
-      candidates[1],
-      WindowMutationKind::MoveTo {
-        point: Point::new(10.0, 20.0),
-      }
-    ));
-
-    assert!(candidate_supports_window_mutation(candidates[1], WindowMutationKind::Minimize,));
+    let set_frame = WindowMutationKind::SetFrame {
+      origin: Some(Point::new(10.0, 20.0)),
+      size: None,
+    };
+    let set_state = WindowMutationKind::SetState {
+      state: WindowStateTarget::Minimized,
+    };
+    assert!(candidate_supports_window_mutation(candidates[0], set_frame));
+    assert!(!candidate_supports_window_mutation(candidates[1], set_frame));
+    assert!(candidate_supports_window_mutation(candidates[1], set_state));
   }
 
   #[test]
@@ -573,133 +610,202 @@ mod no_steal_tests {
   }
 
   #[test]
-  fn decoded_window_mutation_request_rounds_geometry_for_native_bridge() {
-    let request = decoded_window_mutation_request(
-      123,
-      42,
-      "Library".to_string(),
-      WindowMutationKind::SetFrame {
-        frame: Rect::new(10.4, 20.5, 800.2, 600.8),
-      },
-    )
-    .expect("request");
+  fn set_frame_requires_a_normal_window_and_names_the_recovery() {
+    let minimized = WindowState {
+      is_minimized: Some(true),
+      ..WindowState::default()
+    };
+    let maximized = WindowState {
+      is_minimized: Some(false),
+      is_maximized: Some(true),
+      ..WindowState::default()
+    };
 
-    assert_eq!(request.pid, 123);
-    assert_eq!(request.window_number, 42);
-    assert_eq!(request.title, "Library");
-    assert_eq!(request.kind, crate::native::window::DecodedWindowMutationKind::SetFrame);
-    assert_eq!((request.x, request.y, request.width, request.height), (10, 21, 800, 601));
+    let error = require_normal_window(&minimized, "set_frame").expect_err("minimized window must be refused");
+    let DriverError::FailedPrecondition { recovery, .. } = error else {
+      panic!("expected FailedPrecondition, got {error:?}");
+    };
+    assert_eq!(recovery.as_deref(), Some("call set_state(Normal) first"));
+    // A maximized macOS window is only a frame, so it can be moved.
+    require_normal_window(&maximized, "set_frame").expect("maximized window is movable");
+    // A state the platform cannot tell does not block the call.
+    require_normal_window(&WindowState::default(), "set_frame").expect("unknown state is not a precondition failure");
   }
 
   #[test]
-  fn decoded_window_mutation_request_rejects_non_positive_size() {
-    let result = decoded_window_mutation_request(
-      123,
-      42,
-      String::new(),
-      WindowMutationKind::Resize {
-        size: Size::new(0.0, 100.0),
-      },
-    );
+  fn set_frame_corrective_pass_rewrites_only_the_unsettled_component() {
+    // The app took the position but kept its old size.
+    let current = Rect::new(100.0, 50.0, 800.0, 600.0);
 
-    assert!(matches!(result, Err(DriverError::InvalidInput { .. })));
+    let pending = unsettled_frame_components(current, Some(Point::new(101.0, 50.0)), Some(Size::new(1024.0, 768.0)), 2.0);
+    assert_eq!(
+      pending,
+      FrameComponents {
+        origin: false,
+        size: true,
+      }
+    );
+    // A component the caller did not request never needs a write.
+    assert!(unsettled_frame_components(current, None, Some(Size::new(800.0, 600.0)), 2.0).is_settled());
   }
 
   #[test]
-  fn window_mutation_result_maps_native_frames_and_disturbance() {
-    let result = window_mutation_result(
-      WindowMutationPath::AxWindowAttribute,
-      vec![WindowMutationAttempt::success(
-        WindowMutationPath::AxWindowAttribute,
-        "set AXPosition",
-      )],
-      crate::native::window::DecodedWindowMutationResponse {
-        performed_action: "move_to".to_string(),
-        path: "pid=123 window_number=42".to_string(),
-        before_x: 10,
-        before_y: 20,
-        before_width: 800,
-        before_height: 600,
-        after_x: 30,
-        after_y: 40,
-        after_width: 800,
-        after_height: 600,
-        was_minimized: false,
-        is_minimized: false,
-        error_message: None,
-        recovery_hint: None,
-      },
-    );
+  fn set_frame_refuses_windows_of_the_calling_process() {
+    let mut window = sample_window();
+    window.process_id = Some(std::process::id());
 
-    assert_eq!(result.selected_path, WindowMutationPath::AxWindowAttribute);
-    assert_eq!(result.before_frame, Some(Rect::new(10.0, 20.0, 800.0, 600.0)));
-    assert_eq!(result.after_frame, Some(Rect::new(30.0, 40.0, 800.0, 600.0)));
-    assert_eq!(result.focus_disturbance, DisturbanceLevel::None);
-    assert_eq!(result.mouse_disturbance, DisturbanceLevel::None);
+    let error = mutation_target(&window).expect_err("own-process window must be refused");
+
+    assert!(matches!(error, DriverError::InvalidInput { .. }));
   }
 
   #[test]
-  fn window_mutation_frame_verification_rejects_clamped_frame() {
-    let result = window_mutation_result(
-      WindowMutationPath::AxWindowAttribute,
-      Vec::new(),
-      crate::native::window::DecodedWindowMutationResponse {
-        performed_action: "resize".to_string(),
-        path: "pid=123 window_number=42".to_string(),
-        before_x: 10,
-        before_y: 20,
-        before_width: 800,
-        before_height: 600,
-        after_x: 10,
-        after_y: 20,
-        after_width: 400,
-        after_height: 300,
-        was_minimized: false,
-        is_minimized: false,
-        error_message: None,
-        recovery_hint: None,
-      },
-    );
+  fn set_state_step_skips_states_the_window_is_already_in() {
+    use crate::native::window::DecodedWindowMutationKind::{Minimize, Unminimize};
+    let normal = WindowState {
+      is_minimized: Some(false),
+      ..WindowState::default()
+    };
+    let minimized = WindowState {
+      is_minimized: Some(true),
+      ..WindowState::default()
+    };
 
-    let error = verify_window_mutation(
-      WindowMutationKind::Resize {
-        size: Size::new(800.0, 600.0),
-      },
-      &WindowMutationVerification::FrameTolerance { points: 2.0 },
-      &result,
-    )
-    .expect_err("clamped frame should fail verification");
-
-    assert!(error.to_string().contains("frame.size.width"));
+    assert_eq!(window_state_step(&normal, WindowStateTarget::Normal).unwrap(), None);
+    assert_eq!(window_state_step(&normal, WindowStateTarget::Minimized).unwrap(), Some(Minimize));
+    assert_eq!(window_state_step(&minimized, WindowStateTarget::Minimized).unwrap(), None);
+    // Maximizing a minimized window unminimizes it before the frame write.
+    assert_eq!(window_state_step(&minimized, WindowStateTarget::Maximized).unwrap(), Some(Unminimize));
   }
 
   #[test]
-  fn window_mutation_state_verification_rejects_failed_minimize() {
-    let result = window_mutation_result(
-      WindowMutationPath::AxWindowAction,
-      Vec::new(),
-      crate::native::window::DecodedWindowMutationResponse {
-        performed_action: "minimize".to_string(),
-        path: "pid=123 window_number=42".to_string(),
-        before_x: 10,
-        before_y: 20,
-        before_width: 800,
-        before_height: 600,
-        after_x: 10,
-        after_y: 20,
-        after_width: 800,
-        after_height: 600,
-        was_minimized: false,
-        is_minimized: false,
-        error_message: None,
-        recovery_hint: None,
-      },
-    );
+  fn set_state_normal_restores_only_a_recorded_frame() {
+    let maximized = WindowState {
+      is_maximized: Some(true),
+      ..WindowState::default()
+    };
+    let recorded = Rect::new(200.0, 200.0, 600.0, 400.0);
 
-    let error = verify_window_mutation(WindowMutationKind::Minimize, &WindowMutationVerification::BestEffortState, &result)
-      .expect_err("failed minimize should fail verification");
+    assert_eq!(normal_frame(&maximized, Some(recorded)), NormalFrame::Restore(recorded));
+    // Maximized by hand or before a Runner restart: the frame stays.
+    assert_eq!(normal_frame(&maximized, None), NormalFrame::Unrecorded);
+    assert_eq!(normal_frame(&WindowState::default(), Some(recorded)), NormalFrame::Keep);
+  }
+
+  fn display(bounds: ObservedRect, visible_bounds: ObservedRect) -> ObservedDisplay {
+    ObservedDisplay {
+      display_id: 1,
+      is_main: false,
+      is_built_in: false,
+      pixel_width: bounds.width * 2,
+      pixel_height: bounds.height * 2,
+      bounds,
+      visible_bounds,
+      scale_factor: 2.0,
+    }
+  }
+
+  fn rect(x: i64, y: i64, width: i64, height: i64) -> ObservedRect {
+    ObservedRect {
+      x,
+      y,
+      width,
+      height,
+    }
+  }
+
+  /// The owner's layout: a main display with a 30 pt menu bar and a display
+  /// below it with no menu bar (global CG coordinates).
+  fn stacked_displays() -> Vec<ObservedDisplay> {
+    vec![
+      display(rect(0, 0, 3008, 1692), rect(0, 30, 3008, 1662)),
+      display(rect(0, 1692, 3008, 1692), rect(0, 1692, 3008, 1692)),
+    ]
+  }
+
+  #[test]
+  fn maximized_frame_is_the_visible_frame_of_the_display_under_the_center() {
+    let displays = stacked_displays();
+
+    // Mostly on the lower display, center too.
+    assert_eq!(maximized_frame(Rect::new(100.0, 1600.0, 600.0, 400.0), &displays), Some(Rect::new(0.0, 1692.0, 3008.0, 1692.0)));
+    // Center off every display: the largest overlap wins.
+    assert_eq!(maximized_frame(Rect::new(-500.0, 1600.0, 600.0, 400.0), &displays), Some(Rect::new(0.0, 1692.0, 3008.0, 1692.0)));
+    assert_eq!(maximized_frame(Rect::new(-900.0, 100.0, 600.0, 400.0), &displays), None);
+  }
+
+  #[test]
+  fn listing_marks_a_window_that_fills_its_display_visible_frame_as_maximized() {
+    // ROOT CAUSE:
+    //
+    // TextEdit's green-button zoom on the lower display gave `0,1722
+    // 3008x1662`, which left a 30 pt menu-bar gap that display does not have,
+    // so the window read as not maximized and `set_state(Normal)` did nothing.
+    //
+    // The listing now reads maximized against the window's own display, the
+    // frame `set_state(Maximized)` writes, or against the frame an AUV
+    // maximize settled at. TextEdit constrains an AX frame write the same way.
+    let constrained = rect(0, 1722, 3008, 1662);
+    let mut snapshot = super::observed_windows(vec![
+      super::observed_window(1, 10, "com.apple.TextEdit", "TextEdit", "Filled", 0, 0),
+      super::observed_window(2, 10, "com.apple.TextEdit", "TextEdit", "Zoomed by hand", 0, 0),
+      super::observed_window(3, 10, "com.apple.TextEdit", "TextEdit", "Maximized by AUV", 0, 0),
+    ]);
+    snapshot.windows[0].bounds = rect(0, 1692, 3008, 1692);
+    snapshot.windows[1].bounds = constrained.clone();
+    snapshot.windows[2].bounds = constrained.clone();
+    let recorded = std::collections::HashMap::from([(
+      "3".to_string(),
+      MaximizedFrames {
+        normal: Rect::new(200.0, 1900.0, 600.0, 400.0),
+        maximized: rect_from_observed(&constrained),
+      },
+    )]);
+
+    let windows = listed_windows(&snapshot, &stacked_displays(), &recorded);
+
+    let maximized = windows.iter().map(|window| window.state.is_maximized).collect::<Vec<_>>();
+    assert_eq!(maximized, vec![Some(true), Some(false), Some(true)]);
+  }
+
+  #[test]
+  fn set_state_verification_rejects_failed_minimize() {
+    let after = WindowState {
+      is_minimized: Some(false),
+      ..WindowState::default()
+    };
+
+    let error = verify_window_state(WindowStateTarget::Minimized, &after).expect_err("failed minimize should fail verification");
 
     assert!(error.to_string().contains("not minimized"));
+  }
+
+  #[test]
+  fn listing_orders_on_screen_windows_and_marks_minimized_ones() {
+    let mut minimized = super::observed_window(3, 10, "com.apple.TextEdit", "TextEdit", "Notes", 500, 400);
+    minimized.state = crate::types::ObservedWindowState {
+      off_screen: true,
+      minimized: Some(true),
+      fullscreen: Some(false),
+      focused: Some(false),
+    };
+    let snapshot = super::observed_windows(vec![
+      super::observed_window(1, 10, "com.apple.TextEdit", "TextEdit", "Front", 1000, 760),
+      minimized,
+      super::observed_window(2, 20, "com.apple.Notes", "Notes", "Back", 300, 200),
+    ]);
+    // The first window fills the visible area of a display whose Dock takes
+    // the bottom 40 pt.
+    let windows = listed_windows(&snapshot, &[display(rect(0, 0, 1000, 800), rect(0, 0, 1000, 760))], &Default::default());
+
+    let stack = windows.iter().map(|window| window.state.stack_index).collect::<Vec<_>>();
+    assert_eq!(stack, vec![Some(0), None, Some(1)]);
+    assert_eq!(windows[0].state.is_maximized, Some(true));
+    assert_eq!(windows[2].state.is_maximized, Some(false));
+    assert_eq!(windows[1].state.is_minimized, Some(true));
+    assert!(!windows[1].is_visible);
+    // An on-screen window is known not to be minimized without AX.
+    assert_eq!(windows[2].state.is_minimized, Some(false));
   }
 
   #[test]
@@ -717,7 +823,7 @@ mod no_steal_tests {
 
 #[test]
 fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let window = resolve_from_observed_windows(
     &observed_windows(vec![observed_window(
       999999,
@@ -756,7 +862,7 @@ fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
 #[test]
 #[ignore = "requires a live macOS WindowServer"]
 fn missing_application_keyboard_target_is_not_found() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let error = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("ai.moeru.auv.nonexistent-input-test"))).unwrap_err();
   assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
 }
@@ -768,7 +874,7 @@ fn missing_application_keyboard_target_is_not_found() {
 #[test]
 #[ignore = "requires a live macOS WindowServer"]
 fn unresolved_bundle_that_is_not_running_says_so() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let error = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("ai.moeru.auv.nonexistent-window-test"))).unwrap_err();
   match error {
     DriverError::NotFound { target } => assert!(target.contains("(not running)"), "{target}"),
@@ -781,7 +887,7 @@ fn unresolved_bundle_that_is_not_running_says_so() {
 #[test]
 #[ignore = "requires a running NetEaseMusic application and macOS Accessibility"]
 fn background_keyboard_delivery_does_not_activate() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let before = crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).unwrap().frontmost_app_bundle_id;
   for policy in [
     InputPolicy::BackgroundOnly,
@@ -817,7 +923,7 @@ fn background_keyboard_delivery_does_not_activate() {
 #[test]
 #[ignore = "requires a live macOS WindowServer"]
 fn foreground_preparation_rejects_stale_window() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let mut window = session.window().resolve(SelectWindow::main_visible().owned_by(App::id("com.netease.163music"))).unwrap();
   window.reference.id = "999999999".into();
   session
@@ -840,7 +946,7 @@ fn foreground_preparation_rejects_stale_window() {
 
 #[test]
 fn zero_window_id_cannot_become_application_scope() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let window = resolve_from_observed_windows(
     &observed_windows(vec![observed_window(
       0,
@@ -878,7 +984,7 @@ fn zero_window_id_cannot_become_application_scope() {
 // Otherwise a bad later key can leave a partially executed workflow.
 #[test]
 fn keyboard_sequence_validates_later_keys_before_resolving_target() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let error = session
     .input()
     .input_keyboard(
@@ -913,7 +1019,7 @@ fn keyboard_sequence_validates_later_keys_before_resolving_target() {
 #[test]
 fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() {
   use crate::native::input::tests::with_combination_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorder) = with_combination_recorder(None, || {
     session.input().input_keyboard(
       &InputTarget::Foreground,
@@ -960,7 +1066,7 @@ fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() 
 #[test]
 fn held_keyboard_combination_posts_ordered_transitions_and_modifier_flags() {
   use crate::native::input::tests::with_transition_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorder) = with_transition_recorder(|| {
     let mut hold = session.input().key_down(
       &InputTarget::Foreground,
@@ -990,7 +1096,7 @@ fn held_keyboard_combination_posts_ordered_transitions_and_modifier_flags() {
 #[test]
 fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
   use crate::native::input::tests::with_combination_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorder) = with_combination_recorder(Some(2), || {
     session.input().input_keyboard(
       &InputTarget::Foreground,
@@ -1034,7 +1140,7 @@ fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
 #[test]
 fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
   use crate::native::input::tests::with_combination_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorder) = with_combination_recorder(None, || {
     session.input().press_keys(
       &InputTarget::Foreground,
@@ -1054,7 +1160,7 @@ fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
 
 #[test]
 fn keyboard_combination_rejects_duplicate_aliases_and_invalid_repeat_counts() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   for options in [
     PressKeysOptions {
       keys: vec!["cmd".into(), "command".into(), "a".into()],
@@ -1082,7 +1188,7 @@ fn keyboard_combination_rejects_duplicate_aliases_and_invalid_repeat_counts() {
 #[test]
 fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
   use crate::native::input::tests::with_combination_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorder) = with_combination_recorder(None, || {
     session.input().press_keys(
       &InputTarget::Foreground,
@@ -1104,7 +1210,7 @@ fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
 #[test]
 #[ignore = "requires the keyboard AppKit fixture and Accessibility permission"]
 fn repeated_preparation_keeps_running_fixture_identity() {
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let target = InputTarget::Application {
     id: "ai.moeru.auv.keyboard-validation-fixture".into(),
   };
@@ -1124,7 +1230,7 @@ fn repeated_preparation_keeps_running_fixture_identity() {
 #[test]
 fn legacy_key_entry_preserves_modifier_order_and_supports_named_keys() {
   use crate::native::input::tests::with_combination_recorder;
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let (result, recorded) = with_combination_recorder(None, || {
     session.input().press_key(KeyPressOptions {
       key: "cmd+shift+p".into(),
@@ -1158,7 +1264,7 @@ fn preparation_rejects_exited_application_and_resolves_restarted_instance() {
   let output = std::env::temp_dir().join(format!("auv-keyboard-exit-{}.json", std::process::id()));
   let _ = std::fs::remove_file(&output);
   let mut fixture = Fixture(Command::new(&executable).arg(&output).spawn().unwrap(), output);
-  let session = MacosDriverSession { _private: () };
+  let session = MacosDriverSession::new();
   let target = InputTarget::Application {
     id: "ai.moeru.auv.keyboard-validation-fixture".into(),
   };

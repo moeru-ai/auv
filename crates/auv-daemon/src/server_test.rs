@@ -140,7 +140,7 @@ const TEST_RUNNER_CLASS: &str = "example.runner.remote";
 #[tokio::test]
 async fn production_device_local_socket_serves_management_without_shared_routes() {
   use auv_api_proto::auv::api::daemon::v1::device_local_service_client::DeviceLocalServiceClient;
-  use auv_api_proto::auv::api::daemon::v1::device_service_client::DeviceServiceClient;
+  use auv_api_proto::auv::api::daemon::v1::user_session_service_client::UserSessionServiceClient;
   use tonic::transport::Endpoint;
 
   let root = tempfile::tempdir().unwrap();
@@ -191,7 +191,7 @@ async fn production_device_local_socket_serves_management_without_shared_routes(
   assert!(local.get_policy(proto::GetPolicyRequest {}).await.unwrap().into_inner().enabled);
   assert!(local.list_enrollments(proto::ListEnrollmentsRequest {}).await.unwrap().into_inner().enrollments.is_empty());
 
-  let missing_device_route = DeviceServiceClient::new(channel).list_user_sessions(proto::ListUserSessionsRequest {}).await.unwrap_err();
+  let missing_device_route = UserSessionServiceClient::new(channel).list_user_sessions(proto::ListUserSessionsRequest {}).await.unwrap_err();
 
   assert_eq!(missing_device_route.code(), tonic::Code::Unimplemented);
 
@@ -310,6 +310,27 @@ impl driver_proto::display_service_server::DisplayService for DisplayFixture {
         ..Default::default()
       }],
     }))
+  }
+
+  async fn capture_display(
+    &self,
+    _request: tonic::Request<driver_proto::CaptureDisplayRequest>,
+  ) -> Result<tonic::Response<driver_proto::CaptureDisplayResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the display fixture"))
+  }
+
+  async fn capture_display_region(
+    &self,
+    _request: tonic::Request<driver_proto::CaptureDisplayRegionRequest>,
+  ) -> Result<tonic::Response<driver_proto::CaptureDisplayRegionResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the display fixture"))
+  }
+
+  async fn find_display_text(
+    &self,
+    _request: tonic::Request<driver_proto::FindDisplayTextRequest>,
+  ) -> Result<tonic::Response<driver_proto::FindDisplayTextResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the display fixture"))
   }
 }
 
@@ -474,7 +495,7 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
   let address = remote_address(&server);
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
-  let mut devices = GrpcClient::connect(format!("http://{address}").parse().unwrap()).await.unwrap().devices();
+  let mut devices = GrpcClient::connect(format!("http://{address}").parse().unwrap()).await.unwrap().user_sessions();
 
   let missing = devices.ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest { target: None }).await.unwrap_err();
 
@@ -575,6 +596,44 @@ async fn registered_daemon_with_only_a_paired_listener_publishes_its_owner_socke
   task.await.unwrap().unwrap();
 }
 
+// ROOT CAUSE:
+//
+// If a registered daemon was killed with SIGKILL, its `auv.sock` stayed beside
+// the discovery descriptor because socket cleanup runs only in Drop.
+//
+// Before the fix, the next registered daemon failed with "API Unix socket
+// path already exists". The fix reclaims an owned socket nobody listens on,
+// binds it 0600, and still refuses a socket that has a live listener.
+#[cfg(unix)]
+#[tokio::test]
+async fn registered_daemon_reclaims_a_stale_owner_socket_but_not_a_live_one() {
+  use std::os::unix::fs::PermissionsExt;
+  let root = tempfile::tempdir().unwrap();
+  let descriptor = root.path().join("daemon.json");
+  let owner_socket = root.path().join("auv.sock");
+  drop(std::os::unix::net::UnixListener::bind(&owner_socket).unwrap());
+  // Each daemon owns its store and pairing locks; only the discovery
+  // directory, and so the owner socket, is shared.
+  let registered = |store: &std::path::Path| {
+    let mut options = config(Vec::new(), store);
+    options.discovery_file = Some(descriptor.clone());
+    options.register = true;
+    options
+  };
+
+  let server = Server::bind(registered(root.path())).await.unwrap();
+
+  assert_eq!(server.discovery_endpoint(), Some(&BoundEndpoint::Unix(owner_socket.clone())));
+  assert_eq!(std::fs::metadata(&owner_socket).unwrap().permissions().mode() & 0o777, 0o600);
+
+  let second = tempfile::tempdir().unwrap();
+  let error = Server::bind(registered(second.path())).await.err().expect("a live owner socket is not reclaimed");
+
+  assert!(error.contains("already has a live listener"), "{error}");
+  assert!(std::os::unix::net::UnixStream::connect(&owner_socket).is_ok());
+  drop(server);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unregistered_daemon_uses_a_private_owner_socket_and_publishes_nothing() {
@@ -625,7 +684,7 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
   .unwrap();
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
-  let mut devices = GrpcClient::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.unwrap().devices();
+  let mut devices = GrpcClient::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.unwrap().user_sessions();
 
   // A verified Unix caller reaches the Device entry policy, which rejects it
   // with a typed status.
@@ -874,11 +933,11 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
 
   let unauthenticated_grpc = GrpcClient::connect(format!("http://{remote}").parse().unwrap()).await.unwrap();
   assert_eq!(unauthenticated_grpc.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
-  assert_eq!(unauthenticated_grpc.devices().list_user_sessions().await.unwrap_err().code(), tonic::Code::Unauthenticated);
-  assert_eq!(unauthenticated_grpc.devices().get_user_session("seat0:42").await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(unauthenticated_grpc.user_sessions().list_user_sessions().await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(unauthenticated_grpc.user_sessions().get_user_session("seat0:42").await.unwrap_err().code(), tonic::Code::Unauthenticated);
   assert_eq!(
     unauthenticated_grpc
-      .devices()
+      .user_sessions()
       .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
         target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
       })
@@ -950,7 +1009,7 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   let credential = enrollment["deviceCredential"].as_str().unwrap().to_string();
 
   let enabled = http
-    .post(format!("http://{remote}/apis/auv/daemon/v1/pairing/devices/enabled"))
+    .post(format!("http://{remote}/apis/auv/daemon/v1/pairing/devices:setEnabled"))
     .bearer_auth(&credential)
     .header(reqwest::header::CONTENT_TYPE, "application/json")
     .body(r#"{"deviceSelector":"browser-device","enabled":true}"#)
@@ -1004,16 +1063,16 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
 
   // The paired request reaches the native support gate, which rejects it
   // with a typed status.
-  let error = paired.devices().list_user_sessions().await.unwrap_err();
+  let error = paired.user_sessions().list_user_sessions().await.unwrap_err();
 
   assert_entry_denied(&error);
 
-  let error = paired.devices().get_user_session("seat0:42").await.unwrap_err();
+  let error = paired.user_sessions().get_user_session("seat0:42").await.unwrap_err();
 
   assert_entry_denied(&error);
 
   let error = paired
-    .devices()
+    .user_sessions()
     .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
       target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
     })

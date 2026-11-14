@@ -166,8 +166,8 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
   }
 
   match input.command_id.as_str() {
-    "input.pointerPosition" if input.dry_run => return Ok(crate::InvokeCommandOutput::completed()),
-    "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText" => {
+    "input.getPointerPosition" if input.dry_run => return Ok(crate::InvokeCommandOutput::completed()),
+    "input.pressKeys" | "input.performKeyboardInputs" | "input.typeText" | "input.pasteText" => {
       let keyboard = crate::commands::input::decode_keyboard_input(&input)
         .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
       crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
@@ -177,9 +177,9 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
       return execute_hold_keys(input, keys, policy, duration, daemon).await;
     }
-    "input.drag" => return execute_drag(input, daemon).await,
-    "input.scroll" => return execute_scroll(input, daemon).await,
-    "input.scrollUntil" => return execute_scroll_until(input, daemon).await,
+    "input.dragMouse" => return execute_drag(input, daemon).await,
+    "window.scroll" => return execute_scroll(input, daemon).await,
+    "window.scrollUntil" => return execute_scroll_until(input, daemon).await,
     _ => {}
   }
 
@@ -192,7 +192,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
     .await
     .map_err(|error| step_failure(&format!("route core Runner for {command_id}"), error))?;
 
-  if command_id == "app.activate" {
+  if command_id == "application.activate" {
     let target = input.application_target()?.expect("validated target");
     // Keep the typed failure: a Runner without activation (Linux) answers
     // UNIMPLEMENTED, which must reach the caller as `unsupported`.
@@ -205,20 +205,20 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
   }
 
   let result = match command_id {
-    "input.pointerPosition" => runner
+    "input.getPointerPosition" => runner
       .input()
       .pointer_position()
       .await
       .map_err(|error| step_failure("InputService/GetPointerPosition", error))
       .and_then(|point| crate::commands::input::pointer_position_output(point.point()).map_err(Into::into)),
-    "app.probePermissions" => runner
+    "permission.probe" => runner
       .macos()
       .permissions()
       .probe()
       .await
       .map_err(|error| step_failure("PermissionService/ProbePermissions", error))
       .and_then(|probe| crate::commands::app::permission_probe_output(&probe).map_err(Into::into)),
-    "input.focusText" | "input.axFocusText" => {
+    "accessibility.focusText" => {
       let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
       let selector = if candidate.trim().is_empty() {
         auv_driver::AxTextSelector::Query(input.inputs.get("query").cloned().unwrap_or_default())
@@ -239,47 +239,47 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
           crate::commands::input::focus_text_output(&result, &candidate).map_err(Into::into)
         })
     }
-    "mediaControl.nowPlaying" => runner
+    "media.getNowPlaying" => runner
       .macos()
       .media()
       .now_playing()
       .await
-      .map_err(|error| step_failure("MediaControlService/GetNowPlaying", error))
+      .map_err(|error| step_failure("MediaService/GetNowPlaying", error))
       .and_then(|state| crate::commands::media_control::now_playing_state_output(&state).map_err(Into::into)),
-    "mediaControl.play" => runner
+    "media.play" => runner
       .macos()
       .media()
       .play()
       .await
-      .map_err(|error| step_failure("MediaControlService/Play", error))
+      .map_err(|error| step_failure("MediaService/PlayMedia", error))
       .and_then(|outcome| crate::commands::media_control::media_control_output(&outcome).map_err(Into::into)),
-    "mediaControl.pause" => runner
+    "media.pause" => runner
       .macos()
       .media()
       .pause()
       .await
-      .map_err(|error| step_failure("MediaControlService/Pause", error))
+      .map_err(|error| step_failure("MediaService/PauseMedia", error))
       .and_then(|outcome| crate::commands::media_control::media_control_output(&outcome).map_err(Into::into)),
-    "mediaControl.togglePlayPause" => runner
+    "media.togglePlayback" => runner
       .macos()
       .media()
       .toggle_play_pause()
       .await
-      .map_err(|error| step_failure("MediaControlService/TogglePlayPause", error))
+      .map_err(|error| step_failure("MediaService/ToggleMediaPlayback", error))
       .and_then(|outcome| crate::commands::media_control::media_control_output(&outcome).map_err(Into::into)),
-    "mediaControl.next" => runner
+    "media.skipToNextTrack" => runner
       .macos()
       .media()
       .next_track()
       .await
-      .map_err(|error| step_failure("MediaControlService/NextTrack", error))
+      .map_err(|error| step_failure("MediaService/SkipToNextTrack", error))
       .and_then(|outcome| crate::commands::media_control::media_control_output(&outcome).map_err(Into::into)),
-    "mediaControl.previous" => runner
+    "media.skipToPreviousTrack" => runner
       .macos()
       .media()
       .previous_track()
       .await
-      .map_err(|error| step_failure("MediaControlService/PreviousTrack", error))
+      .map_err(|error| step_failure("MediaService/SkipToPreviousTrack", error))
       .and_then(|outcome| crate::commands::media_control::media_control_output(&outcome).map_err(Into::into)),
     "overlay.outline" | "overlay.cursor" | "overlay.status" | "overlay.captureFrame" | "overlay.clickTarget" => {
       let plan = crate::commands::overlay::plan_overlay(&input)?;
@@ -297,7 +297,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       .map_err(|error| step_failure("DisplayService/ListDisplays", error))
       .and_then(|displays| crate::commands::display::list_displays_output(&displays).map_err(Into::into)),
     "display.capture" => match runner.displays().capture(None).await {
-      Err(error) => Err(step_failure("CaptureService/CaptureDisplay", error)),
+      Err(error) => Err(step_failure("DisplayService/CaptureDisplay", error)),
       Ok(capture) => match evidence_pixels(&runner, &capture.capture).await {
         Err(error) => Err(error),
         Ok(pixels) => crate::commands::display::recorded_display_capture_output(
@@ -309,10 +309,10 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         .map_err(Into::into),
       },
     },
-    "screen.captureRegion" => match selected_screen_region(&input) {
+    "display.captureRegion" => match selected_screen_region(&input) {
       Err(error) => Err(error.into()),
       Ok(region) => match runner.displays().capture_region(region, None).await {
-        Err(error) => Err(step_failure("CaptureService/CaptureRegion", error)),
+        Err(error) => Err(step_failure("DisplayService/CaptureDisplayRegion", error)),
         Ok(capture) => match evidence_pixels(&runner, &capture.capture).await {
           Err(error) => Err(error),
           Ok(pixels) => crate::commands::screen::recorded_region_capture_output(
@@ -325,10 +325,25 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         },
       },
     },
-    "window.list" => runner.windows().list().await.map_err(|error| step_failure("WindowService/ListWindows", error)).and_then(|windows| {
-      crate::commands::window::list_windows_output(&windows.iter().map(|window| window.resource().clone()).collect::<Vec<_>>())
-        .map_err(Into::into)
-    }),
+    "window.list" => match crate::command::decode_args::<crate::commands::window::ListWindowsArgs>(&input) {
+      Err(message) => Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message)),
+      Ok(args) => {
+        runner.windows().list_with(args.filter()).await.map_err(|error| step_failure("WindowService/ListWindows", error)).and_then(
+          |windows| {
+            crate::commands::window::list_windows_output(&windows.iter().map(|window| window.resource().clone()).collect::<Vec<_>>())
+              .map_err(Into::into)
+          },
+        )
+      }
+    },
+    "window.get" => {
+      async {
+        let window = resolve_runner_window(&runner, &input).await.map_err(|error| step_failure("WindowService/GetWindow", error))?;
+        crate::commands::window::window_output(window.resource()).map_err(Into::into)
+      }
+      .await
+    }
+    "window.setFrame" | "window.setState" | "window.focus" => execute_window_mutation(&input, &runner).await,
     "window.capture" => {
       let selector = selected_window_selector(&input);
       let response = match runner.windows().resolve(selector).await {
@@ -336,7 +351,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         Ok(window) => window.capture().await,
       };
       match response {
-        Err(error) => Err(step_failure("WindowService/ResolveWindow or CaptureService/CaptureWindow", error)),
+        Err(error) => Err(step_failure("WindowService/ResolveWindow or WindowService/CaptureWindow", error)),
         Ok(response) => match evidence_pixels(&runner, &response.capture).await {
           Err(error) => Err(error),
           Ok(pixels) => crate::commands::window::recorded_window_capture_output(
@@ -357,7 +372,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
           Ok(window) => window.find_text(query).await,
         };
         match response {
-          Err(error) => Err(step_failure("WindowService/ResolveWindow or TextRecognitionService/FindWindowText", error)),
+          Err(error) => Err(step_failure("WindowService/ResolveWindow or WindowService/FindWindowText", error)),
           Ok(response) => evidence_pixels(&runner, &response.capture).await.and_then(|pixels| {
             crate::commands::window::recorded_window_text_matches_output(
               &crate::commands::window::WindowTextRecognition {
@@ -384,7 +399,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
             || {
               let window = window.clone();
               let query = query.clone();
-              async move { window.find_text(query).await.map_err(|error| step_failure("TextRecognitionService/FindWindowText", error)) }
+              async move { window.find_text(query).await.map_err(|error| step_failure("WindowService/FindWindowText", error)) }
             },
             |response| !response.matches.matches.is_empty(),
           )
@@ -405,34 +420,31 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
         }
       },
     },
-    "screen.findText" => match input.inputs.get("query").cloned() {
-      None => Err("screen.findText omitted its typed query argument".to_string().into()),
+    "display.findText" => match input.inputs.get("query").cloned() {
+      None => Err("display.findText omitted its typed query argument".to_string().into()),
       Some(query) => {
         let response = runner.displays().find_text(None, query).await;
         match response {
-          Err(error) => Err(step_failure("TextRecognitionService/FindDisplayText", error)),
+          Err(error) => Err(step_failure("DisplayService/FindDisplayText", error)),
           Ok(response) => evidence_pixels(&runner, &response.capture).await.and_then(|pixels| {
             crate::commands::screen::recorded_screen_text_matches_output(&response.matches, pixels.as_ref()).map_err(Into::into)
           }),
         }
       }
     },
-    "screen.clickText" => {
+    "display.clickText" => {
       async {
-        let query = input.inputs.get("query").cloned().ok_or_else(|| "screen.clickText omitted its typed query argument".to_string())?;
+        let query = input.inputs.get("query").cloned().ok_or_else(|| "display.clickText omitted its typed query argument".to_string())?;
         let within = crate::commands::screen::parse_click_bounds(input.inputs.get("within").map(String::as_str))?;
-        let recognized = runner
-          .displays()
-          .find_text(None, query.clone())
-          .await
-          .map_err(|error| step_failure("TextRecognitionService/FindDisplayText", error))?;
+        let recognized =
+          runner.displays().find_text(None, query.clone()).await.map_err(|error| step_failure("DisplayService/FindDisplayText", error))?;
         let matches = recognized.matches;
         let capture = recognized.capture;
         // The direct local path answers the same miss with `not_found`, so the
         // Runner route must not downgrade it to `command_failed`.
         let point = matches
           .best_match()
-          .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("screen.clickText did not find text {query:?}")))?
+          .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("display.clickText did not find text {query:?}")))?
           .action_point();
         crate::commands::screen::check_click_bounds(&point, within)?;
         let click = selected_click_options(&input)?.click;
@@ -455,7 +467,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
       }
       .await
     }
-    "screen.waitForText" => match crate::commands::screen::WaitForScreenTextArgs::decode(&input) {
+    "display.waitForText" => match crate::commands::screen::WaitForScreenTextArgs::decode(&input) {
       Err(error) => Err(error.into()),
       Ok((query, options)) => {
         let displays = runner.displays();
@@ -467,7 +479,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
           || {
             let displays = displays.clone();
             let query = query.clone();
-            async move { displays.find_text(None, query).await.map_err(|error| step_failure("TextRecognitionService/FindDisplayText", error)) }
+            async move { displays.find_text(None, query).await.map_err(|error| step_failure("DisplayService/FindDisplayText", error)) }
           },
           |response| !response.matches.matches.is_empty(),
         )
@@ -495,8 +507,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
           .await
           .map_err(|error| step_failure("WindowService/ResolveWindow", error))?;
         let resolved_window = resolved.resource().clone();
-        let recognized =
-          resolved.find_text(query.clone()).await.map_err(|error| step_failure("TextRecognitionService/FindWindowText", error))?;
+        let recognized = resolved.find_text(query.clone()).await.map_err(|error| step_failure("WindowService/FindWindowText", error))?;
         let matches = recognized.matches;
         let capture = recognized.capture;
         let matched = crate::commands::window::selected_window_text_match(&matches, &query, selected_index)?;
@@ -740,19 +751,19 @@ fn selected_screen_region(input: &crate::InvokeCommandInput) -> Result<auv_drive
     input
       .inputs
       .get(name)
-      .ok_or_else(|| format!("screen.captureRegion omitted --{name}"))?
+      .ok_or_else(|| format!("display.captureRegion omitted --{name}"))?
       .parse::<f64>()
-      .map_err(|error| format!("screen.captureRegion has invalid --{name}: {error}"))
+      .map_err(|error| format!("display.captureRegion has invalid --{name}: {error}"))
   };
   let x = number("x")?;
   let y = number("y")?;
   let width = number("width")?;
   let height = number("height")?;
   if !x.is_finite() || !y.is_finite() {
-    return Err("screen.captureRegion requires finite --x and --y".to_string());
+    return Err("display.captureRegion requires finite --x and --y".to_string());
   }
   if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
-    return Err("screen.captureRegion requires --width and --height greater than zero".to_string());
+    return Err("display.captureRegion requires --width and --height greater than zero".to_string());
   }
   Ok(auv_driver::Rect::new(x, y, width, height))
 }
@@ -760,7 +771,7 @@ fn selected_screen_region(input: &crate::InvokeCommandInput) -> Result<auv_drive
 fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_driver::ClickOptions, String> {
   let command_id = input.command_id.as_str();
   let policy = match input.inputs.get("input-policy").map(String::as_str) {
-    None if command_id == "screen.clickText" => auv_driver::InputPolicy::ForegroundPreferred,
+    None if command_id == "display.clickText" => auv_driver::InputPolicy::ForegroundPreferred,
     None | Some("background-preferred") => auv_driver::InputPolicy::BackgroundPreferred,
     Some("background-only") => auv_driver::InputPolicy::BackgroundOnly,
     Some("foreground-preferred") => auv_driver::InputPolicy::ForegroundPreferred,
@@ -888,7 +899,7 @@ async fn execute_hold_keys(
   crate::commands::input::targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }
 
-/// Runner route for `input.drag`: the same plan and path as local invoke,
+/// Runner route for `input.dragMouse`: the same plan and path as local invoke,
 /// resolved through Runner window/display services and one DragMouse call.
 async fn execute_scroll_until(input: crate::InvokeCommandInput, daemon: SelectedDaemon) -> crate::InvokeExecutionResult {
   let plan = crate::commands::input::decode_scroll_until(&input)?;
@@ -920,6 +931,42 @@ async fn execute_scroll_until(input: crate::InvokeCommandInput, daemon: Selected
   }
   output.result = Some(result);
   crate::commands::input::scroll_until_output(output).map_err(Into::into)
+}
+
+/// Runner route for `window.setFrame`, `window.setState` and `window.focus`:
+/// the same arguments and result as local invoke, through the Runner's
+/// WindowService. A dry run resolves the window and mutates nothing.
+async fn execute_window_mutation(
+  input: &crate::InvokeCommandInput,
+  runner: &auv::client::runner::RunnerClient,
+) -> crate::InvokeExecutionResult {
+  let invalid = |message: String| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message);
+  let frame = match input.command_id.as_str() {
+    "window.setFrame" => {
+      let args = crate::command::decode_args::<crate::commands::window::SetWindowFrameArgs>(input).map_err(invalid)?;
+      args.validate()?;
+      Some(args)
+    }
+    _ => None,
+  };
+  let state = match input.command_id.as_str() {
+    "window.setState" => Some(crate::command::decode_args::<crate::commands::window::SetWindowStateArgs>(input).map_err(invalid)?.state),
+    _ => None,
+  };
+  let window = resolve_runner_window(runner, input).await?;
+  if input.dry_run {
+    return Ok(crate::commands::input::validation_only_output());
+  }
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let result = match (frame, state) {
+    (Some(args), _) => {
+      let (origin, size) = args.request(window.resource().frame);
+      window.set_frame(origin, size).await.map_err(|error| step_failure("WindowService/SetWindowFrame", error))?
+    }
+    (_, Some(state)) => window.set_state(state.into()).await.map_err(|error| step_failure("WindowService/SetWindowState", error))?,
+    (None, None) => window.focus().await.map_err(|error| step_failure("WindowService/FocusWindow", error))?,
+  };
+  crate::commands::window::window_mutation_output(window.resource(), &result).map_err(Into::into)
 }
 
 /// Resolves an `app:` (optionally by title) or `window:` target through the
@@ -956,13 +1003,13 @@ async fn execute_scroll(input: crate::InvokeCommandInput, daemon: SelectedDaemon
       while let Some(event) = stream.next().await? {
         match event {
           auv::client::runner::ScrollMotionEvent::Started { window, .. } if window.reference != result.window.reference => {
-            return Err(crate::InvokeFailure::from("ScrollWindowPointMotion changed the resolved WindowRef".to_string()));
+            return Err(crate::InvokeFailure::from("ScrollWindowWithMotion changed the resolved WindowRef".to_string()));
           }
           auv::client::runner::ScrollMotionEvent::Completed { delivered, action } => return Ok((delivered, action)),
           _ => {}
         }
       }
-      Err(crate::InvokeFailure::from("ScrollWindowPointMotion ended without completion evidence".to_string()))
+      Err(crate::InvokeFailure::from("ScrollWindowWithMotion ended without completion evidence".to_string()))
     };
     let (delivered, action) = tokio::select! {
       _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
@@ -978,7 +1025,7 @@ async fn execute_scroll(input: crate::InvokeCommandInput, daemon: SelectedDaemon
     response = resolved.scroll(point, plan.scroll, plan.options.clone()) => response?,
   };
   if response.window.reference != result.window.reference {
-    return Err("ScrollWindowPoint response changed the resolved WindowRef".to_string().into());
+    return Err("ScrollWindow response changed the resolved WindowRef".to_string().into());
   }
   crate::emit_input_action_result(&response.action);
   result.window = response.window;
@@ -996,7 +1043,7 @@ async fn execute_drag(input: crate::InvokeCommandInput, daemon: SelectedDaemon) 
   if plan.policy == Some(auv_driver::InputPolicy::ForegroundPreferred) {
     return Err(crate::InvokeFailure::new(
       crate::FailureCode::Unsupported,
-      "input.drag --input-policy foreground-preferred is available only for local invoke",
+      "input.dragMouse --input-policy foreground-preferred is available only for local invoke",
     ));
   }
   let auv = daemon.connect().await?;
@@ -1026,7 +1073,7 @@ async fn execute_drag(input: crate::InvokeCommandInput, daemon: SelectedDaemon) 
         unreachable!("target/basis validated")
       };
       let display = runner.displays().list().await?.displays.into_iter().find(|display| display.id == *id).ok_or_else(|| {
-        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find display target {id:?}"))
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.dragMouse could not find display target {id:?}"))
       })?;
       let (start, end) = plan.screen_points(display.frame, "display")?;
       let mut result = DragResult::planned(&plan, start, end);

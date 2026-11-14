@@ -9,9 +9,10 @@ use std::str::FromStr;
 use auv_api_proto::auv::api::daemon::v1::device_service_client::DeviceServiceClient;
 use auv_api_proto::auv::api::daemon::v1::discovery_service_client::DiscoveryServiceClient;
 use auv_api_proto::auv::api::daemon::v1::pairing_service_client::PairingServiceClient;
-use auv_api_proto::auv::api::daemon::v1::run_service_client::RunServiceClient;
-use auv_api_proto::auv::api::daemon::v1::runner_class_service_client::RunnerClassServiceClient;
-use auv_api_proto::auv::api::daemon::v1::runner_service_client::RunnerServiceClient;
+use auv_api_proto::auv::api::daemon::v1::user_session_service_client::UserSessionServiceClient;
+use auv_api_proto::auv::api::runtime::v1::run_service_client::RunServiceClient;
+use auv_api_proto::auv::api::runtime::v1::runner_class_service_client::RunnerClassServiceClient;
+use auv_api_proto::auv::api::runtime::v1::runner_service_client::RunnerServiceClient;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::{Channel, Endpoint};
@@ -240,6 +241,7 @@ pub struct Client {
   discovery: DiscoveryServiceClient<ApiTransport>,
   pairing: PairingServiceClient<ApiTransport>,
   device: DeviceServiceClient<ApiTransport>,
+  user_session: UserSessionServiceClient<ApiTransport>,
   runner: RunnerServiceClient<ApiTransport>,
   runner_class: RunnerClassServiceClient<ApiTransport>,
   run: RunServiceClient<ApiTransport>,
@@ -266,6 +268,7 @@ impl Client {
       discovery: DiscoveryServiceClient::new(transport()),
       pairing: PairingServiceClient::new(transport()),
       device: DeviceServiceClient::new(transport()),
+      user_session: UserSessionServiceClient::new(transport()),
       runner: RunnerServiceClient::new(transport()),
       runner_class: RunnerClassServiceClient::new(transport()),
       run: RunServiceClient::new(transport()),
@@ -284,16 +287,20 @@ impl Client {
     clients::daemon::v1::device::Client::new(self.device.clone())
   }
 
-  pub fn runner_classes(&self) -> clients::daemon::v1::runner_class::Client {
-    clients::daemon::v1::runner_class::Client::new(self.runner_class.clone())
+  pub fn user_sessions(&self) -> clients::daemon::v1::user_session::Client {
+    clients::daemon::v1::user_session::Client::new(self.user_session.clone())
   }
 
-  pub fn runs(&self) -> clients::daemon::v1::run::Client {
-    clients::daemon::v1::run::Client::new(self.run.clone())
+  pub fn runner_classes(&self) -> clients::runtime::v1::runner_class::Client {
+    clients::runtime::v1::runner_class::Client::new(self.runner_class.clone())
   }
 
-  pub fn runners(&self) -> clients::daemon::v1::runner::Client {
-    clients::daemon::v1::runner::Client::new(self.runner.clone())
+  pub fn runs(&self) -> clients::runtime::v1::run::Client {
+    clients::runtime::v1::run::Client::new(self.run.clone())
+  }
+
+  pub fn runners(&self) -> clients::runtime::v1::runner::Client {
+    clients::runtime::v1::runner::Client::new(self.runner.clone())
   }
 
   /// Builds an opaque transport routed by daemon metadata. Generated clients

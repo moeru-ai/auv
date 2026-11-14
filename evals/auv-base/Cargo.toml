@@ -38,6 +38,14 @@ path = "platforms/desktop-windows/tasks/background_session.rs"
 name = "appkit-keyboard"
 path = "platforms/desktop-macos/cases/appkit_keyboard.rs"
 
+[[test]]
+name = "appkit-window-management"
+path = "platforms/desktop-macos/cases/window_management.rs"
+
+[[test]]
+name = "linux-window-management"
+path = "platforms/desktop-linux/cases/window_management.rs"
+
 [dependencies]
 anyhow = "1"
 axum = "0.8"
@@ -60,6 +68,10 @@ url = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-common = { path = "../../crates/auv-driver-common" }
 auv-driver-macos = { path = "../../crates/auv-driver-macos" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+auv-driver-common = { path = "../../crates/auv-driver-common" }
+auv-driver-linux = { path = "../../crates/auv-driver-linux" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 auv-driver-common = { path = "../../crates/auv-driver-common" }

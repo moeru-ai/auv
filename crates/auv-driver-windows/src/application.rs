@@ -96,15 +96,11 @@ impl ApplicationApi<'_> {
 /// any window's ownership is unreadable, the observation degrades to
 /// `Unknown` — an unattributable window may be the target application's.
 fn activation_window_observation(requested_process: &str, windows: &[auv_driver_common::window::Window]) -> ActivationWindowObservation {
-  let mut matching: Vec<&auv_driver_common::window::Window> = windows
-    .iter()
-    .filter(|window| {
-      window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, &TextMatcher::Exact(requested_process.to_string())))
-    })
-    .collect();
-  // The resolver's own main-window preference, shared through one rank.
-  matching.sort_by_key(|window| std::cmp::Reverse(crate::window::main_visible_rank(window)));
-  match matching.first() {
+  let matching = windows.iter().filter(|window| {
+    window.app_name.as_deref().is_some_and(|app_name| matches_executable(app_name, &TextMatcher::Exact(requested_process.to_string())))
+  });
+  // The resolver's own main-window cascade, so the two cannot disagree.
+  match auv_driver_common::window::select_main_window(matching) {
     Some(window) => ActivationWindowObservation::Present {
       reference: window.reference.clone(),
     },

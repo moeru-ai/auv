@@ -1,0 +1,51 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/capture.proto";
+import "auv/api/driver/v1/display.proto";
+import "auv/api/driver/v1/text_recognition.proto";
+
+// NOTICE(service-files): see window_service.proto. display.proto is imported
+// by capture.proto and text_recognition.proto, so DisplayService cannot be
+// declared there without an import cycle.
+service DisplayService {
+  rpc ListDisplays(ListDisplaysRequest) returns (ListDisplaysResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "display.list"
+      title: "List displays"
+      description: "Lists the connected displays with their frames in logical screen coordinates and their scale factors."
+    };
+  }
+  rpc CaptureDisplay(CaptureDisplayRequest) returns (CaptureDisplayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "display.capture"
+      title: "Capture a display"
+      description: "Captures a whole display, the primary one unless a selector names another. Returns a capture reference and metadata, not pixels."
+    };
+  }
+  rpc CaptureDisplayRegion(CaptureDisplayRegionRequest) returns (CaptureDisplayRegionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "display.captureRegion"
+      title: "Capture a screen region"
+      description: "Captures a rectangle in logical screen coordinates from the display that contains it. Returns a capture reference and metadata, not pixels."
+    };
+  }
+  rpc FindDisplayText(FindDisplayTextRequest) returns (FindDisplayTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "display.findText"
+      title: "Find text on a display"
+      description: "Captures a display and returns every match of a text query, with screen bounds and confidence, plus the capture they came from."
+    };
+  }
+}

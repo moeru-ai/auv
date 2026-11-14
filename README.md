@@ -241,7 +241,7 @@ After you change the permissions, restart the terminal. Then run:
 
 ```sh
 auv doctor
-auv invoke app.probePermissions
+auv invoke permission.probe
 ```
 
 #### Windows
@@ -260,13 +260,29 @@ auv setup windows-helper status
 > `AuvHelper` service. The Helper does not listen on the network. Lock and
 > unlock work through an ordinary `auv serve` that runs as the logged-in user.
 > To accept paired Devices from the network, start that daemon with
-> `--remote-bind 0.0.0.0:9847`. If a 0.0.28 Helper is installed, run
+> `--remote-bind 0.0.0.0:9847`. Setup also registers the `AUV Daemon`
+> scheduled task for the user who runs it. The task starts a local-only
+> `auv serve` at that user's logon, in the interactive session and with
+> limited privileges. If a 0.0.28 Helper is installed, run
 > `auv setup windows-helper uninstall` first, then install again and pair
 > clients again.
 >
 > Evidence level: one installed lock and unlock gate on one Windows 11 host.
 > This is not a general support claim. See the
 > [Windows Helper and daemon split](docs/ai/references/session-api/2026-10-06-windows-helper-daemon-split.md#evidence).
+
+#### Local daemon
+
+`auv invoke` and `auv mcp serve` run commands through your local AUV daemon
+and its Runner, so state such as a window maximize record stays between calls.
+If no daemon runs, the first command starts one. It runs as you, accepts only
+local connections, keeps its store and traces in your AUV state directory, and
+stops 5 minutes after the last command. The command output names the Run and
+the store. To run a command in the calling process instead, use
+`auv --no-daemon invoke <command-id>`. `AUV_ENDPOINT` selects another daemon;
+the CLI never starts one for it. On Windows over SSH (Session 0), the CLI
+starts the `AUV Daemon` task in your interactive session instead, so run
+`auv setup windows-helper install` first.
 
 ### Uninstall
 

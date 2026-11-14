@@ -2,9 +2,10 @@ use crate::FILE_DESCRIPTOR_SET;
 use crate::auv::api::daemon::v1::device_service_client::DeviceServiceClient;
 use crate::auv::api::daemon::v1::discovery_service_client::DiscoveryServiceClient;
 use crate::auv::api::daemon::v1::pairing_service_client::PairingServiceClient;
-use crate::auv::api::daemon::v1::run_service_client::RunServiceClient;
-use crate::auv::api::daemon::v1::runner_class_service_client::RunnerClassServiceClient;
-use crate::auv::api::daemon::v1::runner_service_client::RunnerServiceClient;
+use crate::auv::api::daemon::v1::user_session_service_client::UserSessionServiceClient;
+use crate::auv::api::runtime::v1::run_service_client::RunServiceClient;
+use crate::auv::api::runtime::v1::runner_class_service_client::RunnerClassServiceClient;
+use crate::auv::api::runtime::v1::runner_service_client::RunnerServiceClient;
 use prost::Message;
 use prost_reflect::{DescriptorPool, Value};
 use prost_types::FileDescriptorSet;
@@ -44,7 +45,7 @@ fn pointer_position_is_a_read_only_input_capability() {
 
 #[test]
 fn daemon_json_uses_proto_enum_well_known_and_uint64_shapes() {
-  use crate::auv::api::daemon::v1::{Runner, RunnerLifecycle, RunnerPhase};
+  use crate::auv::api::runtime::v1::{Runner, RunnerLifecycle, RunnerPhase};
 
   let runner = Runner {
     lifecycle: RunnerLifecycle::UnlessShutdown as i32,
@@ -71,12 +72,12 @@ fn daemon_json_uses_proto_enum_well_known_and_uint64_shapes() {
 
 #[test]
 fn local_enrollment_credential_is_excluded_from_daemon_json() {
-  use crate::auv::api::daemon::v1::EnrollRequest;
+  use crate::auv::api::daemon::v1::CreateEnrollmentRequest;
 
   // The daemon package derives JSON support for REST, but enrollment is a
   // local gRPC-only request. This guards against accidentally copying a
   // credential into a generic JSON log or HTTP payload.
-  let request = EnrollRequest {
+  let request = CreateEnrollmentRequest {
     user: "neko".into(),
     credential: b"probe-secret".to_vec(),
     ..Default::default()
@@ -94,7 +95,7 @@ fn daemon_control_services_are_typed_and_do_not_claim_watch() {
   let mut services = descriptor_set
     .file
     .iter()
-    .filter(|file| file.package.as_deref() == Some("auv.api.daemon.v1"))
+    .filter(|file| matches!(file.package.as_deref(), Some("auv.api.daemon.v1" | "auv.api.runtime.v1")))
     .flat_map(|file| file.service.iter())
     .map(|service| {
       (service.name.as_deref().expect("service name"), service.method.iter().filter_map(|method| method.name.as_deref()).collect::<Vec<_>>())
@@ -103,7 +104,7 @@ fn daemon_control_services_are_typed_and_do_not_claim_watch() {
   services.sort_by_key(|(name, _)| *name);
 
   let runner_file =
-    descriptor_set.file.iter().find(|file| file.name.as_deref() == Some("auv/api/daemon/v1/runner.proto")).expect("Runner descriptor");
+    descriptor_set.file.iter().find(|file| file.name.as_deref() == Some("auv/api/runtime/v1/runner.proto")).expect("Runner descriptor");
   let runner = runner_file.message_type.iter().find(|message| message.name.as_deref() == Some("Runner")).expect("Runner message");
   assert_eq!(
     runner.field.iter().filter_map(|field| field.name.as_deref()).collect::<Vec<_>>(),
@@ -137,7 +138,52 @@ fn daemon_control_services_are_typed_and_do_not_claim_watch() {
   assert_client::<DeviceServiceClient<tonic::transport::Channel>>();
   assert_client::<DiscoveryServiceClient<tonic::transport::Channel>>();
   assert_client::<PairingServiceClient<tonic::transport::Channel>>();
+  assert_client::<UserSessionServiceClient<tonic::transport::Channel>>();
   assert_client::<RunServiceClient<tonic::transport::Channel>>();
   assert_client::<RunnerServiceClient<tonic::transport::Channel>>();
   assert_client::<RunnerClassServiceClient<tonic::transport::Channel>>();
+}
+
+// Rule 5 of docs/ai/references/session-api/2026-11-02-driver-api-naming-normalization.md:
+// `presentation.name` is `<service resource>.<rpc without the resource noun>`
+// in lower camelCase, so `WindowService.FindWindowText` is `window.findText`.
+// TODO(api-linter): the doc also asks that every discoverable RPC has an
+// invoke command or an SDK-only marker. The invoke registry lives in
+// auv-cli-invoke, so that check needs its own test there once approved.
+#[test]
+fn presentation_name_is_derived_from_the_service_and_rpc() {
+  let pool = DescriptorPool::decode(FILE_DESCRIPTOR_SET).expect("decode descriptor pool with extensions");
+  let presentation = pool.get_extension_by_name("auv.api.annotations.v1.presentation").expect("presentation extension descriptor");
+  let lower_first = |name: &str| name[..1].to_ascii_lowercase() + &name[1..];
+
+  let mut checked = 0;
+  for service in pool.services() {
+    for method in service.methods() {
+      let options = method.options();
+      if !options.has_extension(&presentation) {
+        continue;
+      }
+      let resource = service.name().strip_suffix("Service").expect("service name ends in Service");
+      // The noun follows the leading verb, singular or plural (`ListWindows`,
+      // `FindWindowText`). Without it the RPC name is kept (`GetPointerPosition`).
+      let name = method.name();
+      let verb_end = name[1..].find(char::is_uppercase).map_or(name.len(), |at| at + 1);
+      let (verb, after_verb) = name.split_at(verb_end);
+      let rest = [
+        format!("{resource}es"),
+        format!("{resource}s"),
+        resource.to_string(),
+      ]
+      .iter()
+      .find_map(|noun| after_verb.strip_prefix(noun.as_str()).filter(|rest| rest.chars().next().is_none_or(char::is_uppercase)))
+      .map_or_else(|| name.to_string(), |rest| format!("{verb}{rest}"));
+      let expected = format!("{}.{}", lower_first(resource), lower_first(&rest));
+
+      let value = options.get_extension(&presentation);
+      let name = value.as_message().and_then(|message| message.get_field_by_name("name")).expect("presentation.name");
+      assert_eq!(name.as_str(), Some(expected.as_str()), "{} has the wrong presentation.name", method.full_name());
+      checked += 1;
+    }
+  }
+  assert!(checked > 0, "no presented methods found");
 }

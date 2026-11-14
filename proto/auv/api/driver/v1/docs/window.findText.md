@@ -18,7 +18,7 @@ and click positions, so a match can be clicked directly.
 ## The capture
 
 The capture is a reference held by the Runner, not pixels: fetch them with
-`captures.image` when you need them. It carries a ThumbHash for a quick
+`capture.getImage` when you need them. It carries a ThumbHash for a quick
 preview. A reference expires when the Runner evicts it, and then fails with
 `NOT_FOUND`.
 

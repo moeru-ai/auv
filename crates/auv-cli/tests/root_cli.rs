@@ -720,15 +720,15 @@ fn serve_help_explains_listener_authentication_and_registration() {
 
 #[test]
 fn invoke_command_help_uses_typed_arguments_and_inline_examples() {
-  let output = run(&["invoke", "screen.findText", "--help"]);
+  let output = run(&["invoke", "display.findText", "--help"]);
 
   assert_eq!(output.status.code(), Some(0), "invoke help must exit 0; stderr={}", stderr(&output));
   let help = stdout(&output);
-  assert!(help.contains("Usage: auv invoke screen.findText [OPTIONS] <TEXT>"), "unexpected invoke help:\n{help}");
+  assert!(help.contains("Usage: auv invoke display.findText [OPTIONS] <TEXT>"), "unexpected invoke help:\n{help}");
   assert!(help.contains("Arguments:"), "unexpected invoke help:\n{help}");
   assert!(help.contains("<TEXT>"), "unexpected invoke help:\n{help}");
   assert!(help.contains("Examples:"), "unexpected invoke help:\n{help}");
-  assert!(help.contains("auv invoke screen.findText \"Settings\""), "unexpected invoke help:\n{help}");
+  assert!(help.contains("auv invoke display.findText \"Settings\""), "unexpected invoke help:\n{help}");
   assert!(!help.contains("--target com.apple.TextEdit"), "help must not claim unsupported target activation:\n{help}");
 }
 
@@ -963,7 +963,7 @@ fn plugin_list_reports_non_executable_candidates_and_empty_paths() {
 fn typed_invoke_values_are_rejected_before_execution() {
   let output = run(&[
     "invoke",
-    "screen.captureRegion",
+    "display.captureRegion",
     "--x",
     "not-a-number",
     "--y",
@@ -1020,7 +1020,7 @@ fn click_point_dry_run_reports_the_validated_coordinate() {
 fn drag_dry_run_reports_both_screen_endpoints() {
   let output = run(&[
     "invoke",
-    "input.drag",
+    "input.dragMouse",
     "--duration-ms",
     "0",
     "--dry-run",
@@ -1092,10 +1092,9 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
   #[cfg(windows)]
   let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
   for arguments in [
-    vec!["input.key", "escape"],
-    vec!["input.keys", "escape"],
+    vec!["input.pressKeys", "escape"],
     vec![
-      "input.keyboard",
+      "input.performKeyboardInputs",
       "--actions",
       r#"[{"kind":"press","keys":["escape"]}]"#,
     ],
@@ -1127,6 +1126,110 @@ fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
     "",
     "unreachable selected Runner must not enter local command validation"
   );
+}
+
+// The default invoke route (no --device/--device-id/--run) goes through a
+// daemon. `AUV_ENDPOINT` names that daemon and must never make the CLI start
+// one; `--no-daemon` keeps the call in this process. A keyboard dry run is on
+// the routed path without the flag, so the two calls differ only in routing.
+#[test]
+#[cfg(any(unix, windows))]
+fn invoke_without_a_selection_uses_auv_endpoint_and_never_starts_a_daemon() {
+  let root = tempfile::tempdir().unwrap();
+  #[cfg(unix)]
+  let endpoint = format!("unix://{}", root.path().join("missing-daemon.sock").display());
+  #[cfg(windows)]
+  let endpoint = format!("npipe://./pipe/auv-missing-daemon-{}", uuid::Uuid::now_v7());
+  let discovery = root.path().join("discovery").join("api-server.json");
+  let logs = root.path().join("logs");
+  let invoke = |root_flags: &[&str]| {
+    Command::new(env!("CARGO_BIN_EXE_auv"))
+      .current_dir(root.path())
+      .env_remove("AUV_CONTEXT")
+      .env("AUV_ENDPOINT", &endpoint)
+      .env("AUV_DISCOVERY_FILE", &discovery)
+      .env("AUV_LOG_DIR", &logs)
+      .env("AUV_CONFIG_PROFILES_FILE", root.path().join("profiles.json"))
+      .args(root_flags)
+      .args(["invoke", "input.pressKeys", "escape", "--dry-run", "--json"])
+      .output()
+      .unwrap()
+  };
+
+  let routed = invoke(&[]);
+  let response: serde_json::Value = serde_json::from_slice(&routed.stdout).unwrap_or_else(|error| panic!("{error}: {}", stderr(&routed)));
+  assert_eq!(response["status"], "failed", "{response}");
+  assert!(response["failure"].as_str().unwrap().contains("connect"), "{response}");
+  assert!(!discovery.exists(), "AUV_ENDPOINT must not register a started daemon");
+  assert!(!logs.join("daemon-autostart.log").exists(), "AUV_ENDPOINT must not start a daemon");
+
+  let direct = invoke(&["--no-daemon"]);
+  let response: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap_or_else(|error| panic!("{error}: {}", stderr(&direct)));
+  assert!(!response["failure"].as_str().unwrap_or_default().contains("AUV API server"), "{response}");
+  assert!(
+    std::path::Path::new(response["store_root"].as_str().unwrap()).ends_with(std::path::Path::new(".auv").join("store")),
+    "{response}"
+  );
+  let records = std::fs::read_to_string(root.path().join(".auv").join("store").join("records.jsonl")).unwrap();
+  assert!(records.contains("auv.invoke.command"), "the direct path records the command in the working-directory store");
+}
+
+// One end-to-end check of auto-start: two concurrent first calls share one
+// registered daemon (the discovery lock picks the winner), a later call
+// reuses it, and the CLI records in that daemon's store.
+#[test]
+#[cfg(target_os = "macos")]
+fn invoke_without_a_selection_starts_one_shared_registered_daemon() {
+  let root = tempfile::tempdir().unwrap();
+  // `directories` resolves the user state directory from HOME on macOS.
+  let home = root.path().join("home");
+  std::fs::create_dir_all(&home).unwrap();
+  let discovery = root.path().join("d").join("api-server.json");
+  let invoke = || {
+    Command::new(env!("CARGO_BIN_EXE_auv"))
+      .current_dir(root.path())
+      .env_remove("AUV_CONTEXT")
+      .env_remove("AUV_ENDPOINT")
+      .env("HOME", &home)
+      .env("AUV_DISCOVERY_FILE", &discovery)
+      .env("AUV_LOG_DIR", root.path().join("logs"))
+      .env("AUV_CONFIG_PROFILES_FILE", root.path().join("profiles.json"))
+      .args(["invoke", "input.pressKeys", "escape", "--dry-run", "--json"])
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .spawn()
+      .unwrap()
+  };
+  // Stops the started daemon even when an assertion fails. Its argv names the
+  // unique temporary HOME, so no other daemon matches.
+  struct StopDaemon(String);
+  impl Drop for StopDaemon {
+    fn drop(&mut self) {
+      let _ = Command::new("/usr/bin/pkill").args(["-INT", "-f", &self.0]).status();
+    }
+  }
+  let _stop = StopDaemon(format!("serve --store-root {}", home.display()));
+  let completed = |child: Child| {
+    let output = child.wait_with_output().unwrap();
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}: {}", stderr(&output)));
+    assert_eq!(response["status"], "completed", "{response} stderr={}", stderr(&output));
+    response
+  };
+
+  let (first, second) = (invoke(), invoke());
+  let (first, _) = (completed(first), completed(second));
+  let descriptor = || -> serde_json::Value { serde_json::from_slice(&std::fs::read(&discovery).unwrap()).unwrap() };
+  let started = descriptor();
+  let store = std::path::PathBuf::from(started["store_root"].as_str().unwrap());
+  assert!(store.starts_with(std::fs::canonicalize(&home).unwrap()), "the daemon store is the user state directory: {started}");
+  assert_eq!(std::fs::canonicalize(first["store_root"].as_str().unwrap()).unwrap(), store, "{first}");
+  let records = std::fs::read_to_string(store.join("records.jsonl")).unwrap();
+  assert!(records.contains(first["run_id"].as_str().unwrap()), "CLI traces go to the daemon store");
+
+  completed(invoke());
+  assert_eq!(descriptor()["instance_id"], started["instance_id"], "a later call reuses the registered daemon");
+  let daemons = Command::new("/usr/bin/pgrep").args(["-f", &_stop.0]).output().unwrap();
+  assert_eq!(stdout(&daemons).lines().count(), 1, "one daemon serves concurrent first calls: {}", stdout(&daemons));
 }
 
 // https://github.com/moeru-ai/auv/pull/177

@@ -23,6 +23,27 @@ impl driver_proto::display_service_server::DisplayService for RemoteDisplayFixtu
     tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(tonic::Response::new(driver_proto::ListDisplaysResponse::default()))
   }
+
+  async fn capture_display(
+    &self,
+    _request: tonic::Request<driver_proto::CaptureDisplayRequest>,
+  ) -> Result<tonic::Response<driver_proto::CaptureDisplayResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the remote Runner fixture"))
+  }
+
+  async fn capture_display_region(
+    &self,
+    _request: tonic::Request<driver_proto::CaptureDisplayRegionRequest>,
+  ) -> Result<tonic::Response<driver_proto::CaptureDisplayRegionResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the remote Runner fixture"))
+  }
+
+  async fn find_display_text(
+    &self,
+    _request: tonic::Request<driver_proto::FindDisplayTextRequest>,
+  ) -> Result<tonic::Response<driver_proto::FindDisplayTextResponse>, tonic::Status> {
+    Err(tonic::Status::unimplemented("not used by the remote Runner fixture"))
+  }
 }
 
 #[tokio::test]
@@ -68,7 +89,7 @@ async fn remote_grpc_runtime_connects_without_owning_the_endpoint_process() {
     tokio::spawn(async move { DisplayServiceClient::new(operation_channel).list_displays(driver_proto::ListDisplaysRequest {}).await });
   operation.await.expect("join business RPC").expect("business RPC");
   let mut managed = ManagedRunner {
-    record: daemon_proto::Runner::default(),
+    record: runtime_proto::Runner::default(),
     runtime: ready.runtime,
     channel: ready.channel,
     display_name: ready.display_name,
@@ -87,11 +108,11 @@ async fn remote_grpc_runtime_connects_without_owning_the_endpoint_process() {
 }
 
 #[cfg(unix)]
-async fn managed_runner(lifecycle: daemon_proto::RunnerLifecycle, run_affinities: u64) -> ManagedRunner {
+async fn managed_runner(lifecycle: runtime_proto::RunnerLifecycle, run_affinities: u64) -> ManagedRunner {
   let child = tokio::process::Command::new("/bin/sleep").arg("10").spawn().expect("spawn inert test child");
   ManagedRunner {
-    record: daemon_proto::Runner {
-      r#ref: Some(daemon_proto::RunnerRef {
+    record: runtime_proto::Runner {
+      r#ref: Some(runtime_proto::RunnerRef {
         runner_id: "runner_test".to_string(),
       }),
       lifecycle: lifecycle as i32,
@@ -99,8 +120,8 @@ async fn managed_runner(lifecycle: daemon_proto::RunnerLifecycle, run_affinities
         seconds: 0,
         nanos: 50_000_000,
       }),
-      phase: daemon_proto::RunnerPhase::Ready as i32,
-      ..daemon_proto::Runner::default()
+      phase: runtime_proto::RunnerPhase::Ready as i32,
+      ..runtime_proto::Runner::default()
     },
     runtime: ManagedRunnerRuntime::Executable { child },
     channel: Channel::from_static("http://[::]:1").connect_lazy(),
@@ -115,7 +136,7 @@ async fn dropped_operation_permit_balances_cancellation_safe_accounting() {
   let supervisor = RunnerSupervisor::new(daemon_proto::DeviceRef {
     device_id: "device_test".to_string(),
   });
-  let managed = managed_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0).await;
+  let managed = managed_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0).await;
   supervisor.runners.lock().expect("registry").insert("runner_test".to_string(), managed);
 
   let (_channel, permit) = supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation");
@@ -134,7 +155,7 @@ async fn aggregated_admission_routes_the_registered_endpoint_without_a_method_al
   let supervisor = RunnerSupervisor::new(daemon_proto::DeviceRef {
     device_id: "device_test".to_string(),
   });
-  let managed = managed_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0).await;
+  let managed = managed_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0).await;
   supervisor.runners.lock().expect("registry").insert("runner_test".to_string(), managed);
 
   let (_channel, permit) =
@@ -149,14 +170,14 @@ async fn aggregated_admission_routes_the_registered_endpoint_without_a_method_al
 #[tokio::test]
 async fn final_activity_selects_ephemeral_stop_or_unless_idle_deadline() {
   let runners = Arc::new(Mutex::new(HashMap::new()));
-  let managed = managed_runner(daemon_proto::RunnerLifecycle::Ephemeral, 1).await;
+  let managed = managed_runner(runtime_proto::RunnerLifecycle::Ephemeral, 1).await;
   runners.lock().expect("registry").insert("runner_test".to_string(), managed);
   let (ephemeral, deadline) = decrement_activity_locked(&runners, "runner_test", true).expect("release ephemeral affinity");
   assert!(deadline.is_none());
   let mut ephemeral = ephemeral.expect("ephemeral Runner stops immediately");
   stop_managed_in_place(&mut ephemeral, None, true).await.expect("stop ephemeral test Runner");
 
-  let managed = managed_runner(daemon_proto::RunnerLifecycle::UnlessIdle, 1).await;
+  let managed = managed_runner(runtime_proto::RunnerLifecycle::UnlessIdle, 1).await;
   runners.lock().expect("registry").insert("runner_test".to_string(), managed);
   let (stopped, deadline) = decrement_activity_locked(&runners, "runner_test", true).expect("release idle affinity");
   assert!(stopped.is_none());
@@ -169,16 +190,16 @@ async fn final_activity_selects_ephemeral_stop_or_unless_idle_deadline() {
 
 /// A cross-platform RemoteGrpc fixture: no endpoint is contacted because the
 /// lazy channel only connects on first RPC.
-fn remote_grpc_runner(lifecycle: daemon_proto::RunnerLifecycle, active_operations: u64) -> ManagedRunner {
+fn remote_grpc_runner(lifecycle: runtime_proto::RunnerLifecycle, active_operations: u64) -> ManagedRunner {
   ManagedRunner {
-    record: daemon_proto::Runner {
-      r#ref: Some(daemon_proto::RunnerRef {
+    record: runtime_proto::Runner {
+      r#ref: Some(runtime_proto::RunnerRef {
         runner_id: "runner_test".to_string(),
       }),
       lifecycle: lifecycle as i32,
-      phase: daemon_proto::RunnerPhase::Ready as i32,
+      phase: runtime_proto::RunnerPhase::Ready as i32,
       active_operations,
-      ..daemon_proto::Runner::default()
+      ..runtime_proto::Runner::default()
     },
     runtime: ManagedRunnerRuntime::RemoteGrpc,
     channel: Channel::from_static("http://[::]:1").connect_lazy(),
@@ -206,7 +227,7 @@ fn spawn_delete(
   supervisor: &Arc<RunnerSupervisor>,
   grace_period: Option<prost_types::Duration>,
   force: bool,
-) -> tokio::task::JoinHandle<Result<daemon_proto::DeleteRunnerResponse, RunnerError>> {
+) -> tokio::task::JoinHandle<Result<runtime_proto::DeleteRunnerResponse, RunnerError>> {
   let supervisor = supervisor.clone();
   tokio::spawn(async move { supervisor.delete("runner_test", grace_period, force).await })
 }
@@ -220,12 +241,12 @@ async fn concurrent_delete_single_owner_second_delete_conflicts() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let (_channel, permit) =
     supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation while the Runner is Ready");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the first delete must claim the Runner as Draining",
   )
   .await;
@@ -245,7 +266,7 @@ async fn concurrent_delete_single_owner_second_delete_conflicts() {
     .expect("the first delete must finish once the operation is released")
     .expect("the first delete task joins")
     .expect("the first delete owns the deletion");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
@@ -258,11 +279,11 @@ async fn delete_waits_for_active_operations_and_completes_after_release() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let (_channel, permit) = supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the delete must claim the Runner as Draining",
   )
   .await;
@@ -278,7 +299,7 @@ async fn delete_waits_for_active_operations_and_completes_after_release() {
     .expect("the delete must finish once the operation is released")
     .expect("the delete task joins")
     .expect("the delete owns the deletion");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
@@ -291,11 +312,11 @@ async fn ephemeral_release_leaves_deletion_to_the_delete_owner() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::Ephemeral, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::Ephemeral, 0));
   let (_channel, permit) = supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the delete must claim the Runner as Draining",
   )
   .await;
@@ -305,7 +326,7 @@ async fn ephemeral_release_leaves_deletion_to_the_delete_owner() {
     .expect("an Ephemeral permit release must hand the entry to the delete owner instead of removing it")
     .expect("the delete task joins")
     .expect("the delete owns the deletion");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
@@ -318,11 +339,11 @@ async fn shutdown_takes_over_from_draining_delete() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let (_channel, permit) = supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the delete must claim the Runner as Draining",
   )
   .await;
@@ -340,8 +361,8 @@ async fn idle_stop_and_ephemeral_release_never_stop_a_draining_runner() {
   // (a) An Ephemeral permit release during Draining must leave the entry to
   // its delete owner instead of removing and stopping it.
   let runners = Arc::new(Mutex::new(HashMap::new()));
-  let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::Ephemeral, 1);
-  managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
+  let mut managed = remote_grpc_runner(runtime_proto::RunnerLifecycle::Ephemeral, 1);
+  managed.record.phase = runtime_proto::RunnerPhase::Draining as i32;
   runners.lock().expect("registry").insert("runner_test".to_string(), managed);
   let (stop_now, schedule) = decrement_activity_locked(&runners, "runner_test", false).expect("release the last operation");
   assert!(stop_now.is_none(), "a Draining Runner is owned by its delete, not by lifecycle release");
@@ -351,14 +372,14 @@ async fn idle_stop_and_ephemeral_release_never_stop_a_draining_runner() {
   // (b) An expired idle deadline must not remove a Draining Runner behind
   // the delete owner's back.
   let runners = Arc::new(Mutex::new(HashMap::new()));
-  let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessIdle, 0);
+  let mut managed = remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessIdle, 0);
   managed.record.idle_timeout = Some(prost_types::Duration {
     seconds: 0,
     nanos: 50_000_000,
   });
   let deadline = std::time::SystemTime::now();
   managed.record.idle_deadline = Some(timestamp_from_system_time(deadline));
-  managed.record.phase = daemon_proto::RunnerPhase::Draining as i32;
+  managed.record.phase = runtime_proto::RunnerPhase::Draining as i32;
   runners.lock().expect("registry").insert("runner_test".to_string(), managed);
   schedule_idle_stop(runners.clone(), "runner_test".to_string(), deadline, Duration::from_millis(50));
   tokio::time::sleep(Duration::from_millis(150)).await;
@@ -366,7 +387,7 @@ async fn idle_stop_and_ephemeral_release_never_stop_a_draining_runner() {
 
   // (c) A Ready UnlessIdle Runner still schedules its idle stop on release.
   let runners = Arc::new(Mutex::new(HashMap::new()));
-  let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessIdle, 1);
+  let mut managed = remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessIdle, 1);
   managed.record.idle_timeout = Some(prost_types::Duration {
     seconds: 0,
     nanos: 50_000_000,
@@ -387,11 +408,11 @@ async fn cancelled_delete_future_still_completes_deletion() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let (_channel, permit) = supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the delete must claim the Runner as Draining",
   )
   .await;
@@ -424,17 +445,17 @@ async fn stop_failure_retains_failed_runner_for_retry() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let managed = supervisor.runners.lock().expect("registry").remove("runner_test").expect("managed Runner");
   record_stop_failure(&supervisor.runners, "runner_test".to_string(), managed);
   let retained = supervisor.get("runner_test").expect("the failed Runner is retained").runner.expect("record");
-  assert_eq!(retained.phase, daemon_proto::RunnerPhase::Failed as i32);
+  assert_eq!(retained.phase, runtime_proto::RunnerPhase::Failed as i32);
 
   let deleted = tokio::time::timeout(Duration::from_secs(5), supervisor.delete("runner_test", None, false))
     .await
     .expect("the retry delete must finish")
     .expect("a retained Failed Runner can be deleted again");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the retried delete removes the entry");
 }
 
@@ -481,13 +502,13 @@ async fn remote_grpc_delete_detaches_without_stopping_the_endpoint() {
   supervisor.runners.lock().expect("registry").insert(
     "runner_test".to_string(),
     ManagedRunner {
-      record: daemon_proto::Runner {
-        r#ref: Some(daemon_proto::RunnerRef {
+      record: runtime_proto::Runner {
+        r#ref: Some(runtime_proto::RunnerRef {
           runner_id: "runner_test".to_string(),
         }),
-        lifecycle: daemon_proto::RunnerLifecycle::UnlessShutdown as i32,
-        phase: daemon_proto::RunnerPhase::Ready as i32,
-        ..daemon_proto::Runner::default()
+        lifecycle: runtime_proto::RunnerLifecycle::UnlessShutdown as i32,
+        phase: runtime_proto::RunnerPhase::Ready as i32,
+        ..runtime_proto::Runner::default()
       },
       runtime: ready.runtime,
       channel: ready.channel,
@@ -497,7 +518,7 @@ async fn remote_grpc_delete_detaches_without_stopping_the_endpoint() {
   );
 
   let deleted = supervisor.delete("runner_test", None, false).await.expect("full delete path for a RemoteGrpc Runner");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 
   let channel = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
@@ -519,12 +540,12 @@ async fn draining_runner_rejects_new_operations() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0));
+    .insert("runner_test".to_string(), remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0));
   let (_channel, permit) =
     supervisor.begin_external_operation("runner_test", DISPLAY_SERVICE, "ListDisplays").expect("admit operation while the Runner is Ready");
   let delete_owner = spawn_delete(&supervisor, None, false);
   poll_until(
-    || registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Draining as i32),
+    || registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Draining as i32),
     "the delete must claim the Runner as Draining",
   )
   .await;
@@ -538,7 +559,7 @@ async fn draining_runner_rejects_new_operations() {
     .expect("the delete must finish once the operation is released")
     .expect("the delete task joins")
     .expect("the delete owns the deletion");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
 }
 
 // Test children are inert sleepers owned by the test and always terminated:
@@ -546,16 +567,16 @@ async fn draining_runner_rejects_new_operations() {
 // the Windows command additionally sets kill_on_drop(true) so a failing test
 // never leaks the process.
 #[cfg(unix)]
-fn executable_runner(lifecycle: daemon_proto::RunnerLifecycle) -> ManagedRunner {
+fn executable_runner(lifecycle: runtime_proto::RunnerLifecycle) -> ManagedRunner {
   let child = tokio::process::Command::new("/bin/sleep").arg("10").spawn().expect("spawn inert test child");
   ManagedRunner {
-    record: daemon_proto::Runner {
-      r#ref: Some(daemon_proto::RunnerRef {
+    record: runtime_proto::Runner {
+      r#ref: Some(runtime_proto::RunnerRef {
         runner_id: "runner_test".to_string(),
       }),
       lifecycle: lifecycle as i32,
-      phase: daemon_proto::RunnerPhase::Ready as i32,
-      ..daemon_proto::Runner::default()
+      phase: runtime_proto::RunnerPhase::Ready as i32,
+      ..runtime_proto::Runner::default()
     },
     runtime: ManagedRunnerRuntime::Executable { child },
     channel: Channel::from_static("http://[::]:1").connect_lazy(),
@@ -565,20 +586,20 @@ fn executable_runner(lifecycle: daemon_proto::RunnerLifecycle) -> ManagedRunner 
 }
 
 #[cfg(windows)]
-fn executable_runner(lifecycle: daemon_proto::RunnerLifecycle) -> ManagedRunner {
+fn executable_runner(lifecycle: runtime_proto::RunnerLifecycle) -> ManagedRunner {
   let child = tokio::process::Command::new("powershell")
     .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 10"])
     .kill_on_drop(true)
     .spawn()
     .expect("spawn inert test child");
   ManagedRunner {
-    record: daemon_proto::Runner {
-      r#ref: Some(daemon_proto::RunnerRef {
+    record: runtime_proto::Runner {
+      r#ref: Some(runtime_proto::RunnerRef {
         runner_id: "runner_test".to_string(),
       }),
       lifecycle: lifecycle as i32,
-      phase: daemon_proto::RunnerPhase::Ready as i32,
-      ..daemon_proto::Runner::default()
+      phase: runtime_proto::RunnerPhase::Ready as i32,
+      ..runtime_proto::Runner::default()
     },
     runtime: ManagedRunnerRuntime::Executable { child },
     channel: Channel::from_static("http://[::]:1").connect_lazy(),
@@ -596,9 +617,9 @@ async fn force_and_grace_semantics_preserved() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+    .insert("runner_test".to_string(), executable_runner(runtime_proto::RunnerLifecycle::UnlessShutdown));
   let deleted = supervisor.delete("runner_test", None, true).await.expect("force delete terminates the child");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 
   let supervisor = RunnerSupervisor::new(daemon_proto::DeviceRef {
@@ -608,7 +629,7 @@ async fn force_and_grace_semantics_preserved() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+    .insert("runner_test".to_string(), executable_runner(runtime_proto::RunnerLifecycle::UnlessShutdown));
   let grace = prost_types::Duration {
     seconds: 0,
     nanos: 50_000_000,
@@ -617,7 +638,7 @@ async fn force_and_grace_semantics_preserved() {
     .await
     .expect("the grace delete must finish once its deadline expires")
     .expect("the grace delete stops the child after its deadline");
-  assert_eq!(deleted.runner.expect("record").phase, daemon_proto::RunnerPhase::Stopped as i32);
+  assert_eq!(deleted.runner.expect("record").phase, runtime_proto::RunnerPhase::Stopped as i32);
   assert!(supervisor.get("runner_test").is_err(), "the deleted Runner leaves the registry");
 }
 
@@ -636,7 +657,7 @@ async fn pr431_shutdown_waits_for_a_removed_executable_delete() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+    .insert("runner_test".to_string(), executable_runner(runtime_proto::RunnerLifecycle::UnlessShutdown));
   let delete_owner = spawn_delete(
     &supervisor,
     Some(prost_types::Duration {
@@ -703,7 +724,7 @@ async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admissi
     .expect("bounded fixture startup")
     .expect("read fixture readiness");
   assert_eq!(ready.trim(), "ready");
-  let mut managed = remote_grpc_runner(daemon_proto::RunnerLifecycle::UnlessShutdown, 0);
+  let mut managed = remote_grpc_runner(runtime_proto::RunnerLifecycle::UnlessShutdown, 0);
   managed.runtime = ManagedRunnerRuntime::Executable { child };
   let (fail_stop, stop_released) = tokio::sync::oneshot::channel();
   let runners = supervisor.runners.clone();
@@ -722,7 +743,7 @@ async fn pr431_shutdown_collects_a_late_stop_failure_and_closes_deletion_admissi
   let waits_for_owner = futures_util::poll!(shutdown.as_mut()).is_pending();
   fail_stop.send(()).expect("finish the owner after shutdown takes the map");
   tokio::time::timeout(Duration::from_secs(5), owner).await.expect("bounded owner").expect("join owner");
-  let retained_before_cleanup = registered_phase(&supervisor, "runner_test") == Some(daemon_proto::RunnerPhase::Failed as i32);
+  let retained_before_cleanup = registered_phase(&supervisor, "runner_test") == Some(runtime_proto::RunnerPhase::Failed as i32);
   let retry = supervisor.delete("runner_test", None, true).await;
   let rejects_new_delete = matches!(retry, Err(RunnerError::Stop(_)));
   let waits_for_child = waits_for_owner && futures_util::poll!(shutdown.as_mut()).is_pending();
@@ -755,7 +776,7 @@ async fn pr431_shutdown_waits_for_a_cancelled_executable_delete_caller() {
     .runners
     .lock()
     .expect("registry")
-    .insert("runner_test".to_string(), executable_runner(daemon_proto::RunnerLifecycle::UnlessShutdown));
+    .insert("runner_test".to_string(), executable_runner(runtime_proto::RunnerLifecycle::UnlessShutdown));
   let caller = spawn_delete(
     &supervisor,
     Some(prost_types::Duration {

@@ -6,8 +6,7 @@ mod recent_frames;
 mod recording;
 
 pub(crate) use auv_daemon::runner_provider::{
-  INTERNAL_RUNNER_SENTINEL as INTERNAL_SENTINEL, LOCAL_DRIVER_ROLE, RUNNER_STATE_ROOT_ENV as STATE_ROOT_ENV,
-  RUNNER_TRACE_ROOT_ENV as TRACE_ROOT_ENV,
+  INTERNAL_RUNNER_SENTINEL as INTERNAL_SENTINEL, LOCAL_DRIVER_ROLE, RUNNER_TRACE_ROOT_ENV as TRACE_ROOT_ENV,
 };
 
 /// Runs an internal Runner role before the ordinary CLI runtime is created.

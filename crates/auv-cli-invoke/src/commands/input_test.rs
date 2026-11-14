@@ -7,8 +7,8 @@ use std::sync::Arc;
 #[test]
 fn pointer_position_has_no_arguments_and_reports_logical_screen_coordinates() {
   let registry = crate::default_registry();
-  let command = registry.resolve("input.pointerPosition").expect("pointer-position command");
-  let crate::InvokeCliParse::Invoke { inputs, target, .. } = crate::parse_invoke_args(&["input.pointerPosition".into()]).unwrap() else {
+  let command = registry.resolve("input.getPointerPosition").expect("pointer-position command");
+  let crate::InvokeCliParse::Invoke { inputs, target, .. } = crate::parse_invoke_args(&["input.getPointerPosition".into()]).unwrap() else {
     panic!("expected pointer-position invocation");
   };
   assert!(inputs.is_empty());
@@ -16,7 +16,7 @@ fn pointer_position_has_no_arguments_and_reports_logical_screen_coordinates() {
   let error = command
     .target
     .validate(&InvokeCommandInput {
-      command_id: "input.pointerPosition".into(),
+      command_id: "input.getPointerPosition".into(),
       target: Some(crate::ExecutionTarget::Display {
         id: "primary".into(),
       }),
@@ -329,6 +329,7 @@ fn test_window() -> auv_driver::Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 
@@ -372,7 +373,7 @@ fn focus_text_human_output_exposes_target_selection_delivery_and_verification_bo
 
   for (candidate, command) in [
     ("", focus_text_input_invoke_command()),
-    ("root/AXTextArea[0]", ax_focus_text_input_invoke_command()),
+    ("root/AXTextArea[0]", focus_text_input_invoke_command()),
   ] {
     let output = focus_text_output(&result, candidate).expect("focus result should serialize");
     assert_eq!(output.result(), Some(&serde_json::to_value(&result).expect("fixture should serialize")));
@@ -409,10 +410,7 @@ fn focus_text_output_preserves_confirmed_focus_readback() {
 #[cfg(target_os = "windows")]
 #[tokio::test]
 async fn windows_focus_text_preserves_missing_application_without_input() {
-  for command in [
-    focus_text_input_invoke_command(),
-    ax_focus_text_input_invoke_command(),
-  ] {
+  for command in [focus_text_input_invoke_command()] {
     let error = command
       .invoke(crate::InvokeCommandInput {
         command_id: command.id.into(),
@@ -507,7 +505,7 @@ fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
 #[ignore = "requires a running NetEaseMusic window and macOS Accessibility permission"]
 async fn keyboard_application_target_dry_run_is_supported() {
   for (command, name, value) in [
-    (press_key_invoke_command(), "key", "cmd+a"),
+    (press_keys_invoke_command(), "keys", r#"["cmd","a"]"#),
     (type_text_invoke_command(), "text", "Arielle's Wish"),
     (paste_text_preserve_clipboard_invoke_command(), "text", "Arielle's Wish"),
   ] {
@@ -530,7 +528,7 @@ async fn keyboard_application_target_dry_run_is_supported() {
 
 #[test]
 fn keyboard_help_distinguishes_application_activation_from_control_focus() {
-  let help = crate::render_command_help(&press_key_invoke_command());
+  let help = crate::render_command_help(&press_keys_invoke_command());
   assert!(help.contains("text-control focus"), "{help}");
   assert!(!help.contains("display:<display-id>"), "{help}");
 }
@@ -538,7 +536,7 @@ fn keyboard_help_distinguishes_application_activation_from_control_focus() {
 #[tokio::test]
 async fn keyboard_display_target_fails_consistently_before_local_or_runner_io() {
   for command in [
-    press_key_invoke_command(),
+    press_keys_invoke_command(),
     type_text_invoke_command(),
     paste_text_preserve_clipboard_invoke_command(),
   ] {
@@ -596,7 +594,7 @@ fn press_keys_alias_uses_the_existing_keyboard_action() {
   };
 
   let mut old = input.clone();
-  old.command_id = "input.keys".into();
+  old.command_id = "input.pressKeys".into();
 
   assert_eq!(decode_keyboard_input(&input).unwrap(), decode_keyboard_input(&old).unwrap());
 }
@@ -652,7 +650,7 @@ async fn focus_text_requires_application_even_in_dry_run() {
 
 // ROOT CAUSE:
 //
-// If `input.focusText` or `input.axFocusText` ran without a local path, the
+// If `input.focusText` or `input.axFocusText` (now `accessibility.focusText`) ran without a local path, the
 // refusal reached the caller as `command_failed`, because `focus_text` returned a
 // plain `String` and `InvokeFailure::from(String)` assigns that code.
 //
@@ -662,10 +660,7 @@ async fn focus_text_requires_application_even_in_dry_run() {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[tokio::test]
 async fn focus_text_refuses_as_unsupported_without_a_platform_path() {
-  for command in [
-    focus_text_input_invoke_command(),
-    ax_focus_text_input_invoke_command(),
-  ] {
+  for command in [focus_text_input_invoke_command()] {
     let error = command
       .invoke(crate::InvokeCommandInput {
         command_id: command.id.into(),
@@ -687,7 +682,7 @@ async fn focus_text_refuses_as_unsupported_without_a_platform_path() {
 #[test]
 fn keyboard_commands_accept_explicit_delivery_policy() {
   for command in [
-    press_key_invoke_command(),
+    press_keys_invoke_command(),
     type_text_invoke_command(),
     paste_text_preserve_clipboard_invoke_command(),
   ] {
@@ -708,7 +703,7 @@ fn keyboard_commands_accept_explicit_delivery_policy() {
 #[tokio::test]
 async fn background_keyboard_without_target_fails_before_local_or_runner_io() {
   for (command, name, value) in [
-    (press_key_invoke_command(), "key", "Escape"),
+    (press_keys_invoke_command(), "keys", r#"["escape"]"#),
     (type_text_invoke_command(), "text", "must not type"),
     (paste_text_preserve_clipboard_invoke_command(), "text", "must not paste"),
   ] {
@@ -733,12 +728,16 @@ async fn background_keyboard_without_target_fails_before_local_or_runner_io() {
 
 #[tokio::test]
 async fn repeated_key_requires_interval_in_local_dry_run() {
-  let command = press_key_invoke_command();
+  let command = press_keys_invoke_command();
   let error = command
     .invoke(crate::InvokeCommandInput {
       command_id: command.id.into(),
       target: None,
-      inputs: [("key".into(), "a".into()), ("count".into(), "2".into())].into(),
+      inputs: [
+        ("keys".into(), r#"["a"]"#.into()),
+        ("count".into(), "2".into()),
+      ]
+      .into(),
       typed_args: None,
       dry_run: true,
       cancellation: Default::default(),
@@ -787,9 +786,8 @@ async fn linux_keyboard_commands_reach_driver_validation() {
   // ROOT CAUSE: invoke returned Unsupported before calling the Linux driver.
   // Exercise command dispatch, not just argument conversion.
   for (command, inputs) in [
-    (press_key_invoke_command(), [("key".into(), "a".into())].into()),
     (press_keys_invoke_command(), [("keys".into(), "[\"ctrl\",\"a\"]".into())].into()),
-    (input_keyboard_invoke_command(), [("actions".into(), "[{\"kind\":\"press\",\"keys\":[\"a\"]}]".into())].into()),
+    (perform_keyboard_inputs_invoke_command(), [("actions".into(), "[{\"kind\":\"press\",\"keys\":[\"a\"]}]".into())].into()),
   ] {
     command
       .invoke(InvokeCommandInput {
@@ -842,7 +840,7 @@ fn click_button_survives_cli_protocol_and_recorded_replay() {
 
 fn drag_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -> InvokeCommandInput {
   InvokeCommandInput {
-    command_id: "input.drag".into(),
+    command_id: "input.dragMouse".into(),
     target,
     inputs: inputs.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect(),
     typed_args: None,
@@ -856,7 +854,7 @@ fn drag_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -
 fn drag_cli_and_protocol_inputs_decode_to_the_same_plan() {
   let crate::InvokeCommandCliParse::Invoke {
     inputs, typed_args, ..
-  } = drag_invoke_command()
+  } = drag_mouse_invoke_command()
     .parse_cli_args(&[
       "--button".into(),
       "right".into(),
@@ -909,10 +907,10 @@ fn drag_plan_rejects_invalid_requests_before_io() {
     ("end_y", "0.2"),
   ];
   for (extra, target, expected) in [
-    (vec![("duration-ms", "30001")], None, "input.drag --duration-ms must be within 0..=30000"),
-    (vec![("normalized", "true")], None, "input.drag --normalized is valid only relative to a window or display"),
-    (vec![("relative-to", "window")], display, "input.drag --target kind is incompatible with --relative-to window"),
-    (vec![("normalized", "true"), ("end_x", "1.5")], window, "input.drag --normalized coordinates must be within 0..=1"),
+    (vec![("duration-ms", "30001")], None, "input.dragMouse --duration-ms must be within 0..=30000"),
+    (vec![("normalized", "true")], None, "input.dragMouse --normalized is valid only relative to a window or display"),
+    (vec![("relative-to", "window")], display, "input.dragMouse --target kind is incompatible with --relative-to window"),
+    (vec![("normalized", "true"), ("end_x", "1.5")], window, "input.dragMouse --normalized coordinates must be within 0..=1"),
   ] {
     let mut inputs = points.to_vec();
     inputs.retain(|(key, _)| extra.iter().all(|(extra_key, _)| extra_key != key));
@@ -946,7 +944,7 @@ fn drag_input_policy_requires_window_basis_and_reaches_the_plan() {
   let mut foreground = points.to_vec();
   foreground.push(("input-policy", "foreground-preferred"));
   assert_eq!(plan(&foreground, window).unwrap().policy, Some(auv_driver::InputPolicy::ForegroundPreferred));
-  assert_eq!(plan(&foreground, None).unwrap_err(), "input.drag --input-policy is valid only with an app: or window: target");
+  assert_eq!(plan(&foreground, None).unwrap_err(), "input.dragMouse --input-policy is valid only with an app: or window: target");
 }
 
 #[test]
@@ -977,7 +975,7 @@ fn drag_projects_both_endpoints_from_the_target_frame() {
   outside.end = auv_driver::Point::new(800.5, 10.0);
   let error = outside.screen_points(frame, "window").unwrap_err();
   assert_eq!(error.code, crate::FailureCode::InvalidInput);
-  assert!(error.message.starts_with("input.drag point 800.5,10 is outside target window bounds"), "{error}");
+  assert!(error.message.starts_with("input.dragMouse point 800.5,10 is outside target window bounds"), "{error}");
 }
 
 // The driver receives one complete gesture: down at the start, motion along
@@ -1047,7 +1045,7 @@ fn drag_dry_run_reports_resolved_endpoints_without_delivery() {
 
 fn scroll_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -> InvokeCommandInput {
   InvokeCommandInput {
-    command_id: "input.scroll".into(),
+    command_id: "window.scroll".into(),
     target,
     inputs: inputs.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect(),
     typed_args: None,
@@ -1119,13 +1117,13 @@ fn scroll_plan_rejects_invalid_requests_before_io() {
     id: "primary".to_string(),
   });
   for (inputs, target, expected) in [
-    (vec![("dy", "100")], None, "input.scroll requires --target app: or window:"),
-    (vec![("dy", "100")], display, "input.scroll requires --target app: or window:"),
-    (vec![("dy", "100"), ("title", "Doc")], scroll_window_target(), "input.scroll --title requires --target app:"),
-    (vec![], app.clone(), "input.scroll requires a non-zero --dx or --dy"),
-    (vec![("dx", "NaN")], app.clone(), "input.scroll requires finite --dx and --dy"),
-    (vec![("dy", "10"), ("normalized", "true")], app.clone(), "input.scroll --normalized coordinates must be within 0..=1"),
-    (vec![("dy", "10"), ("settle-ms", "30001")], app, "input.scroll --settle-ms must be within 0..=30000"),
+    (vec![("dy", "100")], None, "window.scroll requires --target app: or window:"),
+    (vec![("dy", "100")], display, "window.scroll requires --target app: or window:"),
+    (vec![("dy", "100"), ("title", "Doc")], scroll_window_target(), "window.scroll --title requires --target app:"),
+    (vec![], app.clone(), "window.scroll requires a non-zero --dx or --dy"),
+    (vec![("dx", "NaN")], app.clone(), "window.scroll requires finite --dx and --dy"),
+    (vec![("dy", "10"), ("normalized", "true")], app.clone(), "window.scroll --normalized coordinates must be within 0..=1"),
+    (vec![("dy", "10"), ("settle-ms", "30001")], app, "window.scroll --settle-ms must be within 0..=30000"),
   ] {
     let mut all = vec![("x", "40"), ("y", "50")];
     all.extend(inputs);
@@ -1229,9 +1227,9 @@ fn timed_scroll_cli_and_protocol_inputs_decode_to_the_same_motion() {
 #[test]
 fn timed_scroll_plan_rejects_invalid_timing_before_io() {
   for (inputs, expected) in [
-    (vec![("easing", "ease-in")], "input.scroll --easing requires a positive --duration-ms"),
-    (vec![("duration-ms", "60001")], "input.scroll --duration-ms must be within 0..=60000"),
-    (vec![("duration-ms", "100"), ("sample-rate-hz", "0")], "input.scroll --sample-rate-hz must be within 1..=1000"),
+    (vec![("easing", "ease-in")], "window.scroll --easing requires a positive --duration-ms"),
+    (vec![("duration-ms", "60001")], "window.scroll --duration-ms must be within 0..=60000"),
+    (vec![("duration-ms", "100"), ("sample-rate-hz", "0")], "window.scroll --sample-rate-hz must be within 1..=1000"),
   ] {
     let mut all = vec![("x", "40"), ("y", "50"), ("dy", "100")];
     all.extend(inputs);
@@ -1243,7 +1241,7 @@ fn timed_scroll_plan_rejects_invalid_timing_before_io() {
 
 fn scroll_until_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -> InvokeCommandInput {
   InvokeCommandInput {
-    command_id: "input.scrollUntil".into(),
+    command_id: "window.scrollUntil".into(),
     target,
     inputs: inputs.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect(),
     typed_args: None,
@@ -1313,7 +1311,7 @@ fn scroll_until_cli_and_protocol_inputs_decode_to_the_same_request() {
 #[test]
 fn scroll_until_plan_rejects_invalid_requests_before_io() {
   for (inputs, expected) in [
-    (vec![("dy", "100"), ("until", "bottom")], "input.scrollUntil --until must be end or text:<query>"),
+    (vec![("dy", "100"), ("until", "bottom")], "window.scrollUntil --until must be end or text:<query>"),
     (vec![("dx", "50"), ("dy", "100"), ("until", "end")], "step must move along one axis"),
     (vec![("dy", "100"), ("until", "end"), ("max-steps", "0")], "max_steps must be within 1..=1000"),
     (vec![("dy", "100"), ("until", "text: ")], "text query must not be empty"),
@@ -1328,7 +1326,7 @@ fn scroll_until_plan_rejects_invalid_requests_before_io() {
   }
   let input = scroll_until_input(&[("x", "1"), ("y", "1"), ("dy", "10"), ("until", "end")], None);
   let error = crate::command::decode_args::<ScrollUntilArgs>(&input).unwrap().plan(None).unwrap_err();
-  assert_eq!(error, "input.scrollUntil requires --target app: or window:");
+  assert_eq!(error, "window.scrollUntil requires --target app: or window:");
 }
 
 #[tokio::test]

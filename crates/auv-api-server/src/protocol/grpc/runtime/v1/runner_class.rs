@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use auv_api_proto::auv::api::daemon::v1 as proto;
-use auv_api_proto::auv::api::daemon::v1::runner_class_service_server::RunnerClassService;
+use auv_api_proto::auv::api::runtime::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1::runner_class_service_server::RunnerClassService;
 use tonic::{Request, Response, Status};
 
 use crate::control::Control;

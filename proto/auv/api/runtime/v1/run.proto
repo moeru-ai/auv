@@ -1,10 +1,11 @@
 // EXPERIMENTAL / UNSTABLE
-// auv.api.daemon.v1 is not a long-term public compatibility promise.
+// auv.api.runtime.v1 is not a long-term public compatibility promise.
 syntax = "proto3";
 
-package auv.api.daemon.v1;
+package auv.api.runtime.v1;
 
 import "auv/api/daemon/v1/resource.proto";
+import "auv/api/runtime/v1/resource.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -53,7 +54,7 @@ enum RunOutcome {
 message Run {
   RunRef ref = 1;
   RunPhase phase = 2;
-  repeated DeviceRef devices = 3;
+  repeated auv.api.daemon.v1.DeviceRef devices = 3;
   map<string, string> labels = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp completed_at = 6;
@@ -61,7 +62,7 @@ message Run {
 
 message CreateRunRequest {
   // Empty selects the implicit local Device.
-  repeated DeviceRef devices = 1;
+  repeated auv.api.daemon.v1.DeviceRef devices = 1;
   map<string, string> labels = 2;
 }
 

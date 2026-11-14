@@ -71,8 +71,16 @@ pub fn default_path() -> Result<PathBuf, DiscoveryError> {
   if let Some(path) = std::env::var_os("AUV_DISCOVERY_FILE") {
     return Ok(PathBuf::from(path));
   }
+  Ok(user_state_directory()?.join("api-server.json"))
+}
+
+/// The current user's AUV state directory: XDG state on Linux, local app data
+/// on macOS and Windows. It holds the discovery descriptor and logs, and is
+/// the store root of daemons that AUV starts for the user (the Windows logon
+/// task), so their store does not depend on a working directory.
+pub fn user_state_directory() -> Result<PathBuf, DiscoveryError> {
   let directories = directories::ProjectDirs::from("ai", "moeru", "auv").ok_or(DiscoveryError::StateDirectoryUnavailable)?;
-  Ok(directories.state_dir().unwrap_or_else(|| directories.data_local_dir()).join("api-server.json"))
+  Ok(directories.state_dir().unwrap_or_else(|| directories.data_local_dir()).to_path_buf())
 }
 
 /// Reads a descriptor without treating a missing daemon as an error.

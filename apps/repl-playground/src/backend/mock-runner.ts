@@ -23,8 +23,7 @@ import {
   SCROLL_UNTIL_DEFAULTS,
   ScrollUntilStopReason,
   serveMockDaemon,
-  splitKeyCombination,
-  TextRecognitionService,
+  TextService,
   WindowClickStrategy,
   WindowService,
 } from '@auv-js/sdk'
@@ -164,10 +163,41 @@ export function mockRunner(desktop: MockDesktop): Transport {
     serveMockDaemon(router, MOCK_DEVICE)
 
     service(DisplayService, {
+      captureDisplay: async (request) => {
+        await delay(LATENCY_MS.capture)
+        const target = display(request.selector)
+        return { capture: capture(target.frame, scaleOf(request.resolution, target.frame), { case: 'displayId', value: target.id }), display: displayMessage(target) }
+      },
+      captureDisplayRegion: async (request) => {
+        await delay(LATENCY_MS.capture)
+        const region = request.region ?? { height: 0, width: 0, x: 0, y: 0 }
+        if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0)
+          throw new AuvRpcError(INVALID_ARGUMENT, 'capture region requires finite coordinates and positive width and height')
+        const target = request.selector ? display(request.selector) : desktop.displayAt(region)
+        return { capture: capture(region, scaleOf(request.resolution, region), undefined), display: displayMessage(target) }
+      },
+      findDisplayText: async (request) => {
+        await delay(LATENCY_MS.recognize)
+        const target = display(request.selector)
+        const frame = capture(target.frame, target.scale, { case: 'displayId', value: target.id })
+        return { capture: frame, display: displayMessage(target), matches: matchesOf(target.frame, searchArea(target.frame, request.screenRegion, request.region), request.query) }
+      },
       listDisplays: () => ({ displays: desktop.displays().map(displayMessage) }),
     })
 
     service(WindowService, {
+      captureWindow: async (request) => {
+        await delay(LATENCY_MS.capture)
+        const target = window(request.window?.windowId)
+        return { capture: capture(target.frame, scaleOf(request.resolution, target.frame), { case: 'windowId', value: target.id }), window: windowMessage(target) }
+      },
+      findWindowText: async (request) => {
+        await delay(LATENCY_MS.recognize)
+        const target = window(request.window?.windowId)
+        const frame = capture(target.frame, desktop.displayAt(target.frame).scale, { case: 'windowId', value: target.id })
+        return { capture: frame, matches: matchesOf(target.frame, searchArea(target.frame, request.screenRegion, request.region), request.query), window: windowMessage(target) }
+      },
+      getWindow: request => ({ window: windowMessage(window(request.window?.windowId)) }),
       listWindows: () => ({ windows: desktop.windows().map(windowMessage) }),
       resolveWindow: async (request) => {
         await delay(LATENCY_MS.list)
@@ -183,134 +213,19 @@ export function mockRunner(desktop: MockDesktop): Transport {
           throw new AuvRpcError(NOT_FOUND, `no mock window matches ${JSON.stringify(request.selector ?? {})}`)
         return { window: windowMessage(found) }
       },
-    })
-
-    service(CaptureService, {
-      captureDisplay: async (request) => {
-        await delay(LATENCY_MS.capture)
-        const target = display(request.selector)
-        return { capture: capture(target.frame, scaleOf(request.resolution, target.frame), { case: 'displayId', value: target.id }), display: displayMessage(target) }
-      },
-      captureRegion: async (request) => {
-        await delay(LATENCY_MS.capture)
-        const region = request.region ?? { height: 0, width: 0, x: 0, y: 0 }
-        if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0)
-          throw new AuvRpcError(INVALID_ARGUMENT, 'capture region requires finite coordinates and positive width and height')
-        const target = request.selector ? display(request.selector) : desktop.displayAt(region)
-        return { capture: capture(region, scaleOf(request.resolution, region), undefined), display: displayMessage(target) }
-      },
-      captureWindow: async (request) => {
-        await delay(LATENCY_MS.capture)
+      scrollWindow: async (request) => {
+        await delay(LATENCY_MS.scroll)
         const target = window(request.window?.windowId)
-        return { capture: capture(target.frame, scaleOf(request.resolution, target.frame), { case: 'windowId', value: target.id }), window: windowMessage(target) }
+        const local = windowPoint(target, request.point as PositionMessage)
+        const scroll = request.scroll ?? { deltaX: 0, deltaY: 0 }
+        desktop.scroll(target.id, local, { dx: scroll.deltaX, dy: scroll.deltaY })
+        return { action: delivered(InputDeliveryPath.WINDOW_TARGETED_WHEEL), point: local, scroll, window: windowMessage(target) }
       },
-      getCaptureImage: async (request) => {
-        const source = stored(request.capture?.captureId)
-        const area = searchArea(source.bounds, request.screenRegion, request.region) ?? source.bounds
-        const scale = source.canvas.width / source.bounds.width
-        const crop = { height: area.height * scale, width: area.width * scale, x: (area.x - source.bounds.x) * scale, y: (area.y - source.bounds.y) * scale }
-        const max = request.maxSize && request.maxSize.width > 0 && request.maxSize.height > 0 ? request.maxSize : undefined
-        const fit = max ? Math.min(1, max.width / crop.width, max.height / crop.height) : 1
-        const out = new OffscreenCanvas(Math.max(1, Math.round(crop.width * fit)), Math.max(1, Math.round(crop.height * fit)))
-        const ctx = out.getContext('2d')!
-        ctx.drawImage(source.canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, out.width, out.height)
-        const encoding = request.encoding === ImageEncoding.UNSPECIFIED ? ImageEncoding.RGBA : request.encoding
-        const data = encoding === ImageEncoding.RGBA
-          ? new Uint8Array(ctx.getImageData(0, 0, out.width, out.height).data.buffer)
-          : new Uint8Array(await (await out.convertToBlob({ type: IMAGE_TYPES[encoding] ?? 'image/png' })).arrayBuffer())
-        return { image: { data, encoding, height: out.height, width: out.width } }
-      },
-    })
-
-    service(TextRecognitionService, {
-      findDisplayText: async (request) => {
-        await delay(LATENCY_MS.recognize)
-        const target = display(request.selector)
-        const frame = capture(target.frame, target.scale, { case: 'displayId', value: target.id })
-        return { capture: frame, display: displayMessage(target), matches: matchesOf(target.frame, searchArea(target.frame, request.screenRegion, request.region), request.query) }
-      },
-      findWindowText: async (request) => {
-        await delay(LATENCY_MS.recognize)
-        const target = window(request.window?.windowId)
-        const frame = capture(target.frame, desktop.displayAt(target.frame).scale, { case: 'windowId', value: target.id })
-        return { capture: frame, matches: matchesOf(target.frame, searchArea(target.frame, request.screenRegion, request.region), request.query), window: windowMessage(target) }
-      },
-      recognizeText: async (request) => {
-        await delay(LATENCY_MS.recognize)
-        // TODO(mock-runner-image-ocr): caller-owned images (`source.image`)
-        // have no scene to read text from; recognize them when a mock test needs it.
-        if (request.source.case !== 'captureRef')
-          throw new AuvRpcError(UNIMPLEMENTED, 'the mock Runner recognizes text in its own captures only')
-        const source = stored(request.source.value.captureId)
-        return recognized(desktop.text(source.bounds, searchArea(source.bounds, request.screenRegion, request.region)))
-      },
-    })
-
-    service(InputService, {
-      clickPoint: async (request) => {
-        await delay(LATENCY_MS.click)
-        const position = request.position as PositionMessage
-        const targetId = request.window?.windowId ?? (position?.coordinateSpace.case === 'windowId' ? String(position.coordinateSpace.value) : undefined)
-        if (targetId === undefined) {
-          // A global click has no target window, so it must not carry window
-          // delivery options the Runner would silently ignore.
-          if (request.options?.policy !== undefined && request.options.policy !== InputPolicy.UNSPECIFIED)
-            throw new AuvRpcError(INVALID_ARGUMENT, 'options.policy requires a target window; omit it for a screen or display position')
-          if (request.options?.windowStrategy !== undefined && request.options.windowStrategy !== WindowClickStrategy.UNSPECIFIED)
-            throw new AuvRpcError(INVALID_ARGUMENT, 'options.window_strategy requires a target window; omit it for a screen or display position')
-          const point = screenPoint(position)
-          desktop.click(point)
-          return { action: delivered(InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS), screenPoint: point }
-        }
-        const target = window(targetId)
-        const local = windowPoint(target, position)
-        const point = { x: target.frame.x + local.x, y: target.frame.y + local.y }
-        desktop.click(point)
-        return { action: delivered(InputDeliveryPath.WINDOW_TARGETED_MOUSE), screenPoint: point, window: windowMessage(target), windowPoint: local }
-      },
-      inputKeyboard: async (request) => {
-        if (request.inputs.length === 0)
-          throw new AuvRpcError(INVALID_ARGUMENT, 'keyboard input requires at least one action')
-        // Match the Runner's validation boundary: reject unsupported actions
-        // before an earlier action in the sequence can change the scene.
-        for (const input of request.inputs) {
-          if (input.action.case === 'press')
-            requireMockKey(input.action.value.options?.keys ?? [])
-          else if (input.action.case !== 'typeText' && input.action.case !== 'pasteText')
-            throw new AuvRpcError(INVALID_ARGUMENT, 'keyboard input requires a press, typeText, or pasteText action')
-        }
-        const recipient = request.target?.recipient
-        if (recipient?.case === 'window')
-          window(recipient.value.ref?.windowId)
-        else if (recipient?.case === 'applicationId' && !desktop.hasApplication(recipient.value))
-          throw new AuvRpcError(NOT_FOUND, `No running application with application ID ${recipient.value}`)
-        const path = recipient?.case === 'window' ? InputDeliveryPath.WINDOW_TARGETED_KEYBOARD : InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS
-        const actions = []
-        for (const input of request.inputs) {
-          await delay(LATENCY_MS.key)
-          if (request.dryRun)
-            continue
-          if (input.action.case === 'press')
-            desktop.pressKey((input.action.value.options?.keys ?? []).join('+'))
-          else if (input.action.case === 'typeText')
-            desktop.typeText(input.action.value.text)
-          else if (input.action.case === 'pasteText')
-            desktop.typeText(input.action.value.text)
-          actions.push(delivered(input.action.case === 'pasteText' ? InputDeliveryPath.CLIPBOARD_PASTE : path))
-        }
-        return { actions }
-      },
-      pressKey: async (request) => {
-        const key = requireMockKey(splitKeyCombination(request.key))
-        await delay(LATENCY_MS.key)
-        desktop.pressKey(key)
-        return { action: delivered(InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS) }
-      },
-      async* scrollUntil(requests) {
+      async* scrollWindowUntil(requests) {
         const iterator = requests[Symbol.asyncIterator]()
         const first = (await iterator.next()).value
         if (first?.event.case !== 'begin')
-          throw new AuvRpcError(INVALID_ARGUMENT, 'begin must be the first ScrollUntil event')
+          throw new AuvRpcError(INVALID_ARGUMENT, 'begin must be the first ScrollWindowUntil event')
         const begin = first.event.value
         const target = window(begin.window?.windowId)
         const local = windowPoint(target, begin.point as PositionMessage)
@@ -365,13 +280,99 @@ export function mockRunner(desktop: MockDesktop): Transport {
           }
         }
       },
-      scrollWindowPoint: async (request) => {
-        await delay(LATENCY_MS.scroll)
-        const target = window(request.window?.windowId)
-        const local = windowPoint(target, request.point as PositionMessage)
-        const scroll = request.scroll ?? { deltaX: 0, deltaY: 0 }
-        desktop.scroll(target.id, local, { dx: scroll.deltaX, dy: scroll.deltaY })
-        return { action: delivered(InputDeliveryPath.WINDOW_TARGETED_WHEEL), point: local, scroll, window: windowMessage(target) }
+    })
+
+    service(CaptureService, {
+      getCaptureImage: async (request) => {
+        const source = stored(request.capture?.captureId)
+        const area = searchArea(source.bounds, request.screenRegion, request.region) ?? source.bounds
+        const scale = source.canvas.width / source.bounds.width
+        const crop = { height: area.height * scale, width: area.width * scale, x: (area.x - source.bounds.x) * scale, y: (area.y - source.bounds.y) * scale }
+        const max = request.maxSize && request.maxSize.width > 0 && request.maxSize.height > 0 ? request.maxSize : undefined
+        const fit = max ? Math.min(1, max.width / crop.width, max.height / crop.height) : 1
+        const out = new OffscreenCanvas(Math.max(1, Math.round(crop.width * fit)), Math.max(1, Math.round(crop.height * fit)))
+        const ctx = out.getContext('2d')!
+        ctx.drawImage(source.canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, out.width, out.height)
+        const encoding = request.encoding === ImageEncoding.UNSPECIFIED ? ImageEncoding.RGBA : request.encoding
+        const data = encoding === ImageEncoding.RGBA
+          ? new Uint8Array(ctx.getImageData(0, 0, out.width, out.height).data.buffer)
+          : new Uint8Array(await (await out.convertToBlob({ type: IMAGE_TYPES[encoding] ?? 'image/png' })).arrayBuffer())
+        return { image: { data, encoding, height: out.height, width: out.width } }
+      },
+    })
+
+    service(TextService, {
+      recognizeText: async (request) => {
+        await delay(LATENCY_MS.recognize)
+        // TODO(mock-runner-image-ocr): caller-owned images (`source.image`)
+        // have no scene to read text from; recognize them when a mock test needs it.
+        if (request.source.case !== 'captureRef')
+          throw new AuvRpcError(UNIMPLEMENTED, 'the mock Runner recognizes text in its own captures only')
+        const source = stored(request.source.value.captureId)
+        return recognized(desktop.text(source.bounds, searchArea(source.bounds, request.screenRegion, request.region)))
+      },
+    })
+
+    service(InputService, {
+      clickPoint: async (request) => {
+        await delay(LATENCY_MS.click)
+        const position = request.position as PositionMessage
+        const targetId = request.window?.windowId ?? (position?.coordinateSpace.case === 'windowId' ? String(position.coordinateSpace.value) : undefined)
+        if (targetId === undefined) {
+          // A global click has no target window, so it must not carry window
+          // delivery options the Runner would silently ignore.
+          if (request.options?.policy !== undefined && request.options.policy !== InputPolicy.UNSPECIFIED)
+            throw new AuvRpcError(INVALID_ARGUMENT, 'options.policy requires a target window; omit it for a screen or display position')
+          if (request.options?.windowStrategy !== undefined && request.options.windowStrategy !== WindowClickStrategy.UNSPECIFIED)
+            throw new AuvRpcError(INVALID_ARGUMENT, 'options.window_strategy requires a target window; omit it for a screen or display position')
+          const point = screenPoint(position)
+          desktop.click(point)
+          return { action: delivered(InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS), screenPoint: point }
+        }
+        const target = window(targetId)
+        const local = windowPoint(target, position)
+        const point = { x: target.frame.x + local.x, y: target.frame.y + local.y }
+        desktop.click(point)
+        return { action: delivered(InputDeliveryPath.WINDOW_TARGETED_MOUSE), screenPoint: point, window: windowMessage(target), windowPoint: local }
+      },
+      performKeyboardInputs: async (request) => {
+        if (request.inputs.length === 0)
+          throw new AuvRpcError(INVALID_ARGUMENT, 'keyboard input requires at least one action')
+        // Match the Runner's validation boundary: reject unsupported actions
+        // before an earlier action in the sequence can change the scene.
+        for (const input of request.inputs) {
+          if (input.action.case === 'press')
+            requireMockKey(input.action.value.options?.keys ?? [])
+          else if (input.action.case !== 'typeText' && input.action.case !== 'pasteText')
+            throw new AuvRpcError(INVALID_ARGUMENT, 'keyboard input requires a press, typeText, or pasteText action')
+        }
+        const recipient = request.target?.recipient
+        if (recipient?.case === 'window')
+          window(recipient.value.ref?.windowId)
+        else if (recipient?.case === 'applicationId' && !desktop.hasApplication(recipient.value))
+          throw new AuvRpcError(NOT_FOUND, `No running application with application ID ${recipient.value}`)
+        const path = recipient?.case === 'window' ? InputDeliveryPath.WINDOW_TARGETED_KEYBOARD : InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS
+        const actions = []
+        for (const input of request.inputs) {
+          await delay(LATENCY_MS.key)
+          if (request.dryRun)
+            continue
+          if (input.action.case === 'press')
+            desktop.pressKey((input.action.value.options?.keys ?? []).join('+'))
+          else if (input.action.case === 'typeText')
+            desktop.typeText(input.action.value.text)
+          else if (input.action.case === 'pasteText')
+            desktop.typeText(input.action.value.text)
+          actions.push(delivered(input.action.case === 'pasteText' ? InputDeliveryPath.CLIPBOARD_PASTE : path))
+        }
+        return { actions }
+      },
+      pressKeys: async (request) => {
+        const key = requireMockKey(request.options?.keys ?? [])
+        await delay(LATENCY_MS.key)
+        if (!request.dryRun)
+          desktop.pressKey(key)
+        return { action: delivered(InputDeliveryPath.FOREGROUND_SYSTEM_EVENTS) }
       },
       typeText: async (request) => {
         await delay(LATENCY_MS.key * Math.max(1, request.text.length / 4))

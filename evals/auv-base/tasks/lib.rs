@@ -9,3 +9,6 @@ pub mod desktop_windows;
 
 pub mod receiver;
 pub mod support;
+
+#[cfg(any(target_os = "macos", windows))]
+pub mod window_management;

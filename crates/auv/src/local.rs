@@ -9,8 +9,9 @@ use std::path::PathBuf;
 /// Stable desktop-entry identity used by AUV's direct and Runner frontends.
 pub const PORTAL_APP_ID: &str = "ai.moeru.auv";
 
-/// Creates an AUV-owned driver. Runner callers can retain their existing state
-/// directory; direct invocations use the user's durable AUV state directory.
+/// Creates an AUV-owned driver. `None` keeps Linux portal restore tokens in
+/// the user's durable AUV state directory, which the direct path and the
+/// first-party local Runner share; a library host may pass its own directory.
 pub fn driver(portal_state_root: Option<PathBuf>) -> DriverResult<LocalDriver> {
   let driver = LocalDriver::new();
   #[cfg(target_os = "linux")]

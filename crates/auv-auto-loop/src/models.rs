@@ -26,6 +26,8 @@ pub enum ReasonCode {
   RejectModeConflict,
   /// Operation schema_version does not match current supported version.
   RejectSchemaVersionMismatch,
+  /// Operation definition has missing, empty, or whitespace-only name.
+  RejectInvalidOperationName,
   /// Auto compilation gate fully passed: all 3 sub-gates satisfied, approved for activation.
   CompilationApproved,
 
@@ -68,6 +70,7 @@ impl ReasonCode {
       Self::RejectModeUndeclared => "REJECT_MODE_UNDECLARED",
       Self::RejectModeConflict => "REJECT_MODE_CONFLICT",
       Self::RejectSchemaVersionMismatch => "REJECT_SCHEMA_VERSION_MISMATCH",
+      Self::RejectInvalidOperationName => "REJECT_INVALID_OPERATION_NAME",
       Self::CompilationApproved => "COMPILATION_APPROVED",
       Self::ExactKeyMatch => "EXACT_KEY_MATCH",
       Self::EmbeddingTop3Candidate => "EMBEDDING_TOP3_CANDIDATE",

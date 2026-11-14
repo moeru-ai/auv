@@ -141,6 +141,7 @@ fn run(foreground: bool) {
       coordinate_space: CoordinateSpace::Screen,
       is_main: false,
       is_visible: false,
+      state: Default::default(),
     })
   };
   let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

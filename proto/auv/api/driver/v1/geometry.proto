@@ -34,3 +34,9 @@ message Position {
     string window_id = 5;
   }
 }
+
+// A width and height in logical points.
+message LogicalSize {
+  double width = 1;
+  double height = 2;
+}

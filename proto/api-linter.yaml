@@ -1,0 +1,37 @@
+# Google api-linter, restricted to method naming. Run from `proto/`:
+#   api-linter --config api-linter.yaml -I . -I vendor --set-exit-status \
+#     $(find auv -name '*.proto')
+# Rules and exceptions:
+# docs/ai/references/session-api/2026-11-02-driver-api-naming-normalization.md
+# Rule 5 (operation id derived from the RPC) is checked by a descriptor test in
+# crates/auv-api-proto/src/lib_test.rs, because no api-linter rule covers it.
+- disabled_rules: ["all"]
+  enabled_rules:
+    - core::0131::synonyms
+    - core::0132::synonyms
+    - core::0133::synonyms
+    - core::0134::synonyms
+    - core::0135::synonyms
+    - core::0136::verb-noun
+    - core::0136::prepositions
+    - core::0190::method-case
+    - core::0190::service-case
+# HealthService.Check follows the gRPC health-checking convention.
+- included_paths: ["auv/api/daemon/v1/health.proto"]
+  disabled_rules: ["core::0136::verb-noun"]
+# SetPolicy and SetPairedDeviceEnabled keep Set: an AIP Update needs a
+# FieldMask, which this API does not adopt yet.
+- included_paths: ["auv/api/daemon/v1/device_local.proto", "auv/api/daemon/v1/pairing.proto"]
+  disabled_rules: ["core::0134::synonyms"]
+# SkipToNextTrack and SkipToPreviousTrack are the approved media verbs.
+- included_paths: ["auv/api/driver/macos/v1/media_control.proto"]
+  disabled_rules: ["core::0136::prepositions"]
+# ScrollWindowWithMotion and ScrollWindowUntil are the approved names; they
+# keep the old scroll motion and scroll-until RPCs apart from ScrollWindow.
+- included_paths: ["auv/api/driver/v1/window_service.proto"]
+  disabled_rules: ["core::0136::prepositions"]
+# SetWindowFrame and SetWindowState are the approved window mutation names
+# (Tauri setPosition/setSize, BiDi setClientWindowState); they change one
+# aspect of a window the Runner does not own, not an AIP resource Update.
+- included_paths: ["auv/api/driver/v1/window_service.proto"]
+  disabled_rules: ["core::0134::synonyms"]

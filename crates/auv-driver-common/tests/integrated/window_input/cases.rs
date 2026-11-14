@@ -38,6 +38,7 @@ fn fixture_window() -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main: true,
     is_visible: true,
+    state: Default::default(),
   }
 }
 

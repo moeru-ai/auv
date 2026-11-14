@@ -161,7 +161,7 @@ describe('sdk bridge', () => {
     const recorded: Array<{ end?: BridgedCallEnd, start: BridgedCallStart }> = []
     const transport = bridge(daemon.transport, recorded)
 
-    const call = await transport.duplex({ headers: new Headers(), method: '/auv.api.driver.v1.InputService/ScrollUntil' })
+    const call = await transport.duplex({ headers: new Headers(), method: '/auv.api.driver.v1.WindowService/ScrollWindowUntil' })
     const received: number[] = []
     const reading = (async () => {
       for await (const body of call.responses)

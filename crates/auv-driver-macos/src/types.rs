@@ -40,6 +40,21 @@ pub struct ObservedWindow {
   pub layer: i64,
   pub title: String,
   pub bounds: ObservedRect,
+  pub state: ObservedWindowState,
+}
+
+/// Window facts beyond the WindowServer record. The default is an on-screen
+/// window whose AX state was not read, as the on-screen-only listing reports.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ObservedWindowState {
+  /// Listed by the all-windows listing although not on screen (minimized).
+  pub off_screen: bool,
+  /// `kAXMinimizedAttribute`, when the window matched an AX window.
+  pub minimized: Option<bool>,
+  /// `AXFullScreen`, when the window matched an AX window.
+  pub fullscreen: Option<bool>,
+  /// The focused window of the frontmost application, when focus was read.
+  pub focused: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -7,6 +7,12 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  # A newer push to the same pull request supersedes the older run. Runs on
+  # main are never cancelled, so every main commit keeps a complete result.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -53,6 +59,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # Pull requests only restore the cache; main writes it, so a pull
+      # request cannot evict main's entry or poison it.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Build AUV CLI
         run: cargo build --package auv-cli --bin auv

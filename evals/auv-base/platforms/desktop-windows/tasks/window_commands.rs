@@ -69,7 +69,8 @@ impl Invocation {
 pub(super) fn invoke(auv: &Path, store: &Path, command: &str, args: &[&str]) -> Result<Invocation> {
   let started = Instant::now();
   let output = Command::new(auv)
-    .arg("invoke")
+    // The direct path: plain `auv invoke` routes through the local daemon.
+    .args(["--no-daemon", "invoke"])
     .arg(command)
     .args(args)
     .args(["--json", "--no-overlay", "--store-root"])

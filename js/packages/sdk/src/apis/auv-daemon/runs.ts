@@ -1,6 +1,6 @@
 import type { V1CreateRunRequest, V1GetRunRequest, V1StopRunRequest } from '@auv-js/api-client'
 
-import type { Run as ProtoRun } from '../../gen/auv/api/daemon/v1/run_pb'
+import type { Run as ProtoRun } from '../../gen/auv/api/runtime/v1/run_pb'
 import type { AuvConnection, RpcDefinition } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 
@@ -24,7 +24,7 @@ import {
   RunService,
   StopRunRequestSchema,
   StopRunResponseSchema,
-} from '../../gen/auv/api/daemon/v1/run_pb'
+} from '../../gen/auv/api/runtime/v1/run_pb'
 import { AuvProtocolError } from '../../transport/errors'
 import { selectedDevices } from '../auv/routing'
 import { timestampDate, unknownEnum } from './wire'

@@ -289,8 +289,9 @@ mod platform {
       let result = self
         .session
         .window()
-        .restore(
+        .set_state(
           &window,
+          auv_driver::window::WindowStateTarget::Normal,
           WindowMutationOptions {
             settle,
             verification: WindowMutationVerification::BestEffortState,

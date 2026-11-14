@@ -3,14 +3,14 @@ use std::thread;
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::geometry::{Point, Rect, RelativeRect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::geometry::{Point, RelativeRect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions,
   Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
 };
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
-use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
+use auv_driver_common::window::{Window, WindowMutationOptions, WindowMutationResult, WindowStateTarget, find_window};
 use auv_driver_common::{InputTarget, KeyboardHold, KeyboardHoldId, MouseButton};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
@@ -23,7 +23,6 @@ use crate::clipboard::{
 use crate::driver::WindowsDriverSession;
 use crate::error::{invalid_input, not_found};
 use crate::input::{click_at, copy, current_position, paste, paste_text, press_key, scroll_at, type_text};
-use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
 use crate::window::{activate_window, list_windows, resolve_window};
@@ -175,6 +174,11 @@ impl WindowApi<'_> {
     list_windows()
   }
 
+  /// The window with `window_id`, read fresh from a new listing.
+  pub fn get(&self, window_id: &str) -> DriverResult<Window> {
+    find_window(list_windows()?, window_id)
+  }
+
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
     resolve_window(&selector)
   }
@@ -242,28 +246,28 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::MoveTo { point }, options)
+  /// Moves and/or resizes a normal window so its visible frame lands on the request. A missing
+  /// origin keeps the position; a missing size keeps the size. A minimized, maximized or
+  /// full-screen window fails with `FailedPrecondition`.
+  pub fn set_frame(
+    &self,
+    window: &Window,
+    origin: Option<Point>,
+    size: Option<Size>,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    crate::mutation::set_frame(window, origin, size, options)
   }
 
-  pub fn resize(&self, window: &Window, size: Size, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::Resize { size }, options)
+  /// Moves a window to `state`, verified with `IsIconic`/`IsZoomed`.
+  pub fn set_state(&self, window: &Window, state: WindowStateTarget, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    crate::mutation::set_state(window, state, options)
   }
 
-  pub fn set_frame(&self, window: &Window, frame: Rect, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::SetFrame { frame }, options)
-  }
-
-  pub fn minimize(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::Minimize, options)
-  }
-
-  pub fn restore(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::Restore, options)
-  }
-
-  pub fn zoom(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    mutate_window(window, WindowMutationKind::Zoom, options)
+  /// Raises a window and gives it keyboard focus; the result reports the focus disturbance and
+  /// whether the window is focused after `options.settle`.
+  pub fn focus(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
+    crate::mutation::focus(window, options)
   }
 
   /// Delivers a window-targeted click.
@@ -281,13 +285,13 @@ impl WindowApi<'_> {
     }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
-      let activation_attempt = foreground_window_attempt(window, "pointer delivery");
+      let activation = activate_window(window);
       #[cfg(feature = "overlay")]
       let click = options.click.clone();
       // Delivered like a global click, but reported below as aimed at `window`, so the
       // live overlay shows it with that window's cursor.
       let mut result = crate::input::deliver_click(screen_point, options.button, options.click, options.modifiers)?;
-      result.attempts.insert(0, activation_attempt);
+      record_activation(&mut result, activation, "pointer delivery");
       #[cfg(feature = "overlay")]
       {
         let mut events = vec![crate::overlay_follow::window_targeted(window)];
@@ -351,10 +355,10 @@ impl WindowApi<'_> {
           if options.policy == InputPolicy::BackgroundOnly {
             continue;
           }
-          let activation_attempt = foreground_window_attempt(window, "wheel delivery");
+          let activation = activate_window(window);
           let screen_point = self.to_screen_point(window, point)?.point();
           let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
-          attempts.push(activation_attempt);
+          record_activation(&mut result, activation, "wheel delivery");
           attempts.append(&mut result.attempts);
           result.attempts = attempts;
           return Ok(result);
@@ -395,23 +399,38 @@ impl WindowInput for WindowApi<'_> {
       movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
       return self.session.input().drag_mouse(movement, button);
     }
-    let activation_attempt = foreground_window_attempt(window, "pointer drag");
+    let activation = activate_window(window);
     movement.target = Some(auv_driver_common::InputTarget::Foreground);
     let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
-    result.attempts.insert(0, activation_attempt);
+    record_activation(&mut result, activation, "pointer drag");
     Ok((point, result))
   }
 }
 
-/// Foregrounds `window` before a foreground-only input delivery, reporting the
-/// outcome as an attempt instead of failing the whole delivery on activation
-/// trouble (the subsequent `SendInput` call still targets the window's frame).
-fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
-  match activate_window(window) {
-    Ok(()) => InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
-    Err(error) => InputAttempt::failure(
-      InputDeliveryPath::ForegroundSystemEvents,
-      format!("failed to foreground target window before {purpose}: {error}"),
+/// Folds the window activation that precedes a foreground-only input delivery
+/// into the delivery result. Activation trouble does not fail the delivery:
+/// the `SendInput` call still targets the window's frame.
+///
+/// NOTICE: activating the window is input preparation, not a delivery
+/// attempt; `attempts` lists delivery paths. A successful activation shows
+/// only as a foreground `focus_disturbance`. A failed activation stays a
+/// failed `ForegroundSystemEvents` attempt, so it remains visible as a
+/// fallback reason. This is the rule of `record_focus_preparation` in
+/// `crates/auv-driver-linux/src/session.rs`.
+///
+/// TODO(input-preparation-record): `InputActionResult` has no field for
+/// preparation steps (see "Prepare For Input Options" in
+/// `docs/TERMS_AND_CONCEPTS.md`). Add one in `auv-driver-common` for every
+/// platform when an owner-approved slice defines it.
+fn record_activation(result: &mut InputActionResult, activation: DriverResult<()>, purpose: &str) {
+  match activation {
+    Ok(()) => result.focus_disturbance = DisturbanceLevel::Foreground,
+    Err(error) => result.attempts.insert(
+      0,
+      InputAttempt::failure(
+        InputDeliveryPath::ForegroundSystemEvents,
+        format!("failed to foreground target window before {purpose}: {error}"),
+      ),
     ),
   }
 }

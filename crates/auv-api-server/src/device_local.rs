@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+#[cfg(unix)]
+use crate::unix_socket::current_euid;
 use auv::devices::EnrollmentState;
 use auv_api_proto::auv::api::daemon::v1 as proto;
 use auv_api_proto::auv::api::daemon::v1::device_local_service_server::DeviceLocalService;
@@ -147,7 +149,10 @@ impl DeviceLocalService for DeviceLocalGrpc {
     }))
   }
 
-  async fn enroll(&self, request: Request<proto::EnrollRequest>) -> Result<Response<proto::EnrollResponse>, Status> {
+  async fn create_enrollment(
+    &self,
+    request: Request<proto::CreateEnrollmentRequest>,
+  ) -> Result<Response<proto::CreateEnrollmentResponse>, Status> {
     let principal = peer_principal(&request);
     let mut input = request.into_inner();
     let credential = SecretBytes(Zeroizing::new(std::mem::take(&mut input.credential)));
@@ -160,19 +165,19 @@ impl DeviceLocalService for DeviceLocalGrpc {
     }
 
     let enrollment = self.control.enroll(&principal, EnrollAccount { user, credential }).await.map_err(status)?;
-    Ok(Response::new(proto::EnrollResponse {
+    Ok(Response::new(proto::CreateEnrollmentResponse {
       enrollment: Some(wire_enrollment(enrollment)),
     }))
   }
 
-  async fn remove_enrollment(
+  async fn delete_enrollment(
     &self,
-    request: Request<proto::RemoveEnrollmentRequest>,
-  ) -> Result<Response<proto::RemoveEnrollmentResponse>, Status> {
+    request: Request<proto::DeleteEnrollmentRequest>,
+  ) -> Result<Response<proto::DeleteEnrollmentResponse>, Status> {
     let principal = peer_principal(&request)?;
     let user = required_user(&request.get_ref().user)?;
     self.control.remove_enrollment(&principal, user).await.map_err(status)?;
-    Ok(Response::new(proto::RemoveEnrollmentResponse {}))
+    Ok(Response::new(proto::DeleteEnrollmentResponse {}))
   }
 
   async fn get_policy(&self, request: Request<proto::GetPolicyRequest>) -> Result<Response<proto::GetPolicyResponse>, Status> {
@@ -187,7 +192,10 @@ impl DeviceLocalService for DeviceLocalGrpc {
     Ok(Response::new(proto::SetPolicyResponse { enabled }))
   }
 
-  async fn list_audit(&self, request: Request<proto::ListAuditRequest>) -> Result<Response<proto::ListAuditResponse>, Status> {
+  async fn list_audit_entries(
+    &self,
+    request: Request<proto::ListAuditEntriesRequest>,
+  ) -> Result<Response<proto::ListAuditEntriesResponse>, Status> {
     let principal = peer_principal(&request)?;
     let input = request.get_ref();
 
@@ -215,7 +223,7 @@ impl DeviceLocalService for DeviceLocalGrpc {
         })
       })
       .collect::<Result<Vec<_>, Status>>()?;
-    Ok(Response::new(proto::ListAuditResponse {
+    Ok(Response::new(proto::ListAuditEntriesResponse {
       entries,
       next_page_token: page.next_cursor.map(encode_audit_page_token).unwrap_or_default(),
     }))
@@ -305,7 +313,10 @@ pub async fn serve_unix(
     return Err("DeviceLocalService socket parent must be an owned directory without group/other write permission".into());
   }
 
-  clear_stale_socket(path).await?;
+  // NOTICE(device-local-stale-socket): A process killed without Drop leaves a
+  // socket inode. The owned parent is not group/other writable, and the
+  // metadata store's process lock excludes another daemon using this root.
+  crate::unix_socket::clear_stale(path, "DeviceLocalService socket").await?;
   let listener = tokio::net::UnixListener::bind(path).map_err(|error| format!("cannot bind DeviceLocalService Unix socket: {error}"))?;
   let cleanup = SocketCleanup::new(path)?;
   std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))
@@ -319,48 +330,6 @@ pub async fn serve_unix(
     .map_err(|error| format!("DeviceLocalService Unix server failed: {error}"));
   drop(cleanup);
   result
-}
-
-#[cfg(unix)]
-async fn clear_stale_socket(path: &std::path::Path) -> Result<(), String> {
-  use std::os::unix::fs::{FileTypeExt, MetadataExt};
-  let existing = match std::fs::symlink_metadata(path) {
-    Ok(metadata) => metadata,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-    Err(error) => return Err(format!("cannot inspect DeviceLocalService socket path: {error}")),
-  };
-
-  if !existing.file_type().is_socket() || existing.uid() != current_euid() {
-    return Err("DeviceLocalService socket path is not an owned socket".into());
-  }
-
-  match tokio::time::timeout(std::time::Duration::from_millis(250), tokio::net::UnixStream::connect(path)).await {
-    Ok(Ok(_)) => return Err("DeviceLocalService socket already has a live listener".into()),
-    Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
-    Ok(Err(_)) | Err(_) => return Err("DeviceLocalService socket liveness could not be established".into()),
-  }
-
-  // NOTICE(device-local-stale-socket): A process killed without Drop leaves a
-  // socket inode. The owned parent is not group/other writable, and the
-  // metadata store's process lock excludes another daemon using this root.
-  // Recheck the inode before removing the refused listener's pathname.
-  let current = std::fs::symlink_metadata(path).map_err(|_| "DeviceLocalService socket changed during stale recovery".to_string())?;
-
-  if !current.file_type().is_socket()
-    || current.uid() != existing.uid()
-    || current.dev() != existing.dev()
-    || current.ino() != existing.ino()
-  {
-    return Err("DeviceLocalService socket changed during stale recovery".into());
-  }
-
-  std::fs::remove_file(path).map_err(|error| format!("cannot remove stale DeviceLocalService socket: {error}"))
-}
-
-#[cfg(unix)]
-fn current_euid() -> u32 {
-  // SAFETY: geteuid has no pointers, allocation, or preconditions.
-  unsafe { libc::geteuid() }
 }
 
 #[cfg(unix)]
@@ -525,7 +494,7 @@ mod tests {
   #[tokio::test]
   async fn dedicated_unix_server_uses_real_peer_uid_and_denies_other_account() {
     use auv_api_proto::auv::api::daemon::v1::device_local_service_client::DeviceLocalServiceClient;
-    use auv_api_proto::auv::api::daemon::v1::device_service_client::DeviceServiceClient;
+    use auv_api_proto::auv::api::daemon::v1::user_session_service_client::UserSessionServiceClient;
     use tonic::transport::Endpoint;
 
     let directory = tempfile::tempdir().unwrap();
@@ -561,7 +530,7 @@ mod tests {
       .await
       .unwrap();
 
-    let mut public_client = DeviceServiceClient::new(channel.clone());
+    let mut public_client = UserSessionServiceClient::new(channel.clone());
     let missing_public_route = public_client.list_user_sessions(proto::ListUserSessionsRequest {}).await.unwrap_err();
 
     assert_eq!(missing_public_route.code(), tonic::Code::Unimplemented);
@@ -588,7 +557,7 @@ mod tests {
     assert_eq!(denied.code(), tonic::Code::PermissionDenied);
 
     let invalid = client
-      .enroll(proto::EnrollRequest {
+      .create_enrollment(proto::CreateEnrollmentRequest {
         user: "neko".into(),
         credential: Vec::new(),
       })
@@ -598,7 +567,7 @@ mod tests {
     assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
 
     let unavailable = client
-      .enroll(proto::EnrollRequest {
+      .create_enrollment(proto::CreateEnrollmentRequest {
         user: "neko".into(),
         credential: b"fixture-only".to_vec(),
       })
@@ -620,7 +589,7 @@ mod tests {
     }
 
     let invalid_page = client
-      .list_audit(proto::ListAuditRequest {
+      .list_audit_entries(proto::ListAuditEntriesRequest {
         page_token: String::new(),
         limit: 101,
       })
@@ -630,7 +599,7 @@ mod tests {
     assert_eq!(invalid_page.code(), tonic::Code::InvalidArgument);
 
     let default_page = client
-      .list_audit(proto::ListAuditRequest {
+      .list_audit_entries(proto::ListAuditEntriesRequest {
         page_token: String::new(),
         limit: 0,
       })
@@ -642,7 +611,7 @@ mod tests {
 
     // The token is opaque: a caller-built byte offset is not accepted.
     let forged_token = client
-      .list_audit(proto::ListAuditRequest {
+      .list_audit_entries(proto::ListAuditEntriesRequest {
         page_token: "42".into(),
         limit: 1,
       })
@@ -652,7 +621,7 @@ mod tests {
     assert_eq!(forged_token.code(), tonic::Code::InvalidArgument);
 
     let first_page = client
-      .list_audit(proto::ListAuditRequest {
+      .list_audit_entries(proto::ListAuditEntriesRequest {
         page_token: String::new(),
         limit: 1,
       })
@@ -665,7 +634,7 @@ mod tests {
     assert!(!first_page.next_page_token.is_empty());
 
     let last_page = client
-      .list_audit(proto::ListAuditRequest {
+      .list_audit_entries(proto::ListAuditEntriesRequest {
         page_token: first_page.next_page_token,
         limit: 1,
       })

@@ -22,6 +22,7 @@ fn window(id: &str, title: &str, frame: Rect, is_main: bool) -> Window {
     coordinate_space: CoordinateSpace::Screen,
     is_main,
     is_visible: true,
+    state: Default::default(),
   }
 }
 

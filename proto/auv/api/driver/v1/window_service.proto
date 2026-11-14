@@ -1,0 +1,229 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/capture.proto";
+import "auv/api/driver/v1/geometry.proto";
+import "auv/api/driver/v1/input.proto";
+import "auv/api/driver/v1/text_recognition.proto";
+import "auv/api/driver/v1/window.proto";
+
+// NOTICE(service-files): A service sits with the resource it acts on (see
+// docs/ai/references/session-api/2026-11-02-driver-api-naming-normalization.md),
+// but its messages stay next to the capability types they share. The service
+// lives in its own file because window.proto is imported by capture.proto,
+// text_recognition.proto and input.proto; declaring it there would be an
+// import cycle.
+service WindowService {
+  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.list"
+      title: "List windows"
+      description: "Lists the windows a user could switch to, including minimized windows and windows on other desktops unless excluded, with their applications, titles, process IDs, frames in logical screen coordinates and state."
+    };
+  }
+  rpc GetWindow(GetWindowRequest) returns (GetWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.get"
+      title: "Read a window"
+      description: "Reads one window by reference, fresh: its frame and state now. Fails with NOT_FOUND once the window is gone."
+    };
+  }
+  rpc ResolveWindow(ResolveWindowRequest) returns (ResolveWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.resolve"
+      title: "Find a window"
+      description: "Finds one window by application (application ID, name, process ID or the frontmost app) and optionally by title."
+    };
+  }
+  // Moves and/or resizes a window. An unset origin keeps the position; an unset
+  // size keeps the size. A maximized window becomes normal at the new frame. A
+  // minimized or full-screen window fails with FAILED_PRECONDITION: call
+  // SetWindowState(NORMAL) first.
+  rpc SetWindowFrame(SetWindowFrameRequest) returns (SetWindowFrameResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.setFrame"
+      title: "Move or resize a window"
+      description: "Moves and/or resizes one window in logical screen coordinates; a maximized window becomes normal at the new frame and reports the frame before and after. A window the app settled at another size succeeds with adjusted_by_app. Not supported on Linux yet."
+    };
+  }
+  // Moves a window to NORMAL, MINIMIZED or MAXIMIZED. A window already in the
+  // requested state succeeds without a native call.
+  rpc SetWindowState(SetWindowStateRequest) returns (SetWindowStateResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.setState"
+      title: "Minimize, maximize or restore a window"
+      description: "Moves one window to normal, minimized or maximized and reports its state before and after. Maximized is best effort on macOS. Not supported on Linux yet."
+    };
+  }
+  // Raises one window and gives it keyboard focus. This brings its
+  // application to the front.
+  rpc FocusWindow(FocusWindowRequest) returns (FocusWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.focus"
+      title: "Focus a window"
+      description: "Raises one window and gives it keyboard focus, bringing its application to the front. Reports the focus disturbance and whether the window is focused afterwards. A minimized window fails with FAILED_PRECONDITION. Not supported on Linux yet."
+    };
+  }
+  rpc CaptureWindow(CaptureWindowRequest) returns (CaptureWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.capture"
+      title: "Capture a window"
+      description: "Captures one window. Returns a reference to the capture held by the Runner and its metadata (screen bounds, pixel size, scale and a ThumbHash preview), not pixels; fetch pixels with capture.getImage."
+    };
+  }
+  rpc FindWindowText(FindWindowTextRequest) returns (FindWindowTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.findText"
+      title: "Find text in a window"
+      description: "Captures a window and returns every match of a text query, with screen bounds and confidence, plus the capture they came from."
+    };
+  }
+  // Wheel-style scroll in a window, at a position in its space or in screen or
+  // display space. Delivery evidence only: a delivered wheel event does not
+  // prove the target viewport moved. Use ScrollPoint to scroll without a
+  // target window.
+  rpc ScrollWindow(ScrollWindowRequest) returns (ScrollWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scroll"
+      title: "Scroll in a window"
+      description: "Sends one wheel scroll at a point in a window. Deltas are logical pixels, positive toward later content. The result proves delivery, not that the view moved."
+    };
+  }
+  // Spreads one window scroll over time with a timing function and streams
+  // started, progress, and completed events. Invalid input ends the RPC with a
+  // gRPC status before the first wheel event. The first non-empty sample
+  // selects the delivery path; later samples reuse it.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ScrollWindowWithMotion(ScrollWindowWithMotionRequest) returns (stream ScrollWindowWithMotionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scrollWithMotion"
+      title: "Scroll smoothly in a window"
+      description: "Spreads one scroll over time with a timing function and streams its progress."
+    };
+  }
+  // Live window scroll steered by caller velocity updates. The client sends one
+  // begin event, then set_velocity events (each renews the lease), then stop
+  // or cancel. Delivery starts after begin. A missing renewal within the lease
+  // ramps to zero and completes; a disconnect stops at the next sample.
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc StreamWindowScroll(stream StreamWindowScrollRequest) returns (stream StreamWindowScrollResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.streamScroll"
+      title: "Steer a live scroll"
+      description: "Opens a live scroll in a window whose velocity the caller steers. Each velocity update renews a lease; without renewal the scroll slows to a stop."
+    };
+  }
+  // Scrolls a window in steps and observes after each step (one capture per
+  // update) until consecutive steps show no visual motion, the text query
+  // becomes visible, the client decides to stop, or the step budget runs out.
+  // The first request must be `begin`. Every update is streamed, with its
+  // capture and recognized text unless opted out. With `await_decisions`, the
+  // Runner waits for one `decision` after each update it does not end
+  // itself; a half-closed request stream counts as a stop.
+  // "No visual progress" is not proof that no more content exists.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ScrollWindowUntil(stream ScrollWindowUntilRequest) returns (stream ScrollWindowUntilResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+    option (auv.api.annotations.v1.presentation) = {
+      name: "window.scrollUntil"
+      title: "Scroll until a condition"
+      description: "Scrolls a window in steps and captures after each one, until the view stops moving, a text query becomes visible, the caller decides to stop, or the step budget runs out. Every step is streamed with its capture and recognized text."
+    };
+  }
+}
+
+// NOTICE(window-mutation-messages): the mutation messages live here, not in
+// window.proto, because they carry DisturbanceLevel from input.proto, and
+// input.proto imports window.proto.
+message SetWindowFrameRequest {
+  WindowRef window = 1;
+  // New top-left of the outer frame in logical screen coordinates; unset keeps
+  // the position.
+  ScreenPoint origin = 2;
+  // New outer size in logical points; unset keeps the size.
+  LogicalSize size = 3;
+  // TODO(window-mutation-options): WindowMutationOptions (policy, strategy,
+  // settle, verification) stay at their driver defaults; add them when a
+  // caller needs another settle or tolerance.
+}
+
+message SetWindowFrameResponse {
+  WindowMutationResult result = 1;
+}
+
+message SetWindowStateRequest {
+  WindowRef window = 1;
+  WindowStateTarget state = 2;
+}
+
+message SetWindowStateResponse {
+  WindowMutationResult result = 1;
+}
+
+message FocusWindowRequest {
+  WindowRef window = 1;
+}
+
+message FocusWindowResponse {
+  WindowMutationResult result = 1;
+}
+
+// How a window mutation reached the window.
+enum WindowMutationPath {
+  WINDOW_MUTATION_PATH_UNSPECIFIED = 0;
+  WINDOW_MUTATION_PATH_AX_WINDOW_ATTRIBUTE = 1;
+  WINDOW_MUTATION_PATH_AX_WINDOW_ACTION = 2;
+  WINDOW_MUTATION_PATH_PLATFORM_NATIVE = 3;
+  WINDOW_MUTATION_PATH_FOREGROUND_SYSTEM_EVENTS = 4;
+  WINDOW_MUTATION_PATH_UNSUPPORTED = 5;
+}
+
+message WindowMutationAttempt {
+  WindowMutationPath path = 1;
+  bool succeeded = 2;
+  optional string message = 3;
+}
+
+// Evidence for one window mutation: the attempts, and the frame and state the
+// Runner read before and after. A request for the current state reports no
+// attempts and the same state twice.
+message WindowMutationResult {
+  WindowMutationPath selected_path = 1;
+  repeated WindowMutationAttempt attempts = 2;
+  ScreenRect before_frame = 3;
+  ScreenRect after_frame = 4;
+  WindowState before_state = 5;
+  WindowState after_state = 6;
+  // The window changed, but the app settled it at another frame than the one
+  // requested (minimum or maximum size, grid snapping).
+  bool adjusted_by_app = 7;
+  DisturbanceLevel focus_disturbance = 8;
+  DisturbanceLevel mouse_disturbance = 9;
+}

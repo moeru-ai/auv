@@ -135,6 +135,7 @@ fn sample_snapshot_with_partial_main_window() -> ObservedWindowSnapshot {
         width: 1200,
         height: 800,
       },
+      state: Default::default(),
     }],
   }
 }

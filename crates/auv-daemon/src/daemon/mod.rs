@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
 use tonic::transport::Channel;
 
 use self::runner::RunnerSupervisor;
@@ -42,7 +43,7 @@ struct RunnerAffinityKey {
 
 struct OwnedRun {
   caller: CallerId,
-  run: proto::Run,
+  run: runtime_proto::Run,
 }
 
 pub(crate) struct OperationPermit {
@@ -104,7 +105,11 @@ impl Daemon {
     self.local_device.r#ref.as_ref().is_some_and(|device| device.device_id == device_id).then(|| self.local_device.clone())
   }
 
-  pub(crate) fn create_run(&self, caller: &CallerId, request: proto::CreateRunRequest) -> Result<proto::CreateRunResponse, DaemonError> {
+  pub(crate) fn create_run(
+    &self,
+    caller: &CallerId,
+    request: runtime_proto::CreateRunRequest,
+  ) -> Result<runtime_proto::CreateRunResponse, DaemonError> {
     let mut runs = self.runs.lock().expect("Run registry lock poisoned");
     let devices = if request.devices.is_empty() {
       vec![self.local_device.r#ref.clone().expect("local Device always has a ref")]
@@ -123,11 +128,11 @@ impl Daemon {
       devices
     };
     let run_id = crate::resource_id::generate_run().map_err(DaemonError::Identity)?;
-    let run = proto::Run {
-      r#ref: Some(proto::RunRef {
+    let run = runtime_proto::Run {
+      r#ref: Some(runtime_proto::RunRef {
         run_id: run_id.clone(),
       }),
-      phase: proto::RunPhase::Running as i32,
+      phase: runtime_proto::RunPhase::Running as i32,
       devices,
       labels: request.labels,
       created_at: Some(timestamp_now()),
@@ -141,20 +146,25 @@ impl Daemon {
         run: run.clone(),
       },
     );
-    Ok(proto::CreateRunResponse { run: Some(run) })
+    Ok(runtime_proto::CreateRunResponse { run: Some(run) })
   }
 
-  pub async fn stop_run(&self, caller: &CallerId, run_id: &str, outcome: proto::RunOutcome) -> Result<proto::StopRunResponse, DaemonError> {
+  pub async fn stop_run(
+    &self,
+    caller: &CallerId,
+    run_id: &str,
+    outcome: runtime_proto::RunOutcome,
+  ) -> Result<runtime_proto::StopRunResponse, DaemonError> {
     let terminal_phase = match outcome {
-      proto::RunOutcome::Succeeded => proto::RunPhase::Succeeded,
-      proto::RunOutcome::Failed => proto::RunPhase::Failed,
-      proto::RunOutcome::Canceled => proto::RunPhase::Canceled,
-      proto::RunOutcome::Unspecified => return Err(DaemonError::InvalidArgument("terminal Run outcome is required")),
+      runtime_proto::RunOutcome::Succeeded => runtime_proto::RunPhase::Succeeded,
+      runtime_proto::RunOutcome::Failed => runtime_proto::RunPhase::Failed,
+      runtime_proto::RunOutcome::Canceled => runtime_proto::RunPhase::Canceled,
+      runtime_proto::RunOutcome::Unspecified => return Err(DaemonError::InvalidArgument("terminal Run outcome is required")),
     };
     let run = {
       let mut runs = self.runs.lock().expect("Run registry lock poisoned");
       let owned = runs.get_mut(run_id).filter(|owned| &owned.caller == caller).ok_or_else(|| DaemonError::UnknownRun(run_id.to_string()))?;
-      if owned.run.phase == proto::RunPhase::Running as i32 || owned.run.phase == proto::RunPhase::Pending as i32 {
+      if owned.run.phase == runtime_proto::RunPhase::Running as i32 || owned.run.phase == runtime_proto::RunPhase::Pending as i32 {
         owned.run.phase = terminal_phase as i32;
         owned.run.completed_at = Some(timestamp_now());
       } else if owned.run.phase != terminal_phase as i32 {
@@ -172,10 +182,10 @@ impl Daemon {
     for runner_id in runner_ids {
       self.runners.release_run_affinity(&runner_id).await?;
     }
-    Ok(proto::StopRunResponse { run: Some(run) })
+    Ok(runtime_proto::StopRunResponse { run: Some(run) })
   }
 
-  pub fn list_runs(&self, caller: &CallerId) -> proto::ListRunsResponse {
+  pub fn list_runs(&self, caller: &CallerId) -> runtime_proto::ListRunsResponse {
     let mut runs = self
       .runs
       .lock()
@@ -185,27 +195,30 @@ impl Daemon {
       .map(|owned| owned.run.clone())
       .collect::<Vec<_>>();
     runs.sort_by(|left, right| run_id(left).cmp(run_id(right)));
-    proto::ListRunsResponse { runs }
+    runtime_proto::ListRunsResponse { runs }
   }
 
-  pub(crate) fn get_run(&self, caller: &CallerId, run_id: &str) -> Result<proto::GetRunResponse, DaemonError> {
+  pub(crate) fn get_run(&self, caller: &CallerId, run_id: &str) -> Result<runtime_proto::GetRunResponse, DaemonError> {
     self
       .runs
       .lock()
       .expect("Run registry lock poisoned")
       .get(run_id)
       .filter(|owned| &owned.caller == caller)
-      .map(|owned| proto::GetRunResponse {
+      .map(|owned| runtime_proto::GetRunResponse {
         run: Some(owned.run.clone()),
       })
       .ok_or_else(|| DaemonError::UnknownRun(run_id.to_string()))
   }
 
-  pub fn list_runners(&self) -> proto::ListRunnersResponse {
+  pub fn list_runners(&self) -> runtime_proto::ListRunnersResponse {
     self.runners.list()
   }
 
-  pub(crate) async fn create_runner(&self, request: proto::CreateRunnerRequest) -> Result<proto::CreateRunnerResponse, DaemonError> {
+  pub(crate) async fn create_runner(
+    &self,
+    request: runtime_proto::CreateRunnerRequest,
+  ) -> Result<runtime_proto::CreateRunnerResponse, DaemonError> {
     let device_id = request
       .device
       .as_ref()
@@ -221,16 +234,20 @@ impl Daemon {
     self.runners.create(request, 0).await.map_err(Into::into)
   }
 
-  pub(crate) fn get_runner(&self, runner_id: &str) -> Result<proto::GetRunnerResponse, DaemonError> {
+  pub(crate) fn get_runner(&self, runner_id: &str) -> Result<runtime_proto::GetRunnerResponse, DaemonError> {
     self.runners.get(runner_id).map_err(Into::into)
   }
 
-  pub(crate) fn list_runner_classes(&self, device_id: Option<&str>) -> Result<proto::ListRunnerClassesResponse, DaemonError> {
+  pub(crate) fn list_runner_classes(&self, device_id: Option<&str>) -> Result<runtime_proto::ListRunnerClassesResponse, DaemonError> {
     self.validate_local_device(device_id)?;
     Ok(self.runners.list_classes())
   }
 
-  pub(crate) fn get_runner_class(&self, device_id: Option<&str>, runner_class: &str) -> Result<proto::GetRunnerClassResponse, DaemonError> {
+  pub(crate) fn get_runner_class(
+    &self,
+    device_id: Option<&str>,
+    runner_class: &str,
+  ) -> Result<runtime_proto::GetRunnerClassResponse, DaemonError> {
     self.validate_local_device(device_id)?;
     self.runners.get_class(runner_class).map_err(Into::into)
   }
@@ -240,7 +257,7 @@ impl Daemon {
     runner_id: &str,
     grace_period: Option<prost_types::Duration>,
     force: bool,
-  ) -> Result<proto::DeleteRunnerResponse, DaemonError> {
+  ) -> Result<runtime_proto::DeleteRunnerResponse, DaemonError> {
     self.runners.delete(runner_id, grace_period, force).await.map_err(Into::into)
   }
 
@@ -275,7 +292,7 @@ impl Daemon {
     let affinity = match route.run_id.as_deref() {
       Some(run_id) => {
         let run = self.get_run(caller, run_id)?.run.expect("GetRun always returns a Run");
-        if run.phase != proto::RunPhase::Running as i32 {
+        if run.phase != runtime_proto::RunPhase::Running as i32 {
           return Err(DaemonError::InvalidArgument("capability routing requires a running Run"));
         }
         if !run.devices.iter().any(|device| device.device_id == device_id) {
@@ -316,7 +333,7 @@ impl Daemon {
     let mut runner = existing_affinity
       .as_deref()
       .and_then(|runner_id| self.runners.get(runner_id).ok().and_then(|response| response.runner))
-      .filter(|runner| runner.phase == proto::RunnerPhase::Ready as i32);
+      .filter(|runner| runner.phase == runtime_proto::RunnerPhase::Ready as i32);
     if runner.is_none()
       && existing_affinity.is_some()
       && let Some(key) = &affinity
@@ -337,20 +354,20 @@ impl Daemon {
         runner = self
           .runners
           .create(
-            proto::CreateRunnerRequest {
+            runtime_proto::CreateRunnerRequest {
               device: Some(proto::DeviceRef {
                 device_id: device_id.clone(),
               }),
-              runner_class: Some(proto::RunnerClassRef {
+              runner_class: Some(runtime_proto::RunnerClassRef {
                 runner_class: route.runner_class.clone(),
               }),
               labels: HashMap::new(),
               lifecycle: if persistent_local {
-                proto::RunnerLifecycle::UnlessIdle as i32
+                runtime_proto::RunnerLifecycle::UnlessIdle as i32
               } else if affinity.is_some() {
-                proto::RunnerLifecycle::UnlessShutdown as i32
+                runtime_proto::RunnerLifecycle::UnlessShutdown as i32
               } else {
-                proto::RunnerLifecycle::Ephemeral as i32
+                runtime_proto::RunnerLifecycle::Ephemeral as i32
               },
               // Keep authorization sessions warm between operations, while
               // allowing unattended daemons to become idle and shut down.
@@ -381,7 +398,7 @@ impl Daemon {
       (|| {
         let run =
           runs.get(&key.run_id).filter(|owned| &owned.caller == caller).ok_or_else(|| DaemonError::UnknownRun(key.run_id.clone()))?;
-        if run.run.phase != proto::RunPhase::Running as i32 {
+        if run.run.phase != runtime_proto::RunPhase::Running as i32 {
           return Err(DaemonError::InvalidArgument("capability routing requires a running Run"));
         }
         if attach_to_run {
@@ -521,7 +538,7 @@ impl Control for Daemon {
     let response = Daemon::create_run(
       self,
       caller,
-      proto::CreateRunRequest {
+      runtime_proto::CreateRunRequest {
         devices: request
           .devices
           .into_iter()
@@ -536,9 +553,9 @@ impl Control for Daemon {
   }
   async fn stop_run(&self, caller: &CallerId, run_id: &str, outcome: auv::runs::RunOutcome) -> Result<auv::runs::Run, ControlError> {
     let outcome = match outcome {
-      auv::runs::RunOutcome::Succeeded => proto::RunOutcome::Succeeded,
-      auv::runs::RunOutcome::Failed => proto::RunOutcome::Failed,
-      auv::runs::RunOutcome::Canceled => proto::RunOutcome::Canceled,
+      auv::runs::RunOutcome::Succeeded => runtime_proto::RunOutcome::Succeeded,
+      auv::runs::RunOutcome::Failed => runtime_proto::RunOutcome::Failed,
+      auv::runs::RunOutcome::Canceled => runtime_proto::RunOutcome::Canceled,
     };
     let response = Daemon::stop_run(self, caller, run_id, outcome).await?;
     domain_run(response.run.ok_or(ControlError::InvalidArgument("StopRun response omitted Run"))?)
@@ -556,15 +573,15 @@ impl Control for Daemon {
   async fn create_runner(&self, request: auv::runners::CreateRunner) -> Result<auv::runners::Runner, ControlError> {
     let response = Daemon::create_runner(
       self,
-      proto::CreateRunnerRequest {
+      runtime_proto::CreateRunnerRequest {
         device: request.device.map(|id| proto::DeviceRef {
           device_id: id.to_string(),
         }),
-        runner_class: Some(proto::RunnerClassRef {
+        runner_class: Some(runtime_proto::RunnerClassRef {
           runner_class: request.class.to_string(),
         }),
         labels: request.labels,
-        lifecycle: proto::RunnerLifecycle::from(request.lifecycle) as i32,
+        lifecycle: runtime_proto::RunnerLifecycle::from(request.lifecycle) as i32,
         idle_timeout: request.idle_timeout.map(duration_to_proto),
       },
     )
@@ -611,15 +628,15 @@ fn domain_device(value: proto::Device) -> Result<auv::devices::Device, ControlEr
   auv::devices::Device::try_from(value).map_err(|error| ControlError::Identity(error.to_string()))
 }
 
-fn domain_run(value: proto::Run) -> Result<auv::runs::Run, ControlError> {
+fn domain_run(value: runtime_proto::Run) -> Result<auv::runs::Run, ControlError> {
   auv::runs::Run::try_from(value).map_err(|error| ControlError::Identity(error.to_string()))
 }
 
-fn domain_runner(value: proto::Runner) -> Result<auv::runners::Runner, ControlError> {
+fn domain_runner(value: runtime_proto::Runner) -> Result<auv::runners::Runner, ControlError> {
   auv::runners::Runner::try_from(value).map_err(|error| ControlError::Identity(error.to_string()))
 }
 
-fn domain_runner_class(value: proto::RunnerClass) -> Result<auv::runners::RunnerClass, ControlError> {
+fn domain_runner_class(value: runtime_proto::RunnerClass) -> Result<auv::runners::RunnerClass, ControlError> {
   auv::runners::RunnerClass::try_from(value).map_err(|error| ControlError::Identity(error.to_string()))
 }
 
@@ -630,11 +647,11 @@ fn duration_to_proto(value: std::time::Duration) -> prost_types::Duration {
   }
 }
 
-fn run_id(run: &proto::Run) -> &str {
+fn run_id(run: &runtime_proto::Run) -> &str {
   run.r#ref.as_ref().map(|run| run.run_id.as_str()).unwrap_or_default()
 }
 
-fn runner_id(runner: &proto::Runner) -> &str {
+fn runner_id(runner: &runtime_proto::Runner) -> &str {
   runner.r#ref.as_ref().map(|runner| runner.runner_id.as_str()).unwrap_or_default()
 }
 

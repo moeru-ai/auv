@@ -17,8 +17,9 @@ enum MethodEffect {
 // live in Markdown next to the schema (`docs/<name>.md`) and are served by
 // `MethodDocsService`.
 message MethodPresentation {
-  // Dotted API name with lower_snake_case segments, e.g. "window.find_text".
-  // Clients derive other casings (camelCase "window.findText") from it.
+  // The operation id: `<service resource>.<rpc without the resource noun>` in
+  // lower camelCase, e.g. "window.findText" for WindowService.FindWindowText.
+  // The invoke command and the MCP tool use the same id.
   string name = 1;
   // A short title, e.g. "Find text in a window".
   string title = 2;

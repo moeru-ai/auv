@@ -1240,8 +1240,10 @@ POST   /apis/auv/runtime/v1/runs/{run}/runnerleases
 DELETE /apis/auv/runtime/v1/runs/{run}/runnerleases/{lease}
 ```
 
-`auv` is the fixed API namespace; `core` and `runtime` are groups within that
-namespace. AUV does not use DNS-style API group names.
+`auv` is the fixed API namespace; `daemon` and `runtime` are groups within that
+namespace (the code uses `daemon`, not the earlier `core`; Protobuf packages
+`auv.api.daemon.v1` and `auv.api.runtime.v1` match them). AUV does not use
+DNS-style API group names.
 
 Collections may support label/field selectors. LIST responses need a collection
 resource version before WATCH is promised. WATCH must define reconnect,

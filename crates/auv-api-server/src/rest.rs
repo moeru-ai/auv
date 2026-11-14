@@ -15,9 +15,8 @@ use tonic::{Code, Status};
 use crate::authentication::Authenticator;
 use crate::control::Control;
 use crate::middleware::authentication;
-use crate::protocol::grpc::daemon::v1::{
-  DeviceServiceGrpc, DiscoveryServiceGrpc, HealthServiceGrpc, PairingServiceGrpc, RunServiceGrpc, RunnerClassServiceGrpc, RunnerServiceGrpc,
-};
+use crate::protocol::grpc::daemon::v1::{DeviceServiceGrpc, DiscoveryServiceGrpc, HealthServiceGrpc, PairingServiceGrpc};
+use crate::protocol::grpc::runtime::v1::{RunServiceGrpc, RunnerClassServiceGrpc, RunnerServiceGrpc};
 
 const PROTOBUF_CONTENT_TYPE: &str = "application/protobuf";
 const INVOKE_PATH: &str = "/apis/auv/runtime/v1/invoke";

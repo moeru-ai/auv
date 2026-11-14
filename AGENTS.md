@@ -204,7 +204,7 @@ Runner owns. Do not treat them as ordinary response data.
 Captures, find-text evidence, scroll-until updates and OCR already
 follow this rule: they use `CaptureRef`, and `GetCaptureImage` is the explicit
 pixel fetch (see "Capture Frame" in `docs/TERMS_AND_CONCEPTS.md`). One existing
-API predates it: `GetRecentFramesResponse` frames
+API predates it: `ListRecentFramesResponse` frames
 (`TODO(recent-frames-capture-refs)`). Do not copy its shape into new APIs.
 
 ## Architecture Surfaces

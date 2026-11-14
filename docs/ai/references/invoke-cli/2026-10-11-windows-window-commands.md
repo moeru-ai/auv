@@ -138,15 +138,18 @@ witness runs do not prove it from the desktop side.
 
 - Display scaling other than 100%. The crop assumes the process sees physical pixels;
   `TODO(windows-window-capture-dpi)` stays at the capture code.
+  Update (2026-11-03): the driver is now per-monitor DPI aware and the TODO is removed; see
+  [Windows DPI awareness](../driver/2026-11-03-windows-dpi-awareness.md) (issue #460).
 - More than one display, windows that span displays, virtual desktops, remote or locked sessions.
 - Applications other than the harness receiver. `PrintWindow` with `PW_RENDERFULLCONTENT` is the
   capture backend, and whether it returns the content of GPU-drawn windows (browsers, XAML) is the
   question the `apps` survey asks of the background session, not yet of this path.
 - OCR quality beyond the receiver's two lines of text, and OCR languages other than the
   profile's.
-- `window.list` lists a minimized window with its off-screen frame and `is_visible: true`. Changing
-  that alters how a background session discovers a window it must answer `skipped_minimized` for,
-  so it is left as it was (`TODO(windows-window-list-minimized)` in `window.rs`).
+- `window.list` used to list a minimized window with its off-screen frame and `is_visible: true`.
+  Since window management v1 (2026-11-03) it reports the restore frame with
+  `state.is_minimized: Some(true)` and `is_visible: false`; the background session still answers
+  `skipped_minimized`. See `../driver/2026-11-02-window-management-api-v1-design.md`.
 - The selected Runner path.
 
 ## Validation

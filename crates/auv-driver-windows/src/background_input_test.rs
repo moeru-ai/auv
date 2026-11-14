@@ -162,6 +162,7 @@ fn window_receives_modified_click_messages_without_modifier_carryover() {
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: false,
+    state: Default::default(),
   };
   for (button, down, up, double, held) in [
     (auv_driver_common::MouseButton::Left, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, 1),
@@ -286,6 +287,7 @@ fn background_click_rejects_client_coordinates_exceeding_signed_16bit_without_po
     coordinate_space: CoordinateSpace::Screen,
     is_main: false,
     is_visible: false,
+    state: Default::default(),
   };
 
   let mut client_origin = POINT { x: 0, y: 0 };

@@ -96,7 +96,7 @@
         ]
       }
     },
-    "/apis/auv/daemon/v1/pairing/credentials/revoke": {
+    "/apis/auv/daemon/v1/pairing/credentials:revoke": {
       "post": {
         "operationId": "PairingService_RevokeDeviceCredential",
         "responses": {
@@ -148,7 +148,7 @@
         ]
       }
     },
-    "/apis/auv/daemon/v1/pairing/devices/enabled": {
+    "/apis/auv/daemon/v1/pairing/devices:setEnabled": {
       "post": {
         "operationId": "PairingService_SetPairedDeviceEnabled",
         "responses": {
@@ -174,7 +174,7 @@
         ]
       }
     },
-    "/apis/auv/daemon/v1/pairing/devices/unpair": {
+    "/apis/auv/daemon/v1/pairing/devices:unpair": {
       "post": {
         "operationId": "PairingService_UnpairDevice",
         "responses": {

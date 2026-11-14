@@ -103,7 +103,7 @@ fn a_failed_input_command_records_unverified_submission_progress() {
   let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch");
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let mut input = scan_frame_input(BTreeMap::new());
-  input.command_id = "input.focusText".into();
+  input.command_id = "accessibility.focusText".into();
   input.dry_run = false;
   let action = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxFocus);
   let failure = crate::InvokeFailure::from(auv_driver::DriverError::InputAction {

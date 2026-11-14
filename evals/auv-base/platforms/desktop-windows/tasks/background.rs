@@ -248,6 +248,7 @@ pub(super) fn error_kind(error: &DriverError) -> &'static str {
     DriverError::PermissionDenied { .. } => "permission_denied",
     DriverError::InvalidInput { .. } => "invalid_input",
     DriverError::StaleUiReference { .. } => "stale_ui_reference",
+    DriverError::FailedPrecondition { .. } => "failed_precondition",
     DriverError::RoleMismatch { .. } => "role_mismatch",
     DriverError::Backend { .. } => "backend",
   }

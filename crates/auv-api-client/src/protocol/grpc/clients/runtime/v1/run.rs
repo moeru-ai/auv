@@ -1,7 +1,7 @@
 //! run gRPC service implementation.
 
-use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
-use auv_api_proto::auv::api::daemon::v1::run_service_client::RunServiceClient;
+use auv_api_proto::auv::api::runtime::v1 as runtime_proto;
+use auv_api_proto::auv::api::runtime::v1::run_service_client::RunServiceClient;
 
 use crate::protocol::grpc::client::ApiTransport;
 
@@ -16,19 +16,19 @@ impl Client {
     Self { inner }
   }
 
-  pub async fn create_run(&mut self, request: daemon_proto::CreateRunRequest) -> Result<daemon_proto::Run, tonic::Status> {
+  pub async fn create_run(&mut self, request: runtime_proto::CreateRunRequest) -> Result<runtime_proto::Run, tonic::Status> {
     self.inner.create_run(request).await?.into_inner().run.ok_or_else(|| tonic::Status::internal("CreateRun response omitted Run"))
   }
 
-  pub async fn list_runs(&mut self) -> Result<Vec<daemon_proto::Run>, tonic::Status> {
-    Ok(self.inner.list_runs(daemon_proto::ListRunsRequest {}).await?.into_inner().runs)
+  pub async fn list_runs(&mut self) -> Result<Vec<runtime_proto::Run>, tonic::Status> {
+    Ok(self.inner.list_runs(runtime_proto::ListRunsRequest {}).await?.into_inner().runs)
   }
 
-  pub async fn get_run(&mut self, run_id: impl Into<String>) -> Result<daemon_proto::Run, tonic::Status> {
+  pub async fn get_run(&mut self, run_id: impl Into<String>) -> Result<runtime_proto::Run, tonic::Status> {
     self
       .inner
-      .get_run(daemon_proto::GetRunRequest {
-        run: Some(daemon_proto::RunRef {
+      .get_run(runtime_proto::GetRunRequest {
+        run: Some(runtime_proto::RunRef {
           run_id: run_id.into(),
         }),
       })
@@ -41,12 +41,12 @@ impl Client {
   pub async fn stop_run(
     &mut self,
     run_id: impl Into<String>,
-    outcome: daemon_proto::RunOutcome,
-  ) -> Result<daemon_proto::Run, tonic::Status> {
+    outcome: runtime_proto::RunOutcome,
+  ) -> Result<runtime_proto::Run, tonic::Status> {
     self
       .inner
-      .stop_run(daemon_proto::StopRunRequest {
-        run: Some(daemon_proto::RunRef {
+      .stop_run(runtime_proto::StopRunRequest {
+        run: Some(runtime_proto::RunRef {
           run_id: run_id.into(),
         }),
         outcome: outcome as i32,

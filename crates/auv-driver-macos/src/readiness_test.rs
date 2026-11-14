@@ -21,6 +21,7 @@ fn window(id: &str, bundle: &str, title: &str, frame: Rect, is_main: bool) -> Wi
     coordinate_space: CoordinateSpace::Screen,
     is_main,
     is_visible: true,
+    state: Default::default(),
   }
 }
 

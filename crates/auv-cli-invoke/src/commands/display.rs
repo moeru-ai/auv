@@ -16,7 +16,8 @@ use std::time::Duration;
 pub fn group() -> CommandGroup {
   // TODO(invoke-display-stubs): point commands stay intentionally unregistered
   // until an owner-approved implementation has behavioral evidence.
-  CommandGroup::new("display", "DISPLAY").command(capture_display_invoke_command()).command(list_displays_invoke_command())
+  let group = CommandGroup::new("display", "DISPLAY").command(capture_display_invoke_command()).command(list_displays_invoke_command());
+  super::screen::display_commands().into_iter().fold(group, CommandGroup::command)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]

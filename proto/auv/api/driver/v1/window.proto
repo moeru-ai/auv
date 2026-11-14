@@ -3,37 +3,14 @@ syntax = "proto3";
 
 package auv.api.driver.v1;
 
-import "auv/api/annotations/v1/annotations.proto";
 import "auv/api/driver/v1/geometry.proto";
-
-service WindowService {
-  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
-    option (auv.api.annotations.v1.presentation) = {
-      name: "windows.list"
-      title: "List windows"
-      description: "Lists the visible windows with their applications, titles, process IDs and frames in logical screen coordinates."
-    };
-  }
-  rpc ResolveWindow(ResolveWindowRequest) returns (ResolveWindowResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
-    option (auv.api.annotations.v1.presentation) = {
-      name: "windows.resolve"
-      title: "Find a window"
-      description: "Finds one window by application (application ID, name, process ID or the frontmost app) and optionally by title."
-    };
-  }
-}
-
 message WindowRef {
   string window_id = 1;
 }
 
 message WindowSelector {
   oneof application {
-    // The platform application ID that windows.list reports.
+    // The platform application ID that window.list reports.
     string application_id = 1;
     string application_name = 2;
     uint32 process_id = 3;
@@ -54,14 +31,51 @@ message Window {
   // on Linux. Windows does not report one yet.
   optional string application_id = 4;
   optional uint32 process_id = 5;
+  // The outer frame in logical screen coordinates. For a minimized window,
+  // the frame it returns to.
   ScreenRect frame = 6;
   bool is_main = 7;
   bool is_visible = 8;
+  // Minimized, maximized, focus, stacking and desktop facts.
+  WindowState state = 9;
+}
+
+// What the platform knows about a window beyond its frame. An unset field
+// means the platform cannot tell, never false. See "Window state" in
+// docs/TERMS_AND_CONCEPTS.md.
+message WindowState {
+  optional bool is_minimized = 1;
+  // Best effort on macOS: the frame equals the display's visible frame.
+  optional bool is_maximized = 2;
+  optional bool is_fullscreen = 3;
+  optional bool is_visible = 4;
+  // Has keyboard focus. Distinct from Window.is_main, the application's main
+  // window.
+  optional bool is_focused = 5;
+  optional bool is_always_on_top = 6;
+  // 0 is the frontmost window of the listing that carries it. Valid only
+  // inside that listing; it is not an identity.
+  optional uint32 stack_index = 7;
+  // Unset when the platform cannot tell (macOS Spaces, Linux).
+  WindowDesktop desktop = 8;
+}
+
+// The virtual desktop a window is on.
+message WindowDesktop {
+  // Opaque platform id, such as a Windows virtual desktop GUID. Compare it;
+  // do not parse it.
+  string id = 1;
+  bool is_current = 2;
 }
 
 message ListWindowsRequest {
   reserved 1;
   reserved "lease";
+  // Default false: minimized windows are listed.
+  bool exclude_minimized = 2;
+  // Default false: windows on other virtual desktops are listed. A window
+  // whose desktop is unknown is always listed.
+  bool exclude_other_desktops = 3;
 }
 
 message ListWindowsResponse {
@@ -76,4 +90,29 @@ message ResolveWindowRequest {
 
 message ResolveWindowResponse {
   Window window = 1;
+}
+
+message GetWindowRequest {
+  WindowRef window = 1;
+}
+
+message GetWindowResponse {
+  // A fresh read of the window.
+  Window window = 1;
+}
+
+// The state SetWindowState moves a window to.
+// TODO(window-fullscreen): no FULLSCREEN target. macOS full screen moves the
+// window to its own Space with an asynchronous animation, and Win32 has no
+// generic full screen for another app's window. WindowState.is_fullscreen
+// stays on the read side.
+enum WindowStateTarget {
+  WINDOW_STATE_TARGET_UNSPECIFIED = 0;
+  // Neither minimized nor maximized (nor full screen).
+  WINDOW_STATE_TARGET_NORMAL = 1;
+  WINDOW_STATE_TARGET_MINIMIZED = 2;
+  // macOS has no maximized state: the window gets the visible frame of its
+  // display (no menu bar, no Dock), and NORMAL restores the frame the same
+  // Runner recorded before maximizing.
+  WINDOW_STATE_TARGET_MAXIMIZED = 3;
 }

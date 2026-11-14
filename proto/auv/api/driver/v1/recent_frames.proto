@@ -11,31 +11,31 @@ import "auv/api/driver/v1/window.proto";
 import "auv/api/image/v1/image.proto";
 import "google/protobuf/timestamp.proto";
 
-service RecentFramesService {
-  rpc OpenFrameBuffer(OpenFrameBufferRequest) returns (OpenFrameBufferResponse) {
+service FrameBufferService {
+  rpc CreateFrameBuffer(CreateFrameBufferRequest) returns (CreateFrameBufferResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
     option (auv.api.annotations.v1.presentation) = {
-      name: "frames.open_buffer"
-      title: "Open a frame buffer"
+      name: "frameBuffer.create"
+      title: "Create a frame buffer"
       description: "Starts capturing a window, display or region repeatedly into a buffer that keeps the newest frames."
     };
   }
-  rpc GetRecentFrames(GetRecentFramesRequest) returns (GetRecentFramesResponse) {
+  rpc ListRecentFrames(ListRecentFramesRequest) returns (ListRecentFramesResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
     option (auv.api.annotations.v1.presentation) = {
-      name: "frames.recent"
-      title: "Get recent frames"
+      name: "frameBuffer.listRecentFrames"
+      title: "List recent frames"
       description: "Returns the frames a buffer captured after a given sequence number, oldest first."
     };
   }
-  rpc CloseFrameBuffer(CloseFrameBufferRequest) returns (CloseFrameBufferResponse) {
+  rpc DeleteFrameBuffer(DeleteFrameBufferRequest) returns (DeleteFrameBufferResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
     option (auv.api.annotations.v1.presentation) = {
-      name: "frames.close_buffer"
-      title: "Close a frame buffer"
+      name: "frameBuffer.delete"
+      title: "Delete a frame buffer"
       description: "Stops a frame buffer and frees its frames."
     };
   }
@@ -66,7 +66,7 @@ message CaptureTarget {
   }
 }
 
-message OpenFrameBufferRequest {
+message CreateFrameBufferRequest {
   CaptureTarget target = 1;
   uint32 target_fps = 2;
   // Maximum number of newest frames retained by this buffer.
@@ -77,7 +77,7 @@ message OpenFrameBufferRequest {
   auv.api.image.v1.PixelSize output_size = 4;
 }
 
-message OpenFrameBufferResponse {
+message CreateFrameBufferResponse {
   FrameBufferRef frame_buffer = 1;
 }
 
@@ -89,13 +89,13 @@ message RecentFrame {
   ImageFrame frame = 3;
 }
 
-message GetRecentFramesRequest {
+message ListRecentFramesRequest {
   FrameBufferRef frame_buffer = 1;
   // Return frames newer than this sequence. Zero starts at the retained tail.
   uint64 after_sequence = 2;
 }
 
-message GetRecentFramesResponse {
+message ListRecentFramesResponse {
   // Frames are ordered from oldest to newest.
   repeated RecentFrame frames = 1;
   uint64 latest_sequence = 2;
@@ -118,8 +118,8 @@ message FrameBufferPause {
   google.protobuf.Timestamp since = 3;
 }
 
-message CloseFrameBufferRequest {
+message DeleteFrameBufferRequest {
   FrameBufferRef frame_buffer = 1;
 }
 
-message CloseFrameBufferResponse {}
+message DeleteFrameBufferResponse {}

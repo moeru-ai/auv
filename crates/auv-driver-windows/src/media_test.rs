@@ -207,3 +207,45 @@ fn empty_smtc_strings_are_absent_values() {
   assert_eq!(state.album, None);
   assert_eq!(state.source_bundle_id, None);
 }
+
+#[test]
+fn test_matches_smtc_app_id_exact_and_negative() {
+  // 1. Positive matches
+  assert!(matches_smtc_app_id("QQMusic.exe", "QQMusic.exe"));
+  assert!(matches_smtc_app_id("qqmusic.exe", "QQMusic.exe"));
+  assert!(matches_smtc_app_id("QQMusic", "QQMusic.exe"));
+  assert!(matches_smtc_app_id("qqmusic", "QQMusic.exe"));
+  assert!(matches_smtc_app_id(r"C:\Program Files\Tencent\QQMusic\QQMusic.exe", "QQMusic.exe"));
+  assert!(matches_smtc_app_id(r"D:/Music/qqmusic.exe", "QQMusic.exe"));
+
+  // 2. Strict negative matches (no loose substring false-positives!)
+  assert!(!matches_smtc_app_id("NotQQMusic.exe", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("QQMusic_Helper.exe", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("Fake_QQMusic.exe", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("My_qqmusic", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("Spotify.exe", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("", "QQMusic.exe"));
+  assert!(!matches_smtc_app_id("QQMusic.exe", ""));
+}
+
+#[test]
+fn test_select_target_session_resolution_and_ambiguity() {
+  // 1. Single match succeeds with Ok(Some(item))
+  let candidates = vec!["Spotify.exe", "QQMusic.exe", "chrome.exe"];
+  assert_eq!(select_target_session(candidates, |s| *s, "QQMusic.exe").unwrap(), Some("QQMusic.exe"));
+
+  // 2. Not found returns Ok(None) matching production find_session semantics
+  let candidates_none = vec!["Spotify.exe", "NotQQMusic.exe"];
+  assert_eq!(select_target_session(candidates_none, |s| *s, "QQMusic.exe").unwrap(), None);
+
+  // 3. Ambiguous multiple candidates rejected with Err(InvalidInput)
+  let candidates_multi = vec!["QQMusic.exe", r"C:\Tencent\QQMusic\QQMusic.exe"];
+  let err_ambig = select_target_session(candidates_multi, |s| *s, "QQMusic.exe").unwrap_err();
+  match err_ambig {
+    auv_driver_common::error::DriverError::InvalidInput { message } => {
+      assert!(message.contains("Ambiguous match"), "{message}");
+      assert!(message.contains("count: 2"), "{message}");
+    }
+    other => panic!("expected InvalidInput for ambiguous sessions, got {other:?}"),
+  }
+}
