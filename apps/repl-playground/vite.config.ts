@@ -27,10 +27,11 @@ function oauthCallbackPage(): Plugin {
 export default defineConfig({
   base: '/playground/',
   // NOTICE(worker-prebundle): discovering these imports on the first worker
-  // execution reloads the page and disconnects its ACP tool call. Include
-  // compiler and shared worker dependencies before the first execution starts.
+  // execution reloads the page and disconnects its ACP tool call. Pre-bundle
+  // dependencies first reached from workers and the Agent panel.
   optimizeDeps: {
     include: [
+      '@base-ui/react/collapsible',
       '@exterioragentprotocol/sdk/client',
       '@exterioragentprotocol/sdk/client/react',
       '@exterioragentprotocol/client-sdk/codemode',

@@ -1,4 +1,9 @@
 /* Markdown descendants come from the renderer; component layout uses UnoCSS. */
+.agent-md {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .agent-md > :first-child {
   margin-top: 0;
 }
@@ -69,17 +74,15 @@
   border-radius: 6px;
   max-height: 256px;
   overflow: auto;
-  white-space: pre-wrap;
-}
-
-.agent-md [data-code-header] + pre {
-  margin-top: 0;
-  border-top: 0;
-  border-radius: 0 0 6px 6px;
   white-space: pre;
 }
 
+.agent-md:has(table) {
+  overflow-x: auto;
+}
+
 .agent-md table {
+  margin: 10px 0;
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;

@@ -96,8 +96,6 @@ The browser integration uses real HTTP MCP clients, synthetic Exterior and
 ACP peers, Pi's browser worker, the AUV SDK, and a Mock Runner. See the
 [execution fixture](../../../../apps/repl-playground/agent/execution.browser.test.tsx)
 and [connection fixture](../../../../apps/repl-playground/agent/connection.browser.test.tsx).
-The [agent interface research](2026-10-20-codemode-agent-interface-research.md)
-describes the earlier design.
 
 An earlier live probe reached the Mock desktop from OpenCode 2.0.26 through the
 hosted relay using a prior `codemode` tool. Verification with a real external

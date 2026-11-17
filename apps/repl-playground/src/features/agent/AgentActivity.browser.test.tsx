@@ -24,21 +24,24 @@ describe('agent activity', () => {
       toolCallId: 'neutral-result',
     }])
     const screen = page.elementLocator(container)
-    await expect.element(screen.getByText('2 activities', { exact: true })).toBeVisible()
+    const activity = screen.getByRole('button', { name: /2 activities/ })
+    await expect.element(activity).toHaveAttribute('aria-expanded', 'false')
     await expect.element(screen.getByText('1 issue', { exact: true })).toBeVisible()
     await expect.element(screen.getByTitle('Script failed: OverlayService/ShowOverlay is UNIMPLEMENTED', { exact: true })).toBeVisible()
-    const activity = container.querySelector('[data-agent-activity]')!
-    await page.elementLocator(activity.querySelector('summary')!).click()
-    const tool = container.querySelector('[data-tool-id="nested-failure"]')!
-    expect(tool.getAttribute('data-tool-status')).toBe('error')
-    expect(container.querySelector('[data-tool-id="neutral-result"]')?.getAttribute('data-tool-status')).toBe('finished')
-    const details = page.elementLocator(tool)
-    await page.elementLocator(tool.querySelector('summary')!).click()
+    await activity.click()
+    await expect.element(activity).toHaveAttribute('aria-expanded', 'true')
+    const failed = screen.getByRole('button', { name: /Playground.*Returned an error/ })
+    await expect.element(failed).toHaveAttribute('aria-expanded', 'false')
+    await expect.element(screen.getByRole('button', { name: /Read notes.*Finished/ })).toBeVisible()
+    await failed.click()
+    await expect.element(failed).toHaveAttribute('aria-expanded', 'true')
+    const panelId = failed.element().getAttribute('aria-controls')!
+    const details = page.elementLocator(document.getElementById(panelId)!)
     await details.getByText('Script', { exact: true }).click()
-    await expect.element(page.elementLocator(tool.querySelector('[data-tool-script]')!)).toHaveTextContent(script)
+    await expect.element(details.getByText(script, { exact: true })).toBeVisible()
     await details.getByText('Protocol details', { exact: true }).click()
     await expect.element(details.getByText('ACP status: completed', { exact: true })).toBeVisible()
-    expect(tool.textContent).toMatch(/"status": "error"/)
+    await expect.element(details.getByText(/"status": "error"/)).toBeVisible()
   })
 
   it('decodes a returned image and closes its preview with Escape', async () => {
@@ -51,14 +54,17 @@ describe('agent activity', () => {
       toolCallId: 'image-result',
     }])
     const screen = page.elementLocator(container)
+    await expect.element(screen.getByRole('button', { name: /1 activity/ })).toHaveAttribute('aria-expanded', 'false')
     const thumbnail = screen.getByRole('img', { exact: true, name: 'Screenshot 1' })
     await expect.element(thumbnail).toBeVisible()
     const image = thumbnail.element() as HTMLImageElement
     await image.decode()
     expect(image.naturalWidth).toBeGreaterThan(0)
-    await screen.getByRole('button', { exact: true, name: 'View screenshot 1' }).click()
+    const preview = screen.getByRole('button', { exact: true, name: 'View screenshot 1' })
+    await preview.click()
     await expect.element(page.getByRole('dialog', { exact: true, name: 'Screenshot 1' })).toBeVisible()
     await userEvent.keyboard('{Escape}')
     await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
+    await expect.element(preview).toHaveFocus()
   })
 })

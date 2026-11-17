@@ -1,13 +1,18 @@
 import type { ReasoningMessagePartComponent, TextMessagePartComponent } from '@assistant-ui/react'
 
+import remarkGfm from 'remark-gfm'
+
 import { AuiIf, ComposerPrimitive, groupPartByType, MessagePrimitive, ThreadPrimitive, useAuiState } from '@assistant-ui/react'
+import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import { useAcpPermissions, useAcpRuntimeExtras } from '@hafbit/react-acp'
 import { useState } from 'react'
 
 import { iconButtonClassName } from '../../components/icon-button-class'
 import { IconButton } from '../../components/IconButton'
 import { AgentActivity, AgentTool } from './AgentActivity'
-import { MarkdownText } from './MarkdownText'
+
+import '@assistant-ui/react-markdown/styles/dot.css'
+import './markdown.css'
 
 /**
  * Chat over the live ACP connection: assistant messages, tool-call rows,
@@ -71,19 +76,13 @@ export function AgentThread() {
   )
 }
 
-const AgentText: TextMessagePartComponent = ({ text }) => {
-  if (!text)
-    return <span className="text-fg-subtle animate-pulse">●</span>
-  return <MarkdownText className="text-[13px] text-fg leading-[1.75]" />
-}
-
 const AgentReasoning: ReasoningMessagePartComponent = ({ text }) => {
   if (!text)
     return null
   return (
     <details className="text-[12px] text-fg-muted">
       <summary className="cursor-pointer">Reasoning</summary>
-      <MarkdownText className="leading-relaxed mt-1" />
+      <MarkdownTextPrimitive className="agent-md leading-relaxed mt-1" defer remarkPlugins={[remarkGfm]} />
     </details>
   )
 }
@@ -113,7 +112,10 @@ function AgentMessage() {
               </div>
             )
             case 'reasoning': return <AgentReasoning {...part} />
-            case 'text': return <AgentText {...part} />
+            case 'text':
+              return part.text
+                ? <MarkdownTextPrimitive className="agent-md text-[13px] text-fg leading-[1.75]" defer remarkPlugins={[remarkGfm]} />
+                : <span className="text-fg-subtle animate-pulse">●</span>
             case 'tool-call': return part.toolUI ?? <AgentTool {...part} />
             default: return null
           }

@@ -35,9 +35,8 @@ The chat primitive supplies a jump-to-latest control that respects manual histor
 
 ## Markdown and styles
 
-Assistant text and reasoning use `@assistant-ui/react-markdown` with `remark-gfm`.
-The library owns parsing, streamed text, and code-fence extraction.
-The local adapter applies the theme, scrolls wide tables, and uses the shared clipboard helper.
+Assistant text and reasoning render with assistant-ui's `MarkdownTextPrimitive`
+and `remark-gfm`. The library handles streamed text and Markdown rendering.
 Tool protocol data and scripts remain plain text in their detail sections.
 
 Agent components use UnoCSS utilities and the Playground theme.
@@ -50,7 +49,7 @@ Global `styles.css` contains no Agent-specific rules.
 Evidence level: automated browser component tests with in-memory ACP updates, plus workbench integration with synthetic network peers and Mock Runner.
 The [activity component tests](../../../../apps/repl-playground/src/features/agent/AgentActivity.browser.test.tsx) check grouped tool calls, nested failures, harmless error-related text, readable scripts, and unchanged protocol status.
 They also check screenshot decoding and dialog dismissal.
-The [Markdown component tests](../../../../apps/repl-playground/src/features/agent/MarkdownText.browser.test.tsx) cover tables, task lists, strikethrough, links, quotes, and fenced-code copies.
+The [Markdown browser test](../../../../apps/repl-playground/src/features/agent/MarkdownText.browser.test.tsx) covers tables, task lists, strikethrough, links, quotes, and fenced code.
 The [connection integration test](../../../../apps/repl-playground/agent/connection.browser.test.tsx) checks connection retention, session changes, and the workbench at 1280 by 720.
 The [presentation unit tests](../../../../apps/repl-playground/src/features/agent/tool-presentation.test.ts) check structured error metadata without a browser.
 The execution contract records the shared validation commands and results.

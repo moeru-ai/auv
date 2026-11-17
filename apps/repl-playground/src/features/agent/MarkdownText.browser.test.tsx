@@ -4,9 +4,9 @@ import { page } from 'vitest/browser'
 import { mountAgentThread } from '../../../agent/thread.fixture'
 
 describe('agent Markdown', () => {
-  it('renders GFM tables, task lists, links and quoted text', async () => {
+  it('renders formatted Agent messages with GFM and code blocks', async () => {
     const container = await mountAgentThread([{
-      content: { text: '| Check | Result |\n| --- | --- |\n| Counter | Passed |\n\n- [x] Verified\n\n~~Outdated~~\n\n> Checked with a screenshot.\n\n[Documentation](https://example.com/docs)', type: 'text' },
+      content: { text: '| Check | Result |\n| --- | --- |\n| Counter | Passed |\n\n- [x] Verified\n\n~~Outdated~~\n\n> Checked with a screenshot.\n\n[Documentation](https://example.com/docs)\n\n```js\ntext("verified");\n```', type: 'text' },
       sessionUpdate: 'agent_message_chunk',
     }])
     const screen = page.elementLocator(container)
@@ -16,18 +16,6 @@ describe('agent Markdown', () => {
     expect(container.querySelector('del')?.textContent).toBe('Outdated')
     expect(container.querySelector('blockquote')?.textContent?.trim()).toBe('Checked with a screenshot.')
     await expect.element(screen.getByRole('link', { name: 'Documentation' })).toHaveAttribute('href', 'https://example.com/docs')
-  })
-
-  it('copies the original fenced code to the browser clipboard', async () => {
-    const container = await mountAgentThread([{
-      content: { text: '```ts\ntext("verified");\n```', type: 'text' },
-      sessionUpdate: 'agent_message_chunk',
-    }])
-    const screen = page.elementLocator(container)
-    await expect.poll(() => container.querySelector('pre code')?.textContent).toBe('text("verified");\n')
-    await screen.getByRole('button', { exact: true, name: 'Copy code' }).click()
-    await expect.element(screen.getByRole('button', { exact: true, name: 'Copied' })).toBeVisible()
-    // The Windows clipboard normalizes LF to CRLF.
-    expect((await navigator.clipboard.readText()).replaceAll('\r\n', '\n')).toBe('text("verified");\n')
+    expect(container.querySelector('pre code')?.textContent?.trim()).toBe('text("verified");')
   })
 })
