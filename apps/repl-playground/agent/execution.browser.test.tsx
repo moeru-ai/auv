@@ -8,7 +8,7 @@ import { commands, page } from 'vitest/browser'
 import { CodeModeHost } from '../src/features/agent/codemode-bridge'
 import { serveMcp } from '../src/features/agent/exterior'
 import { restoreDevices } from '../src/features/device/devices'
-import { session } from '../src/runtime/session'
+import { activateBackend, session } from '../src/runtime/session'
 import { usePlayground } from '../src/store'
 import { cursorSeq, latestFramesAt } from '../src/timeline'
 import { mountPlayground } from './browser.fixture'
@@ -42,50 +42,49 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     await expect.element(page.elementLocator(editor)).not.toBeVisible()
 
     await restoreDevices()
+    usePlayground.setState({ live: false })
     expect((await session.run({ mode: 'run', source: 'const editorValue = 99;', startLine: 1 })).status).toBe('ok')
     endpoint = await serveMcp(fixture.relayUrl, 'browser-check', transport => void host.connect(transport))
     host.setSession('browser-check')
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: Object.fromEntries(endpoint.headers.map(header => [header.name, header.value])) } }))
     const backend = usePlayground.getState().backend
-    usePlayground.setState({ backend: null })
+    await activateBackend(null)
     try {
-      const pure = await execute('text(api.help().limits.memoryMiB); return 2;')
-      expect(pure.isError).toBe(false)
-      expect(textItems(pure).slice(0, 2)).toEqual(['64', '2'])
-      const missing = await execute('await auv.windows.list();')
+      const pure = await execute('return 1 + 1;')
+      expect(pure.isError).toBeFalsy()
+      expect(textItems(pure)).toContain('2')
+      const missing = await execute('return await tools.list_windows({});')
       expect(missing.isError).toBe(true)
-      expect(textItems(missing).at(-1)).toMatch(/needs a device/)
+      expect(textItems(missing).at(-1)).toMatch(/need a Device/)
     }
-    finally { usePlayground.setState({ backend }) }
+    finally { await activateBackend(backend) }
 
-    expect((await client.listTools()).tools[0].description).toMatch(/api\.help/)
-    const discovery = await execute('text(api.help()); text(api.describe({ path: api.search({ query: "WindowClient.findText" }).items[0].path }));')
-    expect(discovery.isError).toBe(false)
-    const help = JSON.parse(textItems(discovery)[1])
-    expect(help.signature).toMatch(/query: string/)
-    expect(help.types.FindWindowTextResponse.definition).toMatch(/matches/)
+    const { tools } = await client.listTools()
+    expect(tools.map(tool => tool.name)).toEqual(['execute'])
+    expect(tools[0]?.description).toContain('find_window_text')
+    const discovery = await execute('return ALL_TOOLS.map(tool => tool.name);')
+    expect(discovery.isError).toBeFalsy()
+    expect(JSON.parse(textItems(discovery)[0]!)).toContain('find_window_text')
     expect(usePlayground.getState().calls).toHaveLength(0)
-    const display = await execute('const selector = { selector: { case: "display", value: { displayId: "2" } } }; text((await auv.displays.capture(selector)).display.displayId); text((await auv.displays.findText(selector, "Counter")).matches.length);')
-    expect(display.isError).toBe(false)
-    expect(textItems(display)).toEqual(expect.arrayContaining(['2', '1']))
-    const example = await execute(help.examples[0])
-    expect(example.isError).toBe(false)
-    expect(textItems(example).join('\n')).toContain('Increment')
     const result = await execute(`
-      const counter = await auv.windows.resolve({ appName: 'Counter' });
-      const found = await counter.findText('Increment');
+      const counter = await tools.resolve_window({ appName: 'Counter' });
+      const found = await tools.find_window_text({ windowId: counter.windowId, query: 'Increment' });
       if (found.matches.length !== 1) throw new Error('Expected one button');
-      for (let i = 0; i < 3; i++) await counter.click(found.matches[0]);
-      const after = await counter.findText('3');
+      const { x, y, width, height } = found.matches[0].bounds;
+      for (let i = 0; i < 3; i++) {
+        await tools.click_window({ windowId: counter.windowId, x: x + width / 2, y: y + height / 2, space: "screen" });
+      }
+      const after = await tools.find_window_text({ windowId: counter.windowId, query: 'Count:' });
       text(after.matches.map(item => item.text));
-      store('counterId', counter.id);
-      const shot = await counter.capture();
-      await image(shot.capture);
+      store('counterId', counter.windowId);
+      const shot = await tools.capture_window({ windowId: counter.windowId });
+      image(await tools.get_capture_image({ captureId: shot.captureId }));
     `)
-    expect(result.isError).toBe(false)
+    expect(result.isError).toBeFalsy()
     expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
     expect(textItems(result)).toContain('["Count: 3"]')
     const calls = usePlayground.getState().calls
+    const counterSource = calls.at(-1)!.script
     expect(calls.filter(call => call.effect === 'input')).toHaveLength(3)
     expect(calls.every(call => call.status === 'ok')).toBe(true)
     await scriptTab.click()
@@ -102,76 +101,141 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     // store query erased SDK calls and hid the previous desktop capture.
     const previous = history()
     const saved = await execute('text(load("counterId")); text(typeof counter); text(typeof editorValue);')
-    expect(saved.isError).toBe(false)
-    expect(textItems(saved).filter(text => text === 'undefined')).toHaveLength(2)
+    expect(saved.isError).toBeFalsy()
+    expect(textItems(saved).slice(0, 3)).toEqual(['w-counter', 'undefined', 'undefined'])
     const continued = history()
     expect(continued.calls).toEqual(previous.calls)
     expect(continued.frames).toEqual(previous.frames)
     expect(continued.seq).toBeGreaterThan(previous.seq)
+    const previousRunId = usePlayground.getState().run.runId
+    const runIds: Array<null | string> = []
+    const access = backend!.sdk.bind(backend)
+    const observed = vi.spyOn(backend!, 'sdk').mockImplementation(() => {
+      const sdk = access()
+      return {
+        ...sdk,
+        target: {
+          ...sdk.target,
+          transport: {
+            ...sdk.target.transport,
+            unary: async (call) => {
+              if (call.method.endsWith('/FindWindowText'))
+                runIds.push(call.headers.get('auv-run-id'))
+              return await sdk.target.transport.unary(call)
+            },
+          },
+        },
+      }
+    })
+    let repeated: CallToolResult
+    try {
+      repeated = await execute('const result = await tools.find_window_text({ windowId: load("counterId"), query: "Count:" }); return result.matches.map(item => item.text);')
+    }
+    finally { observed.mockRestore() }
+    expect(repeated.isError).toBeFalsy()
+    expect(textItems(repeated)).toContain('["Count: 3"]')
+    const currentRunId = usePlayground.getState().run.runId
+    expect(currentRunId).toMatch(/^[a-f\d]{32}$/)
+    expect(currentRunId).not.toBe(previousRunId)
+    expect(runIds).toEqual([currentRunId])
+    const retainedCall = usePlayground.getState().calls.at(-1)!
+    expect(retainedCall.script.id).not.toBe(counterSource.id)
+    expect(retainedCall.script.source).toContain('find_window_text')
+    expect(retainedCall.line).toBeNull()
     await page.getByRole('tab', { exact: true, name: 'Variables' }).click()
-    await expect.element(page.getByRole('tabpanel', { exact: true, name: 'Variables' })).toHaveTextContent(/Declared names show up here/)
+    const variables = page.getByRole('tabpanel', { exact: true, name: 'Variables' })
+    await expect.element(variables).toHaveTextContent(/Declared names show up here/)
+    await expect.element(variables).not.toHaveTextContent(/editorValue/)
     await page.getByRole('tab', { name: /^Calls / }).click()
     const failed = await execute('store("counterId", "bad"); text("before"); throw new Error("intentional");')
     expect(failed.isError).toBe(true)
     expect(textItems(failed)).toContain('before')
     expect(textItems(await execute('return load("counterId");'))).toContain('w-counter')
     const jpeg = await execute(`
-      const counter = await auv.windows.get(load('counterId'));
-      await image((await counter.capture()).capture, { encoding: sdk.ImageEncoding.JPEG, maxSize: { height: 256, width: 256 } });
+      const shot = await tools.capture_window({ windowId: load('counterId') });
+      image(await tools.get_capture_image({ captureId: shot.captureId, encoding: 'jpeg', maxSize: { height: 256, width: 256 } }));
     `)
-    expect(jpeg.isError).toBe(false)
+    expect(jpeg.isError).toBeFalsy()
     expect(jpeg.content).toEqual(expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg', type: 'image' })]))
     const appended = usePlayground.getState().calls
     expect(appended.slice(0, previous.calls.length).map(call => call.id)).toEqual(previous.calls)
-    expect(appended[previous.calls.length].seq).toBeGreaterThan(continued.seq)
-    expect(appended.at(-1)!.script.id).not.toBe(appended[previous.calls.length - 1].script.id)
+    expect(retainedCall.seq).toBeGreaterThan(continued.seq)
+    expect(appended.at(-1)!.script.id).not.toBe(counterSource.id)
     expect(appended[previous.calls.length - 1].script.source).toMatch(/for \(let i = 0; i < 3;/)
     await page.elementLocator(document.querySelector(`[data-call-id="${previous.calls.at(-1)}"] td`)!).click()
     const source = [...document.querySelectorAll('summary')].find(element => element.textContent?.includes('source'))!
     await page.elementLocator(source).click()
     await expect.poll(() => document.querySelector('details pre')?.textContent).toMatch(/for \(let i = 0; i < 3;/)
 
-    const canceled = execute('text("waiting"); await new Promise(() => {});', 10000)
-    await vi.waitUntil(() => usePlayground.getState().logs.some(log => log.values.includes('waiting')))
-    host.cancel()
-    const canceledResult = await canceled
-    expect(canceledResult.isError).toBe(true)
-    expect(textItems(canceledResult).at(-1)).toMatch(/canceled/)
-    expect(textItems(canceledResult)).toContain('waiting')
-    const reset = execute('text("reset waiting"); await new Promise(() => {});', 10000)
-    await vi.waitUntil(() => usePlayground.getState().logs.some(log => log.values.includes('reset waiting')))
-    session.reset()
-    expect((await reset).isError).toBe(true)
-    const transportAbort = new AbortController()
-    const transportCanceled = client.callTool({ arguments: { code: 'text("transport waiting"); await new Promise(() => {});', timeoutMs: 10000 }, name: 'execute' }, undefined, { signal: transportAbort.signal })
-    const rejected = expect(transportCanceled).rejects.toBeDefined()
-    await vi.waitUntil(() => usePlayground.getState().logs.some(log => log.values.includes('transport waiting')))
-    transportAbort.abort()
-    await rejected
-    await vi.waitUntil(() => usePlayground.getState().run.status === 'stopped')
+    // Delay a real tool call so cancellation reaches the worker and the
+    // transport while the desktop is still locked.
+    const originalSdk = backend!.sdk.bind(backend)
+    const delayed = vi.spyOn(backend!, 'sdk').mockImplementation(() => {
+      const sdk = originalSdk()
+      return {
+        ...sdk,
+        target: {
+          ...sdk.target,
+          transport: {
+            ...sdk.target.transport,
+            async unary(call) {
+              if (call.method.endsWith('/ListWindows')) {
+                await new Promise<void>((_resolve, reject) => {
+                  const abort = () => reject(call.signal?.reason)
+                  if (call.signal?.aborted)
+                    abort()
+                  else
+                    call.signal?.addEventListener('abort', abort, { once: true })
+                })
+              }
+              return await sdk.target.transport.unary(call)
+            },
+          },
+        },
+      }
+    })
+    try {
+      const pending = execute('await tools.list_windows({});', 10000)
+      await vi.waitUntil(() => usePlayground.getState().calls.some(call => call.status === 'pending'))
+      expect(await session.run({ mode: 'run', source: '1 + 1;', startLine: 1 })).toMatchObject({ status: 'error' })
+      host.cancel()
+      expect((await pending).isError).toBe(true)
+      expect(usePlayground.getState().run.status).toBe('stopped')
+      const canceledCall = usePlayground.getState().calls.at(-1)
+      expect(canceledCall?.status).toBe('error')
+
+      const transportAbort = new AbortController()
+      const transportCall = client.callTool({ arguments: { code: 'await tools.list_windows({});', timeoutMs: 10000 }, name: 'execute' }, undefined, { signal: transportAbort.signal })
+      const rejected = expect(transportCall).rejects.toBeDefined()
+      await vi.waitUntil(() => usePlayground.getState().calls.some(call => call.status === 'pending'))
+      transportAbort.abort()
+      await rejected
+      await vi.waitUntil(() => !session.running)
+      expect(usePlayground.getState().run.status).toBe('stopped')
+    }
+    finally { delayed.mockRestore() }
     const loop = await execute('while (true) {}', 300)
     expect(loop.isError).toBe(true)
-    expect(textItems(loop).at(-1)).toMatch(/timed out|interrupted/)
+    expect(textItems(loop).at(-1)).toMatch(/timed out|deadline/i)
     const recovered = await execute('return 7;')
-    expect(recovered.isError).toBe(false)
+    expect(recovered.isError).toBeFalsy()
     expect(textItems(recovered)).toContain('7')
-    const allocation = await execute('const values = new Array(1000000).fill("x"); text(values.length);')
-    expect(allocation.isError).toBe(false)
-    expect(textItems(allocation)).toContain('1000000')
-    // NOTICE(codemode-trace-granularity): the owner retained complete statement
-    // history. This optional probe reproduces its CPU-loop cost; it is not a
-    // performance guarantee of the normal browser check.
-    if (fixture.benchmark) {
-      const busy = await execute('let sum=0; for(let i=0;i<1000000;i++){ sum+=i; } text(sum);', 10000)
-      expect(busy.isError).toBe(false)
-      expect(textItems(busy)).toContain('499999500000')
-    }
-    const malformed = await execute('await auv.displays.captureRegion({ x: 0, y: 0, width: -10, height: -10 });')
+
+    expect(textItems(await execute('return load("counterId");'))).toContain('w-counter')
+    host.setSession('replacement')
+    expect(textItems(await execute('return load("counterId") ?? "cleared";'))).toContain('cleared')
+    await execute('store("device", "mock");')
+    await activateBackend(null)
+    await activateBackend(backend)
+    expect(textItems(await execute('return load("device") ?? "cleared";'))).toContain('cleared')
+    const malformed = await execute('await tools.click_window({ windowId: "w-counter", x: "bad", y: 5 });')
     expect(malformed.isError).toBe(true)
-    expect(textItems(malformed).at(-1)).toMatch(/positive/)
-    const empty = await execute('const win = await auv.windows.get("w-counter"); text((await win.findText("")).matches.length); text((await win.findText(" ")).matches.length);')
-    expect(empty.isError).toBe(false)
-    expect(textItems(empty).filter(text => text === '0')).toHaveLength(2)
+    const empty = await execute(`
+      for (const query of ['', ' '])
+        text((await tools.find_window_text({ windowId: 'w-counter', query })).matches.length);
+    `)
+    expect(textItems(empty)).toEqual(['0', '0'])
+    expect(empty.isError).toBeFalsy()
     const editorRun = await session.run({ mode: 'run', source: 'editorValue;', startLine: 1 })
     expect(editorRun.status).toBe('ok')
     expect(editorRun.status === 'ok' && editorRun.value).toBe(99)
@@ -181,9 +245,16 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     const stepped = await editorStep
     expect(stepped.status).toBe('ok')
     expect(stepped.status === 'ok' && stepped.value).toBe(100)
+
+    const resetting = session.run({ mode: 'step', source: 'editorValue + 2;', startLine: 1 })
+    await vi.waitUntil(() => usePlayground.getState().run.status === 'paused')
+    session.reset()
+    expect(await resetting).toEqual({ status: 'stopped' })
+    expect(usePlayground.getState().run.status).toBe('idle')
+    expect(await session.run({ mode: 'run', source: 'typeof editorValue;', startLine: 1 })).toMatchObject({ status: 'ok', value: 'undefined' })
   }
   finally {
-    host.cancel()
+    host.close()
     await client.close()
     endpoint?.close()
   }

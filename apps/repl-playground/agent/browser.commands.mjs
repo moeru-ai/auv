@@ -72,7 +72,7 @@ export const browserCommands = {
             await client.connect(new StreamableHTTPClientTransport(new URL(declaration.url), { requestInit: { headers: Object.fromEntries(declaration.headers.map(header => [header.name, header.value])) } }))
             const { tools } = await client.listTools()
             assert.deepEqual(tools.map(tool => tool.name), ['execute'], 'Tool discovery must work before ACP session creation finishes')
-            assert.ok(tools[0].description.includes('text(api.help())'), 'Tool discovery must include execution and SDK discovery instructions')
+            assert.ok(tools[0].description.includes('ALL_TOOLS'), 'Tool discovery must include execution and SDK discovery instructions')
             clients.push(client)
             result = { sessionId: `ui-${message.id}` }
           }

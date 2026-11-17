@@ -5,8 +5,6 @@ import UnoCSS from 'unocss/vite'
 
 import { defineConfig } from 'vite'
 
-import { codeModeHelpPlugin } from './agent/help-catalog'
-
 // NOTICE(oauth-callback-page): Cloudflare serves this file at
 // `/playground/oauth/callback` and keeps that address. A missing path falls
 // back to the docs index, and rewriting it onto `/playground/index.html`
@@ -30,11 +28,21 @@ export default defineConfig({
   base: '/playground/',
   // NOTICE(worker-prebundle): discovering these imports on the first worker
   // execution reloads the page and disconnects its ACP tool call. Include
-  // compiler and VM dependencies before the first execution starts.
+  // compiler and shared worker dependencies before the first execution starts.
   optimizeDeps: {
-    include: ['@jitl/quickjs-singlefile-browser-release-sync', '@moeru/eventa/adapters/webworkers/worker', '@typescript/vfs', 'acorn', 'magic-string', 'quickjs-emscripten-core', 'ts-blank-space', 'typescript'],
+    include: [
+      '@exterioragentprotocol/sdk/client',
+      '@exterioragentprotocol/sdk/client/react',
+      '@exterioragentprotocol/client-sdk/codemode',
+      '@moeru/eventa/adapters/webworkers/worker',
+      '@typescript/vfs',
+      'acorn',
+      'magic-string',
+      'ts-blank-space',
+      'typescript',
+    ],
   },
-  plugins: [codeModeHelpPlugin(), UnoCSS(), react(), oauthCallbackPage()],
+  plugins: [UnoCSS(), react(), oauthCallbackPage()],
   server: {
     port: 5180,
   },
@@ -48,6 +56,5 @@ export default defineConfig({
   // Workers use dynamic imports (TypeScript lib chunks), so they must be ES modules.
   worker: {
     format: 'es',
-    plugins: () => [codeModeHelpPlugin()],
   },
 })

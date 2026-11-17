@@ -42,7 +42,7 @@ export class RecordingBackend implements RunBackend {
   readonly rpc: RecordedRpc[] = []
   readonly #transports = new WeakMap<Transport, Transport>()
 
-  constructor(private readonly inner: Backend) {
+  constructor(private readonly inner: Backend, private readonly observeUnary?: (call: RecordedRpc) => Promise<(result: RecordedRpc) => void>) {
     this.kind = inner.kind
     this.label = inner.label
   }
@@ -71,7 +71,7 @@ export class RecordingBackend implements RunBackend {
     const access = this.inner.sdk()
     let recording = this.#transports.get(access.target.transport)
     if (!recording) {
-      recording = recordingTransport(access.target.transport, this.rpc)
+      recording = recordingTransport(access.target.transport, this.rpc, this.observeUnary)
       this.#transports.set(access.target.transport, recording)
     }
     return { ...access, target: { ...access.target, transport: recording } }
@@ -222,7 +222,7 @@ async function pace(): Promise<void> {
 }
 
 /** Wraps a live transport so every call is appended to `log` as it ends. */
-function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
+function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?: (call: RecordedRpc) => Promise<(result: RecordedRpc) => void>): Transport {
   return {
     close: options => inner.close(options),
     connect: options => inner.connect(options),
@@ -254,7 +254,9 @@ function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
     async unary(call) {
       const entry: RecordedRpc = { exchange: [{ request: call.body }], method: call.method }
       log.push(entry)
+      const finish = observeUnary && await observeUnary(entry)
       try {
+        call.signal?.throwIfAborted()
         const body = await inner.unary({
           ...call,
           decodeJson: (text) => {
@@ -269,6 +271,9 @@ function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
       catch (error) {
         entry.error = bridgedError(error)
         throw error
+      }
+      finally {
+        finish?.(entry)
       }
     },
   }

@@ -1,112 +1,119 @@
+import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
 import type { ServedMcp } from '@exterioragentprotocol/sdk/client'
 import type { AcpClientConnection } from '@hafbit/react-acp/core'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js'
+// oxlint-disable-next-line import/default -- Vite exposes its worker constructor as the default export.
+import CodeModeWorker from '@exterioragentprotocol/client-sdk/codemode/worker?worker'
+
+import { connectCodeMode, createBrowserCodeModeSandbox } from '@exterioragentprotocol/client-sdk/codemode'
 
 import { version } from '../../../package.json'
 import { session } from '../../runtime/session'
+import { usePlayground } from '../../store'
+import { codeModeToolDescriptions, createCodeModeTools } from './codemode-tools'
 
-const tool = {
-  description: [
-    'Execute TypeScript in AUV Playground against its selected Device or mock desktop. The agent\'s local files and shell cannot reach this environment.',
-    'Start with text(api.help()). Find exact SDK methods with api.search({query:"window text"}) and api.describe({path:"WindowClient.findText"}). Output their results with text().',
-    'Use auv for SDK calls, sdk for constants and geometry, text(value) or return for output, and await image(capture) for bounded screenshots.',
-    'Calls share one mutable desktop. Call sequentially, including help queries, and await every device call.',
-    'Each call has fresh variables. Use store(key, value) and load(key) for small JSON values committed only after success. Save IDs, not SDK handles or pixels.',
-    'SDK arguments must be data. Callbacks, async iterators, and editor-only helpers are unavailable. Read help for exact types and examples.',
-    'Failed or canceled scripts do not undo delivered input. Verify the requested application state after execution.',
-  ].join('\n'),
-  inputSchema: {
-    additionalProperties: false,
-    properties: {
-      code: { description: 'Raw TypeScript, with top-level await and return.', maxLength: 100000, minLength: 1, type: 'string' },
-      timeoutMs: { default: 30000, maximum: 120000, minimum: 1, type: 'integer' },
-    },
-    required: ['code'],
-    type: 'object',
-  },
-  name: 'execute',
-}
+const description = [
+  'Run JavaScript in AUV Playground against its selected Device or mock desktop.',
+  'Use tools.list_windows({}) or tools.resolve_window({ appName }) to get a windowId. Then use tools.find_window_text({ windowId, query }) to identify UI before acting.',
+  'Use image(await tools.get_capture_image({ captureId })) to see a bounded preview. Use store/load to keep small JSON values between calls on this Device.',
+  'Execute scripts sequentially and await every device call. Failed or canceled scripts leave delivered input in effect.',
+].join('\n')
 
-/** Owns one ACP session's JSON state and the currently executing tool call. */
+/** Connects tool calls to the selected Device for the active ACP conversation. */
 export class CodeModeHost {
   #active?: AbortController
   #sessionId?: string
+  #stopWatchingDevice?: () => void
   #store: Record<string, unknown> = {}
 
   cancel(): void {
     this.#active?.abort()
   }
 
+  close(): void {
+    this.setSession(undefined)
+  }
+
   /** Each Relay MCP session gets its own protocol connection to this execution host. */
-  async connect(transport: Transport): Promise<void> {
-    const server = new Server({ name: 'auv-playground', version }, { capabilities: { tools: {} } })
-    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [tool] }))
-    server.setRequestHandler(CallToolRequestSchema, async (request, { signal }) => {
-      if (request.params.name !== tool.name)
-        throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`)
-      // TODO(mcp-progress): operation-scoped notifications belong to an
-      // approved streaming/progress tool slice. Return one final result.
-      return this.#execute(request.params.arguments, signal)
+  connect(transport: Parameters<typeof connectCodeMode>[0]): Promise<void> {
+    return connectCodeMode(transport, {
+      description,
+      name: 'auv-playground',
+      run: request => this.#execute(request),
+      tools: codeModeToolDescriptions,
+      version,
     })
-    await server.connect(transport)
   }
 
   setSession(sessionId: string | undefined): void {
     if (sessionId === this.#sessionId)
       return
     this.cancel()
+    this.#stopWatchingDevice?.()
     this.#sessionId = sessionId
     this.#store = {}
+    this.#stopWatchingDevice = sessionId === undefined
+      ? undefined
+      : usePlayground.subscribe((next, previous) => {
+          if (next.backend !== previous.backend) {
+            this.cancel()
+            this.#store = {}
+          }
+        })
   }
 
-  async #execute(params: Record<string, unknown> | undefined, requestSignal: AbortSignal): Promise<CallToolResult> {
-    const error = (text: string): CallToolResult => ({ content: [{ text, type: 'text' }], isError: true })
-    if (!this.#sessionId)
-      return error('This ACP session is not active in the playground.')
-    // NOTICE(codemode-serialization): calls share one mutable desktop. Parallel
-    // execution needs an owner-approved ordering contract for delivered input.
-    if (this.#active || session.running)
-      return error('Another playground execution is running.')
-    const code = params?.code
-    const timeoutMs = params?.timeoutMs ?? 30000
-    if (typeof code !== 'string' || !code.trim() || code.length > 100000
-      || typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) {
-      return error('execute requires code and a timeoutMs from 1 to 120000.')
-    }
+  async #execute(request: CodeModeRequest): Promise<CodemodeResult> {
+    if (this.#sessionId === undefined)
+      throw new Error('This ACP session is not active in the playground.')
+    if (this.#active)
+      throw new Error('Another playground execution is running.')
     const active = new AbortController()
     this.#active = active
-    // Each MCP request carries its own signal, including across transports.
-    const signal = AbortSignal.any([active.signal, requestSignal])
+    const signal = AbortSignal.any([active.signal, request.signal])
     try {
-      signal.throwIfAborted()
-      const outcome = await session.run({
-        codemode: { store: this.#store, timeoutMs },
-        mode: 'run',
-        signal,
-        source: code,
-        startLine: 1,
+      const result = await session.runAgent({ ...request, signal }, async (runner, runSignal) => {
+        let pending = Promise.resolve()
+        const tools = createCodeModeTools(() => {
+          if (!runner)
+            throw new Error('AUV tools need a Device or the mock desktop.')
+          return runner
+        }).map(tool => ({
+          ...tool,
+          execute(args: unknown, context: Parameters<typeof tool.execute>[1]) {
+            // One mutable desktop. Even scripts that use Promise.all deliver
+            // calls in issue order and each queued call checks cancellation.
+            const call = pending.then(() => {
+              const signal = AbortSignal.any([runSignal, context.signal])
+              signal.throwIfAborted()
+              return tool.execute(args, { ...context, signal })
+            })
+            pending = call.then(() => {}, () => {})
+            return call
+          },
+        }))
+        const sandbox = createBrowserCodeModeSandbox({
+          createWorker: () => new CodeModeWorker(),
+          memoryLimitBytes: 64 * 1024 * 1024,
+          tools,
+        })
+        try {
+          return await sandbox.execute(request.code, { signal: runSignal, store: this.#store, timeoutMs: request.timeoutMs })
+        }
+        finally {
+          sandbox.close()
+          await pending
+        }
       })
-      const content = [...(outcome.codemode?.content ?? [])]
-      const succeeded = outcome.status === 'ok' && !signal.aborted
-      if (succeeded && outcome.codemode)
-        this.#store = outcome.codemode.store
-      // TODO(codemode-result-metadata): typed MCP outcomes require an approved
-      // result contract; this interface exposes content and isError.
-      let text = 'Script canceled. Delivered inputs are not undone.'
-      if (succeeded)
-        text = 'Script completed. This confirms execution only; verify the requested external state separately.'
-      else if (outcome.status === 'error')
-        text = `Script failed${outcome.line === undefined ? '' : ` at line ${outcome.line}`}: ${outcome.message}`
-      else if (outcome.status === 'stopped' && outcome.reason === 'timeout')
-        text = `Script timed out after ${timeoutMs} ms. Delivered inputs are not undone.`
-      content.push({ text, type: 'text' })
-      return { content, isError: !succeeded }
+      if (result.ok && signal.aborted)
+        return { calls: result.calls, error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: result.output }
+      if (result.ok) {
+        const next = { ...this.#store, ...result.storeWrites.set }
+        for (const key of result.storeWrites.delete)
+          delete next[key]
+        this.#store = next
+      }
+      return result
     }
-    catch (cause) { return error(cause instanceof Error ? cause.message : String(cause)) }
     finally {
       this.#active = undefined
     }
@@ -119,7 +126,7 @@ export class CodeModeHost {
  */
 export function codeModeConnection(connection: AcpClientConnection, host: CodeModeHost, tools: ServedMcp): AcpClientConnection {
   const close = () => {
-    host.cancel()
+    host.close()
     tools.close()
   }
   if (connection.signal.aborted)

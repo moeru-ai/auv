@@ -50,8 +50,10 @@ export function VariablesPanel() {
   const following = usePlayground(state => state.cursor === null)
   const isolated = usePlayground(state => state.run.script?.kind === 'codemode')
   const entries = useMemo(() => {
+    if (following && isolated)
+      return []
     const asOf = binds.length > 0 ? varsAt(usePlayground.getState(), cursor) : {}
-    return Object.entries(following && !isolated ? { ...asOf, ...vars } : asOf)
+    return Object.entries(following ? { ...asOf, ...vars } : asOf)
   }, [binds, cursor, following, isolated, vars])
 
   if (entries.length === 0)

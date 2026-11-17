@@ -10,9 +10,7 @@ import * as sdk from '@auv-js/sdk'
 
 import { HOST_EVENTS } from '../runtime/protocol'
 import { createBridgeTransport, SDK_PORT_MESSAGE } from '../runtime/sdk-bridge'
-import { codeModeSdk } from '../script-api/codemode-sdk'
 import { areaOf } from './area'
-import { runCodeMode } from './codemode'
 import { toWire } from './wire-value'
 
 // NOTICE(exec-worker-isolation): this worker only isolates the playground
@@ -36,7 +34,6 @@ let resumeWaiter: ((next: 'stop' | ResumeMode) => void) | undefined
 let stopRequested = false
 let currentStep: null | number = null
 let executionId = 0
-let codemodeAbort: AbortController | undefined
 
 const globals = globalThis as unknown as Record<string, unknown>
 const persistentNames = new Set<string>()
@@ -50,47 +47,12 @@ const api: ExecWorkerApi = {
   async run(request) {
     executionId = request.executionId
     globals.auv = await runnerFor(request.sdkRoute)
-    if (request.codemode) {
-      steps = request.steps
-      mode = 'run'
-      breakpoints = new Set()
-      stopRequested = false
-      currentStep = null
-      codemodeAbort = new AbortController()
-      try {
-        const runner = globals.auv as sdk.RunnerClient
-        const outcome = await runCodeMode(request, {
-          __bind: globals.__bind,
-          __step: globals.__step,
-          __stepSync: globals.__stepSync,
-          auv: runner,
-          image: async (capture: sdk.CaptureTarget, options: sdk.CaptureImageOptions = {}) => {
-            const maxSize = options.maxSize ?? { height: 1024, width: 1024 }
-            const encoding = options.encoding ?? sdk.ImageEncoding.PNG
-            if (![maxSize.height, maxSize.width].every(size => typeof size === 'number' && Number.isInteger(size) && size > 0 && size <= 1024)
-              || (encoding !== sdk.ImageEncoding.PNG && encoding !== sdk.ImageEncoding.JPEG)) {
-              throw new Error('image() requires PNG or JPEG and positive maxSize dimensions at most 1024')
-            }
-            const pixels = await runner.captures.image(capture, { ...options, encoding, maxSize })
-            let binary = ''
-            for (const byte of pixels.data) binary += String.fromCharCode(byte)
-            return { data: btoa(binary), mimeType: encoding === sdk.ImageEncoding.JPEG ? 'image/jpeg' : 'image/png' }
-          },
-          // Only pure helpers and constants enter the VM; connect() and
-          // transport construction remain outside the script interface.
-          sdk: codeModeSdk,
-        }, codemodeAbort.signal, emitCodeOutput)
-        return outcome.status === 'error' ? { ...outcome, line: currentStep === null ? undefined : steps[currentStep]?.line } : outcome
-      }
-      finally { codemodeAbort = undefined }
-    }
     return await runCell(request)
   },
   setBreakpoints(lines) {
     breakpoints = new Set(lines)
   },
   stop() {
-    codemodeAbort?.abort()
     stopRequested = true
     resumeWaiter?.('stop')
   },
@@ -105,10 +67,6 @@ const host = createBirpc<HostApi, ExecWorkerApi>(api, {
   post: data => postMessage(data),
   timeout: 10 * 60_000,
 })
-
-function emitCodeOutput(item: Parameters<HostApi['onCodeOutput']>[0]): void {
-  host.onCodeOutput(item)
-}
 
 // ---- SDK -------------------------------------------------------------------
 // `auv` is the `@auv-js/sdk` Runner client for the selected Device and the

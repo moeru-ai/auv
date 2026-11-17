@@ -254,9 +254,10 @@ Exterior forwards MCP messages to the page, where the code runs.
 The agent must advertise `agentCapabilities.mcpCapabilities.http`.
 The Playground remains a static site.
 
-The MCP interface exposes one tool: `execute({ code, timeoutMs? })`.
-Its description supplies execution rules and SDK discovery instructions.
-Scripts use `api.help()`, `api.search()`, and `api.describe()` for detailed SDK help.
+The MCP interface exposes `execute({ code, timeoutMs? })` and the read-only
+`help`, `search`, and `describe` tools. Discovery does not start an execution
+or call the selected device. Scripts can also use `api.help()`, `api.search()`,
+and `api.describe()` to consult the same catalog inside an execution.
 The page sends user messages unchanged, with no extra briefing message.
 
 The agent device needs an Exterior client and an installed ACP agent.
@@ -285,7 +286,8 @@ npx --yes --package=https://pkg.pr.new/lulu0119/exterior@aec6c44ae53b0a896f7b206
 Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
 builds. Its default is `http://127.0.0.1:8787`.
 
-The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1.
+The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1 and
+`@exterioragentprotocol/client-sdk` for Pi Code Mode over MCP.
 Exterior no longer supports anonymous app registration.
 The default client identity is
 `https://auv.moeru.ai/playground/oauth-client.json`.
@@ -329,71 +331,36 @@ The connection belongs to the page. React views subscribe to it.
 Connect and Disconnect control its lifetime. View remounts do not reconnect it.
 The agent device and the selected AUV device can be different computers.
 
-The tool description explains the help interface. Help is
-generated from the same SDK declarations that the scripts call:
+The external Agent gets one MCP tool, `execute({ code, timeoutMs? })`.
+Its description includes the available AUV operations and their argument types.
+Inside a script, Pi's `ALL_TOOLS` lists the operations with their descriptions.
 
-```ts
-text(api.help()) // quick start, core signatures, limits, and execution rules
-text(api.search({ limit: 5, query: 'window text' }))
-text(api.describe({ path: 'WindowClient.findText' }))
-text(api.describe({ path: 'FindWindowTextOptions' })) // follow a related type
-```
-
-Search returns exact paths, signatures, and a pagination offset. Use
-`namespace: 'WindowClient'` to browse its methods. Detailed help includes
-argument and return types, source documentation, and examples for common tasks.
-`WindowClient` names the object returned by `auv.windows.resolve/get/list/from`.
-It is not a global constructor. Help queries do not call the device.
-
-SDK callbacks, stream controllers, and async iterators cannot cross the VM
-boundary. Local callbacks such as `Array.map` work. Search omits unsupported
-SDK methods. An exact `api.describe` query explains the
-restriction. Help describes the SDK contract. A device can still reject an
-unsupported platform operation.
-
-```ts
-const counter = await auv.windows.resolve({ appName: 'Counter' })
-const found = await counter.findText('Increment')
-if (found.matches.length !== 1)
+```js
+const { windowId } = await tools.resolve_window({ appName: 'Counter' })
+const { matches } = await tools.find_window_text({ windowId, query: 'Increment' })
+if (matches.length !== 1)
   throw new Error('Expected one button')
-await counter.click(found.matches[0]!)
-text((await counter.findText('Count')).matches.map(match => match.text))
-store('counterId', counter.id)
-await image((await counter.capture()).capture!)
+text(matches[0])
+store('counterId', windowId)
 ```
 
-Each call uses a fresh QuickJS VM. It has no browser, network, filesystem or
-Node globals. Scripts receive `auv`, SDK constants and geometry helpers,
-`text`, `image`, and `store/load`. Top-level `await` and `return` are supported.
-The editor retains its own REPL variables.
+Each call starts a fresh Pi JavaScript VM in a browser worker. Use `store/load`
+for small JSON data across calls. AUV scopes that data to the current
+conversation and selected device and commits it after successful execution.
+SDK objects stay in the page. The Agent uses window IDs and capture references.
 
-`store/load` retains up to 64,000 characters of JSON in the current ACP session.
-The host commits returned state only after an `ok` outcome with no cancellation.
-Failure and cancellation preserve the committed state. Session replacement clears it.
-Save IDs rather than SDK clients. For example, use
-`await auv.windows.get(load('counterId'))` in a later call.
+The Playground records the script and AUV operation results together with their
+Run. The editor's separate TypeScript REPL provides stepping and variable
+inspection. If an Agent script or an editor run is already active, a new
+execution returns a busy error.
 
-The host rejects overlapping calls while its own invocation or the shared execution session is active.
-It does not queue or retry busy calls. The caller waits for completion before the next call.
+A capture returns a reference and metadata. Request an image explicitly to
+show a PNG or JPEG up to 1024 × 1024 pixels. Stop, timeout, disconnect, and a
+change of session or device abort the active script and its pending calls.
+An action already delivered remains effective. Read app state to verify the
+requested result.
 
-Only explicit output and errors return to the agent. Text output has a
-16,000-character limit. `await image(capture)` fetches a PNG bounded to
-1024×1024 pixels. Image output has separate size limits to fit the ACP frame.
-Pixels never enter the VM or its store.
-For a smaller image, pass SDK capture-image options to `image(capture, options)`.
-Dimensions must remain within 1024×1024. PNG and JPEG are supported.
-
-Stop, timeout, disconnect and session replacement cancel the call. Inputs
-already delivered remain effective. Script completion proves execution only.
-Read app state to verify the requested result. SDK callbacks, async iterators
-and editor-only helpers are deferred. They fail explicitly instead of
-silently returning incomplete results.
-Run, stepping, replay and editor types use the editor REPL
-environment, which does not supply codemode helpers.
-
-The [current execution contract and evidence](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md)
-separate automated Mock Runner coverage from earlier live OpenCode and remote Relay evidence.
-The renamed `execute` interface has automated coverage, with no new live model run.
+See the [execution contract and evidence](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md).
 
 ## Architecture
 
@@ -419,10 +386,9 @@ store (zustand) ─▶ canvas, timeline, inspector, editor decorations
   host-resolved promise (birpc). Its `auv` client sends encoded RPCs to the
   page on their own port (`runtime/sdk-bridge.ts`); the page adds the device
   credential, forwards them to the backend's transport and records them.
-- Codemode uses a temporary worker and an isolated QuickJS VM. It shares the
-  compiler, SDK bridge, recording backend and timeline with the editor.
-  Exterior serves the HTTP MCP transport. The browser's MCP server calls the
-  same codemode host, without a custom agent startup wrapper.
+- Agent Code Mode uses the Exterior Client SDK's Pi worker. The page binds
+  selected operations to the AUV SDK and records their calls and resources
+  in the Playground timeline.
 - `runtime/rpc-resources.ts` turns recorded SDK messages into host-side
   resources (frames, text, receipts, windows, displays) by protobuf type.
 - `src/components` holds store-agnostic UI building blocks (icon buttons, tab
@@ -467,7 +433,7 @@ These are known and intentionally deferred; each is marked in code.
   Device credentials are stored in `localStorage`. Run only your own scripts and
   keep the REPL on a local origin.
 - **Agent tab**: `exterior.ts` adapts sign-in, devices, and tickets from
-  `@exterioragentprotocol/sdk`. The package uses an immutable preview revision.
+  `@exterioragentprotocol/sdk`. Both Exterior packages use immutable preview revisions.
   See the [Exterior connection contract](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md#exterior-connection)
   for client identities, local development, and live verification limits.
   The thread uses `@hafbit/react-acp` hooks. Sessions are ephemeral.
@@ -475,7 +441,7 @@ These are known and intentionally deferred; each is marked in code.
   Old sessions linger in the host agent process until disconnect.
   Agent browser-auth (`auth-required`) has no UI yet.
   The agent must advertise HTTP MCP support before session creation.
-  SDK callbacks and iterators remain deferred (`NOTICE(codemode-callbacks)`).
+  SDK callbacks and iterators remain unavailable in the script bindings.
   An explicit reconnect obtains a fresh ticket after a failed connection.
 - `const` at the top level becomes reassignable across cells (same as
   `node:repl`), and a line starting with `(` or `[` continues the previous

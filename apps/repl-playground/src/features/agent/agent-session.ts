@@ -34,7 +34,7 @@ export function connectAgent(account: AccountSession, target: AgentTarget): void
             signal.throwIfAborted()
             void tools.closed.then((reason) => {
               if (!signal.aborted) {
-                codemode.cancel()
+                codemode.close()
                 update({ error: reason === 'revoked' ? 'Access was revoked. Sign in again.' : 'The tool connection closed. Reconnect the agent.' })
               }
             })

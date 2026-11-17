@@ -73,13 +73,13 @@ catalog:
   '@hafbit/react-acp': ^0.1.9
   '@hey-api/openapi-ts': ^0.99.0
   '@iconify-json/ph': ^1.2.2
-  '@jitl/quickjs-singlefile-browser-release-sync': 0.32.0
   '@lezer/highlight': ^1.2.5
   '@modelcontextprotocol/sdk': 1.32.1
   '@moeru/eslint-config': ^0.1.0-beta.20
   '@moeru/eventa': ^1.0.2
   '@moeru/std': 0.1.0-beta.20
   # NOTICE(exterior-preview): pin the SDK preview until its npm release.
+  '@exterioragentprotocol/client-sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0
   '@exterioragentprotocol/sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6
   '@napi-rs/cli': ^3.8.6
   '@pnpm/find-workspace-dir': 1000.1.5
@@ -109,7 +109,6 @@ catalog:
   oxlint: ^1.78.0
   playwright: 1.62.1
   publint: ^0.3.23
-  quickjs-emscripten-core: 0.32.0
   react: ^19.3.0
   react-dom: ^19.3.0
   react-markdown: ^10.1.0
