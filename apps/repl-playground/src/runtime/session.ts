@@ -89,10 +89,10 @@ class EventBatch {
  */
 class ExecSession {
   get running(): boolean {
-    return this.#runAbort !== undefined
+    return this.#active !== undefined
   }
 
-  #agentAbort?: AbortController
+  #active?: { cancel: AbortController, kind: ScriptSource['kind'] }
   #batch: EventBatch
   #bindHits: number[] = []
   #binds: BindSite[] = []
@@ -102,7 +102,6 @@ class ExecSession {
   #lineHits = new Map<number, number>()
   #liveTimer?: number
   #recording?: Recording
-  #runAbort?: AbortController
   #runBackend: null | RunBackend = null
   #seq = 0
   #steps: StepSite[] = []
@@ -136,15 +135,11 @@ class ExecSession {
 
   /** Terminates the worker (also escapes infinite sync loops) and clears REPL state. */
   reset(): void {
-    if (this.#agentAbort) {
-      this.#agentAbort.abort()
-      return
-    }
-    this.#runAbort?.abort()
+    this.#cellId++
+    this.#active?.cancel.abort()
     this.#editor.worker.terminate()
     this.#editor.port.close()
     this.#editor.exec.$close()
-    this.#cellId++
     this.#batch.flush()
     this.#runBackend = null
     actions.resetSession()
@@ -168,7 +163,7 @@ class ExecSession {
       return { status: 'stopped' }
     const worker = this.#editor
     const abort = new AbortController()
-    this.#runAbort = abort
+    this.#active = { cancel: abort, kind: 'editor' }
     const cancel = () => worker.exec.stop()
     options.signal?.addEventListener('abort', cancel, { once: true })
     const recorder = !options.replay && live ? new RecordingBackend(live) : undefined
@@ -251,7 +246,7 @@ class ExecSession {
       abort.abort()
       this.#batch.flush()
       options.signal?.removeEventListener('abort', cancel)
-      this.#runAbort = undefined
+      this.#active = undefined
     }
   }
 
@@ -263,17 +258,15 @@ class ExecSession {
     if (this.running)
       throw new Error('Another playground execution is running.')
     signal.throwIfAborted()
-    const abort = new AbortController()
-    const activeSignal = AbortSignal.any([abort.signal, signal])
-    this.#agentAbort = this.#runAbort = abort
+    const cancel = new AbortController()
+    const cancellation = AbortSignal.any([cancel.signal, signal])
+    const callLifetime = new AbortController()
+    this.#active = { cancel, kind: 'codemode' }
     const script: ScriptSource = { id: ++this.#cellId, kind: 'codemode', source: code, startLine: 1 }
     const live = usePlayground.getState().backend
     // NOTICE(codemode-call-recording): current Agent tools are unary. If an
     // Agent tool adds a stream, observe it as the editor's worker bridge does.
-    const recorder: null | RecordingBackend = live && new RecordingBackend(live, (call) => {
-      const first = call.exchange[0]
-      return this.#recordCall({ body: first && 'request' in first ? first.request : undefined, method: call.method }, script, recorder, null)
-    })
+    const recorder: null | RecordingBackend = live && new RecordingBackend(live, request => this.#recordCall(request, script, recorder, null))
     actions.beginRun('live', script, true)
     this.#seq = usePlayground.getState().seqAt.length
     this.#lastLine = null
@@ -281,7 +274,8 @@ class ExecSession {
     let outcome: RunOutcomeKind = 'failed'
     try {
       const runId = await recorder?.beginRun()
-      actions.patchRun({ runId, status: 'running' })
+      if (this.#cellId === script.id)
+        actions.patchRun({ runId, status: 'running' })
       const access = recorder?.sdk()
       let runner: RunnerClient | undefined
       if (access) {
@@ -300,40 +294,48 @@ class ExecSession {
           duplex: call => transport.duplex({ ...call, headers: withHeaders(call.headers) }),
           unary: call => transport.unary({ ...call, headers: withHeaders(call.headers) }),
         })
-        runner = createAuv(connection).runner({ ...access.route, signal: activeSignal })
+        runner = createAuv(connection).runner({ ...access.route, signal: AbortSignal.any([cancellation, callLifetime.signal]) })
       }
-      let result: CodemodeResult = activeSignal.aborted
+      let result: CodemodeResult = cancellation.aborted
         ? { calls: [], error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: [] }
-        : await execute(runner, activeSignal)
-      if (result.ok && activeSignal.aborted)
+        : await execute(runner, cancellation)
+      const canceled = cancellation.aborted
+      if (result.ok && canceled)
         result = { calls: result.calls, error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: result.output }
-      for (const item of result.output)
-        this.#log('show', [item.type === 'text' ? item.text : 'Image emitted to the agent.'], null)
-      if (result.ok && result.value !== undefined)
-        this.#log('show', [result.value], null, 'result')
-      outcome = activeSignal.aborted || (!result.ok && ['aborted', 'timeout'].includes(result.error.kind))
+      outcome = canceled || (!result.ok && ['aborted', 'timeout'].includes(result.error.kind))
         ? 'canceled'
         : result.ok ? 'succeeded' : 'failed'
-      actions.patchRun({
-        endedAt: Date.now(),
-        errorMessage: !result.ok && outcome === 'failed' ? result.error.message : undefined,
-        status: outcome === 'succeeded' ? 'done' : outcome === 'canceled' ? 'stopped' : 'error',
-      })
+      if (this.#cellId === script.id) {
+        for (const item of result.output)
+          this.#log('show', [item.type === 'text' ? item.text : 'Image emitted to the agent.'], null)
+        if (result.ok && result.value !== undefined)
+          this.#log('show', [result.value], null, 'result')
+        actions.patchRun({
+          endedAt: Date.now(),
+          errorMessage: !result.ok && outcome === 'failed' ? result.error.message : undefined,
+          status: outcome === 'succeeded' ? 'done' : outcome === 'canceled' ? 'stopped' : 'error',
+        })
+      }
       return result
     }
     catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      outcome = activeSignal.aborted ? 'canceled' : 'failed'
-      actions.patchRun({ endedAt: Date.now(), errorMessage: message, status: outcome === 'canceled' ? 'stopped' : 'error' })
+      outcome = cancellation.aborted ? 'canceled' : 'failed'
+      if (this.#cellId === script.id) {
+        const message = error instanceof Error ? error.message : String(error)
+        actions.patchRun({ endedAt: Date.now(), errorMessage: message, status: outcome === 'canceled' ? 'stopped' : 'error' })
+      }
       throw error
     }
     finally {
-      abort.abort()
-      await recorder?.endRun(outcome)
-        .catch(error => this.#log('warn', [`Closing the AUV Run failed: ${error instanceof Error ? error.message : String(error)}`], null))
+      callLifetime.abort()
+      await recorder?.endRun(outcome).catch((error) => {
+        if (this.#cellId === script.id)
+          this.#log('warn', [`Closing the AUV Run failed: ${error instanceof Error ? error.message : String(error)}`], null)
+      })
       this.#batch.flush()
-      this.#agentAbort = this.#runAbort = undefined
-      void this.refreshAxTree().catch(() => {})
+      this.#active = undefined
+      if (this.#cellId === script.id)
+        void this.refreshAxTree().catch(() => {})
     }
   }
 
@@ -366,8 +368,8 @@ class ExecSession {
   }
 
   stop(): void {
-    if (this.#agentAbort)
-      this.#agentAbort.abort()
+    if (this.#active?.kind === 'codemode')
+      this.#active.cancel.abort()
     else
       this.#editor.exec.stop()
   }
@@ -452,11 +454,12 @@ class ExecSession {
         return this.#recordCall(start, script, this.#runBackend, lineOf(start.stepId))
       },
       target: (executionId) => {
-        if (executionId !== this.#cellId || !this.running || this.#runAbort?.signal.aborted)
+        const active = this.#active
+        if (executionId !== this.#cellId || active?.kind !== 'editor' || active.cancel.signal.aborted)
           return 'This script execution has ended.'
         if (!this.#runBackend)
           return '`auv` needs a device, the mock desktop, or a replay of a run that made the same calls'
-        return { ...this.#runBackend.sdk().target, signal: this.#runAbort?.signal }
+        return { ...this.#runBackend.sdk().target, signal: active.cancel.signal }
       },
     })
     const host: HostApi = {

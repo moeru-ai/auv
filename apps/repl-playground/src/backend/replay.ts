@@ -31,6 +31,8 @@ export interface Recording {
   sdk: Omit<SdkAccess, 'target'>
 }
 
+type ObserveUnary = (request: Pick<UnaryCall, 'body' | 'method'>) => Promise<(result: RecordedRpc) => void>
+
 /**
  * Wraps a live backend for one run and records every SDK call and canvas
  * image, so the same script can later run offline against the recording.
@@ -42,7 +44,7 @@ export class RecordingBackend implements RunBackend {
   readonly rpc: RecordedRpc[] = []
   readonly #transports = new WeakMap<Transport, Transport>()
 
-  constructor(private readonly inner: Backend, private readonly observeUnary?: (call: RecordedRpc) => Promise<(result: RecordedRpc) => void>) {
+  constructor(private readonly inner: Backend, private readonly observeUnary?: ObserveUnary) {
     this.kind = inner.kind
     this.label = inner.label
   }
@@ -222,7 +224,7 @@ async function pace(): Promise<void> {
 }
 
 /** Wraps a live transport so every call is appended to `log` as it ends. */
-function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?: (call: RecordedRpc) => Promise<(result: RecordedRpc) => void>): Transport {
+function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?: ObserveUnary): Transport {
   return {
     close: options => inner.close(options),
     connect: options => inner.connect(options),
@@ -254,7 +256,7 @@ function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?:
     async unary(call) {
       const entry: RecordedRpc = { exchange: [{ request: call.body }], method: call.method }
       log.push(entry)
-      const finish = observeUnary && await observeUnary(entry)
+      const finish = observeUnary && await observeUnary({ body: call.body, method: call.method })
       try {
         call.signal?.throwIfAborted()
         const body = await inner.unary({
