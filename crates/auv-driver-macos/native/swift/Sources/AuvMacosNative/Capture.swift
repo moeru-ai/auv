@@ -26,15 +26,21 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeImageCap
   var capturedImage: CGImage?
   var capturedFrame = CGRect.zero
   var captureError: Error?
-  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical) { image, frame, error in
+  let stage = WindowCaptureStage()
+  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical, stage: stage) { image, frame, error in
     capturedImage = image
     capturedFrame = frame
     captureError = error
   }
   if status == .timedOut {
+    // NOTICE(window-capture-timeout-stage): a timeout used to say only "timed
+    // out after 10s" with a Screen Recording hint, even when permissions were
+    // verified (#483). Name the stage that did not finish so a stalled
+    // shareable-content query can be told apart from a stalled screenshot of
+    // a window that was found.
     return emptyImageCaptureResponse(
-      message: "ScreenCaptureKit window capture timed out after 10s",
-      recovery: "verify Screen Recording permission and retry"
+      message: "ScreenCaptureKit window capture timed out after 10s while \(stage.current)",
+      recovery: "if `auv doctor` reports Screen Recording granted, the window may have closed, minimized or moved to another Space during capture; list windows and retry, otherwise grant Screen Recording"
     )
   }
   if let captureError {
@@ -111,9 +117,29 @@ func capture_display_without_self(display_id: UInt32) -> NativeImageCaptureRespo
   return NativeImageCaptureResponse(image_width: Int64(image.width), image_height: Int64(image.height), window_x: 0, window_y: 0, window_width: 0, window_height: 0, rgba_bytes: nativeByteVec(rgba), error_message: nil, recovery_hint: nil)
 }
 
+/// The last stage a window capture reached, read after a timeout. The
+/// ScreenCaptureKit callbacks write it on their own queues.
+private final class WindowCaptureStage: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = "listing shareable content (SCShareableContent)"
+
+  var current: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+
+  func set(_ stage: String) {
+    lock.lock()
+    value = stage
+    lock.unlock()
+  }
+}
+
 private func nativeCaptureWindowForAuv(
   windowID: UInt32,
   logical: Bool,
+  stage: WindowCaptureStage,
   completion: @escaping (CGImage?, CGRect, Error?) -> Void
 ) -> DispatchTimeoutResult {
   let semaphore = DispatchSemaphore(value: 0)
@@ -144,6 +170,7 @@ private func nativeCaptureWindowForAuv(
       return
     }
 
+    stage.set("capturing window \(windowID) after finding it in shareable content (SCScreenshotManager)")
     let filter = SCContentFilter(desktopIndependentWindow: window)
     let config = SCStreamConfiguration()
     // NOTICE(window-capture-pixel-scale): SCStreamConfiguration.width/height
