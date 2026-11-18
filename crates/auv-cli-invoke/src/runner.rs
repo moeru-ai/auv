@@ -338,7 +338,7 @@ async fn invoke_selected(input: crate::InvokeCommandInput, daemon: SelectedDaemo
     },
     "window.get" => {
       async {
-        let window = resolve_runner_window(&runner, &input).await.map_err(|error| step_failure("WindowService/GetWindow", error))?;
+        let window = resolve_runner_window(&runner, &input).await?;
         crate::commands::window::window_output(window.resource()).map_err(Into::into)
       }
       .await
@@ -649,14 +649,7 @@ async fn selected_click_point(
       .map_err(Into::into)
     }
     crate::commands::input::RelativeToArg::Window | crate::commands::input::RelativeToArg::Screen => {
-      let windows = runner.windows();
-      let resolved = match input.target.as_ref().expect("window-relative target validated") {
-        crate::ExecutionTarget::Application { .. } => {
-          windows.resolve(selected_window_selector(input)).await.map_err(|error| step_failure("WindowService/ResolveWindow", error))?
-        }
-        crate::ExecutionTarget::Window { id } => windows.get(id).await.map_err(|error| step_failure("WindowService/ListWindows", error))?,
-        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
-      };
+      let resolved = resolve_runner_window(runner, input).await?;
       let window = resolved.resource();
       let target: auv::client::runner::PointerTarget = if basis == crate::commands::input::RelativeToArg::Screen {
         crate::commands::input::screen_point_in_window("input.clickPoint", requested_point, window.frame)?;
@@ -970,15 +963,19 @@ async fn execute_window_mutation(
 }
 
 /// Resolves an `app:` (optionally by title) or `window:` target through the
-/// Runner for window-bound scroll commands.
+/// Runner for window-bound input and window commands. A failure names the RPC
+/// that resolved the target (`ResolveWindow` for `app:`, `GetWindow` for
+/// `window:`) and keeps its typed code.
 async fn resolve_runner_window(
   runner: &auv::client::runner::RunnerClient,
   input: &crate::InvokeCommandInput,
 ) -> Result<auv::client::runner::WindowClient, crate::InvokeFailure> {
   let windows = runner.windows();
   match input.target.as_ref().expect("window target validated") {
-    crate::ExecutionTarget::Application { .. } => Ok(windows.resolve(selected_window_selector(input)).await?),
-    crate::ExecutionTarget::Window { id } => Ok(windows.get(id).await?),
+    crate::ExecutionTarget::Application { .. } => {
+      windows.resolve(selected_window_selector(input)).await.map_err(|error| step_failure("WindowService/ResolveWindow", error))
+    }
+    crate::ExecutionTarget::Window { id } => windows.get(id).await.map_err(|error| step_failure("WindowService/GetWindow", error)),
     crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
   }
 }
@@ -1057,12 +1054,7 @@ async fn execute_drag(input: crate::InvokeCommandInput, daemon: SelectedDaemon) 
       (DragResult::planned(&plan, start, end), auv_driver::InputTarget::Foreground)
     }
     RelativeToArg::Window | RelativeToArg::Screen => {
-      let windows = runner.windows();
-      let window = match input.target.as_ref().expect("window-relative target validated") {
-        crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?.resource().clone(),
-        crate::ExecutionTarget::Window { id } => windows.get(id).await?.resource().clone(),
-        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
-      };
+      let window = resolve_runner_window(&runner, &input).await?.resource().clone();
       let (start, end) = plan.window_screen_points(window.frame)?;
       let mut result = DragResult::planned(&plan, start, end);
       result.window = Some(window.clone());

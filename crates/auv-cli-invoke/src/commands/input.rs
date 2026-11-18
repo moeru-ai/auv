@@ -794,7 +794,7 @@ pub struct ClickPointResult {
   description = "Click a point relative to the screen, a target window, or a target display.",
   input = ClickPointArgs,
 )]
-async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeCommandResult {
+async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> crate::InvokeExecutionResult {
   let basis = args.basis(input.target.as_ref())?;
   let click = args.click_options()?;
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -821,19 +821,11 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           display: None,
           action,
         })
+        .map_err(Into::into)
       }
       RelativeToArg::Window | RelativeToArg::Screen => {
         let session = auv::local::open().map_err(|error| error.to_string())?;
-        let target = input.target.as_ref().expect("window-relative target validated");
-        let window = match target {
-          crate::ExecutionTarget::Application { id } => {
-            session.window().resolve(click_window_selector(id, args.title.as_deref())).map_err(|error| error.to_string())?
-          }
-          crate::ExecutionTarget::Window { id } => {
-            auv_driver::find_window(session.window().list().map_err(|error| error.to_string())?, id).map_err(|error| error.to_string())?
-          }
-          crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
-        };
+        let window = resolve_local_window(&session, &input, args.title.as_deref())?;
         let point = if basis == RelativeToArg::Screen {
           screen_point_in_window("input.clickPoint", auv_driver::Point::new(args.x, args.y), window.frame)?
         } else {
@@ -858,6 +850,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           display: None,
           action,
         })
+        .map_err(Into::into)
       }
       RelativeToArg::Display => {
         let session = auv::local::open().map_err(|error| error.to_string())?;
@@ -892,13 +885,14 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           display: Some(display),
           action,
         })
+        .map_err(Into::into)
       }
     }
   }
   #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args, basis, click);
-    Err("input.clickPoint is unavailable on this platform".to_string())
+    Err("input.clickPoint is unavailable on this platform".to_string().into())
   }
 }
 
@@ -1163,11 +1157,7 @@ async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::Invo
     }
     RelativeToArg::Window | RelativeToArg::Screen => {
       let session = session.as_ref().expect("window resolution opens a session");
-      let window = match input.target.as_ref().expect("window-relative target validated") {
-        crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
-        crate::ExecutionTarget::Window { id } => auv_driver::find_window(session.window().list()?, id)?,
-        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
-      };
+      let window = resolve_local_window(session, input, plan.title.as_deref())?;
       let (start, end) = plan.window_screen_points(window.frame)?;
       let mut result = DragResult::planned(&plan, start, end);
       result.window = Some(window);
@@ -1525,7 +1515,7 @@ async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::
 }
 
 /// Resolves an `app:` (optionally by title) or `window:` target on the local
-/// driver for window-bound scroll commands.
+/// driver for window-bound input and window commands.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(super) fn resolve_local_window(
   session: &auv_driver::LocalDriverSession,
