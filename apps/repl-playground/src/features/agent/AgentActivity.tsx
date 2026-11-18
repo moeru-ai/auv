@@ -50,17 +50,16 @@ export function AgentActivity({ children, indices }: PropsWithChildren<{ indices
   )
 }
 
-/** The execution outcome is separate from the wrapper's original protocol status. */
-export const AgentTool: ToolCallMessagePartComponent = ({ argsText, result, status, toolCallId, toolName }) => {
+export const AgentTool: ToolCallMessagePartComponent = ({ argsText, result, toolCallId, toolName }) => {
   const tool = useAcpSession()?.tools[toolCallId]?.value
-  const presentation = tool ? presentTool(tool) : { error: false, running: status.type === 'running', script: undefined, title: toolName }
+  const presentation = tool && presentTool(tool)
   const content = tool?.content?.filter(part => part.type !== 'content' || part.content.type !== 'image')
   return (
     <Collapsible.Root className="min-w-0">
-      <Collapsible.Trigger className={`group text-[12px] py-1.75 text-left disclosure-summary flex gap-1.75 w-full items-center ${presentation.error ? 'text-bad' : 'text-fg-muted'}`}>
-        <span aria-hidden="true" className={`text-[14px] shrink-0 ${presentation.running ? 'i-ph-circle-notch animate-spin' : presentation.error ? 'i-ph-warning-circle' : 'i-ph-check'}`} />
-        <span className="min-w-0 truncate">{presentation.title}</span>
-        <span className={`text-[10.5px] shrink-0 ${presentation.error ? 'text-bad' : 'text-fg-subtle'}`}>{presentation.running ? 'Running' : presentation.error ? 'Returned an error' : 'Finished'}</span>
+      <Collapsible.Trigger className={`group text-[12px] py-1.75 text-left disclosure-summary flex gap-1.75 w-full items-center ${presentation?.error ? 'text-bad' : 'text-fg-muted'}`}>
+        <span aria-hidden="true" className={`text-[14px] shrink-0 ${presentation?.running ? 'i-ph-circle-notch animate-spin' : presentation?.error ? 'i-ph-warning-circle' : 'i-ph-circle'}`} />
+        <span className="min-w-0 truncate">{presentation?.title ?? toolName}</span>
+        {presentation && <span className={`text-[10.5px] shrink-0 ${presentation.error ? 'text-bad' : 'text-fg-subtle'}`}>{presentation.running ? 'Running' : presentation.error ? 'Returned an error' : 'Finished'}</span>}
         <span aria-hidden="true" className="i-ph-caret-right text-[12px] ml-auto shrink-0 group-data-[panel-open]:rotate-90" />
       </Collapsible.Trigger>
       <Collapsible.Panel className="pb-2.5 pt-1 min-w-0" keepMounted>
@@ -77,7 +76,7 @@ export const AgentTool: ToolCallMessagePartComponent = ({ argsText, result, stat
               : <pre className="agent-tool-output">{formatValue(result)}</pre>}
           </div>
         )}
-        {presentation.script && (
+        {presentation?.script && (
           <details className="group/detail text-[11px] text-fg-muted mt-2">
             <summary className="py-0.75 disclosure-summary list-inside list-item [list-style-type:disclosure-closed] group-open/detail:[list-style-type:disclosure-open]">Script</summary>
             <pre className="agent-tool-output">{presentation.script}</pre>
@@ -85,7 +84,7 @@ export const AgentTool: ToolCallMessagePartComponent = ({ argsText, result, stat
         )}
         <details className="group/detail text-[11px] text-fg-muted mt-2">
           <summary className="py-0.75 disclosure-summary list-inside list-item [list-style-type:disclosure-closed] group-open/detail:[list-style-type:disclosure-open]">Protocol details</summary>
-          <div className="text-[10.5px] text-fg-subtle mt-1.5">{`ACP status: ${tool?.status ?? status.type}`}</div>
+          {tool && <div className="text-[10.5px] text-fg-subtle mt-1.5">{`ACP status: ${tool.status ?? 'pending'}`}</div>}
           <div className="text-[10.5px] text-fg-subtle mt-1.5">Raw input</div>
           <pre className="agent-tool-output">{tool?.rawInput === undefined ? argsText : formatValue(tool.rawInput)}</pre>
           <div className="text-[10.5px] text-fg-subtle mt-1.5">Raw output</div>

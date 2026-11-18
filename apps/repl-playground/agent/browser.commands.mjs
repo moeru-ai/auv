@@ -78,11 +78,8 @@ export const browserCommands = {
           }
           else if (message.method === 'session/prompt') {
             const notify = update => socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: message.params.sessionId, update } }))
-            // ROOT CAUSE: the chat rendered only the wrapper's completed status,
-            // hiding its input and the failed nested tool result delivered by ACP.
-            // OpenCode 2.0.26 sends nested statuses in rawOutput.metadata.toolCalls.
             notify({ content: { text: 'I will inspect the desktop and check the result.', type: 'text' }, sessionUpdate: 'agent_message_chunk' })
-            notify({ content: [{ content: { text: 'ReferenceError: Unknown identifier \'text\'.', type: 'text' }, type: 'content' }], kind: 'other', rawInput: { code: 'text(api.help());' }, rawOutput: { metadata: { error: true } }, sessionUpdate: 'tool_call', status: 'completed', title: 'execute', toolCallId: 'code-failure' })
+            notify({ content: [{ content: { text: 'ReferenceError: Unknown identifier \'text\'.', type: 'text' }, type: 'content' }], kind: 'other', rawInput: { code: 'text(api.help());' }, sessionUpdate: 'tool_call', status: 'failed', title: 'execute', toolCallId: 'code-failure' })
             notify({ kind: 'other', rawInput: { code: 'return await tools["auv-playground"].execute({ code: "await auv.overlay.show({});" });' }, sessionUpdate: 'tool_call', status: 'in_progress', title: 'execute', toolCallId: 'nested-failure' })
             notify({ content: [{ content: { text: 'Script failed: OverlayService/ShowOverlay is UNIMPLEMENTED', type: 'text' }, type: 'content' }], rawOutput: { metadata: { toolCalls: [{ status: 'error', tool: 'auv-playground.execute' }] } }, sessionUpdate: 'tool_call_update', status: 'completed', toolCallId: 'nested-failure' })
             notify({ content: [{ content: imageResult, type: 'content' }], kind: 'read', rawInput: { code: 'await image(capture);' }, sessionUpdate: 'tool_call', status: 'completed', title: 'Capture result', toolCallId: 'image-result' })

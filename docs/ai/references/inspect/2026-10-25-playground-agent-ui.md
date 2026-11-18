@@ -18,16 +18,9 @@ Execution details show the result before optional script and protocol sections.
 Scripts retain their original text without JSON string escaping.
 Full raw input, raw output, and original ACP status remain inspectable.
 
-Returned errors use these explicit signals:
-
-- ACP status `failed`.
-- A string in `rawOutput.error`.
-- OpenCode's boolean `rawOutput.metadata.error`.
-- OpenCode's nested `rawOutput.metadata.toolCalls[].status === "error"`.
-
-Output text does not determine error status.
-A completed wrapper can contain a failed nested tool call.
-"Finished" means that execution returned. It does not establish semantic task success.
+The activity uses the ACP tool call status. Only `failed` contributes to the issue count and error preview.
+An omitted status defaults to `pending`. Both `pending` and `in_progress` display as "Running".
+A `completed` call displays as "Finished" even when its raw output describes a nested failure.
 The UI does not infer links to SDK Calls from script text, timing, or output strings.
 
 The composer provides a connection indicator and a new-session action.
@@ -47,14 +40,14 @@ Global `styles.css` contains no Agent-specific rules.
 ## Evidence
 
 Evidence level: automated browser component tests with in-memory ACP updates, plus workbench integration with synthetic network peers and Mock Runner.
-The [activity component tests](../../../../apps/repl-playground/src/features/agent/AgentActivity.browser.test.tsx) check grouped tool calls, nested failures, harmless error-related text, readable scripts, and unchanged protocol status.
+The [activity component tests](../../../../apps/repl-playground/src/features/agent/AgentActivity.browser.test.tsx) check issue counts, error previews, readable scripts, and raw output for completed calls.
 They also check screenshot decoding and dialog dismissal.
 The [Markdown browser test](../../../../apps/repl-playground/src/features/agent/MarkdownText.browser.test.tsx) covers tables, task lists, strikethrough, links, quotes, and fenced code.
 The [connection integration test](../../../../apps/repl-playground/agent/connection.browser.test.tsx) checks connection retention, session changes, and the workbench at 1280 by 720.
-The [presentation unit tests](../../../../apps/repl-playground/src/features/agent/tool-presentation.test.ts) check structured error metadata without a browser.
+The [presentation unit tests](../../../../apps/repl-playground/src/features/agent/tool-presentation.test.ts) cover active calls and completed calls with errors in their output.
 The execution contract records the shared validation commands and results.
 
-The fixture shows grouped calls, deliberate errors, a screenshot preview, and a Markdown report:
+The October 25 fixture captured the earlier error presentation, grouped calls, a screenshot preview, and a Markdown report.
 
 ![Agent UI browser fixture](evidence/2026-10-25-agent-markdown/agent-markdown.png)
 
@@ -69,5 +62,4 @@ This probe does not establish support for other agents or physical devices.
 The presentation reference is `anomalyco/opencode@32b57015e5b491a789fba1534ecb472e676c9d8e`:
 
 - [Tool groups and execute presentation](https://github.com/anomalyco/opencode/blob/32b57015e5b491a789fba1534ecb472e676c9d8e/packages/session-ui/src/tools/tool-renderer.tsx)
-- [Code-mode failure metadata](https://github.com/anomalyco/opencode/blob/32b57015e5b491a789fba1534ecb472e676c9d8e/packages/session-ui/src/message/current-tool-state.ts)
 - [Compact expandable triggers](https://github.com/anomalyco/opencode/blob/32b57015e5b491a789fba1534ecb472e676c9d8e/packages/session-ui/src/components/basic-tool.tsx)

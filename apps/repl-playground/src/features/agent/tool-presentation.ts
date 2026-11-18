@@ -18,32 +18,18 @@ export function formatValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''
 }
 
-/** Execution errors come from ACP or structured agent metadata, never output text. */
 export function presentTool(tool: AcpToolCallRecord['value']) {
-  const raw = record(tool.rawOutput)
-  const metadata = record(raw.metadata)
-  const nested = Array.isArray(metadata.toolCalls) ? metadata.toolCalls.map(record) : []
-  // NOTICE(opencode-execute): OpenCode can complete its execute wrapper while
-  // returning an error. This matches its desktop current-tool-state.ts at
-  // `anomalyco/opencode@32b57015`, using metadata.error and toolCalls[].status.
-  const error = tool.status === 'failed' || typeof raw.error === 'string' || metadata.error === true || nested.some(call => call.status === 'error')
-  const running = tool.status === 'pending' || tool.status === 'in_progress'
-  const names = [...new Set(nested.flatMap(call => typeof call.tool === 'string' ? [call.tool === 'auv-playground.execute' ? 'Playground' : call.tool] : []))]
-  const title = names.length
-    ? names.join(', ')
-    : tool.title === 'execute' ? 'Run script' : tool.title || kindTitles[tool.kind ?? 'other']
+  const status = tool.status ?? 'pending'
+  const error = status === 'failed'
   const output = tool.content?.flatMap(part => part.type === 'content' && part.content.type === 'text' ? [part.content.text] : []).join('\n')
   const code = record(tool.rawInput).code
   return {
     error,
-    // NOTICE(activity-titles): titles describe reported tools, not inferred
-    // task success. Semantic step names need an approved agent/run association.
-    errorText: error ? output || (typeof raw.error === 'string' ? raw.error : 'A tool returned an error. Open the activity for details.') : undefined,
-    running,
+    errorText: error ? output || 'A tool returned an error. Open the activity for details.' : undefined,
+    running: status === 'pending' || status === 'in_progress',
     // Show the original script without the enclosing JSON string's escaped newlines.
     script: typeof code === 'string' ? code : undefined,
-    status: running ? 'running' : error ? 'error' : 'finished',
-    title,
+    title: tool.title === 'execute' ? 'Run script' : tool.title || kindTitles[tool.kind ?? 'other'],
   }
 }
 
