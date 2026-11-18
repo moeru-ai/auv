@@ -66,8 +66,8 @@ impl ApplicationApi<'_> {
     };
     let verification = wait_for_foreground(&requested_application_id, verify_within, || {
       crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
-        .map(|snapshot| snapshot.frontmost_app_bundle_id)
         .map_err(|error| format!("frontmost application observation failed: {error}"))
+        .and_then(live_frontmost_bundle_id)
     });
     Ok(ApplicationActivationResult {
       verification,
@@ -123,6 +123,24 @@ fn wait_for_foreground(
     }
     std::thread::sleep(ACTIVATION_VERIFY_INTERVAL);
   }
+}
+
+/// Returns the frontmost bundle id only when the snapshot read it live.
+///
+/// NOTICE(macos-frontmost-stale): without Accessibility the snapshot falls
+/// back to `NSWorkspace.frontmostApplication`, which a process that never
+/// pumps its main run loop keeps reporting from its first read. Treating that
+/// value as foreground evidence reported `verified_foreground` while another
+/// application was in front (#481), so it yields an unavailable verification.
+fn live_frontmost_bundle_id(snapshot: crate::types::ObservedWindowSnapshot) -> Result<String, String> {
+  if snapshot.frontmost_app_live {
+    return Ok(snapshot.frontmost_app_bundle_id);
+  }
+  Err(format!(
+    "the frontmost application ({:?}) was read from NSWorkspace without Accessibility and can be stale; grant Accessibility \
+     to verify activation",
+    snapshot.frontmost_app_bundle_id
+  ))
 }
 
 fn activation_verification(requested_bundle_id: &str, observation: Result<String, String>) -> ApplicationActivationVerification {

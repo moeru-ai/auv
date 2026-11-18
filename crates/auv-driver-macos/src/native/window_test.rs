@@ -93,6 +93,7 @@ fn window_list_response(windows: usize) -> DecodedWindowListResponse {
     frontmost_app_name: "Notes".to_string(),
     frontmost_app_bundle_id: "com.apple.Notes".to_string(),
     frontmost_window_title: "Todo".to_string(),
+    frontmost_app_live: true,
     app_names: vec!["Notes".to_string(); windows],
     owner_pids: vec![10; windows],
     owner_bundle_ids: vec!["com.apple.Notes".to_string(); windows],

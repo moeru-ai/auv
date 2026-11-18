@@ -2221,9 +2221,15 @@ fn verify_window_state(target: WindowStateTarget, after: &WindowState) -> Driver
   Err(backend(format!("window mutation verification failed: {failure}")))
 }
 
-/// The bundle id of the frontmost application, or `None` when it could not be read.
+/// The bundle id of the frontmost application, or `None` when it could not be
+/// read live. A stale NSWorkspace fallback reading (no Accessibility, #481)
+/// would report the same application before and after a mutation and claim
+/// no focus disturbance, so it counts as unread.
 fn frontmost_application_id() -> Option<String> {
-  crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).ok().map(|snapshot| snapshot.frontmost_app_bundle_id)
+  crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
+    .ok()
+    .filter(|snapshot| snapshot.frontmost_app_live)
+    .map(|snapshot| snapshot.frontmost_app_bundle_id)
 }
 
 fn focus_disturbance(before: Option<String>, after: Option<String>) -> DisturbanceLevel {

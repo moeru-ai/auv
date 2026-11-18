@@ -123,6 +123,10 @@ pub(crate) mod ffi {
     frontmost_app_name: String,
     frontmost_app_bundle_id: String,
     frontmost_window_title: String,
+    // True when the frontmost application was read live from the system-wide
+    // AX element; false when it came from the NSWorkspace fallback, which can
+    // be stale (NOTICE(macos-frontmost-stale) in Window.swift).
+    frontmost_app_live: bool,
     app_names: Vec<String>,
     owner_pids: Vec<i64>,
     owner_bundle_ids: Vec<String>,

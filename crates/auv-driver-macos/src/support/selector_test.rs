@@ -121,6 +121,7 @@ fn sample_snapshot_with_partial_main_window() -> ObservedWindowSnapshot {
     frontmost_app_name: "ExampleMusic".to_string(),
     frontmost_app_bundle_id: "com.example.music".to_string(),
     frontmost_window_title: "Main".to_string(),
+    frontmost_app_live: true,
     observed_at: "test".to_string(),
     windows: vec![ObservedWindow {
       window_number: 42,
