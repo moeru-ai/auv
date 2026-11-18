@@ -45,6 +45,18 @@ Git checkout. Cargo follows the link and includes only the required schemas
 in the crates.io archive. The archive contains regular files and builds
 without access to the Git checkout.
 
+Packaging needs a real symlink. A Windows checkout without
+`core.symlinks=true` (the default without Developer Mode or an administrator
+shell) writes `proto` as a text file that contains `../../proto`. `build.rs`
+falls back to reading that path, so `cargo build` and `cargo test` still pass.
+`cargo package` never runs `build.rs`: its `include` globs match nothing, the
+archive has no schemas, and the verification build fails with an
+`auv-api-proto: Protobuf sources are missing` error that names this cause
+([#458](https://github.com/moeru-ai/auv/issues/458)). To package or publish
+from Windows, clone with `git clone -c core.symlinks=true`. Releases publish
+from `macos-latest` and are not affected. Replacing the symlink with a copied
+schema directory is deferred (`TODO(proto-source-copy)` in `build.rs`).
+
 ## Regression and evidence
 
 At commit `372a07be`, `proto/vendor/` was ignored. CI generated it before builds,

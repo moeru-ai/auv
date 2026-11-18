@@ -56,6 +56,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
   }
 
+  // NOTICE(proto-source): A Windows checkout without `core.symlinks=true`
+  // writes the `proto` link as a text file. The fallback above covers
+  // `cargo build`, but `cargo package` selects files through the `include`
+  // globs without running this script, so the archive gets no schemas and its
+  // verification build lands here (#458). Name that cause instead of letting
+  // protoc report a bare missing `health.proto`.
+  // TODO(proto-source-copy): replacing the symlink with a copied or generated
+  // schema directory would remove the checkout requirement; it changes the
+  // packaging contract in
+  // docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md
+  // and needs owner approval.
+  let first_schema = package_proto.join(SCHEMA_PATHS[0]);
+  if !first_schema.is_file() {
+    return Err(
+      format!(
+        "auv-api-proto: Protobuf sources are missing ({} not found). In a Git checkout, `crates/auv-api-proto/proto` must be a \
+         symlink to `../../proto`; on Windows, clone with `git clone -c core.symlinks=true` (requires Developer Mode or an \
+         administrator shell) before running `cargo package` or `cargo publish`.",
+        first_schema.display()
+      )
+      .into(),
+    );
+  }
+
   let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
   let mut builder = tonic_prost_build::configure().file_descriptor_set_path(out_dir.join("auv.api.bin"));
   // NOTICE(proto-serde-paths): prost silently ignores an attribute path that
