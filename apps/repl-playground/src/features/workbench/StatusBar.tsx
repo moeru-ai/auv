@@ -1,12 +1,12 @@
-import { usePlayground } from '../../store'
 import { DeviceIndicator } from '../device/DeviceIndicator'
+import { useWorkspaceState } from './workspace-context'
 
 /** Bottom status bar: the active Device on the left, desktop facts on the right. */
 export function StatusBar() {
-  const displays = usePlayground(state => state.displays.length)
-  const live = usePlayground(state => state.live)
-  const runId = usePlayground(state => state.run.runId)
-  const replay = usePlayground(state => state.run.mode === 'replay' && state.run.status !== 'idle')
+  const displays = useWorkspaceState(state => state.displays.length)
+  const live = useWorkspaceState(state => state.live)
+  const runId = useWorkspaceState(state => state.run.runId)
+  const replay = useWorkspaceState(state => state.run.mode === 'replay' && state.run.status !== 'idle')
 
   return (
     <footer className="text-[11.5px] text-fg-muted border-t border-line bg-surface-1 flex shrink-0 h-6 items-stretch">

@@ -5,18 +5,19 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Empty } from '../../components/Empty'
 import { refOf } from '../../handles'
-import { actions, usePlayground } from '../../store'
 import { cursorSeq } from '../../timeline'
 import { RefChip } from '../inspect/ValueView'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 
 /** Every SDK call in the timeline. Click a row to move the time cursor to it. */
 export function CallList() {
-  const calls = usePlayground(state => state.calls)
-  const hoveredCallId = usePlayground(state => state.hoveredCallId)
-  const selectedCallId = usePlayground(state => state.selectedCallId)
-  const run = usePlayground(state => state.run)
-  const cursor = usePlayground(cursorSeq)
-  const following = usePlayground(state => state.cursor === null)
+  const { store } = useWorkspace()
+  const calls = useWorkspaceState(state => state.calls)
+  const hoveredCallId = useWorkspaceState(state => state.hoveredCallId)
+  const selectedCallId = useWorkspaceState(state => state.selectedCallId)
+  const run = useWorkspaceState(state => state.run)
+  const cursor = useWorkspaceState(cursorSeq)
+  const following = useWorkspaceState(state => state.cursor === null)
   const longest = Math.max(1, ...calls.map(call => (call.endedAt ?? call.startedAt) - call.startedAt))
   const scrollRef = useRef<HTMLDivElement>(null)
   // Stick to the newest call while following, unless the user scrolled up.
@@ -47,7 +48,7 @@ export function CallList() {
   return (
     <div
       className="h-full overflow-auto"
-      onMouseLeave={() => usePlayground.setState({ hoveredCallId: null })}
+      onMouseLeave={() => store.setState({ hoveredCallId: null })}
       onScroll={(event) => {
         const element = event.currentTarget
         stickRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
@@ -77,6 +78,7 @@ export function CallList() {
 const COLLAPSED_REFS = 3
 
 function CallRow({ call, future, hovered, index, selected, share }: { call: CallRecord, future: boolean, hovered: boolean, index: number, selected: boolean, share: number }) {
+  const { actions, store } = useWorkspace()
   const duration = call.endedAt ? call.endedAt - call.startedAt : undefined
   const [expanded, setExpanded] = useState(false)
   const refs = expanded ? call.refs : call.refs.slice(0, COLLAPSED_REFS)
@@ -91,11 +93,11 @@ function CallRow({ call, future, hovered, index, selected, share }: { call: Call
         actions.setCursor(call.endSeq ?? call.seq)
         actions.selectCall(call.id)
       }}
-      onMouseEnter={() => usePlayground.setState({ hoveredCallId: call.id })}
+      onMouseEnter={() => store.setState({ hoveredCallId: call.id })}
     >
       <td className="text-fg-subtle leading-5 font-mono py-1.5 pl-3 text-right w-8">{index}</td>
       <td className="leading-5 px-2 py-1.5 w-20 whitespace-nowrap">
-        <span className="text-[11px] text-fg-subtle mr-1" title={`Script ${call.script.id}`}>{`S${call.script.id}`}</span>
+        {call.source && <span className="text-[11px] text-fg-subtle mr-1" title={`Script ${call.source.id}`}>{`S${call.source.id}`}</span>}
         {call.line !== null && <span className="text-[11px] text-fg-muted font-mono px-1.5 py-0.5 rounded bg-surface-2">{`L${call.line}`}</span>}
         {call.hit > 1 && <span className="text-[11px] text-fg-subtle font-mono ml-1">{`#${call.hit}`}</span>}
       </td>

@@ -43,8 +43,9 @@ controlled desktop.
   changes on input, so everything works without a device. It is a mock Runner
   (`createMockTransport` from `@auv-js/sdk`): it answers the same Runner RPCs
   as a device, so scripts, the timeline and replay behave the same on it.
-- **Agent / Script tabs**: share the center panel. Sign in with Exterior and
-  connect an ACP agent. Tab switches retain the connection and editor.
+- **Agent / Script tabs**: switch workspaces at the top of the Playground.
+  Each workspace keeps its own run history. Sign in with Exterior and connect
+  an ACP agent. Switching tabs retains the connection and editor.
   Through Exterior's HTTP MCP endpoint, the agent calls `execute` to execute code
   against the selected Device or mock desktop. Explicit output returns to the
   agent; SDK calls appear in the timeline. Connections require HTTP MCP support.
@@ -351,8 +352,8 @@ SDK objects stay in the page. The Agent uses window IDs and capture references.
 
 The Playground records the script and AUV operation results together with their
 Run. The editor's separate TypeScript REPL provides stepping and variable
-inspection. If an Agent script or an editor run is already active, a new
-execution returns a busy error.
+inspection. Each run reserves the selected device. While it is busy, the
+Script Run button is disabled and a new Agent `execute` call returns a busy error.
 
 A capture returns a reference and metadata. Request an image explicitly to
 show a PNG or JPEG up to 1024 × 1024 pixels. Stop, timeout, disconnect, and a

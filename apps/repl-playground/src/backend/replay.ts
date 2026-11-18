@@ -31,7 +31,7 @@ export interface Recording {
   sdk: Omit<SdkAccess, 'target'>
 }
 
-type ObserveUnary = (request: Pick<UnaryCall, 'body' | 'method'>) => Promise<(result: RecordedRpc) => void>
+type ObserveUnary = (request: Pick<UnaryCall, 'body' | 'method'>) => Promise<((result: RecordedRpc) => void) | undefined>
 
 /**
  * Wraps a live backend for one run and records every SDK call and canvas

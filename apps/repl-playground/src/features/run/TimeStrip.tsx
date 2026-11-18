@@ -3,8 +3,9 @@ import type { CallRecord, PlaygroundState } from '../../store'
 import { useEffect, useRef, useState } from 'react'
 
 import { IconButton } from '../../components/IconButton'
-import { actions, nowMs, usePlayground } from '../../store'
+import { nowMs } from '../../store'
 import { callAt, cursorSeq, lineAt } from '../../timeline'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 
 const CALL_COLORS = { error: '#f87171', input: '#fb7185', pending: '#fbbf24', read: '#a78bfa' }
 
@@ -19,14 +20,15 @@ interface Axis {
  * colored by effect, and pause markers. Click or drag to move the time cursor.
  */
 export function TimeStrip() {
+  const { actions, store } = useWorkspace()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverLabel, setHoverLabel] = useState<null | { text: string, x: number }>(null)
-  const following = usePlayground(state => state.cursor === null)
-  const cursor = usePlayground(cursorSeq)
-  const hasEvents = usePlayground(state => state.seqAt.length > 0)
-  const cursorLine = usePlayground(state => lineAt(state, cursorSeq(state)))
-  const cursorCall = usePlayground(state => callAt(state, cursorSeq(state)))
-  const elapsed = usePlayground((state) => {
+  const following = useWorkspaceState(state => state.cursor === null)
+  const cursor = useWorkspaceState(cursorSeq)
+  const hasEvents = useWorkspaceState(state => state.seqAt.length > 0)
+  const cursorLine = useWorkspaceState(state => lineAt(state, cursorSeq(state)))
+  const cursorCall = useWorkspaceState(state => callAt(state, cursorSeq(state)))
+  const elapsed = useWorkspaceState((state) => {
     const t = state.seqAt[cursorSeq(state)]
     const start = state.seqAt[0]
     return t !== undefined && start !== undefined ? activeClock(state)(t) - start : 0
@@ -45,7 +47,7 @@ export function TimeStrip() {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, h)
-      const state = usePlayground.getState()
+      const state = store.getState()
       const axis = axisOf(state)
       if (axis) {
         const style = getComputedStyle(canvas)
@@ -92,10 +94,10 @@ export function TimeStrip() {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [])
+  }, [store])
 
   const onPointer = (event: React.PointerEvent) => {
-    const state = usePlayground.getState()
+    const state = store.getState()
     const axis = axisOf(state)
     if (!axis)
       return
@@ -103,7 +105,7 @@ export function TimeStrip() {
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
     const t = axis.t0 + ratio * (axis.t1 - axis.t0)
     const call = callUnder(state, axis, t, (axis.t1 - axis.t0) / 400)
-    usePlayground.setState({ hoveredCallId: call?.id ?? null })
+    store.setState({ hoveredCallId: call?.id ?? null })
     const seq = call ? call.endSeq ?? call.seq : seqNear(state, axis, t)
     const line = lineAt(state, seq)
     setHoverLabel({
@@ -117,7 +119,7 @@ export function TimeStrip() {
   }
 
   const jumpCall = (direction: -1 | 1) => {
-    const state = usePlayground.getState()
+    const state = store.getState()
     const current = cursorSeq(state)
     const next = direction === 1
       ? state.calls.find(call => call.seq > current)
@@ -140,7 +142,7 @@ export function TimeStrip() {
           }}
           onPointerLeave={() => {
             setHoverLabel(null)
-            usePlayground.setState({ hoveredCallId: null })
+            store.setState({ hoveredCallId: null })
           }}
           onPointerMove={onPointer}
           ref={canvasRef}

@@ -6,8 +6,8 @@ import { useState } from 'react'
 
 import { refOf } from '../../handles'
 import { confidenceAlpha } from '../../ocr'
-import { actions, usePlayground } from '../../store'
 import { bindHistory, cursorSeq, framesOf, sampleIndexAt } from '../../timeline'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 import { MethodDocs } from './MethodDocs'
 import { FrameView, ResourcePreview } from './ResourcePreview'
 import { TimeTicks } from './TimeTicks'
@@ -19,30 +19,29 @@ import { RefChip, ValueView } from './ValueView'
  * Every section can be pinned as a floating card fixed to one moment.
  */
 export function HoverCard({ info, line, name }: { info: HoverInfo | null, line: number, name?: string }) {
-  const binds = usePlayground(state => state.binds)
-  const vars = usePlayground(state => state.vars)
-  const allCalls = usePlayground(state => state.calls)
-  const scriptId = usePlayground(state => state.run.script?.id)
-  const isolated = usePlayground(state => state.run.script?.kind === 'codemode')
-  const resources = usePlayground(state => state.resources)
-  const cursor = usePlayground(cursorSeq)
+  const { actions, store } = useWorkspace()
+  const binds = useWorkspaceState(state => state.binds)
+  const vars = useWorkspaceState(state => state.vars)
+  const allCalls = useWorkspaceState(state => state.calls)
+  const resources = useWorkspaceState(state => state.resources)
+  const cursor = useWorkspaceState(cursorSeq)
 
   // Value history: every binding of `name` in this run; top-level values from
   // an earlier cell fall back to the persisted value.
   // `binds` is subscribed above so the card re-renders as new values arrive.
-  const samples = name && binds.length > 0 ? bindHistory(usePlayground.getState(), name, scriptId) : []
-  const persisted = !isolated && name && samples.length === 0 && name in vars ? [{ hit: 1, line: 0, seq: -1, value: vars[name] }] : []
+  const samples = name && binds.length > 0 ? bindHistory(store.getState(), name) : []
+  const persisted = name && samples.length === 0 && name in vars ? [{ hit: 1, line: 0, seq: -1, value: vars[name] }] : []
   const values = samples.length > 0 ? samples : persisted
   const [valuePick, setValuePick] = useState<null | number>(null)
   const valueIndex = valuePick ?? sampleIndexAt(values, cursor)
   const value = values[valueIndex]
 
   const windowRef = value && refOf(value.value)?.startsWith('window:') ? refOf(value.value) : undefined
-  const captures = windowRef ? framesOf(usePlayground.getState(), windowRef) : []
+  const captures = windowRef ? framesOf(store.getState(), windowRef) : []
   const [capturePick, setCapturePick] = useState<null | number>(null)
   const captureIndex = capturePick ?? sampleIndexAt(captures, cursor)
 
-  const calls = allCalls.filter(call => call.line === line && call.script.id === scriptId)
+  const calls = allCalls.filter(call => call.line === line)
   const [callPick, setCallPick] = useState<null | number>(null)
   const callIndex = callPick ?? sampleIndexAt(calls, cursor)
   const call = calls[callIndex]
@@ -105,7 +104,7 @@ export function HoverCard({ info, line, name }: { info: HoverInfo | null, line: 
 
 /** Renders a handle as a resource preview, otherwise as an expandable value. */
 export function ValuePreview({ value }: { value: WireValue }) {
-  const resources = usePlayground(state => state.resources)
+  const resources = useWorkspaceState(state => state.resources)
   const ref = refOf(value)
   const resource = ref ? resources[ref] : undefined
   if (resource)
@@ -119,7 +118,7 @@ export function ValuePreview({ value }: { value: WireValue }) {
  * call itself, so the card does not resize while other sections update.
  */
 function CallSummary({ call, previewCall = call }: { call: CallRecord, previewCall?: CallRecord }) {
-  const resources = usePlayground(state => state.resources)
+  const resources = useWorkspaceState(state => state.resources)
   const produced = previewCall.refs.map(ref => resources[ref]).filter(resource => resource !== undefined)
   const frame = produced.find(resource => resource.kind === 'frame')
   const boxes = produced.flatMap(resource => resource.kind === 'text'

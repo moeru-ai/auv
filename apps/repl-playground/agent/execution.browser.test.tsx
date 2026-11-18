@@ -5,13 +5,18 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { expect, it, vi } from 'vitest'
 import { commands, page } from 'vitest/browser'
 
+import { agentWorkspace } from '../src/features/agent/agent-workspace'
 import { CodeModeHost } from '../src/features/agent/codemode-bridge'
 import { serveMcp } from '../src/features/agent/exterior'
+import { useDeviceTarget } from '../src/features/device/device-target'
 import { restoreDevices } from '../src/features/device/devices'
-import { activateBackend, session } from '../src/runtime/session'
-import { usePlayground } from '../src/store'
+import { scriptWorkspace } from '../src/features/editor/script-workspace'
+import { session } from '../src/runtime/session'
 import { cursorSeq, latestFramesAt } from '../src/timeline'
 import { mountPlayground } from './browser.fixture'
+
+const agent = agentWorkspace.store
+const script = scriptWorkspace.store
 
 const textItems = (result: CallToolResult) => result.content.filter(item => item.type === 'text').map(item => item.text)
 
@@ -23,7 +28,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
   let endpoint: Awaited<ReturnType<typeof serveMcp>> | undefined
   const execute = (code: string, timeoutMs?: number) => client.callTool({ arguments: { code, timeoutMs }, name: 'execute' }) as Promise<CallToolResult>
   const history = () => {
-    const state = usePlayground.getState()
+    const state = agent.getState()
     return { calls: state.calls.map(call => call.id), frames: latestFramesAt(state, cursorSeq(state)).map(frame => frame.handle.$ref), seq: cursorSeq(state) }
   }
   try {
@@ -42,13 +47,17 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     await expect.element(page.elementLocator(editor)).not.toBeVisible()
 
     await restoreDevices()
-    usePlayground.setState({ live: false })
-    expect((await session.run({ mode: 'run', source: 'const editorValue = 99;', startLine: 1 })).status).toBe('ok')
+    await scriptTab.click()
+    await session.run({ mode: 'run', source: 'const editorValue = 99; await auv.windows.list();', startLine: 1 })
+    expect(script.getState().run.status).toBe('done')
+    const scriptCalls = script.getState().calls
+    expect(scriptCalls).toHaveLength(1)
+    await agentTab.click()
     endpoint = await serveMcp(fixture.relayUrl, 'browser-check', transport => void host.connect(transport))
     host.setSession('browser-check')
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: Object.fromEntries(endpoint.headers.map(header => [header.name, header.value])) } }))
-    const backend = usePlayground.getState().backend
-    await activateBackend(null)
+    const backend = useDeviceTarget.getState().backend
+    useDeviceTarget.setState({ backend: null })
     try {
       const pure = await execute('return 1 + 1;')
       expect(pure.isError).toBeFalsy()
@@ -57,7 +66,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
       expect(missing.isError).toBe(true)
       expect(textItems(missing).at(-1)).toMatch(/need a Device/)
     }
-    finally { await activateBackend(backend) }
+    finally { useDeviceTarget.setState({ backend }) }
 
     const { tools } = await client.listTools()
     expect(tools.map(tool => tool.name)).toEqual(['execute'])
@@ -65,7 +74,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     const discovery = await execute('return ALL_TOOLS.map(tool => tool.name);')
     expect(discovery.isError).toBeFalsy()
     expect(JSON.parse(textItems(discovery)[0]!)).toContain('find_window_text')
-    expect(usePlayground.getState().calls).toHaveLength(0)
+    expect(agent.getState().calls).toHaveLength(0)
     const result = await execute(`
       const counter = await tools.resolve_window({ appName: 'Counter' });
       const found = await tools.find_window_text({ windowId: counter.windowId, query: 'Increment' });
@@ -83,12 +92,15 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     expect(result.isError).toBeFalsy()
     expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
     expect(textItems(result)).toContain('["Count: 3"]')
-    const calls = usePlayground.getState().calls
-    const counterSource = calls.at(-1)!.script
+    const calls = agent.getState().calls
+    const counterSource = calls.at(-1)!.source!
     expect(calls.filter(call => call.effect === 'input')).toHaveLength(3)
     expect(calls.every(call => call.status === 'ok')).toBe(true)
     await scriptTab.click()
     await expect.poll(() => document.querySelector('.cm-content')?.textContent).toContain('Count')
+    expect(script.getState().calls).toBe(scriptCalls)
+    await page.getByRole('tab', { exact: true, name: 'Variables' }).click()
+    await expect.element(page.getByRole('tabpanel', { exact: true, name: 'Variables' })).toHaveTextContent(/editorValue.*99/)
     await commands.agentScreenshot('codemode')
     await page.viewport(1024, 768)
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth)
@@ -107,7 +119,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     expect(continued.calls).toEqual(previous.calls)
     expect(continued.frames).toEqual(previous.frames)
     expect(continued.seq).toBeGreaterThan(previous.seq)
-    const previousRunId = usePlayground.getState().run.runId
+    const previousRunId = agent.getState().run.runId
     const runIds: Array<null | string> = []
     const access = backend!.sdk.bind(backend)
     const observed = vi.spyOn(backend!, 'sdk').mockImplementation(() => {
@@ -134,13 +146,13 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     finally { observed.mockRestore() }
     expect(repeated.isError).toBeFalsy()
     expect(textItems(repeated)).toContain('["Count: 3"]')
-    const currentRunId = usePlayground.getState().run.runId
+    const currentRunId = agent.getState().run.runId
     expect(currentRunId).toMatch(/^[a-f\d]{32}$/)
     expect(currentRunId).not.toBe(previousRunId)
     expect(runIds).toEqual([currentRunId])
-    const retainedCall = usePlayground.getState().calls.at(-1)!
-    expect(retainedCall.script.id).not.toBe(counterSource.id)
-    expect(retainedCall.script.source).toContain('find_window_text')
+    const retainedCall = agent.getState().calls.at(-1)!
+    expect(retainedCall.source?.id).not.toBe(counterSource.id)
+    expect(retainedCall.source?.code).toContain('find_window_text')
     expect(retainedCall.line).toBeNull()
     await page.getByRole('tab', { exact: true, name: 'Variables' }).click()
     const variables = page.getByRole('tabpanel', { exact: true, name: 'Variables' })
@@ -157,11 +169,11 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     `)
     expect(jpeg.isError).toBeFalsy()
     expect(jpeg.content).toEqual(expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg', type: 'image' })]))
-    const appended = usePlayground.getState().calls
+    const appended = agent.getState().calls
     expect(appended.slice(0, previous.calls.length).map(call => call.id)).toEqual(previous.calls)
     expect(retainedCall.seq).toBeGreaterThan(continued.seq)
-    expect(appended.at(-1)!.script.id).not.toBe(counterSource.id)
-    expect(appended[previous.calls.length - 1].script.source).toMatch(/for \(let i = 0; i < 3;/)
+    expect(appended.at(-1)!.source!.id).not.toBe(counterSource.id)
+    expect(appended[previous.calls.length - 1].source?.code).toMatch(/for \(let i = 0; i < 3;/)
     await page.elementLocator(document.querySelector(`[data-call-id="${previous.calls.at(-1)}"] td`)!).click()
     const source = [...document.querySelectorAll('summary')].find(element => element.textContent?.includes('source'))!
     await page.elementLocator(source).click()
@@ -196,22 +208,29 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     })
     try {
       const pending = execute('await tools.list_windows({});', 10000)
-      await vi.waitUntil(() => usePlayground.getState().calls.some(call => call.status === 'pending'))
-      expect(await session.run({ mode: 'run', source: '1 + 1;', startLine: 1 })).toMatchObject({ status: 'error' })
+      await vi.waitUntil(() => agent.getState().calls.some(call => call.status === 'pending'))
+      await scriptTab.click()
+      await expect.element(page.getByRole('button', { exact: true, name: 'Another playground execution is running' })).toBeDisabled()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F5', shiftKey: true }))
+      await session.run({ mode: 'run', source: '1 + 1;', startLine: 1 })
+      expect(session.running).toBe(false)
+      expect(script.getState().calls).toBe(scriptCalls)
+      expect(agent.getState().calls.at(-1)?.status).toBe('pending')
+      await agentTab.click()
       host.cancel()
       expect((await pending).isError).toBe(true)
-      expect(usePlayground.getState().run.status).toBe('stopped')
-      const canceledCall = usePlayground.getState().calls.at(-1)
+      expect(agent.getState().run.status).toBe('stopped')
+      const canceledCall = agent.getState().calls.at(-1)
       expect(canceledCall?.status).toBe('error')
 
       const transportAbort = new AbortController()
       const transportCall = client.callTool({ arguments: { code: 'await tools.list_windows({});', timeoutMs: 10000 }, name: 'execute' }, undefined, { signal: transportAbort.signal })
       const rejected = expect(transportCall).rejects.toBeDefined()
-      await vi.waitUntil(() => usePlayground.getState().calls.some(call => call.status === 'pending'))
+      await vi.waitUntil(() => agent.getState().calls.some(call => call.status === 'pending'))
       transportAbort.abort()
       await rejected
-      await vi.waitUntil(() => !session.running)
-      expect(usePlayground.getState().run.status).toBe('stopped')
+      await vi.waitUntil(() => !useDeviceTarget.getState().locked)
+      expect(agent.getState().run.status).toBe('stopped')
     }
     finally { delayed.mockRestore() }
     const loop = await execute('while (true) {}', 300)
@@ -225,8 +244,8 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     host.setSession('replacement')
     expect(textItems(await execute('return load("counterId") ?? "cleared";'))).toContain('cleared')
     await execute('store("device", "mock");')
-    await activateBackend(null)
-    await activateBackend(backend)
+    useDeviceTarget.setState({ backend: null })
+    useDeviceTarget.setState({ backend })
     expect(textItems(await execute('return load("device") ?? "cleared";'))).toContain('cleared')
     const malformed = await execute('await tools.click_window({ windowId: "w-counter", x: "bad", y: 5 });')
     expect(malformed.isError).toBe(true)
@@ -236,22 +255,36 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     `)
     expect(textItems(empty)).toEqual(['0', '0'])
     expect(empty.isError).toBeFalsy()
-    const editorRun = await session.run({ mode: 'run', source: 'editorValue;', startLine: 1 })
-    expect(editorRun.status).toBe('ok')
-    expect(editorRun.status === 'ok' && editorRun.value).toBe(99)
+    const agentHistory = history()
+    await scriptTab.click()
+    await session.run({ mode: 'run', replay: true, source: 'await auv.windows.list();', startLine: 1 })
+    expect(script.getState().run).toMatchObject({ mode: 'replay', status: 'done' })
+    expect(script.getState().calls).toHaveLength(1)
+
     const editorStep = session.run({ mode: 'step', source: 'editorValue + 1;', startLine: 1 })
-    await vi.waitUntil(() => usePlayground.getState().run.status === 'paused')
-    session.resume('continue')
-    const stepped = await editorStep
-    expect(stepped.status).toBe('ok')
-    expect(stepped.status === 'ok' && stepped.value).toBe(100)
+    await vi.waitUntil(() => script.getState().run.status === 'paused')
+    await agentTab.click()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F5', shiftKey: true }))
+    expect(script.getState().run.status).toBe('paused')
+    await scriptTab.click()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8' }))
+    await editorStep
+    expect(script.getState().run.outcome).toMatchObject({ status: 'ok', value: 100 })
+
+    const stopping = session.run({ mode: 'step', source: 'editorValue + 2;', startLine: 1 })
+    await vi.waitUntil(() => script.getState().run.status === 'paused')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F5', shiftKey: true }))
+    await stopping
+    expect(script.getState().run.status).toBe('stopped')
 
     const resetting = session.run({ mode: 'step', source: 'editorValue + 2;', startLine: 1 })
-    await vi.waitUntil(() => usePlayground.getState().run.status === 'paused')
-    session.reset()
-    expect(await resetting).toEqual({ status: 'stopped' })
-    expect(usePlayground.getState().run.status).toBe('idle')
-    expect(await session.run({ mode: 'run', source: 'typeof editorValue;', startLine: 1 })).toMatchObject({ status: 'ok', value: 'undefined' })
+    await vi.waitUntil(() => script.getState().run.status === 'paused')
+    await session.reset()
+    await resetting
+    expect(script.getState().run.status).toBe('idle')
+    await session.run({ mode: 'run', source: 'typeof editorValue;', startLine: 1 })
+    expect(script.getState().run.outcome).toMatchObject({ status: 'ok', value: 'undefined' })
+    expect(history()).toEqual(agentHistory)
   }
   finally {
     host.close()

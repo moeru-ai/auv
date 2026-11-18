@@ -1,11 +1,11 @@
 import type { CapturedFrame, DisplayInfo, InputReceipt, RunBackend, TextSearchResult, WindowInfo } from '../backend/types'
 import type { DisplayHandle, FrameHandle, InputHandle, ScrollDelta, TextHandle, WindowHandle } from '../handles'
 import type { Rect } from '../script-api/api'
-import type { Resource } from '../store'
+import type { Resource, Workspace } from '../store'
 
 import { deliveryPath, toDisplay, toFrame, toRecognized, toRect, toWindow } from '../backend/auv'
 import { decodeThumbHash, revealStart } from '../preview'
-import { actions, nowMs, usePlayground } from '../store'
+import { nowMs } from '../store'
 
 // Turns an SDK call's messages into the playground's resources (frames,
 // text, input receipts, windows, displays), so the canvas, inspector and
@@ -18,13 +18,13 @@ let nextHandle = 1
 /** A decoded protobuf message (`fromBinary` result), read structurally. */
 type Message = Record<string, unknown> & { $typeName: string }
 
-type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'seq' | 'timelineId'> : never : never
+type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'run' | 'seq'> : never : never
 
 /** Tracks the resource refs one SDK call produced. */
 export class CallScope {
   readonly refs: string[] = []
 
-  constructor(readonly callId: number, readonly seq: number, readonly backend: null | RunBackend) {}
+  constructor(private readonly workspace: Workspace, readonly callId: number, readonly seq: number, readonly backend: null | RunBackend) {}
 
   display(info: DisplayInfo): DisplayHandle {
     const handle: DisplayHandle = { $ref: `display:${info.id}`, frame: info.frame, id: info.id, kind: 'display', name: info.name, primary: info.primary, scale: info.scale }
@@ -34,10 +34,10 @@ export class CallScope {
 
   frame(frame: CapturedFrame): FrameHandle {
     // Keyed by the capture ID, so SDK values holding its `CaptureRef` link to
-    // it. A capture seen again in the same timeline keeps its first producer.
+    // it. A capture seen again in the same run keeps its first producer.
     const ref = `frame:${frame.ref}` as const
-    const existing = usePlayground.getState().resources[ref]
-    if (existing?.kind === 'frame' && existing.timelineId === usePlayground.getState().timelineId) {
+    const existing = this.workspace.store.getState().resources[ref]
+    if (existing?.kind === 'frame' && existing.run === this.workspace.store.getState().runIndex) {
       this.refs.push(ref)
       return existing.handle
     }
@@ -57,14 +57,14 @@ export class CallScope {
     }
     this.#put(handle.$ref, { capturedAt: nowMs(), frame, handle, kind: 'frame' })
     const current = () => {
-      const resource = usePlayground.getState().resources[handle.$ref]
+      const resource = this.workspace.store.getState().resources[handle.$ref]
       return resource?.kind === 'frame' ? resource : undefined
     }
     // The ThumbHash preview decodes locally and shows before the pixels load.
     void decodeThumbHash(frame.thumbhash).then((preview) => {
       const resource = current()
       if (preview && resource && !resource.bitmap)
-        actions.putResource(handle.$ref, { ...resource, preview })
+        this.workspace.actions.putResource(handle.$ref, { ...resource, preview })
       else
         preview?.close()
     })
@@ -72,7 +72,7 @@ export class CallScope {
       void decodeBitmap(this.backend, frame).then((bitmap) => {
         const resource = current()
         if (resource)
-          actions.putResource(handle.$ref, { ...resource, bitmap, revealedAt: revealStart(resource) })
+          this.workspace.actions.putResource(handle.$ref, { ...resource, bitmap, revealedAt: revealStart(resource) })
         else
           bitmap.close()
       }, error => console.warn(`Loading ${handle.$ref} pixels failed`, error))
@@ -107,17 +107,17 @@ export class CallScope {
   window(info: WindowInfo): WindowHandle {
     const handle: WindowHandle = { $ref: `window:${info.id}`, app: info.app, applicationId: info.applicationId, frame: info.frame, id: info.id, kind: 'window', pid: info.pid, title: info.title }
     // A window ref is stable across calls; keep the first producer for lineage.
-    const existing = usePlayground.getState().resources[handle.$ref]
+    const existing = this.workspace.store.getState().resources[handle.$ref]
     this.refs.push(handle.$ref)
-    const timelineId = usePlayground.getState().timelineId
-    const sameTimeline = existing?.timelineId === timelineId
-    actions.putResource(handle.$ref, { callId: sameTimeline ? existing.callId : this.callId, handle, kind: 'window', seq: sameTimeline ? existing.seq : this.seq, timelineId })
+    const run = this.workspace.store.getState().runIndex
+    const sameRun = existing?.run === run
+    this.workspace.actions.putResource(handle.$ref, { callId: sameRun ? existing.callId : this.callId, handle, kind: 'window', run, seq: sameRun ? existing.seq : this.seq })
     return handle
   }
 
   #put(ref: string, resource: ResourceBody): void {
     this.refs.push(ref)
-    actions.putResource(ref, { ...resource, callId: this.callId, seq: this.seq, timelineId: usePlayground.getState().timelineId } as Resource)
+    this.workspace.actions.putResource(ref, { ...resource, callId: this.callId, run: this.workspace.store.getState().runIndex, seq: this.seq } as Resource)
   }
 }
 

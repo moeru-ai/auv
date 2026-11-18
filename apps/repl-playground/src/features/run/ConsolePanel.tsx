@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
 
 import { Empty } from '../../components/Empty'
-import { actions, usePlayground } from '../../store'
 import { ValueView } from '../inspect/ValueView'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 
 const LEVEL_STYLE = {
   error: 'text-bad bg-bad/6',
@@ -13,7 +13,8 @@ const LEVEL_STYLE = {
 } as const
 
 export function ConsolePanel() {
-  const logs = usePlayground(state => state.logs)
+  const { actions } = useWorkspace()
+  const logs = useWorkspaceState(state => state.logs)
   const endRef = useRef<HTMLDivElement>(null)
 
   const stickRef = useRef(true)

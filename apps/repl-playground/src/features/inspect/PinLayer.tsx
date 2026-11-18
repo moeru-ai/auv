@@ -1,6 +1,6 @@
 import type { Pin } from '../../store'
 
-import { actions, usePlayground } from '../../store'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 import { ValuePreview } from './HoverCard'
 import { ResourcePreview } from './ResourcePreview'
 
@@ -9,7 +9,7 @@ import { ResourcePreview } from './ResourcePreview'
  * (seq), so several can be laid side by side to compare evidence.
  */
 export function PinLayer() {
-  const pins = usePlayground(state => state.pins)
+  const pins = useWorkspaceState(state => state.pins)
   return (
     <div className="pointer-events-none inset-0 fixed z-40">
       {pins.map(pin => <PinnedCard key={pin.id} pin={pin} />)}
@@ -18,8 +18,9 @@ export function PinLayer() {
 }
 
 function PinnedCard({ pin }: { pin: Pin }) {
-  const resource = usePlayground(state => (pin.ref ? state.resources[pin.ref] : undefined))
-  const atCursor = usePlayground(state => state.cursor === pin.seq)
+  const { actions, store } = useWorkspace()
+  const resource = useWorkspaceState(state => (pin.ref ? state.resources[pin.ref] : undefined))
+  const atCursor = useWorkspaceState(state => state.cursor === pin.seq)
 
   const startDrag = (event: React.PointerEvent) => {
     event.preventDefault()
@@ -40,8 +41,8 @@ function PinnedCard({ pin }: { pin: Pin }) {
   return (
     <div
       className={`border rounded-xl bg-surface-1 flex flex-col max-w-[440px] min-w-[260px] pointer-events-auto shadow-2xl absolute overflow-hidden ${atCursor ? 'border-[var(--o-hover)]' : 'border-line'}`}
-      onMouseEnter={() => pin.ref && usePlayground.setState({ hoveredRef: pin.ref })}
-      onMouseLeave={() => usePlayground.setState({ hoveredRef: null })}
+      onMouseEnter={() => pin.ref && store.setState({ hoveredRef: pin.ref })}
+      onMouseLeave={() => store.setState({ hoveredRef: null })}
       style={{ left: pin.x, top: pin.y }}
     >
       <div

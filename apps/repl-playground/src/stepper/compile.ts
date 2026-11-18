@@ -114,11 +114,10 @@ export function compileCell(source: string, options: CompileOptions = {}): Compi
 
   const stepCall = (node: AnyNode, ctx: VisitContext): string => {
     const id = steps.length
-    const pausable = ctx.async
-    steps.push({ async: pausable, endLine: node.loc.end.line, id, line: node.loc.start.line, top: ctx.top })
+    steps.push({ async: ctx.async, endLine: node.loc.end.line, id, line: node.loc.start.line, top: ctx.top })
     // NOTICE: sync functions and sync generators cannot `await`; they get a
     // record-only hook, so the host can highlight but not pause there.
-    return pausable ? `await __step(${id});` : `__stepSync(${id});`
+    return ctx.async ? `await __step(${id});` : `__stepSync(${id});`
   }
 
   const bindCall = (names: string[], line: number): string => {

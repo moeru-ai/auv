@@ -17,9 +17,10 @@ import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { language, session } from '../../runtime/session'
-import { actions, usePlayground } from '../../store'
 import { bindHistory, lineAt as timelineLineAt } from '../../timeline'
 import { HoverCard } from '../inspect/HoverCard'
+import { WorkspaceContext } from '../workbench/workspace-context'
+import { actions, scriptWorkspace, usePlayground } from './script-workspace'
 
 const STORAGE_KEY = 'auv-playground:source'
 
@@ -291,8 +292,8 @@ const hover = hoverTooltip(async (view, pos) => {
   const word = view.state.wordAt(pos)
   const name = word ? view.state.sliceDoc(word.from, word.to) : undefined
   const state = usePlayground.getState()
-  const hasValue = name !== undefined && ((state.run.script?.kind !== 'codemode' && name in state.vars) || bindHistory(state, name, state.run.script?.id).length > 0)
-  const hasCalls = state.calls.some(call => call.line === line.number && call.script.id === state.run.script?.id)
+  const hasValue = name !== undefined && (name in state.vars || bindHistory(state, name).length > 0)
+  const hasCalls = state.calls.some(call => call.line === line.number)
   let info: HoverInfo | null = null
   try {
     info = await language.hover(pos, view.state.doc.toString())
@@ -307,7 +308,7 @@ const hover = hoverTooltip(async (view, pos) => {
     create() {
       const dom = document.createElement('div')
       const root = createRoot(dom)
-      root.render(<HoverCard info={info} line={line.number} name={hasValue ? name : undefined} />)
+      root.render(<WorkspaceContext value={scriptWorkspace}><HoverCard info={info} line={line.number} name={hasValue ? name : undefined} /></WorkspaceContext>)
       return { destroy: () => root.unmount(), dom }
     },
     end: info?.to ?? word?.to ?? pos,
@@ -413,7 +414,7 @@ export function CodeEditor() {
         effects: setRunView.of({
           breakpoints: state.breakpoints,
           currentLine: state.run.currentLine,
-          cursorLine: state.cursor === null ? null : timelineLineAt(state, state.cursor, state.run.script?.id),
+          cursorLine: state.cursor === null ? null : timelineLineAt(state, state.cursor),
           errorLine: state.run.errorLine,
           executedLines: state.executedLines,
           status: state.run.status,

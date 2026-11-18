@@ -8,8 +8,8 @@ import CodeModeWorker from '@exterioragentprotocol/client-sdk/codemode/worker?wo
 import { connectCodeMode, createBrowserCodeModeSandbox } from '@exterioragentprotocol/client-sdk/codemode'
 
 import { version } from '../../../package.json'
-import { session } from '../../runtime/session'
-import { usePlayground } from '../../store'
+import { useDeviceTarget } from '../device/device-target'
+import { runAgent } from './agent-execution'
 import { codeModeToolDescriptions, createCodeModeTools } from './codemode-tools'
 
 const description = [
@@ -54,7 +54,7 @@ export class CodeModeHost {
     this.#store = {}
     this.#stopWatchingDevice = sessionId === undefined
       ? undefined
-      : usePlayground.subscribe((next, previous) => {
+      : useDeviceTarget.subscribe((next, previous) => {
           if (next.backend !== previous.backend) {
             this.cancel()
             this.#store = {}
@@ -71,7 +71,7 @@ export class CodeModeHost {
     this.#active = active
     const signal = AbortSignal.any([active.signal, request.signal])
     try {
-      const result = await session.runAgent({ ...request, signal }, async (runner, runSignal) => {
+      const result = await runAgent({ ...request, signal }, async (runner, runSignal) => {
         let pending = Promise.resolve()
         const tools = createCodeModeTools(() => {
           if (!runner)

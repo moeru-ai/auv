@@ -45,8 +45,6 @@ export interface ExecWorkerApi {
   stop: () => void
 }
 
-// ---- Execution worker --------------------------------------------------------
-
 /** Host functions the execution worker calls. `on*` are fire-and-forget events. */
 export interface HostApi {
   /** Values bound by a declaration or loop header, right after assignment. */
@@ -61,6 +59,8 @@ export interface HostApi {
   onStep: (stepId: number, at: number) => void
   onVars: (vars: Record<string, WireValue>) => void
 }
+
+// ---- Execution worker --------------------------------------------------------
 
 export interface HoverInfo {
   doc: string
@@ -87,15 +87,13 @@ export type ResumeMode = 'continue' | 'step'
 
 export type RunOutcome
   = | { line?: number, message: string, stack?: string, status: 'error' }
-    | { reason?: 'canceled' | 'timeout', status: 'stopped' }
     | { status: 'ok', value: WireValue }
+    | { status: 'stopped' }
 
 export interface RunRequest {
   binds: BindSite[]
   breakpoints: number[]
   code: string
-  /** Reject late worker RPCs after the host starts another execution. */
-  executionId: number
   hoisted: string[]
   /** Pause at the first hook (`step`) or only at breakpoints (`run`). */
   mode: 'run' | 'step'

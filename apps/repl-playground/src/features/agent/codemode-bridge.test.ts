@@ -13,7 +13,7 @@ import { codeModeConnection, CodeModeHost } from './codemode-bridge'
 const execution = vi.hoisted(() => ({ runAgent: vi.fn() }))
 const success: CodemodeResult = { calls: [], ok: true, output: [], storeWrites: { delete: [], set: {} }, value: undefined }
 const canceled: CodemodeResult = { calls: [], error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: [] }
-vi.mock('../../runtime/session', () => ({ session: execution }))
+vi.mock('./agent-execution', () => execution)
 
 /** Exercise the same MCP interface used by agents, with an in-memory transport. */
 async function connectTools(host: CodeModeHost): Promise<Client> {

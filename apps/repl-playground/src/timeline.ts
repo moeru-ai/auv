@@ -17,10 +17,10 @@ export interface ValueSample {
 }
 
 /** Every value a name was bound to during the run, oldest first. */
-export function bindHistory(state: PlaygroundState, name: string, scriptId?: number): ValueSample[] {
+export function bindHistory(state: PlaygroundState, name: string): ValueSample[] {
   const samples: ValueSample[] = []
   for (const bind of state.binds) {
-    if ((scriptId === undefined || bind.scriptId === scriptId) && name in bind.values)
+    if (name in bind.values)
       samples.push({ hit: bind.hit, line: bind.line, seq: bind.seq, value: bind.values[name] })
   }
   return samples
@@ -60,7 +60,7 @@ export function cursorSeq(state: PlaygroundState): number {
 /** Frames captured from a source (e.g. `window:w-counter`) over time. */
 export function framesOf(state: PlaygroundState, source: string): Array<Resource & { kind: 'frame' }> {
   return Object.values(state.resources)
-    .filter((resource): resource is Resource & { kind: 'frame' } => resource.kind === 'frame' && resource.timelineId === state.timelineId && resource.handle.source === source)
+    .filter((resource): resource is Resource & { kind: 'frame' } => resource.kind === 'frame' && resource.run === state.runIndex && resource.handle.source === source)
     .sort((a, b) => a.seq - b.seq)
 }
 
@@ -72,8 +72,8 @@ export function isFollowingLatest(state: PlaygroundState): boolean {
 export function latestFramesAt(state: PlaygroundState, seq: number): Array<Resource & { kind: 'frame' }> {
   const latest = new Map<string, Resource & { kind: 'frame' }>()
   for (const resource of Object.values(state.resources)) {
-    // Editor runs restart seqs; codemode calls continue the same timeline.
-    if (resource.kind !== 'frame' || resource.timelineId !== state.timelineId || resource.seq > seq)
+    // Seqs restart every run; only frames of the current run are comparable.
+    if (resource.kind !== 'frame' || resource.run !== state.runIndex || resource.seq > seq)
       continue
     const current = latest.get(resource.handle.source)
     if (!current || current.seq <= resource.seq)
@@ -83,7 +83,7 @@ export function latestFramesAt(state: PlaygroundState, seq: number): Array<Resou
 }
 
 /** Editor line that was executing at `seq`, if any. */
-export function lineAt(state: PlaygroundState, seq: number, scriptId?: number): null | number {
+export function lineAt(state: PlaygroundState, seq: number): null | number {
   const steps = state.steps
   let lo = 0
   let hi = steps.length - 1
@@ -91,7 +91,7 @@ export function lineAt(state: PlaygroundState, seq: number, scriptId?: number): 
   while (lo <= hi) {
     const mid = (lo + hi) >> 1
     if (steps[mid]!.seq <= seq) {
-      found = scriptId === undefined || steps[mid]!.scriptId === scriptId ? steps[mid]!.line : null
+      found = steps[mid]!.line
       lo = mid + 1
     }
     else {
@@ -124,15 +124,13 @@ export function sampleIndexAt(samples: { seq: number }[], seq: number): number {
   return index === -1 ? samples.length - 1 : index
 }
 
-/** Values in the script executing at `seq`, without bindings from earlier VMs. */
+/** Values of every bound name as of `seq` (the latest binding of each). */
 export function varsAt(state: PlaygroundState, seq: number): Record<string, WireValue> {
   const vars: Record<string, WireValue> = {}
-  const scriptId = state.steps.findLast(step => step.seq <= seq)?.scriptId
   for (const bind of state.binds) {
     if (bind.seq > seq)
       break
-    if (bind.scriptId === scriptId)
-      Object.assign(vars, bind.values)
+    Object.assign(vars, bind.values)
   }
   return vars
 }

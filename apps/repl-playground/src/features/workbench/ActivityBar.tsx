@@ -1,25 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
+import { create } from 'zustand'
 
 import { IconButton } from '../../components/IconButton'
-import { session } from '../../runtime/session'
-import { actions, usePlayground } from '../../store'
-import { resetMockDesktop } from '../device/devices'
+import { useWorkspace, useWorkspaceState } from './workspace-context'
 
 const THEME_KEY = 'auv-playground:theme'
 
+const useTheme = create<{ theme: 'dark' | 'light' | 'system' }>(() => {
+  try {
+    const theme = localStorage.getItem(THEME_KEY)
+    return { theme: theme === 'dark' || theme === 'light' ? theme : 'system' }
+  }
+  catch {
+    return { theme: 'system' }
+  }
+})
+
 /** Left rail for global actions: live view, pins, REPL reset, theme. The Device lives in the status bar. */
-export function ActivityBar() {
-  const live = usePlayground(state => state.live)
-  const connected = usePlayground(state => state.backend !== null)
-  const pins = usePlayground(state => state.pins.length)
-  const [theme, setTheme] = useState<'dark' | 'light' | 'system'>(() => {
-    try {
-      return (localStorage.getItem(THEME_KEY) as 'dark' | 'light' | null) ?? 'system'
-    }
-    catch {
-      return 'system'
-    }
-  })
+export function ActivityBar({ onReset, resetHint, setLive }: { onReset: () => void, resetHint: string, setLive: (live: boolean) => void }) {
+  const { actions } = useWorkspace()
+  const live = useWorkspaceState(state => state.live)
+  const connected = useWorkspaceState(state => state.backend !== null)
+  const pins = useWorkspaceState(state => state.pins.length)
+  const theme = useTheme(state => state.theme)
 
   useEffect(() => {
     if (theme === 'system')
@@ -42,7 +45,7 @@ export function ActivityBar() {
         disabled={!connected}
         hint={live ? 'Stop live desktop view' : 'Live desktop view'}
         icon="i-ph-broadcast"
-        onClick={() => session.setLive(!live)}
+        onClick={() => setLive(!live)}
         side="right"
       />
       <IconButton
@@ -54,19 +57,15 @@ export function ActivityBar() {
       />
       <div className="flex-1" />
       <IconButton
-        hint="Reset: terminate the worker, clear REPL state, and restore the mock desktop"
+        hint={resetHint}
         icon="i-ph-arrow-counter-clockwise"
-        onClick={() => {
-          session.reset()
-          // The mock desktop keeps state across runs like a real one; reset restores it.
-          void resetMockDesktop()
-        }}
+        onClick={onReset}
         side="right"
       />
       <IconButton
         hint={`Theme: ${theme}`}
         icon={theme === 'dark' ? 'i-ph-moon' : theme === 'light' ? 'i-ph-sun' : 'i-ph-desktop'}
-        onClick={() => setTheme(theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system')}
+        onClick={() => useTheme.setState({ theme: theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system' })}
         side="right"
       />
     </nav>

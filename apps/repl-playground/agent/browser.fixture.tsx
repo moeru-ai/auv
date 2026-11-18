@@ -27,8 +27,7 @@ export async function mountPlayground(signedIn = false) {
   let root = createRoot(container)
   onTestFinished(async () => {
     disconnectAgent()
-    session.setLive(false)
-    session.reset()
+    await session.reset()
     root.unmount()
     container.remove()
     sessionStorage.clear()

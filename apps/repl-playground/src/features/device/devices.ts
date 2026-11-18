@@ -7,7 +7,7 @@ import { create } from 'zustand'
 import { connectBackend, createAuvBackend } from '../../backend/auv'
 import { MockDesktop } from '../../backend/mock-desktop'
 import { mockRunner } from '../../backend/mock-runner'
-import { activateBackend, session } from '../../runtime/session'
+import { reserveDevice, useDeviceTarget } from './device-target'
 
 const STORAGE_KEY = 'auv-playground:devices'
 
@@ -99,7 +99,7 @@ let restoring: Promise<void> | undefined
 
 /** Makes a Device active, connecting its daemon first when needed. */
 export async function activateDevice(connectionId: string, deviceId?: string): Promise<void> {
-  if (session.running)
+  if (useDeviceTarget.getState().locked)
     throw new Error('Stop the current run before switching devices.')
   const connected = connectionId === MOCK_ID || get().states[connectionId]?.status === 'connected'
   const defaultDevice = connected
@@ -112,10 +112,12 @@ export async function activateDevice(connectionId: string, deviceId?: string): P
   if (!get().states[connectionId]?.devices.some(device => device.id === target))
     throw new Error(`The daemon no longer reports Device ${target}`)
   const backend = await backendFor(connectionId, target)
+  if (useDeviceTarget.getState().locked)
+    throw new Error('Stop the current run before switching devices.')
   const active = { connectionId, deviceId: target }
   set({ active })
   persist()
-  await activateBackend(backend)
+  useDeviceTarget.setState({ backend })
 }
 
 /** Remembers a daemon endpoint (or updates the one with the same endpoint) and activates its default Device. */
@@ -173,12 +175,20 @@ export async function forgetConnection(connectionId: string): Promise<void> {
 
 /** Replaces the mock desktop with a fresh one; it keeps state across runs like a real desktop. */
 export async function resetMockDesktop(): Promise<void> {
-  const key = backendKey(MOCK_ID, MOCK_ID)
-  await backends.get(key)?.dispose().catch(() => {})
-  backends.delete(key)
-  const { active } = get()
-  if (active?.connectionId === MOCK_ID)
-    await activateBackend(await backendFor(MOCK_ID, MOCK_ID))
+  const release = reserveDevice()
+  if (!release)
+    return
+  try {
+    const key = backendKey(MOCK_ID, MOCK_ID)
+    await backends.get(key)?.dispose().catch(() => {})
+    backends.delete(key)
+    const { active } = get()
+    if (active?.connectionId === MOCK_ID)
+      useDeviceTarget.setState({ backend: await backendFor(MOCK_ID, MOCK_ID) })
+  }
+  finally {
+    release()
+  }
 }
 
 /**

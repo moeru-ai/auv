@@ -11,7 +11,6 @@ import * as sdk from '@auv-js/sdk'
 import { HOST_EVENTS } from '../runtime/protocol'
 import { createBridgeTransport, SDK_PORT_MESSAGE } from '../runtime/sdk-bridge'
 import { areaOf } from './area'
-import { toWire } from './wire-value'
 
 // NOTICE(exec-worker-isolation): this worker only isolates the playground
 // page from runaway loops (it can be terminated) and keeps the DOM out of
@@ -33,7 +32,6 @@ let breakpoints = new Set<number>()
 let resumeWaiter: ((next: 'stop' | ResumeMode) => void) | undefined
 let stopRequested = false
 let currentStep: null | number = null
-let executionId = 0
 
 const globals = globalThis as unknown as Record<string, unknown>
 const persistentNames = new Set<string>()
@@ -45,7 +43,6 @@ const api: ExecWorkerApi = {
     resumeWaiter?.(next)
   },
   async run(request) {
-    executionId = request.executionId
     globals.auv = await runnerFor(request.sdkRoute)
     return await runCell(request)
   },
@@ -84,15 +81,19 @@ addEventListener('message', (event) => {
   if (!port)
     return
   const { context } = createHostChannel({ messagePort: port as unknown as Worker })
-  sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep, () => executionId) })
+  sdkConnection = sdk.connect({ transport: createBridgeTransport(context, () => currentStep) })
 })
 
 async function runnerFor(route: RunRequest['sdkRoute']): Promise<sdk.RunnerClient> {
-  if (!sdkConnection)
-    throw new Error('The execution worker SDK bridge is not initialized.')
-  // The bridge rejects device calls while no backend is selected. Construct
-  // the ordinary lazy SDK client so pure code and help can still execute.
-  return sdk.createAuv(await sdkConnection).runner(route ?? { runnerClass: 'auv.core.local' })
+  if (!route || !sdkConnection) {
+    // Fails on first use, with the reason, rather than as `auv is undefined`.
+    return new Proxy({} as sdk.RunnerClient, {
+      get() {
+        throw new Error('`auv` needs a device, the mock desktop, or a replay of a run that made the same calls')
+      },
+    })
+  }
+  return sdk.createAuv(await sdkConnection).runner(route)
 }
 
 // ---- Step hooks -------------------------------------------------------------
@@ -172,6 +173,44 @@ async function runCell(request: RunRequest): Promise<RunOutcome> {
     const err = error instanceof Error ? error : new Error(String(error))
     return { line: errorLine(err), message: `${err.name}: ${err.message}`, stack: err.stack, status: 'error' }
   }
+}
+
+/** Structured-clone-safe summary of a script value; keeps protobuf `$typeName`s for lineage. */
+function toWire(value: unknown, depth = 0, seen = new WeakSet<object>()): WireValue {
+  if (value === null || value === undefined)
+    return value
+  switch (typeof value) {
+    case 'bigint':
+      return `${value}n`
+    case 'boolean':
+    case 'number':
+    case 'string':
+      return value
+    case 'function':
+      return { $fn: value.name || 'anonymous' }
+    case 'symbol':
+      return value.toString()
+  }
+  const object = value as object
+  if (seen.has(object))
+    return { $circular: true }
+  if (depth > 6)
+    return { $truncated: true }
+  seen.add(object)
+  if (object instanceof Error)
+    return { $error: `${object.name}: ${object.message}` }
+  if (ArrayBuffer.isView(object))
+    return { $bytes: object.byteLength }
+  if (object instanceof Map)
+    return { $map: [...object.entries()].slice(0, 200).map(([k, v]) => [toWire(k, depth + 1, seen), toWire(v, depth + 1, seen)]) }
+  if (object instanceof Set)
+    return { $set: [...object].slice(0, 200).map(v => toWire(v, depth + 1, seen)) }
+  if (Array.isArray(object))
+    return object.slice(0, 500).map(item => toWire(item, depth + 1, seen))
+  const out: Record<string, WireValue> = {}
+  for (const [key, item] of Object.entries(object))
+    out[key] = toWire(item, depth + 1, seen)
+  return out
 }
 
 // ---- Script globals -------------------------------------------------------------

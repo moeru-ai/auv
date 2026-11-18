@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { copyText } from '../../clipboard'
 import { IconButton } from '../../components/IconButton'
 import { Kbd } from '../../components/Kbd'
-import { usePlayground } from '../../store'
+import { useDeviceTarget } from './device-target'
 import { activateDevice, connectionName, disconnect, forgetConnection, MOCK_ID, PLATFORMS, useDevices } from './devices'
 
 /**
@@ -27,8 +27,7 @@ export function DevicePicker({ onAdd, onClose }: { onAdd: () => void, onClose: (
   const active = useDevices(state => state.active)
   const saved = useDevices(state => state.saved)
   const states = useDevices(state => state.states)
-  const runStatus = usePlayground(state => state.run.status)
-  const locked = runStatus === 'running' || runStatus === 'paused' || runStatus === 'compiling'
+  const locked = useDeviceTarget(state => state.locked)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
   const [pending, setPending] = useState<string>()

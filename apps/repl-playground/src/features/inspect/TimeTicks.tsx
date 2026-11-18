@@ -1,4 +1,4 @@
-import { actions } from '../../store'
+import { useWorkspace } from '../workbench/workspace-context'
 
 export interface Tick {
   label: string
@@ -18,6 +18,7 @@ export function TimeTicks({ cursor, onSelect, selected, ticks }: {
   selected: number
   ticks: Tick[]
 }) {
+  const { actions } = useWorkspace()
   // A single tick still renders so the row height is stable when more arrive.
   if (ticks.length === 0)
     return null

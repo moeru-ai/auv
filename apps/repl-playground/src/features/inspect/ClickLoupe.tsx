@@ -4,7 +4,7 @@ import type { Resource } from '../../store'
 import { contains } from '@auv-js/sdk'
 import { useEffect, useRef } from 'react'
 
-import { usePlayground } from '../../store'
+import { useWorkspaceState } from '../workbench/workspace-context'
 
 type FrameResource = Resource & { kind: 'frame' }
 type InputResource = Resource & { kind: 'input' }
@@ -13,25 +13,25 @@ type InputResource = Resource & { kind: 'input' }
 const AREA = { height: 90, width: 150 }
 
 /**
- * Before/after magnified views around a click, from frames in the same timeline
+ * Before/after magnified views around a click, from the frames of the same run
  * that cover the click point: the latest one before the click and the first
  * one after it. Shows whether the click landed where intended and what changed.
  */
 export function ClickLoupe({ compact = false, resource }: { compact?: boolean, resource: InputResource }) {
-  const resources = usePlayground(state => state.resources)
+  const resources = useWorkspaceState(state => state.resources)
   const point = resource.handle.point
   if (!point)
     return null
 
   const frames = Object.values(resources)
-    .filter((candidate): candidate is FrameResource => candidate.kind === 'frame' && candidate.timelineId === resource.timelineId && contains(candidate.handle.bounds, point))
+    .filter((candidate): candidate is FrameResource => candidate.kind === 'frame' && candidate.run === resource.run && contains(candidate.handle.bounds, point))
     .sort((a, b) => a.seq - b.seq)
   const before = frames.findLast(frame => frame.seq < resource.seq)
   const after = frames.find(frame => frame.seq > resource.seq)
 
   // The OCR match under the point, from the latest recognition before the click.
   const target = Object.values(resources)
-    .filter(candidate => candidate.kind === 'text' && candidate.timelineId === resource.timelineId && candidate.seq < resource.seq)
+    .filter(candidate => candidate.kind === 'text' && candidate.run === resource.run && candidate.seq < resource.seq)
     .sort((a, b) => a.seq - b.seq)
     .flatMap(candidate => (candidate.kind === 'text' ? candidate.handle.matches : []))
     .findLast(match => contains(match.bounds, point))

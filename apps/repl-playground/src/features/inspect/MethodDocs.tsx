@@ -7,7 +7,7 @@ import Markdown from 'react-markdown'
 import { useEffect, useState } from 'react'
 
 import { CopyButton } from '../../components/CopyButton'
-import { usePlayground } from '../../store'
+import { useDeviceTarget } from '../device/device-target'
 
 // Long-form docs per gRPC path, fetched once from the active device. A method
 // without docs is remembered; a failed fetch is retried on the next open.
@@ -109,7 +109,7 @@ function FullDocs({ path }: { path: string }) {
 function load(path: string): Promise<Docs | undefined> {
   let docs = fetched.get(path)
   if (!docs) {
-    const sdk = usePlayground.getState().backend?.sdk?.()
+    const sdk = useDeviceTarget.getState().backend?.sdk?.()
     docs = sdk ? sdk.describe(path).then(described => described?.docs()) : Promise.resolve(undefined)
     fetched.set(path, docs)
     // Do not keep a failed fetch: the device may be reachable on the next hover.
