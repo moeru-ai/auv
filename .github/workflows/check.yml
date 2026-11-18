@@ -98,8 +98,19 @@ jobs:
             libegl-dev \
             libleptonica-dev \
             libtesseract-dev
+      # NOTICE(windows-rust-1.99): Rust 1.100 made Cargo's build-dir layout v2
+      # the default (rust-lang/cargo#17354), and Cargo has no switch back. The
+      # `copy-dylibs` step of `ort-sys` 2.0.0-rc.13, which
+      # ultralytics-inference 0.0.18 enables, finds `target/<profile>` by
+      # walking three levels up from `OUT_DIR`. Under layout v2 that lands in
+      # `target/<profile>/build`, and copying DirectML.dll panics with "The
+      # system cannot find the path specified" (#480). Only Windows downloads
+      # dylibs, so only Windows is pinned. Remove this pin when ort moves to
+      # rc.14 or later (pykeio/ort@eed5681), see TODO(ort-rc14) in
+      # crates/auv-inference-ort/Cargo.toml.
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ runner.os == 'Windows' && '1.99' || 'stable' }}
           components: rustfmt
       # Pull requests only restore the cache; main writes it, so a pull
       # request cannot evict main's entry or poison it.
