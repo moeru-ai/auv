@@ -497,7 +497,8 @@ mod no_steal_tests {
     assert!(matches!(exited, DriverError::NotFound { .. }), "an exited process must be NotFound: {exited:?}");
     assert!(exited.to_string().contains("process 4242 (it exited"), "{exited}");
 
-    let unaddressable = process_activation_failure(4242, lookup_failure(), Some("/Applications/Xcode.app/Contents/MacOS/DeviceHub".to_string()));
+    let unaddressable =
+      process_activation_failure(4242, lookup_failure(), Some("/Applications/Xcode.app/Contents/MacOS/DeviceHub".to_string()));
     assert!(matches!(unaddressable, DriverError::Backend { .. }), "{unaddressable:?}");
     let unaddressable = unaddressable.to_string();
     assert!(
