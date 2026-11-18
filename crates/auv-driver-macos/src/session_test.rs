@@ -180,6 +180,49 @@ fn observed_window(
   }
 }
 
+// https://github.com/moeru-ai/auv/issues/483
+//
+// ROOT CAUSE:
+//
+// If ScreenCaptureKit timed out on a Safari window, the xcap fallback looked
+// the window up among on-screen windows only, and reported "native window
+// 2726 was not found". That read as if the window had closed, while a window
+// that was minimized, hidden or on another Space gives the same answer.
+//
+// Before the fix, every double failure was one backend error with a
+// permission hint. The fix checks the window list with off-screen windows:
+// a window that is gone is a typed NotFound, an off-screen window says so,
+// and both keep the native and fallback errors separately.
+#[test]
+fn capture_fallback_failure_tells_a_closed_window_from_an_off_screen_one_issue_483() {
+  let native = "ScreenCaptureKit window capture timed out after 10s while capturing window 2726";
+  let fallback = "native window 2726 was not found";
+
+  let mut off_screen = observed_window(2726, 10, "com.apple.Safari", "Safari", "Start Page", 800, 600);
+  off_screen.state.off_screen = true;
+  let on_screen = observed_window(2726, 10, "com.apple.Safari", "Safari", "Start Page", 800, 600);
+  let other = observed_window(9, 10, "com.apple.Safari", "Safari", "Other", 800, 600);
+
+  assert_eq!(capture_target_presence(2726, Ok(observed_windows(vec![other.clone()]))), CaptureTargetPresence::Gone);
+  assert_eq!(capture_target_presence(2726, Ok(observed_windows(vec![other, off_screen]))), CaptureTargetPresence::OffScreen);
+  assert_eq!(capture_target_presence(2726, Ok(observed_windows(vec![on_screen]))), CaptureTargetPresence::OnScreen);
+  assert_eq!(capture_target_presence(2726, Err("denied".to_string())), CaptureTargetPresence::Unknown("denied".to_string()));
+
+  let gone = capture_fallback_failure("2726", native, fallback, CaptureTargetPresence::Gone);
+  assert!(matches!(gone, DriverError::NotFound { .. }), "a closed window must be NotFound: {gone:?}");
+  let gone = gone.to_string();
+  assert!(gone.contains("closed during capture") && gone.contains(native) && gone.contains(fallback), "{gone}");
+
+  let hidden = capture_fallback_failure("2726", native, fallback, CaptureTargetPresence::OffScreen);
+  assert!(matches!(hidden, DriverError::Backend { .. }), "an off-screen window is not missing: {hidden:?}");
+  let hidden = hidden.to_string();
+  assert!(hidden.contains("not on screen") && hidden.contains("another Space") && hidden.contains(native), "{hidden}");
+  assert!(!hidden.contains("was not found\""), "{hidden}");
+
+  let unknown = capture_fallback_failure("2726", native, fallback, CaptureTargetPresence::Unknown("denied".to_string())).to_string();
+  assert!(unknown.contains("could not be checked (denied)") && unknown.contains(fallback), "{unknown}");
+}
+
 fn display_target(index: usize, native_id: &str, display_ref: &str, is_primary: bool) -> MacosDisplayTarget {
   MacosDisplayTarget {
     index,

@@ -2565,10 +2565,76 @@ fn capture_window(window: &Window, resolution: CaptureResolution) -> DriverResul
     Err(swift_error) => {
       let fallback_reason = swift_error.to_string();
       capture_window_xcap(window, Some(fallback_reason.clone())).map(|capture| capture.at_resolution(resolution)).map_err(|xcap_error| {
-        backend(format!(
-          "native Swift window capture failed before xcap fallback: {fallback_reason}; xcap fallback also failed: {xcap_error}"
-        ))
+        let presence = window.reference.id.parse::<i64>().map_or_else(
+          |_| CaptureTargetPresence::Unknown("the window ref is not a native window id".to_string()),
+          |number| {
+            let scope = window
+              .application_id
+              .clone()
+              .map_or(crate::native::window::WindowListScope::AllVisible, crate::native::window::WindowListScope::App);
+            capture_target_presence(
+              number,
+              crate::native::window::list_windows(ListWindowsOptions {
+                limit: 10_000,
+                scope,
+                include_offscreen: true,
+              }),
+            )
+          },
+        );
+        capture_fallback_failure(&window.reference.id, &fallback_reason, &xcap_error.to_string(), presence)
       })
+    }
+  }
+}
+
+/// Where a capture target stood once both window capture backends failed.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CaptureTargetPresence {
+  OnScreen,
+  /// Listed, but not on screen: minimized, hidden, or on another Space.
+  OffScreen,
+  /// Not listed even with off-screen windows included.
+  Gone,
+  /// The window list could not be read.
+  Unknown(String),
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn capture_target_presence(window_number: i64, listed: Result<ObservedWindowSnapshot, String>) -> CaptureTargetPresence {
+  match listed {
+    Ok(snapshot) => match snapshot.windows.iter().find(|candidate| candidate.window_number == window_number) {
+      Some(candidate) if candidate.state.off_screen => CaptureTargetPresence::OffScreen,
+      Some(_) => CaptureTargetPresence::OnScreen,
+      None => CaptureTargetPresence::Gone,
+    },
+    Err(error) => CaptureTargetPresence::Unknown(error),
+  }
+}
+
+/// Keeps the native and fallback errors apart and says what became of the
+/// target, so a closed window is a typed `NotFound` and an off-screen window
+/// is not reported as missing.
+///
+/// NOTICE(window-capture-fallback-presence): the xcap fallback enumerates only
+/// on-screen windows (`CGWindowListOption::OptionOnScreenOnly` in xcap 0.6.2
+/// `src/macos/impl_window.rs`), so its "native window N was not found" did not
+/// show that the window had closed (#483).
+#[cfg(any(target_os = "macos", test))]
+fn capture_fallback_failure(window_id: &str, native_error: &str, fallback_error: &str, presence: CaptureTargetPresence) -> DriverError {
+  let errors = format!("native ScreenCaptureKit capture failed: {native_error}; on-screen xcap fallback failed: {fallback_error}");
+  match presence {
+    CaptureTargetPresence::Gone => {
+      not_found(format!("window {window_id} (no longer listed, including off-screen windows; it closed during capture; {errors})"))
+    }
+    CaptureTargetPresence::OffScreen => backend(format!(
+      "window {window_id} is still listed but not on screen (minimized, hidden, or on another Space), so it cannot be captured; \
+       {errors}"
+    )),
+    CaptureTargetPresence::OnScreen => backend(format!("window {window_id} is on screen but both capture backends failed; {errors}")),
+    CaptureTargetPresence::Unknown(reason) => {
+      backend(format!("window {window_id} capture failed and its presence could not be checked ({reason}); {errors}"))
     }
   }
 }
