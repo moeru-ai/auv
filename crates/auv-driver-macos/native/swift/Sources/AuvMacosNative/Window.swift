@@ -123,7 +123,7 @@ private func frontmostFocusedWindow(_ frontmost: NSRunningApplication?) -> (know
   return (true, windowAxCgWindowId(focused))
 }
 
-/// The application that is frontmost now.
+/// The application that is frontmost now, and whether it was read live.
 // NOTICE(macos-frontmost-stale): `NSWorkspace.frontmostApplication` is updated
 // from workspace notifications on the main run loop, which the Runner and CLI
 // never pump, so a process keeps reporting the app that was frontmost at its
@@ -131,8 +131,9 @@ private func frontmostFocusedWindow(_ frontmost: NSRunningApplication?) -> (know
 // `open -a TextEdit`, and changed only after `RunLoop.run(until:)`). That made
 // `window.focus` fail verification right after a successful activation. The
 // system-wide AX element answers live; NSWorkspace stays the fallback when AX
-// is not trusted or has no focused application.
-private func currentFrontmostApplication() -> NSRunningApplication? {
+// is not trusted or has no focused application, reported with `live: false`
+// so callers do not treat it as current foreground evidence (issue #481).
+private func currentFrontmostApplication() -> (app: NSRunningApplication?, live: Bool) {
   if AXIsProcessTrusted() {
     let systemWide = AXUIElementCreateSystemWide()
     AXUIElementSetMessagingTimeout(systemWide, windowListAxTimeout)
@@ -142,18 +143,18 @@ private func currentFrontmostApplication() -> NSRunningApplication? {
       var pid: pid_t = 0
       if AXUIElementGetPid(value as! AXUIElement, &pid) == .success,
          let app = NSRunningApplication(processIdentifier: pid) {
-        return app
+        return (app, true)
       }
     }
   }
-  return NSWorkspace.shared.frontmostApplication
+  return (NSWorkspace.shared.frontmostApplication, false)
 }
 
 func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse {
   let limit = max(Int(request.limit), 1)
   let appFilter = request.app_filter.toString().lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
   let includeOffscreen = request.include_offscreen
-  let frontmostApplication = currentFrontmostApplication()
+  let (frontmostApplication, frontmostAppLive) = currentFrontmostApplication()
   let frontmostAppName = frontmostApplication?.localizedName ?? ""
   let frontmostAppBundleId = frontmostApplication?.bundleIdentifier ?? ""
 
@@ -284,6 +285,7 @@ func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse 
     frontmost_app_name: frontmostAppName.intoRustString(),
     frontmost_app_bundle_id: frontmostAppBundleId.intoRustString(),
     frontmost_window_title: frontmostWindowTitle.intoRustString(),
+    frontmost_app_live: frontmostAppLive,
     app_names: nativeStringVec(appNames),
     owner_pids: nativeVec(ownerPids),
     owner_bundle_ids: nativeStringVec(ownerBundleIds),

@@ -62,6 +62,14 @@ pub struct ObservedWindowSnapshot {
   pub frontmost_app_name: String,
   pub frontmost_app_bundle_id: String,
   pub frontmost_window_title: String,
+  /// True when the frontmost application fields were read live from the
+  /// system-wide Accessibility element. False when Accessibility is not
+  /// trusted and they came from `NSWorkspace.frontmostApplication`, which a
+  /// process that never pumps its main run loop keeps reporting from its first
+  /// read (issue #481). A false value is not evidence of the current
+  /// foreground application.
+  #[serde(skip)]
+  pub frontmost_app_live: bool,
   pub observed_at: String,
   pub windows: Vec<ObservedWindow>,
 }

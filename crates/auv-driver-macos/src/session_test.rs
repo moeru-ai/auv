@@ -149,6 +149,7 @@ fn observed_windows(windows: Vec<ObservedWindow>) -> ObservedWindowSnapshot {
     frontmost_app_name: String::new(),
     frontmost_app_bundle_id: String::new(),
     frontmost_window_title: String::new(),
+    frontmost_app_live: true,
     observed_at: "test".to_string(),
     windows,
   }

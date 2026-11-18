@@ -293,6 +293,7 @@ pub fn decode_window_response(response: DecodedWindowListResponse) -> AuvResult<
     frontmost_app_name: response.frontmost_app_name,
     frontmost_app_bundle_id: response.frontmost_app_bundle_id,
     frontmost_window_title: response.frontmost_window_title,
+    frontmost_app_live: response.frontmost_app_live,
     observed_at: response.observed_at,
     windows,
   })
@@ -365,6 +366,7 @@ pub struct DecodedWindowListResponse {
   pub frontmost_app_name: String,
   pub frontmost_app_bundle_id: String,
   pub frontmost_window_title: String,
+  pub frontmost_app_live: bool,
   pub app_names: Vec<String>,
   pub owner_pids: Vec<i64>,
   pub owner_bundle_ids: Vec<String>,
@@ -461,6 +463,7 @@ impl From<NativeWindowListResponse> for DecodedWindowListResponse {
       frontmost_app_name: value.frontmost_app_name,
       frontmost_app_bundle_id: value.frontmost_app_bundle_id,
       frontmost_window_title: value.frontmost_window_title,
+      frontmost_app_live: value.frontmost_app_live,
       app_names: value.app_names,
       owner_pids: value.owner_pids,
       owner_bundle_ids: value.owner_bundle_ids,
