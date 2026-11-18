@@ -2568,7 +2568,10 @@ fn capture_window(window: &Window, resolution: CaptureResolution) -> DriverResul
         let presence = window.reference.id.parse::<i64>().map_or_else(
           |_| CaptureTargetPresence::Unknown("the window ref is not a native window id".to_string()),
           |number| {
-            let scope = window.application_id.clone().map_or(crate::native::window::WindowListScope::AllVisible, crate::native::window::WindowListScope::App);
+            let scope = window
+              .application_id
+              .clone()
+              .map_or(crate::native::window::WindowListScope::AllVisible, crate::native::window::WindowListScope::App);
             capture_target_presence(
               number,
               crate::native::window::list_windows(ListWindowsOptions {
