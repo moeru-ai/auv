@@ -2334,6 +2334,44 @@ fn activate_process(pid: i64) -> DriverResult<()> {
   run_osascript(&[&format!(
     "tell application \"System Events\" to set frontmost of first application process whose unix id is {pid} to true"
   )])
+  .map_err(|error| process_activation_failure(pid, error, running_process_command(pid)))
+}
+
+/// The executable of a running process, or `None` when no process has `pid`.
+#[cfg(target_os = "macos")]
+fn running_process_command(pid: i64) -> Option<String> {
+  let output = Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
+  let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  (output.status.success() && !command.is_empty()).then_some(command)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn running_process_command(_pid: i64) -> Option<String> {
+  None
+}
+
+/// Names why System Events could not bring a window owner forward.
+///
+/// NOTICE(system-events-process-lookup): `first application process whose
+/// unix id is <pid>` fails with "Invalid index. (-1719)" (or "Can't get
+/// object. (-1728)") when System Events lists no application process for the
+/// pid: the process exited, or it owns windows without being an application
+/// System Events addresses. Device Hub (`com.apple.dt.Devices`) hit this
+/// during foreground window.clickText (#482). Other osascript failures keep
+/// their message unchanged.
+fn process_activation_failure(pid: i64, error: DriverError, command: Option<String>) -> DriverError {
+  let message = error.to_string();
+  if !["(-1719)", "(-1728)"].iter().any(|code| message.contains(code)) {
+    return error;
+  }
+  match command {
+    None => not_found(format!("process {pid} (it exited before System Events could bring it to the foreground)")),
+    Some(command) => backend(format!(
+      "System Events lists no application process for pid {pid} ({command}), so its window could not be brought to the \
+       foreground and no foreground input was delivered; activate the application another way or use background input. \
+       System Events: {message}"
+    )),
+  }
 }
 
 fn activate_app_for_window(window: &Window) -> DriverResult<()> {

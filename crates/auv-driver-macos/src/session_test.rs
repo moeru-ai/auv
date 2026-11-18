@@ -472,6 +472,46 @@ mod no_steal_tests {
     assert_eq!(candidates, vec![InputDeliveryPath::ForegroundSystemEvents]);
   }
 
+  // https://github.com/moeru-ai/auv/issues/482
+  //
+  // ROOT CAUSE:
+  //
+  // If System Events listed no application process for a window owner's pid,
+  // foreground preparation failed with the raw osascript text "Can't get
+  // application process 1 whose unix id = <pid>. Invalid index. (-1719)" as a
+  // generic backend error, which did not say whether the process had exited
+  // or was not addressable.
+  //
+  // Before the fix, both cases read the same. The fix reports an exited
+  // process as NotFound and a live one with its executable, and says that no
+  // foreground input was delivered; other failures are unchanged.
+  #[test]
+  fn foreground_activation_failure_names_the_unaddressable_process_issue_482() {
+    let lookup_failure = || {
+      backend(
+        "40:101: execution error: System Events got an error: Can’t get application process 1 whose unix id = 4242. Invalid index. (-1719)",
+      )
+    };
+
+    let exited = process_activation_failure(4242, lookup_failure(), None);
+    assert!(matches!(exited, DriverError::NotFound { .. }), "an exited process must be NotFound: {exited:?}");
+    assert!(exited.to_string().contains("process 4242 (it exited"), "{exited}");
+
+    let unaddressable = process_activation_failure(4242, lookup_failure(), Some("/Applications/Xcode.app/Contents/MacOS/DeviceHub".to_string()));
+    assert!(matches!(unaddressable, DriverError::Backend { .. }), "{unaddressable:?}");
+    let unaddressable = unaddressable.to_string();
+    assert!(
+      unaddressable.contains("no application process for pid 4242 (/Applications/Xcode.app/Contents/MacOS/DeviceHub)")
+        && unaddressable.contains("no foreground input was delivered")
+        && unaddressable.contains("(-1719)"),
+      "{unaddressable}"
+    );
+
+    let unrelated = "execution error: Not authorized to send Apple events to System Events. (-1743)";
+    let kept = process_activation_failure(4242, backend(unrelated), None);
+    assert!(matches!(&kept, DriverError::Backend { message } if message == unrelated), "{kept:?}");
+  }
+
   #[test]
   fn foreground_activation_targets_bundleless_windows_by_pid() {
     let script = foreground_activation_script(&sample_window()).expect("foreground activation script");
