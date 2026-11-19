@@ -9,7 +9,6 @@ import { Group, Panel } from 'react-resizable-panels'
 import { PanelFrame } from '../../components/PanelFrame'
 import { ResizeHandle } from '../../components/ResizeHandle'
 import { DesktopCanvas } from '../desktop/DesktopCanvas'
-import { useDeviceTarget } from '../device/device-target'
 import { Inspector } from '../inspect/Inspector'
 import { PinLayer } from '../inspect/PinLayer'
 import { BottomPanel } from '../run/BottomPanel'
@@ -18,28 +17,15 @@ import { ActivityBar } from './ActivityBar'
 import { StatusBar } from './StatusBar'
 import { WorkspaceContext } from './workspace-context'
 
-export function Workbench({ children, desktop, onReset, resetHint, workspace }: {
+export function Workbench({ active, children, desktop, onReset, resetHint, workspace }: {
+  active: boolean
   children: ReactNode
   desktop: ReturnType<typeof createWorkspaceDesktop>
   onReset: () => void
   resetHint: string
   workspace: Workspace
 }) {
-  useEffect(() => {
-    const activate = (backend: ReturnType<typeof useDeviceTarget.getState>['backend']) => {
-      if (backend !== workspace.store.getState().backend)
-        void desktop.activateBackend(backend).catch(error => console.warn('Loading the desktop failed', error))
-    }
-    activate(useDeviceTarget.getState().backend)
-    const unsubscribe = useDeviceTarget.subscribe(({ backend }, previous) => {
-      if (backend !== previous.backend)
-        activate(backend)
-    })
-    return () => {
-      unsubscribe()
-      desktop.setLive(false)
-    }
-  }, [desktop, workspace])
+  useEffect(() => active ? desktop.watchDevice() : undefined, [active, desktop])
 
   return (
     <WorkspaceContext value={workspace}>

@@ -82,7 +82,7 @@ export function DebugBar() {
           <IconButton disabled={locked} hint={locked ? 'Another playground execution is running' : 'Run all or the selection'} icon="i-ph-play-fill" keys="⌘↩" label="Run" onClick={() => runEditor('run')} tone="primary" />
           <IconButton disabled={locked} hint="Run and pause at the first statement" icon="i-ph-footprints" keys="⌘⇧↩" onClick={() => runEditor('step')} />
           <IconButton
-            disabled={locked || !hasRecording}
+            disabled={!hasRecording}
             hint={hasRecording ? 'Replay offline: re-run against the last live run’s recorded device calls' : 'Run live once to record device calls for offline replay'}
             icon="i-ph-clock-counter-clockwise"
             onClick={() => runEditor('replay')}

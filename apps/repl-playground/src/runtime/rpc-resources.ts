@@ -130,7 +130,7 @@ export class CallScope {
  * NOTICE(bitmap-logical-resolution): magnifiers (ClickLoupe, zoomed canvas)
  * show logical-resolution detail.
  */
-export async function decodeBitmap(backend: RunBackend, frame: CapturedFrame): Promise<ImageBitmap> {
+export async function decodeBitmap(backend: Pick<RunBackend, 'captureImage'>, frame: CapturedFrame): Promise<ImageBitmap> {
   const scale = frame.scale > 1 ? frame.scale : 1
   const maxSize = { height: Math.max(1, Math.round(frame.height / scale)), width: Math.max(1, Math.round(frame.width / scale)) }
   return await createImageBitmap(await backend.captureImage(frame, maxSize))

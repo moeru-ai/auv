@@ -6,6 +6,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { expect, it, vi } from 'vitest'
 import { commands, page } from 'vitest/browser'
 
+import { connectBackend } from '../src/backend/auv'
+import { MockDesktop } from '../src/backend/mock-desktop'
+import { mockRunner } from '../src/backend/mock-runner'
 import { agentWorkspace } from '../src/features/agent/agent-workspace'
 import { CodeModeHost } from '../src/features/agent/codemode-bridge'
 import { useDeviceTarget } from '../src/features/device/device-target'
@@ -216,6 +219,12 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
       expect(session.running).toBe(false)
       expect(script.getState().calls).toBe(scriptCalls)
       expect(agent.getState().calls.at(-1)?.status).toBe('pending')
+      await expect.element(page.getByRole('button', { name: /^Replay offline/ })).toBeEnabled()
+      await session.run({ mode: 'run', replay: true, source: 'await auv.windows.list();', startLine: 1 })
+      expect(script.getState().run).toMatchObject({ mode: 'replay', status: 'done' })
+      expect(script.getState().calls).toHaveLength(1)
+      expect(agent.getState().calls.at(-1)?.status).toBe('pending')
+      expect(useDeviceTarget.getState().locked).toBe(true)
       await agentTab.click()
       host.cancel()
       expect((await pending).isError).toBe(true)
@@ -255,6 +264,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     `)
     expect(textItems(empty)).toEqual(['0', '0'])
     expect(empty.isError).toBeFalsy()
+    await execute('store("resetCheck", "still here");')
     const agentHistory = history()
     await scriptTab.click()
     await session.run({ mode: 'run', replay: true, source: 'await auv.windows.list();', startLine: 1 })
@@ -279,16 +289,67 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
 
     const resetting = session.run({ mode: 'step', source: 'editorValue + 2;', startLine: 1 })
     await vi.waitUntil(() => script.getState().run.status === 'paused')
-    await session.reset()
+    await page.getByRole('button', { name: 'Reset: terminate the worker and clear REPL state' }).click()
     await resetting
+    expect(useDeviceTarget.getState().backend).toBe(backend)
     expect(script.getState().run.status).toBe('idle')
     await session.run({ mode: 'run', source: 'typeof editorValue;', startLine: 1 })
     expect(script.getState().run.outcome).toMatchObject({ status: 'ok', value: 'undefined' })
     expect(history()).toEqual(agentHistory)
+    expect(textItems(await execute('return load("resetCheck");'))).toContain('still here')
+
+    await page.getByRole('button', { name: 'Switch device' }).click()
+    await page.getByRole('button', { name: 'Reset mock desktop' }).click()
+    await vi.waitUntil(() => useDeviceTarget.getState().backend !== backend && !useDeviceTarget.getState().locked)
+    expect(textItems(await execute('return load("resetCheck") ?? "cleared";'))).toContain('cleared')
   }
   finally {
     host.close()
     await client.close()
     endpoint?.close()
+  }
+})
+
+it('only polls the visible desktop and keeps preview captures outside the active Run', async () => {
+  await mountPlayground()
+  await restoreDevices()
+  const previous = useDeviceTarget.getState().backend
+  const transport = mockRunner(new MockDesktop())
+  const previewRunIds: Array<null | string> = []
+  const { backend } = await connectBackend({
+    kind: 'mock',
+    transport: {
+      ...transport,
+      unary(call) {
+        if (call.method.endsWith('/CaptureDisplay') || call.method.endsWith('/GetCaptureImage'))
+          previewRunIds.push(call.headers.get('auv-run-id'))
+        return transport.unary(call)
+      },
+    },
+  })
+  const run = await backend.beginRun()
+  try {
+    expect(run.sdk().route.runId).toBeDefined()
+    useDeviceTarget.setState({ backend })
+    await vi.waitUntil(() => Object.values(agent.getState().liveFrames).filter(frame => frame.bitmap).length === 2)
+    const beforeLive = previewRunIds.length
+    await page.getByRole('button', { exact: true, name: 'Live desktop view' }).click()
+    await vi.waitUntil(() => previewRunIds.length > beforeLive)
+    await page.getByRole('tab', { exact: true, name: 'Script' }).click()
+    await vi.waitUntil(() => Object.values(script.getState().liveFrames).filter(frame => frame.bitmap).length === 2)
+
+    const afterSwitch = previewRunIds.length
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    expect(previewRunIds).toHaveLength(afterSwitch)
+    expect(previewRunIds.every(runId => runId === null)).toBe(true)
+
+    await page.getByRole('tab', { exact: true, name: 'Agent' }).click()
+    await expect.element(page.getByRole('button', { exact: true, name: 'Stop live desktop view' })).toBeVisible()
+    await vi.waitUntil(() => previewRunIds.length > afterSwitch)
+  }
+  finally {
+    useDeviceTarget.setState({ backend: previous })
+    await run.endRun('succeeded')
+    await backend.dispose()
   }
 })

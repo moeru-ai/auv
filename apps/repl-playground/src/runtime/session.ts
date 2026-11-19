@@ -132,20 +132,22 @@ class ExecSession {
     this.#exec.resume(mode)
   }
 
-  async run(options: RunOptions): Promise<void> {
-    if (this.running || (options.replay && !this.#recording))
+  run(options: RunOptions): Promise<void> | undefined {
+    const savedRecording = options.replay ? this.#recording : undefined
+    if (this.running || (options.replay && !savedRecording))
       return
-    const release = reserveDevice()
-    if (!release)
+    const release = savedRecording ? undefined : reserveDevice()
+    if (!savedRecording && !release)
       return
     const abort = new AbortController()
-    const completion = this.#run(options, abort.signal).finally(() => {
+    const completion = this.#run(options, abort.signal, savedRecording).finally(() => {
       abort.abort()
       this.#active = undefined
-      release()
+      this.#runBackend = null
+      release?.()
     })
     this.#active = { abort, completion }
-    await completion
+    return completion
   }
 
   setBreakpoints(lines: number[]): void {
@@ -167,15 +169,13 @@ class ExecSession {
     return seq
   }
 
-  async #run(options: RunOptions, signal: AbortSignal): Promise<void> {
-    const live = useDeviceTarget.getState().backend
-    const recorder = !options.replay && live ? new RecordingBackend(live) : undefined
-    const backend = options.replay ? new ReplayBackend(this.#recording!) : recorder ?? live
-    this.#runBackend = backend
+  async #run(options: RunOptions, signal: AbortSignal, savedRecording: Recording | undefined): Promise<void> {
+    let backend: null | RunBackend = null
+    let recorder: RecordingBackend | undefined
     this.#seq = 0
     this.#lineHits = new Map()
     this.#lastLine = null
-    actions.beginRun(options.replay ? 'replay' : 'live')
+    actions.beginRun(savedRecording ? 'replay' : 'live')
     let runOpened = false
     try {
       const compiled = await language.compile({ cellId: ++this.#cellId, source: options.source, startLine: options.startLine })
@@ -189,11 +189,20 @@ class ExecSession {
       this.#binds = compiled.binds
       this.#bindHits = Array.from<number>({ length: compiled.binds.length }).fill(0)
       this.#timer = new StepTimer(compiled.steps)
-      const runId = await backend?.beginRun()
+      if (savedRecording) {
+        backend = new ReplayBackend(savedRecording)
+      }
+      else {
+        const live = await useDeviceTarget.getState().backend?.beginRun()
+        if (live)
+          backend = recorder = new RecordingBackend(live)
+      }
       runOpened = true
       if (signal.aborted)
         return
-      actions.patchRun({ runId, status: 'running' })
+      this.#runBackend = backend
+      const sdkRoute = backend?.sdk().route
+      actions.patchRun({ runId: sdkRoute?.runId, status: 'running' })
       const outcome = await this.#exec.run({
         binds: compiled.binds,
         breakpoints: usePlayground.getState().breakpoints,
@@ -201,7 +210,7 @@ class ExecSession {
         hoisted: compiled.hoisted,
         mode: options.mode,
         prelude: compiled.prelude,
-        sdkRoute: backend?.sdk().route,
+        sdkRoute,
         steps: compiled.steps,
       })
       if (signal.aborted)
@@ -231,7 +240,8 @@ class ExecSession {
         this.#recording = recorder.recording()
         usePlayground.setState({ hasRecording: true })
       }
-      void scriptDesktop.refreshAxTree().catch(() => {})
+      if (!savedRecording)
+        void scriptDesktop.refreshAxTree().catch(() => {})
     }
     catch (error) {
       if (!signal.aborted)

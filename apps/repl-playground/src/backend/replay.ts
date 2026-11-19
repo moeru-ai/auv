@@ -1,17 +1,12 @@
 import type { DuplexCall, DuplexCallOptions, Transport, UnaryCall } from '@auv-js/sdk'
 
-import type { BridgedError, Exchanged } from '../runtime/sdk-bridge'
-import type { Backend, CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
+import type { BridgedCallEnd } from '../runtime/sdk-bridge'
+import type { CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
 
-import { bridgedError, remoteError } from '../runtime/sdk-bridge'
+import { bridgedError, recordUnaryCall, remoteError } from '../runtime/sdk-bridge'
 
 /** One SDK call of a live run, as encoded messages. */
-export interface RecordedRpc {
-  error?: BridgedError
-  /** Request and response messages in the order they crossed. */
-  exchange: Exchanged[]
-  /** A JSON-encoded HTTP binding's response text, in place of a response message. */
-  json?: string
+export interface RecordedRpc extends BridgedCallEnd {
   /** gRPC path, `/package.Service/Method`. */
   method: string
 }
@@ -31,26 +26,21 @@ export interface Recording {
   sdk: Omit<SdkAccess, 'target'>
 }
 
-type ObserveUnary = (request: Pick<UnaryCall, 'body' | 'method'>) => Promise<((result: RecordedRpc) => void) | undefined>
-
 /**
  * Wraps a live backend for one run and records every SDK call and canvas
  * image, so the same script can later run offline against the recording.
  */
 export class RecordingBackend implements RunBackend {
   readonly images = new Map<string, Blob>()
-  readonly kind: Backend['kind']
+  readonly kind: RunBackend['kind']
   readonly label: string
   readonly rpc: RecordedRpc[] = []
+
   readonly #transports = new WeakMap<Transport, Transport>()
 
-  constructor(private readonly inner: Backend, private readonly observeUnary?: ObserveUnary) {
+  constructor(private readonly inner: RunBackend) {
     this.kind = inner.kind
     this.label = inner.label
-  }
-
-  beginRun(): Promise<string | undefined> {
-    return this.inner.beginRun()
   }
 
   async captureImage(frame: CapturedFrame, maxSize: { height: number, width: number }): Promise<Blob> {
@@ -66,14 +56,14 @@ export class RecordingBackend implements RunBackend {
   /** The recording of this run so far. */
   recording(): Recording {
     const { describe, route } = this.inner.sdk()
-    return { images: this.images, label: this.label, rpc: this.rpc, sdk: { describe, route } }
+    return { images: this.images, label: this.label, rpc: this.rpc, sdk: { describe, route: { ...route, runId: undefined } } }
   }
 
   sdk(): SdkAccess {
     const access = this.inner.sdk()
     let recording = this.#transports.get(access.target.transport)
     if (!recording) {
-      recording = recordingTransport(access.target.transport, this.rpc, this.observeUnary)
+      recording = recordingTransport(access.target.transport, this.rpc)
       this.#transports.set(access.target.transport, recording)
     }
     return { ...access, target: { ...access.target, transport: recording } }
@@ -97,10 +87,6 @@ export class ReplayBackend implements RunBackend {
   constructor(private readonly recording: Recording) {
     this.label = `Replay of ${recording.label}`
     this.#access = { ...recording.sdk, target: { transport: new ReplayTransport(recording.rpc) } }
-  }
-
-  async beginRun(): Promise<string | undefined> {
-    return undefined
   }
 
   async captureImage(frame: CapturedFrame): Promise<Blob> {
@@ -224,7 +210,7 @@ async function pace(): Promise<void> {
 }
 
 /** Wraps a live transport so every call is appended to `log` as it ends. */
-function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?: ObserveUnary): Transport {
+function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
   return {
     close: options => inner.close(options),
     connect: options => inner.connect(options),
@@ -253,30 +239,10 @@ function recordingTransport(inner: Transport, log: RecordedRpc[], observeUnary?:
         },
       }
     },
-    async unary(call) {
-      const entry: RecordedRpc = { exchange: [{ request: call.body }], method: call.method }
+    unary(call) {
+      const entry: RecordedRpc = { exchange: [], method: call.method }
       log.push(entry)
-      const finish = observeUnary && await observeUnary({ body: call.body, method: call.method })
-      try {
-        call.signal?.throwIfAborted()
-        const body = await inner.unary({
-          ...call,
-          decodeJson: (text) => {
-            entry.json = text
-            return call.decodeJson(text)
-          },
-        })
-        if (entry.json === undefined)
-          entry.exchange.push({ response: body })
-        return body
-      }
-      catch (error) {
-        entry.error = bridgedError(error)
-        throw error
-      }
-      finally {
-        finish?.(entry)
-      }
+      return recordUnaryCall(inner, call, entry)
     },
   }
 }

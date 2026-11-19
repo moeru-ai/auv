@@ -3,8 +3,10 @@ import type { Workspace } from '../../store'
 
 import { decodeThumbHash } from '../../preview'
 import { decodeBitmap } from '../../runtime/rpc-resources'
+import { useDeviceTarget } from '../device/device-target'
 
 export function createWorkspaceDesktop({ actions, store }: Workspace) {
+  let capture: AbortController | undefined
   let liveTimer: number | undefined
 
   /** Reloads the accessibility tree from the active backend, when supported. */
@@ -20,49 +22,71 @@ export function createWorkspaceDesktop({ actions, store }: Workspace) {
   }
 
   /** Polls display captures into the canvas while live mode is on. */
-  function setLive(live: boolean, intervalMs = 900): void {
+  function setLive(live: boolean): void {
     store.setState({ live })
-    window.clearTimeout(liveTimer)
-    if (!live)
-      return
-    const tick = async () => {
-      const { backend, displays, live: stillLive } = store.getState()
-      if (!stillLive || !backend)
-        return
-      for (const display of displays) {
-        try {
-          await captureLiveFrame(backend, display.id)
-        }
-        catch (error) {
-          console.warn(`Live capture failed for display ${display.id}`, error)
-        }
-      }
-      if (store.getState().live)
-        liveTimer = window.setTimeout(() => void tick(), intervalMs)
-    }
-    void tick()
+    if (live)
+      startCapture(store.getState().backend)
+    else
+      stopCapture()
   }
 
-  /**
-   * Switches the backend scripts and the canvas use, and refreshes displays.
-   * The device registry (`features/device`) owns backend lifecycles, so the
-   * previous backend stays open.
-   */
-  async function activateBackend(backend: Backend | null): Promise<void> {
-    setLive(false)
-    store.setState({ axTree: null, backend, displays: [], liveFrames: {} })
+  function watchDevice(): () => void {
+    const activate = (backend: Backend | null) => {
+      if (backend !== store.getState().backend)
+        store.setState({ axTree: null, backend, displays: [], live: false, liveFrames: {} })
+      startCapture(backend)
+      void refreshAxTree().catch(() => {})
+    }
+    const unsubscribe = useDeviceTarget.subscribe(({ backend }, previous) => {
+      if (backend !== previous.backend)
+        activate(backend)
+    })
+    activate(useDeviceTarget.getState().backend)
+    return () => {
+      unsubscribe()
+      stopCapture()
+    }
+  }
+
+  function startCapture(backend: Backend | null): void {
+    stopCapture()
     if (!backend)
       return
+    capture = new AbortController()
+    const { signal } = capture
+    void captureDisplays(backend, signal).catch((error) => {
+      if (!signal.aborted)
+        console.warn('Loading the desktop failed', error)
+    })
+  }
+
+  function stopCapture(): void {
+    capture?.abort()
+    capture = undefined
+    window.clearTimeout(liveTimer)
+  }
+
+  async function captureDisplays(backend: Backend, signal: AbortSignal): Promise<void> {
     const displays = await backend.listDisplays()
-    if (store.getState().backend !== backend)
+    if (signal.aborted)
       return
     store.setState({ displays })
-    // One snapshot per display so the canvas is not empty before live mode.
-    for (const display of displays) {
-      void captureLiveFrame(backend, display.id)
-        .catch(error => console.warn(`Initial capture failed for display ${display.id}`, error))
+    const tick = async () => {
+      for (const display of displays) {
+        if (signal.aborted)
+          return
+        try {
+          await captureLiveFrame(backend, display.id, signal)
+        }
+        catch (error) {
+          if (!signal.aborted)
+            console.warn(`Capture failed for display ${display.id}`, error)
+        }
+      }
+      if (!signal.aborted && store.getState().live)
+        liveTimer = window.setTimeout(() => void tick(), 900)
     }
-    void refreshAxTree().catch(() => {})
+    await tick()
   }
 
   /**
@@ -70,26 +94,26 @@ export function createWorkspaceDesktop({ actions, store }: Workspace) {
    * shows the capture's ThumbHash preview first, so a new connection paints at
    * once; later captures replace the previous pixels when they load.
    */
-  async function captureLiveFrame(backend: Backend, displayId: string): Promise<void> {
-    const frame = await backend.captureDisplay(displayId, { logical: true })
-    if (store.getState().backend !== backend)
+  async function captureLiveFrame(backend: Backend, displayId: string, signal: AbortSignal): Promise<void> {
+    const frame = await backend.captureDisplay(displayId, { logical: true, signal })
+    if (signal.aborted)
       return
     const capturedAt = Date.now()
     const shown = store.getState().liveFrames[displayId]
     const preview = shown?.bitmap ? undefined : await decodeThumbHash(frame.thumbhash)
-    if (store.getState().backend !== backend) {
+    if (signal.aborted) {
       preview?.close()
       return
     }
     if (preview)
       actions.setLiveFrame(displayId, { bounds: frame.bounds, capturedAt, preview })
     const bitmap = await decodeBitmap(backend, frame)
-    if (store.getState().backend !== backend) {
-      bitmap?.close()
+    if (signal.aborted) {
+      bitmap.close()
       return
     }
     actions.setLiveFrame(displayId, { bitmap, bounds: frame.bounds, capturedAt, preview, revealedAt: preview ? performance.now() : undefined })
   }
 
-  return { activateBackend, refreshAxTree, setLive }
+  return { refreshAxTree, setLive, watchDevice }
 }

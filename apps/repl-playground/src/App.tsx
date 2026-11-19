@@ -23,7 +23,7 @@ export function App() {
         ]}
         />
         <Tabs.Panel className="flex-1 min-h-0 min-w-0 relative data-[hidden]:hidden" keepMounted value="agent">
-          <AgentWorkbench />
+          <AgentWorkbench active={workspace === 'agent'} />
         </Tabs.Panel>
         <Tabs.Panel className="flex-1 min-h-0 min-w-0 relative data-[hidden]:hidden" keepMounted value="script">
           <ScriptWorkbench active={workspace === 'script'} />

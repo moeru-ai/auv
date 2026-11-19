@@ -20,3 +20,22 @@ it('allows device initialization to be retried after a running script prevented 
   expect(useDeviceTarget.getState().backend).not.toBeNull()
   expect(useDevices.getState().active).toEqual({ connectionId: 'mock', deviceId: 'mock' })
 })
+
+it('rejects connection changes and mock reset while execution holds the device', async () => {
+  const { activateDevice, addConnection, disconnect, forgetConnection, MOCK_ID, resetMockDesktop, useDevices } = await import('./devices')
+  await activateDevice(MOCK_ID, MOCK_ID)
+  const backend = useDeviceTarget.getState().backend
+  const devices = useDevices.getState()
+  const release = reserveDevice()!
+  try {
+    await expect(addConnection({ endpoint: 'http://localhost:9847' })).rejects.toThrow('Stop the current run')
+    await expect(disconnect('saved-daemon')).rejects.toThrow('Stop the current run')
+    await expect(forgetConnection('saved-daemon')).rejects.toThrow('Stop the current run')
+    await expect(resetMockDesktop()).rejects.toThrow('Stop the current run')
+    expect(useDeviceTarget.getState().backend).toBe(backend)
+    expect(useDevices.getState()).toBe(devices)
+  }
+  finally {
+    release()
+  }
+})

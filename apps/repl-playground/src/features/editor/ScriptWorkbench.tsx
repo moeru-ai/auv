@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 
 import { PanelFrame } from '../../components/PanelFrame'
 import { session } from '../../runtime/session'
-import { resetMockDesktop } from '../device/devices'
 import { Workbench } from '../workbench/Workbench'
 import { CodeEditor } from './CodeEditor'
 import { DebugBar } from './DebugBar'
@@ -30,16 +29,11 @@ export function ScriptWorkbench({ active }: { active: boolean }) {
   }, [active])
 
   return (
-    <Workbench desktop={scriptDesktop} onReset={() => void resetScript()} resetHint="Reset: terminate the worker, clear REPL state, and restore the mock desktop" workspace={scriptWorkspace}>
+    <Workbench active={active} desktop={scriptDesktop} onReset={() => void session.reset()} resetHint="Reset: terminate the worker and clear REPL state" workspace={scriptWorkspace}>
       <PanelFrame title="Script">
         <CodeEditor />
         <DebugBar />
       </PanelFrame>
     </Workbench>
   )
-}
-
-async function resetScript(): Promise<void> {
-  await session.reset()
-  await resetMockDesktop()
 }

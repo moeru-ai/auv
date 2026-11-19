@@ -233,7 +233,8 @@ function runLine(view: EditorView): boolean {
   if (!selection.empty)
     return runAll(view, 'run')
   const line = view.state.doc.lineAt(selection.head)
-  void session.run({ mode: 'run', source: line.text, startLine: line.number })
+  if (!session.run({ mode: 'run', source: line.text, startLine: line.number }))
+    return true
   const next = Math.min(line.number + 1, view.state.doc.lines)
   view.dispatch({ scrollIntoView: true, selection: { anchor: view.state.doc.line(next).from } })
   return true

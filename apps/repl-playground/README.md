@@ -12,7 +12,8 @@ controlled desktop.
 
 - **REPL editor** (CodeMirror 6): `⌘↩` runs all or the selection, `⇧↩` runs the
   current line and moves down, `⌘⇧↩` runs and pauses at the first statement.
-  Top-level declarations persist across runs until **Reset**.
+  Top-level declarations persist across runs until **Reset**. Use **Reset mock
+  desktop** in the device picker to restore the mock scene.
 - **Debug bar** floating over the editor (drag it anywhere): run, step in,
   offline replay, continue (`F8`), step (`F10`), stop (`⇧F5`). Click the gutter
   to toggle breakpoints.
@@ -346,8 +347,9 @@ SDK objects stay in the page. The Agent uses window IDs and capture references.
 
 The Playground records the script and AUV operation results together with their
 Run. The editor's separate TypeScript REPL provides stepping and variable
-inspection. Each run reserves the selected device. While it is busy, the
-Script Run button is disabled and a new Agent `execute` call returns a busy error.
+inspection. Live runs and device changes reserve the selected device. While it
+is busy, Script disables live execution and a new Agent `execute` call returns
+a busy error. Script can still replay a local recording.
 
 A capture returns a reference and metadata. Request an image explicitly to
 show a PNG or JPEG up to 1024 × 1024 pixels. Stop, timeout, disconnect, and a

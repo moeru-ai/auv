@@ -151,6 +151,27 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
   }
 }
 
+export async function recordUnaryCall(transport: Transport, call: UnaryCall, entry: BridgedCallEnd): Promise<Uint8Array> {
+  entry.exchange.push({ request: call.body })
+  try {
+    call.signal?.throwIfAborted()
+    const body = await transport.unary({
+      ...call,
+      decodeJson: (text) => {
+        entry.json = text
+        return call.decodeJson(text)
+      },
+    })
+    if (entry.json === undefined)
+      entry.exchange.push({ response: body })
+    return body
+  }
+  catch (error) {
+    entry.error = bridgedError(error)
+    throw error
+  }
+}
+
 /** Rebuilds a bridged error as the SDK error class it was. */
 export function remoteError(error: BridgedError): Error {
   const rebuilt = error.rpcCode !== undefined

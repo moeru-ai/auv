@@ -94,52 +94,37 @@ const get = useDevices.getState
  * disposes all of its backends.
  */
 const backends = new Map<string, Backend>()
+const connectingDaemons = new Map<string, Promise<string>>()
 
 let restoring: Promise<void> | undefined
 
 /** Makes a Device active, connecting its daemon first when needed. */
-export async function activateDevice(connectionId: string, deviceId?: string): Promise<void> {
-  if (useDeviceTarget.getState().locked)
-    throw new Error('Stop the current run before switching devices.')
-  const connected = connectionId === MOCK_ID || get().states[connectionId]?.status === 'connected'
-  const defaultDevice = connected
-    ? get().states[connectionId]?.devices.find(device => device.local)?.id ?? get().states[connectionId]?.devices[0]?.id
-    : await connectDaemon(connectionId)
-  const target = deviceId ?? defaultDevice
-  if (!target)
-    throw new Error('The daemon reported no Devices')
-  // The SDK falls back to the daemon's local Device for an unknown ID.
-  if (!get().states[connectionId]?.devices.some(device => device.id === target))
-    throw new Error(`The daemon no longer reports Device ${target}`)
-  const backend = await backendFor(connectionId, target)
-  if (useDeviceTarget.getState().locked)
-    throw new Error('Stop the current run before switching devices.')
-  const active = { connectionId, deviceId: target }
-  set({ active })
-  persist()
-  useDeviceTarget.setState({ backend })
+export function activateDevice(connectionId: string, deviceId?: string): Promise<void> {
+  return withDeviceChange(() => selectDevice(connectionId, deviceId))
 }
 
 /** Remembers a daemon endpoint (or updates the one with the same endpoint) and activates its default Device. */
-export async function addConnection(connection: Omit<SavedConnection, 'autoConnect' | 'id'>): Promise<void> {
-  const existing = get().saved.find(candidate => candidate.endpoint === connection.endpoint)
-  const id = existing?.id ?? crypto.randomUUID()
-  // A changed credential or endpoint needs a fresh connection.
-  if (existing)
-    await closeConnection(id)
-  const next: SavedConnection = { ...existing, ...connection, autoConnect: true, id }
-  set(state => ({ saved: existing ? state.saved.map(saved => saved.id === id ? next : saved) : [...state.saved, next] }))
-  persist()
-  try {
-    await activateDevice(id)
-  }
-  catch (error) {
-    // The entry stays so the user can retry or fix it from the picker, but an
-    // active Device on the closed connection must not stay selected.
-    if (get().active?.connectionId === id)
-      await activateDevice(MOCK_ID, MOCK_ID)
-    throw error
-  }
+export function addConnection(connection: Omit<SavedConnection, 'autoConnect' | 'id'>): Promise<void> {
+  return withDeviceChange(async () => {
+    const existing = get().saved.find(candidate => candidate.endpoint === connection.endpoint)
+    const id = existing?.id ?? crypto.randomUUID()
+    // A changed credential or endpoint needs a fresh connection.
+    if (existing)
+      await closeConnection(id)
+    const next: SavedConnection = { ...existing, ...connection, autoConnect: true, id }
+    set(state => ({ saved: existing ? state.saved.map(saved => saved.id === id ? next : saved) : [...state.saved, next] }))
+    persist()
+    try {
+      await selectDevice(id)
+    }
+    catch (error) {
+      // The entry stays so the user can retry or fix it from the picker, but an
+      // active Device on the closed connection must not stay selected.
+      if (get().active?.connectionId === id)
+        await selectDevice(MOCK_ID, MOCK_ID)
+      throw error
+    }
+  })
 }
 
 /** Display name of a saved connection. */
@@ -155,40 +140,31 @@ export function connectionName(connection: SavedConnection): string {
 }
 
 /** Closes a daemon connection; if it held the active Device, the mock desktop takes over. */
-export async function disconnect(connectionId: string): Promise<void> {
-  set(state => ({ saved: state.saved.map(saved => saved.id === connectionId ? { ...saved, autoConnect: false } : saved) }))
-  await closeConnection(connectionId)
-  if (get().active?.connectionId === connectionId)
-    await activateDevice(MOCK_ID, MOCK_ID)
-  persist()
+export function disconnect(connectionId: string): Promise<void> {
+  return withDeviceChange(() => disconnectDevice(connectionId))
 }
 
 /** Disconnects and forgets a saved daemon, including its credential. */
-export async function forgetConnection(connectionId: string): Promise<void> {
-  await disconnect(connectionId)
-  set(state => ({
-    saved: state.saved.filter(saved => saved.id !== connectionId),
-    states: Object.fromEntries(Object.entries(state.states).filter(([id]) => id !== connectionId)),
-  }))
-  persist()
+export function forgetConnection(connectionId: string): Promise<void> {
+  return withDeviceChange(async () => {
+    await disconnectDevice(connectionId)
+    set(state => ({
+      saved: state.saved.filter(saved => saved.id !== connectionId),
+      states: Object.fromEntries(Object.entries(state.states).filter(([id]) => id !== connectionId)),
+    }))
+    persist()
+  })
 }
 
 /** Replaces the mock desktop with a fresh one; it keeps state across runs like a real desktop. */
-export async function resetMockDesktop(): Promise<void> {
-  const release = reserveDevice()
-  if (!release)
-    return
-  try {
+export function resetMockDesktop(): Promise<void> {
+  return withDeviceChange(async () => {
     const key = backendKey(MOCK_ID, MOCK_ID)
-    await backends.get(key)?.dispose().catch(() => {})
+    await backends.get(key)?.dispose()
     backends.delete(key)
-    const { active } = get()
-    if (active?.connectionId === MOCK_ID)
-      useDeviceTarget.setState({ backend: await backendFor(MOCK_ID, MOCK_ID) })
-  }
-  finally {
-    release()
-  }
+    if (get().active?.connectionId === MOCK_ID)
+      await selectDevice(MOCK_ID, MOCK_ID)
+  })
 }
 
 /**
@@ -196,14 +172,13 @@ export async function resetMockDesktop(): Promise<void> {
  * there is none or it is unreachable) and reconnects the other daemons that
  * were connected last time in the background.
  */
-export async function restoreDevices(): Promise<void> {
+export function restoreDevices(): Promise<void> {
   // NOTICE(strict-mode-effects): React StrictMode runs mount effects twice in
   // development; a second restore would open duplicate daemon connections.
-  restoring ??= restore().catch((error) => {
+  return restoring ??= withDeviceChange(restore).catch((error) => {
     restoring = undefined
     throw error
   })
-  await restoring
 }
 
 async function backendFor(connectionId: string, deviceId: string): Promise<Backend> {
@@ -237,6 +212,7 @@ function backendKey(connectionId: string, deviceId: string): string {
 }
 
 async function closeConnection(connectionId: string): Promise<void> {
+  await connectingDaemons.get(connectionId)?.catch(() => undefined)
   const prefix = `${connectionId}/`
   const closing = [...backends].filter(([key]) => key.startsWith(prefix))
   for (const [key] of closing)
@@ -250,23 +226,20 @@ async function closeConnection(connectionId: string): Promise<void> {
 async function connectDaemon(connectionId: string): Promise<string> {
   if (connectionId === MOCK_ID)
     return MOCK_ID
-  const connection = savedConnection(connectionId)
-  patchState(connectionId, { error: undefined, status: 'connecting' })
-  try {
-    const { backend, device, devices } = await createAuvBackend({ credential: connection.credential, endpoint: connection.endpoint })
-    const key = backendKey(connectionId, device.id)
-    // A reconnect replaces the previous backend for the same Device.
-    await backends.get(key)?.dispose().catch(() => {})
-    backends.set(key, backend)
-    patchState(connectionId, { devices: devices.map(summarize), status: 'connected' })
-    set(state => ({ saved: state.saved.map(saved => saved.id === connectionId ? { ...saved, autoConnect: true } : saved) }))
-    persist()
-    return device.id
-  }
-  catch (error) {
-    patchState(connectionId, { error: messageOf(error), status: 'error' })
-    throw error
-  }
+  const connecting = connectingDaemons.get(connectionId)
+  if (connecting)
+    return connecting
+  const pending = openDaemon(connectionId).finally(() => connectingDaemons.delete(connectionId))
+  connectingDaemons.set(connectionId, pending)
+  return pending
+}
+
+async function disconnectDevice(connectionId: string): Promise<void> {
+  set(state => ({ saved: state.saved.map(saved => saved.id === connectionId ? { ...saved, autoConnect: false } : saved) }))
+  await closeConnection(connectionId)
+  if (get().active?.connectionId === connectionId)
+    await selectDevice(MOCK_ID, MOCK_ID)
+  persist()
 }
 
 // NOTICE(credential-storage): paired Device credentials are kept in
@@ -285,6 +258,26 @@ function loadStored(): StoredDevices {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+async function openDaemon(connectionId: string): Promise<string> {
+  const connection = savedConnection(connectionId)
+  patchState(connectionId, { error: undefined, status: 'connecting' })
+  try {
+    const { backend, device, devices } = await createAuvBackend({ credential: connection.credential, endpoint: connection.endpoint })
+    const key = backendKey(connectionId, device.id)
+    // A reconnect replaces the previous backend for the same Device.
+    await backends.get(key)?.dispose().catch(() => {})
+    backends.set(key, backend)
+    patchState(connectionId, { devices: devices.map(summarize), status: 'connected' })
+    set(state => ({ saved: state.saved.map(saved => saved.id === connectionId ? { ...saved, autoConnect: true } : saved) }))
+    persist()
+    return device.id
+  }
+  catch (error) {
+    patchState(connectionId, { error: messageOf(error), status: 'error' })
+    throw error
+  }
 }
 
 function patchState(connectionId: string, patch: Partial<ConnectionState>): void {
@@ -312,14 +305,14 @@ async function restore(): Promise<void> {
   }
   if (previous && previous.connectionId !== MOCK_ID && get().saved.some(connection => connection.id === previous.connectionId)) {
     try {
-      await activateDevice(previous.connectionId, previous.deviceId)
+      await selectDevice(previous.connectionId, previous.deviceId)
       return
     }
     catch (error) {
       console.warn('Could not restore the previous device', error)
     }
   }
-  await activateDevice(MOCK_ID, MOCK_ID)
+  await selectDevice(MOCK_ID, MOCK_ID)
 }
 
 function savedConnection(connectionId: string): SavedConnection {
@@ -329,6 +322,36 @@ function savedConnection(connectionId: string): SavedConnection {
   return connection
 }
 
+async function selectDevice(connectionId: string, deviceId?: string): Promise<void> {
+  const connected = connectionId === MOCK_ID || get().states[connectionId]?.status === 'connected'
+  const defaultDevice = connected
+    ? get().states[connectionId]?.devices.find(device => device.local)?.id ?? get().states[connectionId]?.devices[0]?.id
+    : await connectDaemon(connectionId)
+  const target = deviceId ?? defaultDevice
+  if (!target)
+    throw new Error('The daemon reported no Devices')
+  // The SDK falls back to the daemon's local Device for an unknown ID.
+  if (!get().states[connectionId]?.devices.some(device => device.id === target))
+    throw new Error(`The daemon no longer reports Device ${target}`)
+  const backend = await backendFor(connectionId, target)
+  const active = { connectionId, deviceId: target }
+  set({ active })
+  persist()
+  useDeviceTarget.setState({ backend })
+}
+
 function summarize(device: Device): DeviceSummary {
   return { id: device.id, local: device.local, name: device.name || device.id.slice(0, 12), platform: device.platform }
+}
+
+async function withDeviceChange(change: () => Promise<void>): Promise<void> {
+  const release = reserveDevice()
+  if (!release)
+    throw new Error('Stop the current run before changing devices.')
+  try {
+    await change()
+  }
+  finally {
+    release()
+  }
 }

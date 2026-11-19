@@ -1,12 +1,13 @@
 import type { RunnerClient } from '@auv-js/sdk'
 import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
 
-import type { RunOutcomeKind } from '../../backend/types'
+import type { RunBackend, RunOutcomeKind, SdkAccess } from '../../backend/types'
+import type { BridgedCallEnd, BridgedCallStart } from '../../runtime/sdk-bridge'
 
 import { AuvConnection, createAuv } from '@auv-js/sdk'
 
-import { RecordingBackend } from '../../backend/replay'
 import { recordCall } from '../../runtime/record-call'
+import { recordUnaryCall } from '../../runtime/sdk-bridge'
 import { nowMs } from '../../store'
 import { reserveDevice, useDeviceTarget } from '../device/device-target'
 import { agentDesktop, agentWorkspace } from './agent-workspace'
@@ -35,19 +36,21 @@ export async function runAgent(
   const callLifetime = new AbortController()
   const source = { code, id: nextSourceId++ }
   const backend = useDeviceTarget.getState().backend
-  const recorder: null | RecordingBackend = backend && new RecordingBackend(backend, start =>
-    recordCall(agentWorkspace, recorder, start, { hit: 1, line: null, source }, nextSeq, reset.signal))
+  let run: null | RunBackend = null
   store.setState({ cursor: null, hoveredCallId: null, run: { currentLine: null, mode: 'live', startedAt: Date.now(), status: 'compiling' }, selectedCallId: null })
 
   let outcome: RunOutcomeKind = 'failed'
   try {
-    const runId = await recorder?.beginRun()
+    const openedRun = await backend?.beginRun() ?? null
+    run = openedRun
+    const access = openedRun?.sdk()
     if (!reset.signal.aborted)
-      actions.patchRun({ runId, status: 'running' })
-    const runner = recorder && runnerFor(recorder, AbortSignal.any([cancellation, callLifetime.signal]))
+      actions.patchRun({ runId: access?.route.runId, status: 'running' })
+    const runner = access && runnerFor(access, AbortSignal.any([cancellation, callLifetime.signal]), start =>
+      recordCall(agentWorkspace, openedRun, start, { hit: 1, line: null, source }, nextSeq, reset.signal))
     let result: CodemodeResult = cancellation.aborted
       ? { calls: [], error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: [] }
-      : await execute(runner ?? undefined, cancellation)
+      : await execute(runner, cancellation)
     if (result.ok && cancellation.aborted)
       result = { calls: result.calls, error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: result.output }
     outcome = cancellation.aborted || (!result.ok && ['aborted', 'timeout'].includes(result.error.kind))
@@ -75,7 +78,7 @@ export async function runAgent(
   finally {
     callLifetime.abort()
     try {
-      await recorder?.endRun(outcome)
+      await run?.endRun(outcome)
     }
     finally {
       active = undefined
@@ -92,19 +95,34 @@ function nextSeq(): number {
   return seq
 }
 
-function runnerFor(recorder: RecordingBackend, signal: AbortSignal): RunnerClient {
-  const { route, target: { headers, transport } } = recorder.sdk()
-  const withHeaders = (existing: Headers) => {
-    const merged = new Headers(existing)
-    for (const [name, value] of Object.entries(headers ?? {}))
-      merged.set(name, value)
-    return merged
+function runnerFor(
+  { route, target: { headers, transport } }: SdkAccess,
+  signal: AbortSignal,
+  observe: (start: Pick<BridgedCallStart, 'body' | 'method'>) => ReturnType<typeof recordCall>,
+): RunnerClient {
+  const extraHeaders = Object.entries(headers ?? {})
+  const addHeaders = (headers: Headers) => {
+    for (const [name, value] of extraHeaders)
+      headers.set(name, value)
   }
   const connection = new AuvConnection({
     close() {},
     async connect() {},
-    duplex: call => transport.duplex({ ...call, headers: withHeaders(call.headers) }),
-    unary: call => transport.unary({ ...call, headers: withHeaders(call.headers) }),
+    duplex(call) {
+      addHeaders(call.headers)
+      return transport.duplex(call)
+    },
+    async unary(call) {
+      addHeaders(call.headers)
+      const finish = await observe(call)
+      const entry: BridgedCallEnd = { exchange: [] }
+      try {
+        return await recordUnaryCall(transport, call, entry)
+      }
+      finally {
+        finish?.(entry)
+      }
+    },
   })
   return createAuv(connection).runner({ ...route, signal })
 }

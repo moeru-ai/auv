@@ -68,13 +68,14 @@ interface StoredCapture {
 }
 
 /** A Runner transport over `desktop`, with a mock daemon that reports one Device. */
+let nextCaptureId = 0
+
 export function mockRunner(desktop: MockDesktop): Transport {
   const captures = new Map<string, StoredCapture>()
-  let captured = 0
 
   const capture = (bounds: Rect, scale: number, origin: undefined | { case: 'displayId' | 'windowId', value: string }) => {
     const canvas = desktop.render(bounds, scale)
-    const captureId = `mock-cap-${++captured}`
+    const captureId = `mock-cap-${++nextCaptureId}`
     captures.set(captureId, { bounds: { ...bounds }, canvas })
     for (const old of captures.keys()) {
       if (captures.size <= KEPT_CAPTURES)

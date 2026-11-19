@@ -7,7 +7,7 @@ import { copyText } from '../../clipboard'
 import { IconButton } from '../../components/IconButton'
 import { Kbd } from '../../components/Kbd'
 import { useDeviceTarget } from './device-target'
-import { activateDevice, connectionName, disconnect, forgetConnection, MOCK_ID, PLATFORMS, useDevices } from './devices'
+import { activateDevice, connectionName, disconnect, forgetConnection, MOCK_ID, PLATFORMS, resetMockDesktop, useDevices } from './devices'
 
 /**
  * A keyboard-selectable row of the picker. Device rows carry their daemon
@@ -41,31 +41,30 @@ export function DevicePicker({ onAdd, onClose }: { onAdd: () => void, onClose: (
     listRef.current?.querySelector('[data-highlighted="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [index])
 
+  const changeDevice = async (change: () => Promise<void>) => {
+    setError(undefined)
+    try {
+      await change()
+    }
+    catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   const choose = async (item: Item | undefined) => {
-    if (!item)
+    if (!item || locked)
       return
     if (item.kind === 'add') {
       onAdd()
       return
     }
-    if (locked)
-      return
-    const key = itemKey(item)
-    setPending(key)
-    setError(undefined)
-    try {
-      if (item.kind === 'device')
-        await activateDevice(item.connection?.id ?? MOCK_ID, item.device.id)
-      else
-        await activateDevice(item.connection.id)
+    setPending(itemKey(item))
+    await changeDevice(async () => {
+      const deviceId = item.kind === 'device' ? item.device.id : undefined
+      await activateDevice(item.connection?.id ?? MOCK_ID, deviceId)
       onClose()
-    }
-    catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-    finally {
-      setPending(undefined)
-    }
+    })
+    setPending(undefined)
   }
 
   return (
@@ -94,6 +93,9 @@ export function DevicePicker({ onAdd, onClose }: { onAdd: () => void, onClose: (
           placeholder="Switch to a device, or connect a new one…"
           value={query}
         />
+        {active?.connectionId === MOCK_ID && (
+          <IconButton disabled={locked} hint="Reset mock desktop" icon="i-ph-arrow-counter-clockwise" onClick={() => void changeDevice(resetMockDesktop)} />
+        )}
       </div>
 
       {locked && (
@@ -108,7 +110,7 @@ export function DevicePicker({ onAdd, onClose }: { onAdd: () => void, onClose: (
           const key = itemKey(item)
           return (
             <Row
-              disabled={locked && item.kind !== 'add'}
+              changeDevice={changeDevice}
               highlighted={position === index}
               item={item}
               key={key}
@@ -177,12 +179,12 @@ function buildItems(saved: SavedConnection[], states: Record<string, ConnectionS
 }
 
 /** Disconnect for a connected daemon, plus a menu with the rarer, destructive actions. */
-function ConnectionActions({ connected, connection, locked }: { connected: boolean, connection: SavedConnection, locked: boolean }) {
+function ConnectionActions({ changeDevice, connected, connection, locked }: { changeDevice: (change: () => Promise<void>) => Promise<void>, connected: boolean, connection: SavedConnection, locked: boolean }) {
   return (
     // Row clicks switch devices; the actions must not.
     <span className="flex shrink-0 gap-0.5 items-center" onClick={event => event.stopPropagation()}>
       {connected && (
-        <IconButton disabled={locked} hint={`Disconnect ${connectionName(connection)}`} icon="i-ph-plugs" onClick={() => void disconnect(connection.id)} side="left" />
+        <IconButton disabled={locked} hint={`Disconnect ${connectionName(connection)}`} icon="i-ph-plugs" onClick={() => void changeDevice(() => disconnect(connection.id))} side="left" />
       )}
       <Menu.Root>
         <Menu.Trigger
@@ -195,7 +197,7 @@ function ConnectionActions({ connected, connection, locked }: { connected: boole
           <Menu.Positioner align="end" side="bottom" sideOffset={4}>
             <Menu.Popup className="p-1 outline-none border border-line rounded-lg bg-surface-1 min-w-44 shadow-xl z-50">
               <MenuItem icon="i-ph-copy" onClick={() => void copyText(connection.endpoint)}>Copy endpoint</MenuItem>
-              <MenuItem disabled={locked} icon="i-ph-trash" onClick={() => void forgetConnection(connection.id)} tone="bad">Forget daemon</MenuItem>
+              <MenuItem disabled={locked} icon="i-ph-trash" onClick={() => void changeDevice(() => forgetConnection(connection.id))} tone="bad">Forget daemon</MenuItem>
             </Menu.Popup>
           </Menu.Positioner>
         </Menu.Portal>
@@ -225,8 +227,8 @@ function MenuItem({ children, disabled, icon, onClick, tone }: { children: React
   )
 }
 
-function Row({ disabled, highlighted, item, locked, onChoose, onHover, pending, selected, state }: {
-  disabled: boolean
+function Row({ changeDevice, highlighted, item, locked, onChoose, onHover, pending, selected, state }: {
+  changeDevice: (change: () => Promise<void>) => Promise<void>
   highlighted: boolean
   item: Item
   locked: boolean
@@ -263,11 +265,11 @@ function Row({ disabled, highlighted, item, locked, onChoose, onHover, pending, 
 
   return (
     <div
-      aria-disabled={disabled}
+      aria-disabled={locked}
       aria-selected={selected}
-      className={`mx-1.5 px-2 py-1.5 rounded-md flex gap-2.5 min-h-11 cursor-pointer transition-colors items-center ${background}  ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      className={`mx-1.5 px-2 py-1.5 rounded-md flex gap-2.5 min-h-11 cursor-pointer transition-colors items-center ${background}  ${locked ? 'opacity-50 cursor-not-allowed' : ''}`}
       data-highlighted={highlighted}
-      onClick={disabled ? undefined : onChoose}
+      onClick={locked ? undefined : onChoose}
       onMouseMove={onHover}
       role="option"
     >
@@ -281,7 +283,7 @@ function Row({ disabled, highlighted, item, locked, onChoose, onHover, pending, 
       </span>
       {selected && <span className="i-ph-check-circle-fill text-[16px] text-accent shrink-0" title="Active device" />}
       {item.kind !== 'add' && item.connection && (highlighted || selected) && (
-        <ConnectionActions connected={state?.status === 'connected'} connection={item.connection} locked={locked} />
+        <ConnectionActions changeDevice={changeDevice} connected={state?.status === 'connected'} connection={item.connection} locked={locked} />
       )}
     </div>
   )
