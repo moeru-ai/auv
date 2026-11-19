@@ -1,6 +1,10 @@
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import react from '@vitejs/plugin-react'
 import UnoCSS from 'unocss/vite'
 
+import { build } from 'esbuild'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -17,7 +21,35 @@ export default defineConfig({
       'typescript',
     ],
   },
-  plugins: [UnoCSS(), react()],
+  plugins: [UnoCSS(), react(), {
+    async load(id) {
+      if (id !== '\0auv-agent-sdk')
+        return
+      const root = dirname(fileURLToPath(import.meta.url))
+      const bundle = await build({
+        absWorkingDir: root,
+        bundle: true,
+        entryPoints: ['src/features/agent/sandbox-sdk.ts'],
+        format: 'iife',
+        globalName: 'sdk',
+        inject: ['src/features/agent/sandbox-platform.ts'],
+        mainFields: ['module', 'main'],
+        metafile: true,
+        minify: true,
+        platform: 'neutral',
+        target: 'es2022',
+        write: false,
+      })
+      for (const input of Object.keys(bundle.metafile.inputs))
+        this.addWatchFile(resolve(root, input))
+      return `export default ${JSON.stringify(bundle.outputFiles[0]!.text)}`
+    },
+    name: 'auv-agent-sdk',
+    resolveId(id) {
+      if (id === 'virtual:auv-agent-sdk')
+        return '\0auv-agent-sdk'
+    },
+  }],
   server: {
     port: 5180,
   },

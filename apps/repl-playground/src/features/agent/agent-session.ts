@@ -30,22 +30,23 @@ export function connectAgent(account: AccountSession, target: AgentTarget): void
       adapter: {
         async connect(options) {
           const { signal } = options
-          const tools = await serveMcp(relayUrl(), await account.accessToken(), transport => void codemode.connect(transport), signal)
+          const token = await account.accessToken()
+          const endpoint = await serveMcp(relayUrl(), token, await codemode.createServerFactory(), signal)
           try {
             signal.throwIfAborted()
             const { url } = await account.openConnection({ agentName: target.agentName, deviceId: target.deviceId }, signal)
             signal.throwIfAborted()
-            void tools.closed.then((reason) => {
+            void endpoint.closed.then((reason) => {
               if (!signal.aborted) {
                 codemode.close()
                 update({ error: reason === 'revoked' ? 'Access was revoked. Sign in again.' : 'The tool connection closed. Reconnect the agent.' })
               }
             })
             const acp = await new SdkAcpClientAdapter(() => createWebSocketStream(url)).connect(options)
-            return codeModeConnection(acp, codemode, tools)
+            return codeModeConnection(acp, codemode, endpoint)
           }
           catch (cause) {
-            tools.close()
+            endpoint.close()
             throw cause
           }
         },

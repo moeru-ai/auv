@@ -47,10 +47,6 @@ The [connection integration test](../../../../apps/repl-playground/agent/connect
 The [presentation unit tests](../../../../apps/repl-playground/src/features/agent/tool-presentation.test.ts) cover active calls and completed calls with errors in their output.
 The execution contract records the shared validation commands and results.
 
-The October 25 fixture captured the earlier error presentation, grouped calls, a screenshot preview, and a Markdown report.
-
-![Agent UI browser fixture](evidence/2026-10-25-agent-markdown/agent-markdown.png)
-
 Evidence level: one live task with OpenCode 2.0.26 through a remote Exterior Relay and the Mock desktop.
 The task set Counter to two and returned a screenshot that showed `Count: 2`.
 Tool calls appeared in two activity groups. The screenshot remained visible while its group was folded.

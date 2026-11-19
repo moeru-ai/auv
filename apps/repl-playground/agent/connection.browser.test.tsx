@@ -38,8 +38,6 @@ it('retains ACP connections across view remounts, creates fresh sessions and rec
   expect(prompted.connections).toBe(connected.connections)
   expect(prompted.messages.filter(message => message.method === 'session/new')).toHaveLength(sessions)
   expect(prompted.messages.find(message => message.method === 'session/prompt')?.params.prompt).toEqual([{ text: 'Check the connection', type: 'text' }])
-  document.querySelector('[data-agent-activity]')!.scrollIntoView()
-  await commands.agentScreenshot('connected')
   await page.viewport(1280, 720)
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth)
   await page.getByRole('button', { exact: true, name: 'Start a new agent session' }).click()

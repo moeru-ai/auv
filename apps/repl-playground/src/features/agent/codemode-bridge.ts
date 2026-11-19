@@ -5,19 +5,14 @@ import type { AcpClientConnection } from '@hafbit/react-acp/core'
 // oxlint-disable-next-line import/default -- Vite exposes its worker constructor as the default export.
 import CodeModeWorker from '@exterioragentprotocol/client-sdk/codemode/worker?worker'
 
-import { connectCodeMode, createBrowserCodeModeSandbox } from '@exterioragentprotocol/client-sdk/codemode'
+import { createBrowserCodeModeSandbox, registerCodeMode } from '@exterioragentprotocol/client-sdk/codemode'
+import { createMcpApp } from '@exterioragentprotocol/client-sdk/mcp'
 
 import { version } from '../../../package.json'
 import { useDeviceTarget } from '../device/device-target'
 import { runAgent } from './agent-execution'
-import { codeModeToolDescriptions, createCodeModeTools } from './codemode-tools'
 
-const description = [
-  'Run JavaScript in AUV Playground against its selected Device or mock desktop.',
-  'Use tools.list_windows({}) or tools.resolve_window({ appName }) to get a windowId. Then use tools.find_window_text({ windowId, query }) to identify UI before acting.',
-  'Use image(await tools.get_capture_image({ captureId })) to see a bounded preview. Use store/load to keep small JSON values between calls on this Device.',
-  'Execute scripts sequentially and await every device call. Failed or canceled scripts leave delivered input in effect.',
-].join('\n')
+const description = 'Run JavaScript with the AUV SDK (`auv`) on the selected Device or mock desktop. Read the `auv-playground` skill for SDK usage.'
 
 /** Connects tool calls to the selected Device for the active ACP conversation. */
 export class CodeModeHost {
@@ -34,13 +29,12 @@ export class CodeModeHost {
     this.setSession(undefined)
   }
 
-  /** Each Relay MCP session gets its own protocol connection to this execution host. */
-  connect(transport: Parameters<typeof connectCodeMode>[0]): Promise<void> {
-    return connectCodeMode(transport, {
-      description,
+  async createServerFactory() {
+    const { skills } = await import('./skills')
+    return createMcpApp({
+      configure: server => registerCodeMode(server, { description, run: request => this.#execute(request), tools: [] }),
       name: 'auv-playground',
-      run: request => this.#execute(request),
-      tools: codeModeToolDescriptions,
+      skills,
       version,
     })
   }
@@ -71,37 +65,24 @@ export class CodeModeHost {
     this.#active = active
     const signal = AbortSignal.any([active.signal, request.signal])
     try {
-      const result = await runAgent({ ...request, signal }, async (runner, runSignal) => {
-        let pending = Promise.resolve()
-        const tools = createCodeModeTools(() => {
-          if (!runner)
-            throw new Error('AUV tools need a Device or the mock desktop.')
-          return runner
-        }).map(tool => ({
-          ...tool,
-          execute(args: unknown, context: Parameters<typeof tool.execute>[1]) {
-            // One mutable desktop. Even scripts that use Promise.all deliver
-            // calls in issue order and each queued call checks cancellation.
-            const call = pending.then(() => {
-              const signal = AbortSignal.any([runSignal, context.signal])
-              signal.throwIfAborted()
-              return tool.execute(args, { ...context, signal })
-            })
-            pending = call.then(() => {}, () => {})
-            return call
-          },
-        }))
+      const result = await runAgent({ ...request, signal }, async ({ globals }, runSignal) => {
+        const { default: sdkSource } = await import('virtual:auv-agent-sdk')
         const sandbox = createBrowserCodeModeSandbox({
           createWorker: () => new CodeModeWorker(),
+          globals,
           memoryLimitBytes: 64 * 1024 * 1024,
-          tools,
+          tools: [],
         })
         try {
-          return await sandbox.execute(request.code, { signal: runSignal, store: this.#store, timeoutMs: request.timeoutMs })
+          return await sandbox.run({
+            ...request,
+            code: `${sdkSource}\nconst { auv } = sdk;\nreturn await (async () => {\n${request.code}\n})();`,
+            signal: runSignal,
+            store: this.#store,
+          })
         }
         finally {
           sandbox.close()
-          await pending
         }
       })
       if (result.ok && signal.aborted)
@@ -124,10 +105,10 @@ export class CodeModeHost {
  * Adds the Playground MCP endpoint to the typed ACP connection.
  * This adapter owns session setup and endpoint cleanup; the SDK owns messages.
  */
-export function codeModeConnection(connection: AcpClientConnection, host: CodeModeHost, tools: ServedMcp): AcpClientConnection {
+export function codeModeConnection(connection: AcpClientConnection, host: CodeModeHost, endpoint: Pick<ServedMcp, 'close' | 'headers' | 'url'>): AcpClientConnection {
   const close = () => {
     host.close()
-    tools.close()
+    endpoint.close()
   }
   if (connection.signal.aborted)
     close()
@@ -140,7 +121,8 @@ export function codeModeConnection(connection: AcpClientConnection, host: CodeMo
     },
     newSession(request) {
       host.setSession(undefined)
-      return connection.newSession({ ...request, mcpServers: [...request.mcpServers, { headers: tools.headers, name: 'auv-playground', type: 'http', url: tools.url }] })
+      const { headers, url } = endpoint
+      return connection.newSession({ ...request, mcpServers: [...request.mcpServers, { headers, name: 'auv-playground', type: 'http', url }] })
     },
   }
 }

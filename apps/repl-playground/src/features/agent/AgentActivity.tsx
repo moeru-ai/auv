@@ -27,7 +27,7 @@ export function AgentActivity({ children, indices }: PropsWithChildren<{ indices
     ? [{ id: `${tool.id}:${index}`, image: `data:${part.content.mimeType};base64,${part.content.data}` }]
     : []))
   return (
-    <Collapsible.Root className="my-2.5 min-w-0" data-agent-activity="">
+    <Collapsible.Root className="my-2.5 min-w-0">
       <Collapsible.Trigger className="group text-[12px] text-fg-muted py-1.5 text-left disclosure-summary flex gap-2 min-w-0 w-full items-center">
         <span aria-hidden="true" className={`text-[15px] shrink-0 ${running ? 'i-ph-circle-notch animate-spin' : 'i-ph-stack-simple'}`} />
         <span className="shrink-0">{running ? 'Working' : `${tools.length} ${tools.length === 1 ? 'activity' : 'activities'}`}</span>

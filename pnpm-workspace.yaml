@@ -74,13 +74,12 @@ catalog:
   '@hey-api/openapi-ts': ^0.99.0
   '@iconify-json/ph': ^1.2.2
   '@lezer/highlight': ^1.2.5
-  '@modelcontextprotocol/sdk': 1.32.1
   '@moeru/eslint-config': ^0.1.0-beta.20
   '@moeru/eventa': ^1.0.2
   '@moeru/std': 0.1.0-beta.20
   # NOTICE(exterior-preview): pin the SDK preview until its npm release.
-  '@exterioragentprotocol/client-sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad
-  '@exterioragentprotocol/sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad
+  '@exterioragentprotocol/client-sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@72262f7b5c7110b3f0182518f2b03faa552b0994
+  '@exterioragentprotocol/sdk': https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@72262f7b5c7110b3f0182518f2b03faa552b0994
   '@napi-rs/cli': ^3.8.6
   '@pnpm/find-workspace-dir': 1000.1.5
   '@types/node': ^26.0.1

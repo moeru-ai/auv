@@ -28,12 +28,12 @@ React views subscribe to this controller.
 Disconnect and Reconnect dispose it. A page reload closes its sockets.
 StrictMode view remounts retain the existing connection.
 
-Startup prepares the MCP endpoint with `serveMcp`, then requests the single-use ACP ticket.
-The page connects a fresh MCP SDK `McpServer` for each MCP session.
-The endpoint closes after failed startup, controller cancellation, or ACP connection closure.
+Startup opens the app endpoint with `serveMcp`, then requests the single-use ACP ticket.
+The page constructs a fresh MCP server for each HTTP request and shares its app-owned skill catalog between requests.
+The endpoint closes on failed startup or ACP disconnection.
 Canceled startup cannot update a replacement connection. Startup failures require explicit reconnect.
 
-The agent must advertise `agentCapabilities.mcpCapabilities.http`.
+The agent must advertise `agentCapabilities.mcpCapabilities.http` and speak MCP 2026-07-28.
 ACP `session/new.mcpServers` receives:
 
 ```ts
@@ -47,12 +47,12 @@ ACP `session/new.mcpServers` receives:
 
 Tool discovery can finish before ACP session creation returns.
 The agent runs its ordinary ACP command.
-The typed `codeModeConnection` adapter supplies the endpoint through `newSession` and forwards cancellation.
+The typed `codeModeConnection` adapter supplies the app endpoint through `newSession` and forwards execution cancellation.
 The ACP SDK owns message parsing and request matching.
 The controller owns negotiated capabilities, connection errors, and active-session selection.
 
-One endpoint belongs to one ACP connection.
-Agents can share that endpoint across sessions, so the host binds execution to its active ACP session.
+The endpoint belongs to one ACP connection.
+Agents can share the execution endpoint across sessions, so the host binds execution to its active ACP session.
 The local [React ACP patch](../../../../patches/@hafbit__react-acp@0.1.9.patch) exposes `useAcpControllerRuntime` without connection lifecycle effects.
 An upstream release that exports this interface can replace the patch.
 
@@ -64,12 +64,14 @@ to 30,000. The Client SDK validates the arguments through the official MCP
 SDK and returns text, images, and an MCP error flag. ACP user prompts pass
 through unchanged.
 
-Pi renders declarations from the app's registered operations and supplies
-the same operations to JavaScript as `tools.*`. The script can use
-`ALL_TOOLS` to search the operation names and descriptions. The
-[Playground's AUV adapters](../../../../apps/repl-playground/src/features/agent/codemode-tools.ts)
-call the existing Runner SDK and expose plain data. SDK clients remain in
-the page and a script uses IDs such as `windowId` or a capture reference.
+Each Agent VM loads the native AUV Runner client as `auv`. Its window clients,
+SDK enums, geometry helpers, callbacks and stream iterators stay in the VM.
+The page forwards Driver RPCs to the selected Run and owns its credentials.
+See the [Runner host](../../../../apps/repl-playground/src/features/agent/runner-host.ts).
+
+The same `auv-playground` server advertises MCP Skills. A supporting harness lists the app's skill and requests the
+instructions, SDK guide or Runner source when needed. The official Skills
+client verifies individual files against the metadata.
 
 ## Execution and state
 
@@ -93,7 +95,7 @@ variable inspection, and replay.
 ## Evidence
 
 The browser integration uses real HTTP MCP clients, synthetic Exterior and
-ACP peers, Pi's browser worker, the AUV SDK, and a Mock Runner. See the
+ACP peers, Pi's browser worker, the AUV SDK, and a Mock Runner. The ACP fixture also uses the official MCP Skills client to discover and verify the app's instructions and Runner reference. See the
 [execution fixture](../../../../apps/repl-playground/agent/execution.browser.test.tsx)
 and [connection fixture](../../../../apps/repl-playground/agent/connection.browser.test.tsx).
 

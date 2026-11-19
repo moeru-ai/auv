@@ -52,7 +52,6 @@ Routes are managed in the Cloudflare dashboard.
 `public/_redirects` defines the `/install.sh` shortcut. It returns a `302`
 redirect to `https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh`.
 Vite copies this file to `dist/_redirects` for Cloudflare to apply.
-
 The README and website use this install command:
 
 ```sh

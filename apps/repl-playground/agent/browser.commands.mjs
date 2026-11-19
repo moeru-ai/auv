@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import process from 'node:process'
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { SkillsClient } from '@modelcontextprotocol/client/ext/skills'
 import { WebSocketServer } from 'ws'
 
 import { createMcpRelay } from './relay.fixture.mjs'
@@ -20,18 +19,7 @@ export const browserCommands = {
     return fixtures.get(context.testPath).state(options)
   },
 
-  /** Preserve the existing opt-in evidence paths without exposing Node APIs to tests. */
-  async agentScreenshot(context, name) {
-    const path = {
-      agent: process.env.AUV_AGENT_SCREENSHOT,
-      codemode: process.env.AUV_CODEMODE_SCREENSHOT,
-      connected: process.env.AUV_AGENT_CONNECTED_SCREENSHOT,
-    }[name]
-    if (path)
-      await context.iframe.locator('body').screenshot({ animations: 'disabled', path })
-  },
-
-  async startAgentFixtures(context, imageResult) {
+  async startAgentFixtures(context) {
     const page = context.page
     const relay = await createMcpRelay()
     const errors = []
@@ -66,27 +54,33 @@ export const browserCommands = {
             result = { agentCapabilities: supported ? { mcpCapabilities: { http: true } } : {}, protocolVersion: 1 }
           }
           else if (message.method === 'session/new') {
-            const declaration = message.params.mcpServers.find(server => server.type === 'http')
+            const declaration = message.params.mcpServers.find(server => server.name === 'auv-playground' && server.type === 'http')
             assert.ok(declaration, 'An ordinary agent must receive the HTTP MCP declaration')
-            const client = new Client({ name: 'agent', version: '1' })
+            const client = new Client({ name: 'agent', version: '1' }, { versionNegotiation: { mode: 'auto' } })
             await client.connect(new StreamableHTTPClientTransport(new URL(declaration.url), { requestInit: { headers: Object.fromEntries(declaration.headers.map(header => [header.name, header.value])) } }))
             const { tools } = await client.listTools()
             assert.deepEqual(tools.map(tool => tool.name), ['execute'], 'Tool discovery must work before ACP session creation finishes')
-            assert.ok(tools[0].description.includes('ALL_TOOLS'), 'Tool discovery must include execution and SDK discovery instructions')
             clients.push(client)
+            assert.equal(client.getProtocolEra(), 'modern')
+            const skills = new SkillsClient(client)
+            assert.ok(skills.supported)
+            const { skills: [entry] } = await skills.list()
+            assert.equal(entry.uri, 'skill://auv-playground/SKILL.md')
+            const instructions = await skills.read(entry)
+            assert.ok(instructions.verified && instructions.body.includes('auv.windows.resolve'))
+            const reference = await skills.read(entry, 'references/driver.ts')
+            assert.ok(reference.verified && reference.text.includes('interface WindowClient'))
             result = { sessionId: `ui-${message.id}` }
           }
           else if (message.method === 'session/prompt') {
-            const notify = update => socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: message.params.sessionId, update } }))
-            notify({ content: { text: 'I will inspect the desktop and check the result.', type: 'text' }, sessionUpdate: 'agent_message_chunk' })
-            notify({ content: [{ content: { text: 'ReferenceError: Unknown identifier \'text\'.', type: 'text' }, type: 'content' }], kind: 'other', rawInput: { code: 'text(api.help());' }, sessionUpdate: 'tool_call', status: 'failed', title: 'execute', toolCallId: 'code-failure' })
-            notify({ kind: 'other', rawInput: { code: 'return await tools["auv-playground"].execute({ code: "await auv.overlay.show({});" });' }, sessionUpdate: 'tool_call', status: 'in_progress', title: 'execute', toolCallId: 'nested-failure' })
-            notify({ content: [{ content: { text: 'Script failed: OverlayService/ShowOverlay is UNIMPLEMENTED', type: 'text' }, type: 'content' }], rawOutput: { metadata: { toolCalls: [{ status: 'error', tool: 'auv-playground.execute' }] } }, sessionUpdate: 'tool_call_update', status: 'completed', toolCallId: 'nested-failure' })
-            notify({ content: [{ content: imageResult, type: 'content' }], kind: 'read', rawInput: { code: 'await image(capture);' }, sessionUpdate: 'tool_call', status: 'completed', title: 'Capture result', toolCallId: 'image-result' })
-            notify({ content: [{ content: { text: '0 errors found.', type: 'text' }, type: 'content' }], kind: 'read', rawInput: { path: 'notes.md' }, sessionUpdate: 'tool_call', status: 'completed', title: 'Read notes', toolCallId: 'neutral-result' })
+            const text = `Connected through the test ACP peer.
+
+| Check | Operation | Expected | Actual | Evidence | Result |
+| --- | --- | --- | --- | --- | --- |
+| Counter | Click Increment twice and capture the window. | Count: 2 | Count: 2 | Screenshot | Passed |`
             socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: {
               sessionId: message.params.sessionId,
-              update: { content: { text: 'Connected through the test ACP peer.\n\n| Check | Operation | Expected | Actual | Evidence | Result |\n| --- | --- | --- | --- | --- | --- |\n| Counter | Click Increment twice and capture the window. | Count: 2 | Count: 2 | Screenshot | Passed |\n\n- [x] Verified\n\n~~Outdated~~\n\n> Checked with a screenshot.\n\n[Documentation](https://example.com/docs)\n\n```ts\ntext("verified");\n```', type: 'text' }, sessionUpdate: 'agent_message_chunk' },
+              update: { content: { text, type: 'text' }, sessionUpdate: 'agent_message_chunk' },
             } }))
             result = { stopReason: 'end_turn' }
           }
@@ -146,7 +140,7 @@ export const browserCommands = {
         return { connections, errors, messages, registrations: [...relay.registrations], ticketRequests, tools }
       },
     })
-    return { benchmark: Boolean(process.env.AUV_CODEMODE_BENCHMARK), cwd, relayUrl: relay.url }
+    return { cwd, relayUrl: relay.url }
   },
 
   async stopAgentFixtures(context) {

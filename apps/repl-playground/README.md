@@ -49,7 +49,7 @@ controlled desktop.
   an ACP agent. Switching tabs retains the connection and editor.
   Through Exterior's HTTP MCP endpoint, the agent calls `execute` to execute code
   against the selected Device or mock desktop. Explicit output returns to the
-  agent; SDK calls appear in the timeline. Connections require HTTP MCP support.
+  agent; SDK calls appear in the timeline. Connections require HTTP MCP 2026-07-28.
   A new connection starts a fresh agent process; disconnect ends it.
   The chat is not persisted. For a remote relay, set `VITE_EXTERIOR_URL`
   at build time.
@@ -249,28 +249,28 @@ by name in cells, e.g. `function toolbar(win: Area): Area`.
 
 ## Agent execution
 
-The playground supplies its own code tool to an ACP agent. Pi is not required.
-The browser opens an HTTP MCP endpoint through Exterior's `serveMcp` SDK.
-The agent receives its URL and authorization header in `session/new.mcpServers`.
+The Playground connects an ACP agent to its browser sandbox and skills
+through one MCP 2026-07-28 endpoint. The agent receives its URL and authorization
+headers in `session/new.mcpServers`.
 Exterior forwards MCP messages to the page, where the code runs.
-The agent must advertise `agentCapabilities.mcpCapabilities.http`.
+The agent must advertise `agentCapabilities.mcpCapabilities.http` and negotiate MCP 2026-07-28.
 The Playground remains a static site.
 
-The MCP interface exposes `execute({ code, timeoutMs? })` and the read-only
-`help`, `search`, and `describe` tools. Discovery does not start an execution
-or call the selected device. Scripts can also use `api.help()`, `api.search()`,
-and `api.describe()` to consult the same catalog inside an execution.
+The Agent gets one MCP tool, `execute({ code, timeoutMs? })`. The same
+endpoint offers the `auv-playground` skill to supporting clients.
+The harness can list the metadata, read the skill, and then request the SDK
+guide or Runner source. Each read addresses an individual resource.
 The page sends user messages unchanged, with no extra briefing message.
 
 The agent device needs an Exterior client and an installed ACP agent.
-Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/32eb3fdec35d573979bc95c4d1a940745cdc75ad/docs/manual.md).
-For example, configure an ordinary OpenCode slot:
+Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/72262f7b5c7110b3f0182518f2b03faa552b0994/docs/manual.md).
+To register an OpenCode slot on the device:
 
 ```sh
 exterior agent add opencode
 ```
 
-Use an existing slot if the device already offers the agent.
+Slot registration proves ACP availability. The harness needs modern HTTP MCP to call the Playground.
 Sign in and start the Exterior daemon against the same relay:
 
 ```sh
@@ -282,14 +282,14 @@ Keep the client running while you use the agent.
 For the pinned CLI preview, use this prefix for each command above:
 
 ```sh
-npx --yes --package=https://pkg.pr.new/lulu0119/exterior@32eb3fdec35d573979bc95c4d1a940745cdc75ad -- exterior
+npx --yes --package=https://pkg.pr.new/lulu0119/exterior@72262f7b5c7110b3f0182518f2b03faa552b0994 -- exterior
 ```
 
 Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
-builds. Its default is `http://127.0.0.1:8787`.
+builds. Use the Relay from the same Exterior preview as the SDK. The default origin is `http://127.0.0.1:8787`.
 
 The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1 and
-`@exterioragentprotocol/client-sdk` for Pi Code Mode over MCP.
+`@exterioragentprotocol/client-sdk` for Pi Code Mode and the MCP skill catalog.
 The default client identity is
 `https://auv.moeru.ai/playground/oauth-client.json`.
 The build copies `public/oauth-client.json` to that address.
@@ -298,7 +298,7 @@ The OAuth callback is the Playground entry URL. The document lists the
 deployed entry URL and the local entries for `127.0.0.1` and `localhost`.
 
 To use a client ID issued by one relay, follow Exterior's
-[app setup](https://github.com/lulu0119/exterior/blob/32eb3fdec35d573979bc95c4d1a940745cdc75ad/docs/app-setup.md)
+[app setup](https://github.com/lulu0119/exterior/blob/72262f7b5c7110b3f0182518f2b03faa552b0994/docs/app-setup.md)
 or use **Register app** and **Copy configuration** on the relay dashboard.
 Registration does not grant access to devices. App sign-in requests that access separately.
 
@@ -328,22 +328,23 @@ Connect and Disconnect control its lifetime. View remounts do not reconnect it.
 The agent device and the selected AUV device can be different computers.
 
 The external Agent gets one MCP tool, `execute({ code, timeoutMs? })`.
-Its description includes the available AUV operations and their argument types.
-Inside a script, Pi's `ALL_TOOLS` lists the operations with their descriptions.
+Its sandbox provides `auv`, the native SDK Runner client for this Run, and
+`sdk`, the Runner enums and geometry helpers.
 
 ```js
-const { windowId } = await tools.resolve_window({ appName: 'Counter' })
-const { matches } = await tools.find_window_text({ windowId, query: 'Increment' })
+const win = await auv.windows.resolve({ appName: 'Counter' })
+const { matches } = await win.findText('Increment')
 if (matches.length !== 1)
   throw new Error('Expected one button')
 text(matches[0])
-store('counterId', windowId)
+store('counterId', win.id)
 ```
 
 Each call starts a fresh Pi JavaScript VM in a browser worker. Use `store/load`
 for small JSON data across calls. AUV scopes that data to the current
 conversation and selected device and commits it after successful execution.
-SDK objects stay in the page. The Agent uses window IDs and capture references.
+Window clients, callback functions and stream iterators live in this VM.
+Use `auv.windows.from(load('counterId'))` to bind a saved ID to the current Run.
 
 The Playground records the script and AUV operation results together with their
 Run. The editor's separate TypeScript REPL provides stepping and variable
@@ -352,7 +353,7 @@ is busy, Script disables live execution and a new Agent `execute` call returns
 a busy error. Script can still replay a local recording.
 
 A capture returns a reference and metadata. Request an image explicitly to
-show a PNG or JPEG up to 1024 × 1024 pixels. Stop, timeout, disconnect, and a
+show a PNG or JPEG, specifying `maxSize` in `auv.captures.image`. Stop, timeout, disconnect, and a
 change of session or device abort the active script and its pending calls.
 An action already delivered remains effective. Read app state to verify the
 requested result.
@@ -438,7 +439,6 @@ These are known and intentionally deferred; each is marked in code.
   Old sessions linger in the host agent process until disconnect.
   Agent browser-auth (`auth-required`) has no UI yet.
   The agent must advertise HTTP MCP support before session creation.
-  SDK callbacks and iterators remain unavailable in the script bindings.
   An explicit reconnect obtains a fresh ticket after a failed connection.
 - `const` at the top level becomes reassignable across cells (same as
   `node:repl`), and a line starting with `(` or `[` continues the previous

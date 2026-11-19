@@ -11,16 +11,14 @@ import { session } from '../src/runtime/session'
 declare module 'vitest/browser' {
   interface BrowserCommands {
     agentFixtureState: (options?: Parameters<typeof browserCommands.agentFixtureState>[1]) => Promise<Awaited<ReturnType<typeof browserCommands.agentFixtureState>>>
-    agentScreenshot: (name: 'agent' | 'codemode' | 'connected') => Promise<void>
-    startAgentFixtures: (image?: { data: string, mimeType: string, type: 'image' }) => Promise<Awaited<ReturnType<typeof browserCommands.startAgentFixtures>>>
+    startAgentFixtures: () => Promise<Awaited<ReturnType<typeof browserCommands.startAgentFixtures>>>
     stopAgentFixtures: () => Promise<void>
   }
 }
 
 /** Mount the actual workbench; only its external Relay and ACP peers are synthetic. */
 export async function mountPlayground(signedIn = false) {
-  const data = document.createElement('canvas').toDataURL('image/png').split(',')[1]
-  const fixture = await commands.startAgentFixtures({ data, mimeType: 'image/png', type: 'image' })
+  const fixture = await commands.startAgentFixtures()
   const container = document.createElement('div')
   container.id = 'root'
   document.body.appendChild(container)

@@ -4,8 +4,8 @@ import type { AnyMessage } from '@agentclientprotocol/sdk'
 import type { CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
 
 import { AcpThreadController, SdkAcpClientAdapter } from '@hafbit/react-acp/core'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createMcpHandler } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { codeModeConnection, CodeModeHost } from './codemode-bridge'
@@ -17,14 +17,16 @@ vi.mock('./agent-execution', () => execution)
 
 /** Exercise the same MCP interface used by agents, with an in-memory transport. */
 async function connectTools(host: CodeModeHost): Promise<Client> {
-  const [agent, page] = InMemoryTransport.createLinkedPair()
-  const client = new Client({ name: 'agent', version: '1' })
-  onTestFinished(() => {
+  const handler = createMcpHandler(await host.createServerFactory(), { legacy: 'reject' })
+  const client = new Client({ name: 'agent', version: '1' }, { versionNegotiation: { mode: 'auto' } })
+  onTestFinished(async () => {
     host.close()
-    return client.close()
+    await client.close()
+    await handler.close()
   })
-  await host.connect(page)
-  await client.connect(agent)
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://localhost/mcp'), {
+    fetch: (url, init) => handler.fetch(new Request(url, init)),
+  }))
   return client
 }
 
@@ -75,20 +77,13 @@ describe('playground execute MCP tool', () => {
     const client = await connectTools(host)
     const { tools } = await client.listTools()
     expect(tools.map(tool => tool.name)).toEqual(['execute'])
+    expect(tools[0]?.description).toContain('auv-playground')
+    expect(execution.runAgent).not.toHaveBeenCalled()
     expect((await client.callTool({ arguments: { code: 'return 1' }, name: 'execute' })).isError).toBe(true)
     host.setSession('one')
     execution.runAgent.mockResolvedValueOnce({ ...success, output: [{ text: 'result', type: 'text' }] })
     expect(await client.callTool({ arguments: { code: 'text(1)' }, name: 'execute' })).toMatchObject({ content: [{ text: 'result' }] })
     expect(execution.runAgent.mock.lastCall?.[0].timeoutMs).toBe(30000)
-  })
-
-  it('advertises native tools in execute discovery before a session starts', async () => {
-    const client = await connectTools(new CodeModeHost())
-    const { tools } = await client.listTools()
-    expect(tools[0]?.description).toContain('JavaScript')
-    expect(tools[0]?.description).toContain('find_window_text')
-    expect(tools[0]?.description).toContain('ALL_TOOLS')
-    expect(execution.runAgent).not.toHaveBeenCalled()
   })
 
   it('cancels the MCP invocation without affecting calls from another transport', async () => {
@@ -100,7 +95,7 @@ describe('playground execute MCP tool', () => {
       finish = resolve
     }))
     const controller = new AbortController()
-    const call = client.callTool({ arguments: { code: 'await operation()' }, name: 'execute' }, undefined, { signal: controller.signal })
+    const call = client.callTool({ arguments: { code: 'await operation()' }, name: 'execute' }, { signal: controller.signal })
     const rejection = expect(call).rejects.toThrow()
     await vi.waitFor(() => expect(execution.runAgent.mock.lastCall?.[0].code).toBe('await operation()'))
     const signal = execution.runAgent.mock.lastCall?.[0].signal as AbortSignal

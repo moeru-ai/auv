@@ -1,10 +1,9 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult } from '@modelcontextprotocol/client'
 
 import { serveMcp } from '@exterioragentprotocol/sdk/client'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { expect, it, vi } from 'vitest'
-import { commands, page } from 'vitest/browser'
+import { page } from 'vitest/browser'
 
 import { connectBackend } from '../src/backend/auv'
 import { MockDesktop } from '../src/backend/mock-desktop'
@@ -26,7 +25,7 @@ const textItems = (result: CallToolResult) => result.content.filter(item => item
 // https://github.com/moeru-ai/auv/pull/414#discussion_r4399104804
 it('executes HTTP MCP calls in real workers and preserves history, cancellation and editor state', async () => {
   const fixture = await mountPlayground()
-  const client = new Client({ name: 'browser-check', version: '1' })
+  const client = new Client({ name: 'browser-check', version: '1' }, { versionNegotiation: { mode: 'auto' } })
   const host = new CodeModeHost()
   let endpoint: Awaited<ReturnType<typeof serveMcp>> | undefined
   const execute = (code: string, timeoutMs?: number) => client.callTool({ arguments: { code, timeoutMs }, name: 'execute' }) as Promise<CallToolResult>
@@ -56,7 +55,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     const scriptCalls = script.getState().calls
     expect(scriptCalls).toHaveLength(1)
     await agentTab.click()
-    endpoint = await serveMcp(fixture.relayUrl, 'browser-check', transport => void host.connect(transport))
+    endpoint = await serveMcp(fixture.relayUrl, 'browser-check', await host.createServerFactory())
     host.setSession('browser-check')
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: Object.fromEntries(endpoint.headers.map(header => [header.name, header.value])) } }))
     const backend = useDeviceTarget.getState().backend
@@ -65,32 +64,26 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
       const pure = await execute('return 1 + 1;')
       expect(pure.isError).toBeFalsy()
       expect(textItems(pure)).toContain('2')
-      const missing = await execute('return await tools.list_windows({});')
+      const missing = await execute('return await auv.windows.list();')
       expect(missing.isError).toBe(true)
       expect(textItems(missing).at(-1)).toMatch(/need a Device/)
     }
     finally { useDeviceTarget.setState({ backend }) }
 
-    const { tools } = await client.listTools()
-    expect(tools.map(tool => tool.name)).toEqual(['execute'])
-    expect(tools[0]?.description).toContain('find_window_text')
-    const discovery = await execute('return ALL_TOOLS.map(tool => tool.name);')
-    expect(discovery.isError).toBeFalsy()
-    expect(JSON.parse(textItems(discovery)[0]!)).toContain('find_window_text')
     expect(agent.getState().calls).toHaveLength(0)
     const result = await execute(`
-      const counter = await tools.resolve_window({ appName: 'Counter' });
-      const found = await tools.find_window_text({ windowId: counter.windowId, query: 'Increment' });
+      const counter = await auv.windows.resolve({ appName: 'Counter' });
+      const found = await counter.findText('Increment');
       if (found.matches.length !== 1) throw new Error('Expected one button');
-      const { x, y, width, height } = found.matches[0].bounds;
       for (let i = 0; i < 3; i++) {
-        await tools.click_window({ windowId: counter.windowId, x: x + width / 2, y: y + height / 2, space: "screen" });
+        await counter.click(found.matches[0]);
       }
-      const after = await tools.find_window_text({ windowId: counter.windowId, query: 'Count:' });
+      const after = await counter.findText('Count:');
       text(after.matches.map(item => item.text));
-      store('counterId', counter.windowId);
-      const shot = await tools.capture_window({ windowId: counter.windowId });
-      image(await tools.get_capture_image({ captureId: shot.captureId }));
+      store('counterId', counter.id);
+      const { capture } = await counter.capture();
+      const png = await auv.captures.image(capture, { encoding: sdk.ImageEncoding.PNG, maxSize: { width: 256, height: 256 } });
+      image({ type: 'image', mimeType: 'image/png', data: png.data.toBase64() });
     `)
     expect(result.isError).toBeFalsy()
     expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
@@ -104,13 +97,11 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     expect(script.getState().calls).toBe(scriptCalls)
     await page.getByRole('tab', { exact: true, name: 'Variables' }).click()
     await expect.element(page.getByRole('tabpanel', { exact: true, name: 'Variables' })).toHaveTextContent(/editorValue.*99/)
-    await commands.agentScreenshot('codemode')
     await page.viewport(1024, 768)
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth)
     await agentTab.click()
     expect(agentPanel.isConnected).toBe(true)
     expect(editor.isConnected).toBe(true)
-    await commands.agentScreenshot('agent')
 
     // ROOT CAUSE: each codemode call started a new timeline. Even a help or
     // store query erased SDK calls and hid the previous desktop capture.
@@ -144,7 +135,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     })
     let repeated: CallToolResult
     try {
-      repeated = await execute('const result = await tools.find_window_text({ windowId: load("counterId"), query: "Count:" }); return result.matches.map(item => item.text);')
+      repeated = await execute('const result = await auv.windows.from(load("counterId")).findText("Count:"); return result.matches.map(item => item.text);')
     }
     finally { observed.mockRestore() }
     expect(repeated.isError).toBeFalsy()
@@ -155,7 +146,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     expect(runIds).toEqual([currentRunId])
     const retainedCall = agent.getState().calls.at(-1)!
     expect(retainedCall.source?.id).not.toBe(counterSource.id)
-    expect(retainedCall.source?.code).toContain('find_window_text')
+    expect(retainedCall.source?.code).toContain('findText')
     expect(retainedCall.line).toBeNull()
     await page.getByRole('tab', { exact: true, name: 'Variables' }).click()
     const variables = page.getByRole('tabpanel', { exact: true, name: 'Variables' })
@@ -167,8 +158,9 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     expect(textItems(failed)).toContain('before')
     expect(textItems(await execute('return load("counterId");'))).toContain('w-counter')
     const jpeg = await execute(`
-      const shot = await tools.capture_window({ windowId: load('counterId') });
-      image(await tools.get_capture_image({ captureId: shot.captureId, encoding: 'jpeg', maxSize: { height: 256, width: 256 } }));
+      const { capture } = await auv.windows.from(load('counterId')).capture();
+      const jpeg = await auv.captures.image(capture, { encoding: sdk.ImageEncoding.JPEG, maxSize: { width: 256, height: 256 } });
+      image({ type: 'image', mimeType: 'image/jpeg', data: jpeg.data.toBase64() });
     `)
     expect(jpeg.isError).toBeFalsy()
     expect(jpeg.content).toEqual(expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg', type: 'image' })]))
@@ -210,7 +202,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
       }
     })
     try {
-      const pending = execute('await tools.list_windows({});', 10000)
+      const pending = execute('await auv.windows.list();', 10000)
       await vi.waitUntil(() => agent.getState().calls.some(call => call.status === 'pending'))
       await scriptTab.click()
       await expect.element(page.getByRole('button', { exact: true, name: 'Another playground execution is running' })).toBeDisabled()
@@ -233,7 +225,7 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
       expect(canceledCall?.status).toBe('error')
 
       const transportAbort = new AbortController()
-      const transportCall = client.callTool({ arguments: { code: 'await tools.list_windows({});', timeoutMs: 10000 }, name: 'execute' }, undefined, { signal: transportAbort.signal })
+      const transportCall = client.callTool({ arguments: { code: 'await auv.windows.list();', timeoutMs: 10000 }, name: 'execute' }, { signal: transportAbort.signal })
       const rejected = expect(transportCall).rejects.toBeDefined()
       await vi.waitUntil(() => agent.getState().calls.some(call => call.status === 'pending'))
       transportAbort.abort()
@@ -256,14 +248,27 @@ it('executes HTTP MCP calls in real workers and preserves history, cancellation 
     useDeviceTarget.setState({ backend: null })
     useDeviceTarget.setState({ backend })
     expect(textItems(await execute('return load("device") ?? "cleared";'))).toContain('cleared')
-    const malformed = await execute('await tools.click_window({ windowId: "w-counter", x: "bad", y: 5 });')
+    const malformed = await execute('await auv.windows.get("missing-window");')
     expect(malformed.isError).toBe(true)
     const empty = await execute(`
       for (const query of ['', ' '])
-        text((await tools.find_window_text({ windowId: 'w-counter', query })).matches.length);
+        text((await auv.windows.from('w-counter').findText(query)).matches.length);
     `)
     expect(textItems(empty)).toEqual(['0', '0'])
     expect(empty.isError).toBeFalsy()
+    const music = await execute(`
+      const music = await auv.windows.resolve({ appName: 'Music' });
+      const found = await music.scrollUntil({ x: 100, y: 160 }, {
+        step: { case: 'instant', value: { deltaY: 240 } },
+      }, { until: update => update.text.regions.some(region => region.text === 'Remember') });
+      if (found.reason !== sdk.ScrollUntilStopReason.PREDICATE_SATISFIED) throw new Error('Song missing');
+      const { matches } = await music.findText('Remember');
+      await music.click(matches[0], { click: { count: 2 } });
+      const { capture } = await music.capture();
+      return (await auv.recognizeText(capture)).text.includes('Now playing: Remember');
+    `)
+    expect(textItems(music)).toEqual(['true'])
+    expect(agent.getState().calls.find(call => call.rpc?.path.endsWith('/ScrollWindowUntil'))?.status).toBe('ok')
     await execute('store("resetCheck", "still here");')
     const agentHistory = history()
     await scriptTab.click()

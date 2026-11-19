@@ -1,16 +1,12 @@
-import type { RunnerClient } from '@auv-js/sdk'
 import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
 
-import type { RunBackend, RunOutcomeKind, SdkAccess } from '../../backend/types'
-import type { BridgedCallEnd, BridgedCallStart } from '../../runtime/sdk-bridge'
-
-import { AuvConnection, createAuv } from '@auv-js/sdk'
+import type { RunBackend, RunOutcomeKind } from '../../backend/types'
 
 import { recordCall } from '../../runtime/record-call'
-import { recordUnaryCall } from '../../runtime/sdk-bridge'
 import { nowMs } from '../../store'
 import { reserveDevice, useDeviceTarget } from '../device/device-target'
 import { agentDesktop, agentWorkspace } from './agent-workspace'
+import { createRunnerHost } from './runner-host'
 
 const { actions, store } = agentWorkspace
 let nextSourceId = 1
@@ -23,7 +19,7 @@ export function resetAgentExecution(): void {
 
 export async function runAgent(
   { code, signal }: CodeModeRequest,
-  execute: (runner: RunnerClient | undefined, signal: AbortSignal) => Promise<CodemodeResult>,
+  execute: (host: ReturnType<typeof createRunnerHost>, signal: AbortSignal) => Promise<CodemodeResult>,
 ): Promise<CodemodeResult> {
   signal.throwIfAborted()
   const release = reserveDevice()
@@ -33,7 +29,7 @@ export async function runAgent(
   const reset = new AbortController()
   active = reset
   const cancellation = AbortSignal.any([reset.signal, signal])
-  const callLifetime = new AbortController()
+  let host: ReturnType<typeof createRunnerHost> | undefined
   const source = { code, id: nextSourceId++ }
   const backend = useDeviceTarget.getState().backend
   let run: null | RunBackend = null
@@ -46,11 +42,11 @@ export async function runAgent(
     const access = openedRun?.sdk()
     if (!reset.signal.aborted)
       actions.patchRun({ runId: access?.route.runId, status: 'running' })
-    const runner = access && runnerFor(access, AbortSignal.any([cancellation, callLifetime.signal]), start =>
+    host = createRunnerHost(access, cancellation, start =>
       recordCall(agentWorkspace, openedRun, start, { hit: 1, line: null, source }, nextSeq, reset.signal))
     let result: CodemodeResult = cancellation.aborted
       ? { calls: [], error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: [] }
-      : await execute(runner, cancellation)
+      : await execute(host, cancellation)
     if (result.ok && cancellation.aborted)
       result = { calls: result.calls, error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: result.output }
     outcome = cancellation.aborted || (!result.ok && ['aborted', 'timeout'].includes(result.error.kind))
@@ -76,7 +72,7 @@ export async function runAgent(
     throw error
   }
   finally {
-    callLifetime.abort()
+    await host?.close()
     try {
       await run?.endRun(outcome)
     }
@@ -93,36 +89,4 @@ function nextSeq(): number {
   const seq = store.getState().seqAt.length
   actions.appendEvents([], [], [[seq, nowMs()]])
   return seq
-}
-
-function runnerFor(
-  { route, target: { headers, transport } }: SdkAccess,
-  signal: AbortSignal,
-  observe: (start: Pick<BridgedCallStart, 'body' | 'method'>) => ReturnType<typeof recordCall>,
-): RunnerClient {
-  const extraHeaders = Object.entries(headers ?? {})
-  const addHeaders = (headers: Headers) => {
-    for (const [name, value] of extraHeaders)
-      headers.set(name, value)
-  }
-  const connection = new AuvConnection({
-    close() {},
-    async connect() {},
-    duplex(call) {
-      addHeaders(call.headers)
-      return transport.duplex(call)
-    },
-    async unary(call) {
-      addHeaders(call.headers)
-      const finish = await observe(call)
-      const entry: BridgedCallEnd = { exchange: [] }
-      try {
-        return await recordUnaryCall(transport, call, entry)
-      }
-      finally {
-        finish?.(entry)
-      }
-    },
-  })
-  return createAuv(connection).runner({ ...route, signal })
 }
