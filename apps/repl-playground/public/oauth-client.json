@@ -3,9 +3,9 @@
   "client_name": "AUV Playground",
   "client_uri": "https://auv.moeru.ai/playground/",
   "redirect_uris": [
-    "https://auv.moeru.ai/playground/oauth/callback",
-    "http://127.0.0.1:5180/playground/oauth/callback",
-    "http://localhost:5180/playground/oauth/callback"
+    "https://auv.moeru.ai/playground/",
+    "http://127.0.0.1:5180/playground/",
+    "http://localhost:5180/playground/"
   ],
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],

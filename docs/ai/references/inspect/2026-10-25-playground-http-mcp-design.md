@@ -16,7 +16,7 @@ AUV owns the selected execution device, Mock desktop, session store, and timelin
 The default client identity is `https://auv.moeru.ai/playground/oauth-client.json`.
 The build includes [the metadata document](../../../../apps/repl-playground/public/oauth-client.json), which needs publication at that HTTPS address.
 A registered `VITE_EXTERIOR_CLIENT_ID` supports local development before publication.
-The callback follows the application base path: `/playground/oauth/callback`.
+The Playground entry at `/playground/` handles the OAuth callback.
 App registration and account authorization are separate steps.
 
 The account SDK supplies live tokens through its account methods.

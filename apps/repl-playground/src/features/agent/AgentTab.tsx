@@ -1,4 +1,6 @@
-import type { AccountSession, AgentTarget } from './exterior'
+import type { AccountSession } from '@exterioragentprotocol/sdk/client/react'
+
+import type { AgentTarget } from './exterior'
 
 import { useEffect, useState } from 'react'
 

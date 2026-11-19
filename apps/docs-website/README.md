@@ -53,11 +53,6 @@ Routes are managed in the Cloudflare dashboard.
 redirect to `https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh`.
 Vite copies this file to `dist/_redirects` for Cloudflare to apply.
 
-The playground build also emits `oauth/callback.html`. Cloudflare serves this
-file at `/playground/oauth/callback` without a redirect, so Exterior can finish
-sign-in. Without this asset, the site's SPA fallback serves the docs homepage.
-See [Cloudflare's HTML handling](https://developers.cloudflare.com/workers/static-assets/routing/advanced/html-handling/).
-
 The README and website use this install command:
 
 ```sh

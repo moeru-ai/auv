@@ -262,11 +262,11 @@ and `api.describe()` to consult the same catalog inside an execution.
 The page sends user messages unchanged, with no extra briefing message.
 
 The agent device needs an Exterior client and an installed ACP agent.
-Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/aec6c44ae53b0a896f7b206a0e3b4a56a73fbc7e/docs/manual.md).
+Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/32eb3fdec35d573979bc95c4d1a940745cdc75ad/docs/manual.md).
 For example, configure an ordinary OpenCode slot:
 
 ```sh
-exterior agent-config create --agent-type opencode
+exterior agent add opencode
 ```
 
 Use an existing slot if the device already offers the agent.
@@ -281,7 +281,7 @@ Keep the client running while you use the agent.
 For the pinned CLI preview, use this prefix for each command above:
 
 ```sh
-npx --yes --package=https://pkg.pr.new/lulu0119/exterior@aec6c44ae53b0a896f7b206a0e3b4a56a73fbc7e -- exterior
+npx --yes --package=https://pkg.pr.new/lulu0119/exterior@32eb3fdec35d573979bc95c4d1a940745cdc75ad -- exterior
 ```
 
 Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
@@ -289,42 +289,36 @@ builds. Its default is `http://127.0.0.1:8787`.
 
 The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1 and
 `@exterioragentprotocol/client-sdk` for Pi Code Mode over MCP.
-Exterior no longer supports anonymous app registration.
 The default client identity is
 `https://auv.moeru.ai/playground/oauth-client.json`.
 The build copies `public/oauth-client.json` to that address.
 The relay must receive JSON from this HTTPS address before sign-in can work.
-The local page can stay on `http://127.0.0.1:5180/playground/`.
-The document lists callbacks for both `127.0.0.1` and `localhost`.
+The OAuth callback is the Playground entry URL. The document lists the
+deployed entry URL and the local entries for `127.0.0.1` and `localhost`.
 
-Before publication, follow Exterior's
-[app setup](https://github.com/lulu0119/exterior/blob/aec6c44ae53b0a896f7b206a0e3b4a56a73fbc7e/docs/app-setup.md).
-You can also use **Register app** on the relay dashboard.
-The setup link contains the app name and its exact callback.
-After you sign in and confirm registration, your assistant reads the public client id.
+To use a client ID issued by one relay, follow Exterior's
+[app setup](https://github.com/lulu0119/exterior/blob/32eb3fdec35d573979bc95c4d1a940745cdc75ad/docs/app-setup.md)
+or use **Register app** and **Copy configuration** on the relay dashboard.
 Registration does not grant access to devices. App sign-in requests that access separately.
 
 For this development server, register this callback:
 
 ```text
-http://127.0.0.1:5180/playground/oauth/callback
+http://127.0.0.1:5180/playground/
 ```
 
-Put the returned client id in `apps/repl-playground/.env.development.local`:
+Put `relayUrl` and `clientId` from the returned configuration in `apps/repl-playground/.env.development.local`:
 
 ```dotenv
-VITE_EXTERIOR_URL=https://relay.apps.superpowerlulu.win
-VITE_EXTERIOR_CLIENT_ID=<registered-development-client-id>
+VITE_EXTERIOR_URL=<relay-url>
+VITE_EXTERIOR_CLIENT_ID=<registered-client-id>
 ```
 
 Restart the development server after you change this configuration.
 Open `http://127.0.0.1:5180/playground/` so the callback matches registration.
-The development client needs no secret.
+The browser client needs no secret.
 The registered identity belongs to your account and works only on that relay.
 The development configuration does not affect production builds.
-Before release, publish the metadata document and use its address as the client id.
-People authorize the app again under that identity.
-The local page and the published page then use the same identity.
 
 In the Agent tab, select the agent and click **Connect**.
 Agents without HTTP MCP support show a setup message and cannot start a chat.

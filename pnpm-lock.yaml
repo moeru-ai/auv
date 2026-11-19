@@ -79,11 +79,11 @@ catalogs:
       specifier: ^3.0.0
       version: 3.0.0
     '@exterioragentprotocol/client-sdk':
-      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0
-      version: 0.0.0-preview-df931e0
+      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad
+      version: 0.0.0-preview-32eb3fd
     '@exterioragentprotocol/sdk':
-      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6
-      version: 0.0.0-preview-b590936
+      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad
+      version: 0.0.0-preview-32eb3fd
     '@grpc/grpc-js':
       specifier: 1.14.4
       version: 1.14.4
@@ -453,10 +453,10 @@ importers:
         version: 6.43.13
       '@exterioragentprotocol/client-sdk':
         specifier: 'catalog:'
-        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.5))
+        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad(@modelcontextprotocol/sdk@1.32.1(zod@4.6.5))
       '@exterioragentprotocol/sdk':
         specifier: 'catalog:'
-        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6(react@19.3.0)(typescript@6.0.3)
+        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad(react@19.3.0)(typescript@6.0.3)
       '@hafbit/react-acp':
         specifier: 'catalog:'
         version: 0.1.9(patch_hash=8c968bf116588205e5673f6fd8d9c48fe70db503b82d4bcf1ba7c143bd8e410f)(@assistant-ui/react@0.15.26(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0)))(@assistant-ui/store@0.3.18(@assistant-ui/tap@0.9.22(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(react@19.3.0))(@assistant-ui/tap@0.9.22(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(assistant-cloud@0.2.6)(react@19.3.0)
@@ -1627,15 +1627,15 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exterioragentprotocol/client-sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0':
-    resolution: {integrity: sha512-xR7ffkng5Bm1TTKxL32I+72ewKk4aXp3tVzJ245N0qQpQQCWJhV9rWtdgFpmAM8PxFIrDYoFitnLbajRpZtHXQ==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0}
-    version: 0.0.0-preview-df931e0
+  '@exterioragentprotocol/client-sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad':
+    resolution: {integrity: sha512-SYB8cwpijJAD4MQ+lfEa9UM22n9tKR/Hpt4aOnAxuS6NkNor8j7V+D/py7TPkkL73TCCW1Z6BnRoE9zwBv8IGg==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad}
+    version: 0.0.0-preview-32eb3fd
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.32.1
 
-  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6':
-    resolution: {integrity: sha512-EofDu+1uPFSM0y7MriPQe19Q+TgOIl9XtJ/wdu3qOr5ch2ZZd6GrOeiyBtEIGFsRAw5Ul3X3+TrIXfvWXJuqdQ==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6}
-    version: 0.0.0-preview-b590936
+  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad':
+    resolution: {integrity: sha512-jbXxdhIuRsYGlZWnkUruPbm6R8PosK94Aprgzv+RAD/MDw8TKpbFYfX7t/aDGSlYgUaAUZyEI0ap/fCLvTiyHw==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad}
+    version: 0.0.0-preview-32eb3fd
     peerDependencies:
       react: ^19
     peerDependenciesMeta:
@@ -8290,7 +8290,7 @@ snapshots:
   '@exodus/bytes@1.15.1':
     optional: true
 
-  '@exterioragentprotocol/client-sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@df931e0fa368168f716026db725beb95a581a1b0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.5))':
+  '@exterioragentprotocol/client-sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/client-sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad(@modelcontextprotocol/sdk@1.32.1(zod@4.6.5))':
     dependencies:
       '@earendil-works/pi-codemode': 1.5.2
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.5)
@@ -8298,7 +8298,7 @@ snapshots:
       quickjs-wasi: 3.6.2
       zod: 4.6.5
 
-  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@b590936bc08969982290ca98ab61d28142eb27b6(react@19.3.0)(typescript@6.0.3)':
+  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@32eb3fdec35d573979bc95c4d1a940745cdc75ad(react@19.3.0)(typescript@6.0.3)':
     dependencies:
       oauth4webapi: 3.8.8
       valibot: 1.5.0(typescript@6.0.3)

@@ -1,40 +1,14 @@
-import type { Plugin } from 'vite'
-
 import react from '@vitejs/plugin-react'
 import UnoCSS from 'unocss/vite'
 
 import { defineConfig } from 'vite'
 
-// NOTICE(oauth-callback-page): Cloudflare serves this file at
-// `/playground/oauth/callback` and keeps that address. A missing path falls
-// back to the docs index, and rewriting it onto `/playground/index.html`
-// redirects to `/playground/` before Exterior can redeem the code.
-function oauthCallbackPage(): Plugin {
-  return {
-    apply: 'build',
-    // Run after Vite emits index.html so both routes use the same built entry.
-    enforce: 'post',
-    generateBundle(_, bundle) {
-      const index = bundle['index.html']
-      if (index?.type !== 'asset')
-        this.error('The Playground build must emit index.html for the OAuth callback.')
-      this.emitFile({ fileName: 'oauth/callback.html', source: index.source, type: 'asset' })
-    },
-    name: 'oauth-callback-page',
-  }
-}
-
 export default defineConfig({
   base: '/playground/',
   // NOTICE(worker-prebundle): discovering these imports on the first worker
-  // execution reloads the page and disconnects its ACP tool call. Pre-bundle
-  // dependencies first reached from workers and the Agent panel.
+  // execution reloads the page and disconnects its ACP tool call.
   optimizeDeps: {
     include: [
-      '@base-ui/react/collapsible',
-      '@exterioragentprotocol/sdk/client',
-      '@exterioragentprotocol/sdk/client/react',
-      '@exterioragentprotocol/client-sdk/codemode',
       '@moeru/eventa/adapters/webworkers/worker',
       '@typescript/vfs',
       'acorn',
@@ -43,7 +17,7 @@ export default defineConfig({
       'typescript',
     ],
   },
-  plugins: [UnoCSS(), react(), oauthCallbackPage()],
+  plugins: [UnoCSS(), react()],
   server: {
     port: 5180,
   },

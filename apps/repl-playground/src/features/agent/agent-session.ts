@@ -1,12 +1,15 @@
-import type { AccountSession, AgentTarget } from './exterior'
+import type { AccountSession } from '@exterioragentprotocol/sdk/client/react'
+
+import type { AgentTarget } from './exterior'
 
 import { createWebSocketStream } from '@agentclientprotocol/sdk/experimental/ws-client'
+import { serveMcp } from '@exterioragentprotocol/sdk/client'
 import { AcpThreadController, SdkAcpClientAdapter } from '@hafbit/react-acp/core'
 import { create } from 'zustand'
 
 import { version } from '../../../package.json'
 import { codeModeConnection, CodeModeHost } from './codemode-bridge'
-import { relayUrl, serveMcp } from './exterior'
+import { relayUrl } from './exterior'
 
 export interface AgentConnection {
   controller: AcpThreadController

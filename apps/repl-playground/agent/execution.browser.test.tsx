@@ -1,5 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
+import { serveMcp } from '@exterioragentprotocol/sdk/client'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { expect, it, vi } from 'vitest'
@@ -7,7 +8,6 @@ import { commands, page } from 'vitest/browser'
 
 import { agentWorkspace } from '../src/features/agent/agent-workspace'
 import { CodeModeHost } from '../src/features/agent/codemode-bridge'
-import { serveMcp } from '../src/features/agent/exterior'
 import { useDeviceTarget } from '../src/features/device/device-target'
 import { restoreDevices } from '../src/features/device/devices'
 import { scriptWorkspace } from '../src/features/editor/script-workspace'
