@@ -1,5 +1,5 @@
 import type { DuplexCall } from '@auv-js/sdk'
-import type { CodemodeTool } from '@exterioragentprotocol/client-sdk/codemode'
+import type { CodemodeTool } from '@exterioragentprotocol/sdk/client/codemode'
 
 import type { SdkAccess } from '../../backend/types'
 import type { recordCall } from '../../runtime/record-call'

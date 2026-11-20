@@ -30,7 +30,6 @@
     "@codemirror/search": "catalog:",
     "@codemirror/state": "catalog:",
     "@codemirror/view": "catalog:",
-    "@exterioragentprotocol/client-sdk": "catalog:",
     "@exterioragentprotocol/sdk": "catalog:",
     "@hafbit/react-acp": "catalog:",
     "@lezer/highlight": "catalog:",

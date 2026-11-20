@@ -1,12 +1,12 @@
-import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
 import type { ServedMcp } from '@exterioragentprotocol/sdk/client'
+import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/sdk/client/codemode'
 import type { AcpClientConnection } from '@hafbit/react-acp/core'
 
 // oxlint-disable-next-line import/default -- Vite exposes its worker constructor as the default export.
-import CodeModeWorker from '@exterioragentprotocol/client-sdk/codemode/worker?worker'
+import CodeModeWorker from '@exterioragentprotocol/sdk/client/codemode/worker?worker'
 
-import { createBrowserCodeModeSandbox, registerCodeMode } from '@exterioragentprotocol/client-sdk/codemode'
-import { createMcpApp } from '@exterioragentprotocol/client-sdk/mcp'
+import { createMcpApp } from '@exterioragentprotocol/sdk/client'
+import { createBrowserCodeModeSandbox, registerCodeMode } from '@exterioragentprotocol/sdk/client/codemode'
 
 import { version } from '../../../package.json'
 import { useDeviceTarget } from '../device/device-target'

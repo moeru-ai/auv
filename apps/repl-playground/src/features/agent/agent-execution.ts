@@ -1,4 +1,4 @@
-import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
+import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/sdk/client/codemode'
 
 import type { RunBackend, RunOutcomeKind } from '../../backend/types'
 

@@ -263,7 +263,7 @@ guide or Runner source. Each read addresses an individual resource.
 The page sends user messages unchanged, with no extra briefing message.
 
 The agent device needs an Exterior client and an installed ACP agent.
-Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/72262f7b5c7110b3f0182518f2b03faa552b0994/docs/manual.md).
+Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/5a78681c9bb12091f991b7f8bf4d92770c7ae3f2/docs/manual.md).
 To register an OpenCode slot on the device:
 
 ```sh
@@ -282,14 +282,14 @@ Keep the client running while you use the agent.
 For the pinned CLI preview, use this prefix for each command above:
 
 ```sh
-npx --yes --package=https://pkg.pr.new/lulu0119/exterior@72262f7b5c7110b3f0182518f2b03faa552b0994 -- exterior
+npx --yes --package=https://pkg.pr.new/lulu0119/exterior@5a78681c9bb12091f991b7f8bf4d92770c7ae3f2 -- exterior
 ```
 
 Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
 builds. Use the Relay from the same Exterior preview as the SDK. The default origin is `http://127.0.0.1:8787`.
 
-The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1 and
-`@exterioragentprotocol/client-sdk` for Pi Code Mode and the MCP skill catalog.
+The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1, MCP Skills, and Pi
+Code Mode. The sandbox comes from the SDK's `/client/codemode` entry.
 The default client identity is
 `https://auv.moeru.ai/playground/oauth-client.json`.
 The build copies `public/oauth-client.json` to that address.
@@ -298,7 +298,7 @@ The OAuth callback is the Playground entry URL. The document lists the
 deployed entry URL and the local entries for `127.0.0.1` and `localhost`.
 
 To use a client ID issued by one relay, follow Exterior's
-[app setup](https://github.com/lulu0119/exterior/blob/72262f7b5c7110b3f0182518f2b03faa552b0994/docs/app-setup.md)
+[app setup](https://github.com/lulu0119/exterior/blob/5a78681c9bb12091f991b7f8bf4d92770c7ae3f2/docs/app-setup.md)
 or use **Register app** and **Copy configuration** on the relay dashboard.
 Registration does not grant access to devices. App sign-in requests that access separately.
 
@@ -431,7 +431,7 @@ These are known and intentionally deferred; each is marked in code.
   Device credentials are stored in `localStorage`. Run only your own scripts and
   keep the REPL on a local origin.
 - **Agent tab**: `exterior.ts` adapts sign-in, devices, and tickets from
-  `@exterioragentprotocol/sdk`. Both Exterior packages use immutable preview revisions.
+  `@exterioragentprotocol/sdk`. The SDK uses an immutable preview revision.
   See the [Exterior connection contract](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md#exterior-connection)
   for client identities, local development, and live verification limits.
   The thread uses `@hafbit/react-acp` hooks. Sessions are ephemeral.

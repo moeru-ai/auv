@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { AnyMessage } from '@agentclientprotocol/sdk'
-import type { CodemodeResult } from '@exterioragentprotocol/client-sdk/codemode'
+import type { CodemodeResult } from '@exterioragentprotocol/sdk/client/codemode'
 
 import { AcpThreadController, SdkAcpClientAdapter } from '@hafbit/react-acp/core'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
