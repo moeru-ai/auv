@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { pairBrowser } from '../../backend/auv'
 import { CommandSnippet } from '../../components/CommandSnippet'
 import { Field, Hint } from '../../components/Field'
+import { useDeviceTarget } from './device-target'
 import { addConnection, DEFAULT_ENDPOINT } from './devices'
 
 /** Connects a new daemon by pairing with a one-time token, or with an existing Device credential. */
@@ -11,6 +12,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('')
   const [token, setToken] = useState('')
   const [credential, setCredential] = useState('')
+  const locked = useDeviceTarget(state => state.locked)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const bind = remoteBindAddress(endpoint)
@@ -55,7 +57,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
           <input aria-label="Pairing token" className="input font-mono" onChange={event => setToken(event.target.value)} placeholder="one-time token" value={token} />
           <button
             className="btn-primary shrink-0"
-            disabled={busy || !token.trim()}
+            disabled={busy || locked || !token.trim()}
             onClick={() => void run(async () => await pairBrowser(endpoint.trim(), token.trim()))}
             type="button"
           >
@@ -65,7 +67,7 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
         </div>
         <div className="flex gap-2">
           <input aria-label="Device credential" className="input font-mono" onChange={event => setCredential(event.target.value)} placeholder="…or an existing Device credential" type="password" value={credential} />
-          <button className="btn-ghost border border-line shrink-0" disabled={busy || !credential.trim()} onClick={() => void run(async () => credential.trim())} type="button">
+          <button className="btn-ghost border border-line shrink-0" disabled={busy || locked || !credential.trim()} onClick={() => void run(async () => credential.trim())} type="button">
             Connect
           </button>
         </div>

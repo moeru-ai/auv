@@ -1,7 +1,7 @@
 import type { AuvClient, AuvConnection, Device, DiscoveredRunner, RunnerClient, Transport, WindowClient } from '@auv-js/sdk'
 
 import type { Rect } from '../script-api/api'
-import type { Backend, CapturedFrame, DisplayInfo, RunOutcomeKind, SdkAccess, TextSearchResult, WindowInfo } from './types'
+import type { Backend, CapturedFrame, DisplayInfo, RunBackend, SdkAccess, TextSearchResult, WindowInfo } from './types'
 
 import { CaptureResolution, connect, createAuv, createHttpTransport, discoverRunner, ImageEncoding, InputDeliveryPath, pairDevice } from '@auv-js/sdk'
 
@@ -38,8 +38,7 @@ class AuvBackend implements Backend {
   readonly kind: Backend['kind']
   readonly label: string
   #discovered?: Promise<DiscoveredRunner | undefined>
-  #runId?: string
-  #runner: RunnerClient
+  readonly #runner: RunnerClient
 
   constructor(
     private readonly connection: AuvConnection,
@@ -50,27 +49,35 @@ class AuvBackend implements Backend {
     this.accessibilityTree = http.accessibilityTree
     this.kind = http.kind ?? 'auv'
     this.label = http.label ?? `${device.name || device.id.slice(0, 12)} (${device.platform})`
-    this.#runner = this.#bind()
+    this.#runner = this.client.runner({ deviceId: device.id, runnerClass: RUNNER_CLASS })
   }
 
-  async beginRun(): Promise<string | undefined> {
-    try {
-      const run = await this.client.runs.create({ deviceIds: [this.device.id] })
-      this.#runId = run.id
-    }
-    catch (error) {
+  async beginRun(): Promise<RunBackend> {
+    const run = await this.client.runs.create({ deviceIds: [this.device.id] }).catch((error) => {
       // NOTICE(playground-run-optional): Run creation is correlation only; a
       // daemon that refuses it should not block interactive execution.
       console.warn('AUV Run creation failed; continuing without a Run', error)
-      this.#runId = undefined
+      return undefined
+    })
+    const runId = run?.id
+    return {
+      captureImage: (frame, maxSize) => this.captureImage(frame, maxSize),
+      endRun: async (outcome) => {
+        if (runId)
+          await this.client.runs.stop({ outcome, runId }).catch(error => console.warn('AUV Run stop failed', error))
+      },
+      kind: this.kind,
+      label: this.label,
+      sdk: () => {
+        const access = this.sdk()
+        return { ...access, route: { ...access.route, runId } }
+      },
     }
-    this.#runner = this.#bind()
-    return this.#runId
   }
 
-  async captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
+  async captureDisplay(displayId?: string, options?: { logical?: boolean, signal?: AbortSignal }): Promise<CapturedFrame> {
     const selector = displayId ? { selector: { case: 'display' as const, value: { displayId } } } : undefined
-    const response = await this.#runner.displays.capture(selector, options?.logical ? { resolution: CaptureResolution.LOGICAL } : undefined)
+    const response = await this.#runner.displays.capture(selector, { resolution: options?.logical ? CaptureResolution.LOGICAL : undefined, signal: options?.signal })
     return toFrame(response.capture, `display:${response.display?.displayId ?? displayId ?? 'primary'}`)
   }
 
@@ -83,14 +90,6 @@ class AuvBackend implements Backend {
 
   async dispose(): Promise<void> {
     await this.connection.close()
-  }
-
-  async endRun(outcome: RunOutcomeKind): Promise<void> {
-    const runId = this.#runId
-    this.#runId = undefined
-    this.#runner = this.#bind()
-    if (runId)
-      await this.client.runs.stop({ outcome, runId }).catch(error => console.warn('AUV Run stop failed', error))
   }
 
   async listDisplays(): Promise<DisplayInfo[]> {
@@ -108,17 +107,12 @@ class AuvBackend implements Backend {
     const discovered = this.#discovered
     return {
       describe: async method => (await discovered)?.describeMethod(method),
-      route: { deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS },
+      route: { deviceId: this.device.id, runnerClass: RUNNER_CLASS },
       target: {
         headers: this.http.credential === undefined ? undefined : { authorization: `Bearer ${this.http.credential}` },
         transport: this.http.transport,
       },
     }
-  }
-
-  /** The host's own Runner client for the current Run: canvas captures and pixels. */
-  #bind(): RunnerClient {
-    return this.client.runner({ deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS })
   }
 }
 

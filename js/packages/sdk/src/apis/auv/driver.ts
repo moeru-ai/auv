@@ -147,9 +147,13 @@ export interface RunnerClient {
     image: (capture: CaptureTarget, options?: CaptureImageOptions) => Promise<CaptureImage>
   }
   readonly displays: {
+    /** Capture one display as a Runner-held capture reference. */
     capture: (selector?: Init<typeof DisplaySelectorSchema>, options?: CaptureOptions) => Promise<Shape<typeof DisplayService.method.captureDisplay.output>>
+    /** Capture a logical screen rectangle on a display. Pixels remain on the Runner. */
     captureRegion: (region: Init<typeof ScreenRectSchema>, selector?: Init<typeof DisplaySelectorSchema>, options?: CaptureOptions) => Promise<Shape<typeof DisplayService.method.captureDisplayRegion.output>>
+    /** Find text with OCR on a display. Matches have logical screen-space bounds. */
     findText: (selector: Init<typeof DisplaySelectorSchema> | undefined, query: string, options?: FindDisplayTextOptions) => Promise<Shape<typeof DisplayService.method.findDisplayText.output>>
+    /** List display IDs, bounds, and scale metadata. */
     list: (options?: OperationOptions) => Promise<readonly Display[]>
   }
   readonly input: {
@@ -276,9 +280,11 @@ export interface ScrollWithStep {
 }
 
 export interface WindowClient {
+  /** Capture this window as a Runner-held reference. Fetch pixels explicitly with captures.image. */
   capture: (options?: CaptureOptions) => Promise<Shape<typeof WindowService.method.captureWindow.output>>
   /** Clicks in this window; see `PointTarget` for what `target` accepts. */
   click: (target: PointTarget, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickPoint.output>>
+  /** Find text with OCR inside this window. Returns matches with screen-space bounds and a capture reference. */
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof WindowService.method.findWindowText.output>>
   /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
@@ -765,7 +771,7 @@ function captureRefOf(target: CaptureTarget): Init<typeof CaptureRefSchema> {
   if ('captureId' in target)
     return { captureId: target.captureId }
   if (!target.ref)
-    throw new TypeError('CapturedFrame has no capture reference; pass a frame returned by the Runner')
+    throw new TypeError('Expected a capture ID, CaptureRef, or CapturedFrame. For capture() responses, pass response.capture.')
   return { captureId: target.ref.captureId }
 }
 

@@ -23,19 +23,22 @@ export interface AxNode {
  * desktop's mock Runner. Scripts reach it only through `sdk()`; the other
  * calls serve the canvas and the device picker outside script runs.
  */
-export interface Backend extends RunBackend {
+export interface Backend extends Pick<RunBackend, 'captureImage' | 'sdk'> {
   /**
    * Accessibility tree of the desktop, when the backend can provide one.
    * TODO(auv-ax-tree): AUV exposes no AX snapshot RPC yet; only the mock
    * desktop implements this until a driver capability lands.
    */
   accessibilityTree?: () => Promise<AxNode | null>
+  beginRun: () => Promise<RunBackend>
   /**
    * `logical` captures one pixel per point: for display-only frames such as
    * live mode, a quarter of a Retina capture.
    */
-  captureDisplay: (displayId?: string, options?: { logical?: boolean }) => Promise<CapturedFrame>
+  captureDisplay: (displayId?: string, options?: { logical?: boolean, signal?: AbortSignal }) => Promise<CapturedFrame>
   dispose: () => Promise<void>
+  readonly kind: 'auv' | 'mock'
+  readonly label: string
   listDisplays: () => Promise<DisplayInfo[]>
 }
 
@@ -70,8 +73,6 @@ export interface InputReceipt {
 
 /** What one script run talks to: the selected device, or a replay of a recorded run. */
 export interface RunBackend {
-  /** Opens a correlation scope for one script execution, when supported. */
-  beginRun: () => Promise<string | undefined>
   /**
    * Encoded pixels of a capture, fit inside `maxSize` (never enlarged), for
    * the canvas. Scripts fetch pixels themselves with `auv.captures.image`.

@@ -4,7 +4,7 @@ import type { Resource } from '../../store'
 import { contains } from '@auv-js/sdk'
 import { useEffect, useRef } from 'react'
 
-import { usePlayground } from '../../store'
+import { useWorkspaceState } from '../workbench/workspace-context'
 
 type FrameResource = Resource & { kind: 'frame' }
 type InputResource = Resource & { kind: 'input' }
@@ -18,7 +18,7 @@ const AREA = { height: 90, width: 150 }
  * one after it. Shows whether the click landed where intended and what changed.
  */
 export function ClickLoupe({ compact = false, resource }: { compact?: boolean, resource: InputResource }) {
-  const resources = usePlayground(state => state.resources)
+  const resources = useWorkspaceState(state => state.resources)
   const point = resource.handle.point
   if (!point)
     return null
