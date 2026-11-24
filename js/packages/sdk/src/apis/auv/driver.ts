@@ -45,9 +45,10 @@ import type {
 import type { ListWindowsRequestSchema, Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import type { WindowMutationResult } from '../../gen/auv/api/driver/v1/window_service_pb'
 import type { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
-import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
+import type { TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 import type { WithMillis } from './duration'
+import type { RunnerConnection } from './invoke'
 
 import { create } from '@bufbuild/protobuf'
 
@@ -449,7 +450,7 @@ type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>,
 type Shape<T extends DescMessage> = MessageShape<T>
 
 /** Binds first-party Driver capabilities to one existing Runner route. */
-export function createRunnerClient(connection: AuvConnection, route: RunnerRouteOptions): RunnerClient {
+export function createRunnerClient(connection: RunnerConnection, route: RunnerRouteOptions): RunnerClient {
   const callOptions = (options?: OperationOptions): OperationOptions => ({
     signal: combineSignals(route.signal, options?.signal),
   })

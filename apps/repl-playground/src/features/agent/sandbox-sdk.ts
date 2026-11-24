@@ -1,4 +1,4 @@
-import { AuvConnection, AuvRpcError, createRunnerClient } from '@auv-js/sdk'
+import { AuvConnection, createRunnerClient } from '@auv-js/sdk'
 import { base64Decode, base64Encode } from '@bufbuild/protobuf/wire'
 
 export {
@@ -43,29 +43,18 @@ declare function runnerOpen(method: string): Promise<number>
 declare function runnerSend(request: { body: string, id: number }): Promise<void>
 declare function runnerUnary(request: { body: string, jsonBody: string, method: string }): Promise<{ body: string } | { json: string }>
 
-async function rpc<T>(request: Promise<T>): Promise<T> {
-  try {
-    return await request
-  }
-  catch (error) {
-    if (error instanceof Error && 'rpcCode' in error && typeof error.rpcCode === 'number')
-      throw new AuvRpcError(error.rpcCode, error.message)
-    throw error
-  }
-}
-
 export const auv = createRunnerClient(new AuvConnection({
   close() {},
   async connect() {},
   async duplex({ method }) {
-    const id = await rpc(runnerOpen(method))
+    const id = await runnerOpen(method)
     return {
       close: () => runnerClose(id),
-      halfClose: () => rpc(runnerHalfClose(id)),
+      halfClose: () => runnerHalfClose(id),
       responses: (async function* () {
         try {
           for (;;) {
-            const body = await rpc(runnerNext(id))
+            const body = await runnerNext(id)
             if (body === null)
               return
             yield base64Decode(body)
@@ -75,11 +64,11 @@ export const auv = createRunnerClient(new AuvConnection({
           await runnerClose(id)
         }
       })(),
-      send: body => rpc(runnerSend({ body: base64Encode(body), id })),
+      send: body => runnerSend({ body: base64Encode(body), id }),
     }
   },
   async unary({ body, decodeJson, jsonBody, method }) {
-    const result = await rpc(runnerUnary({ body: base64Encode(body), jsonBody, method }))
+    const result = await runnerUnary({ body: base64Encode(body), jsonBody, method })
     return 'json' in result ? decodeJson(result.json) : base64Decode(result.body)
   },
 }), { runnerClass: 'auv.core.local' })

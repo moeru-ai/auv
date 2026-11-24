@@ -332,6 +332,12 @@ const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
 ```
 
+A host with its own transport can supply a `RunnerConnection` to
+`createRunnerClient(connection, route)`. Implement the typed `unary` and
+`duplex` methods using the generated RPC definitions. Set `local` for
+local-only connections and use `connection.route` for inherited Device and Run
+placement.
+
 Every `google.protobuf.Duration` a Runner call takes can be a number of
 milliseconds instead, at any depth: `{ click: { count: 2, interval: 80 } }`,
 `{ settle: 400 }` or `lease: 250`. A `{ seconds, nanos }` Duration still works.

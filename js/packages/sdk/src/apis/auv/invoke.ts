@@ -29,9 +29,11 @@ export interface InvokeUnaryOptions<I extends DescMessage, O extends DescMessage
   service: string
 }
 
+export type RunnerConnection = Pick<AuvConnection, 'duplex' | 'local' | 'route' | 'unary'>
+
 /** Opens one generated bidirectional capability operation. */
 export async function invokeDuplex<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeDuplexOptions<I, O>,
 ): Promise<TypedDuplexCall<I, O>> {
   return await connection.duplex(definition(options), {
@@ -42,7 +44,7 @@ export async function invokeDuplex<I extends DescMessage, O extends DescMessage>
 
 /** Invokes one generated server-streaming capability operation. */
 export async function invokeServerStream<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeServerStreamOptions<I, O>,
 ): Promise<AsyncIterable<MessageShape<O>>> {
   const stream = await invokeDuplex(connection, options)
@@ -53,7 +55,7 @@ export async function invokeServerStream<I extends DescMessage, O extends DescMe
 
 /** Invokes one generated unary capability operation through a routed Runner. */
 export async function invokeUnary<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeUnaryOptions<I, O>,
 ): Promise<MessageShape<O>> {
   return await connection.unary(definition(options), options.request, {
@@ -85,7 +87,7 @@ function inheritedRouteValue(kind: 'Device' | 'Run', explicit?: string, inherite
   return explicit ?? inherited
 }
 
-function routeHeaders(connection: AuvConnection, options: { deviceId?: string, runId?: string, runnerClass: string }): Headers {
+function routeHeaders(connection: RunnerConnection, options: { deviceId?: string, runId?: string, runnerClass: string }): Headers {
   const headers = new Headers({ 'auv-runner-class': options.runnerClass })
   const deviceId = selectedDevice(connection.local, inheritedRouteValue(
     'Device',
