@@ -17,9 +17,10 @@ import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { language, session } from '../../runtime/session'
-import { actions, usePlayground } from '../../store'
 import { bindHistory, lineAt as timelineLineAt } from '../../timeline'
 import { HoverCard } from '../inspect/HoverCard'
+import { WorkspaceContext } from '../workbench/workspace-context'
+import { actions, scriptWorkspace, usePlayground } from './script-workspace'
 
 const STORAGE_KEY = 'auv-playground:source'
 
@@ -232,7 +233,8 @@ function runLine(view: EditorView): boolean {
   if (!selection.empty)
     return runAll(view, 'run')
   const line = view.state.doc.lineAt(selection.head)
-  void session.run({ mode: 'run', source: line.text, startLine: line.number })
+  if (!session.run({ mode: 'run', source: line.text, startLine: line.number }))
+    return true
   const next = Math.min(line.number + 1, view.state.doc.lines)
   view.dispatch({ scrollIntoView: true, selection: { anchor: view.state.doc.line(next).from } })
   return true
@@ -307,7 +309,7 @@ const hover = hoverTooltip(async (view, pos) => {
     create() {
       const dom = document.createElement('div')
       const root = createRoot(dom)
-      root.render(<HoverCard info={info} line={line.number} name={hasValue ? name : undefined} />)
+      root.render(<WorkspaceContext value={scriptWorkspace}><HoverCard info={info} line={line.number} name={hasValue ? name : undefined} /></WorkspaceContext>)
       return { destroy: () => root.unmount(), dom }
     },
     end: info?.to ?? word?.to ?? pos,

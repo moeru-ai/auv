@@ -8,9 +8,8 @@ import { Empty } from '../../components/Empty'
 import { IconButton } from '../../components/IconButton'
 import { TabBar } from '../../components/TabBar'
 import { refHint } from '../../handles'
-import { session } from '../../runtime/session'
-import { actions, usePlayground } from '../../store'
 import { bindingsOf, consumersOf, cursorSeq, varsAt } from '../../timeline'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 import { MethodDocs } from './MethodDocs'
 import { ResourcePreview } from './ResourcePreview'
 import { RefChip, ValueView } from './ValueView'
@@ -24,10 +23,11 @@ interface RefGroup {
 }
 
 /** Right-hand inspector: the selected handle with its lineage, and the AX tree. */
-export function Inspector() {
-  const tab = usePlayground(state => state.inspectorTab)
+export function Inspector({ refreshAxTree }: { refreshAxTree: () => Promise<void> }) {
+  const { store } = useWorkspace()
+  const tab = useWorkspaceState(state => state.inspectorTab)
   return (
-    <Tabs.Root className="bg-surface-1 flex flex-col h-full" onValueChange={value => usePlayground.setState({ inspectorTab: value as InspectorTab })} value={tab}>
+    <Tabs.Root className="bg-surface-1 flex flex-col h-full" onValueChange={value => store.setState({ inspectorTab: value as InspectorTab })} value={tab}>
       <TabBar
         tabs={[
           { label: 'Handle', value: 'handle' },
@@ -37,21 +37,22 @@ export function Inspector() {
       />
       <Tabs.Panel className="flex-1 min-h-0" value="handle"><HandlePanel /></Tabs.Panel>
       <Tabs.Panel className="flex-1 min-h-0" value="call"><CallPanel /></Tabs.Panel>
-      <Tabs.Panel className="flex-1 min-h-0" value="ax"><AxTreePanel /></Tabs.Panel>
+      <Tabs.Panel className="flex-1 min-h-0" value="ax"><AxTreePanel refreshAxTree={refreshAxTree} /></Tabs.Panel>
     </Tabs.Root>
   )
 }
 
 /** Bound values as of the time cursor (latest when following), plus persisted top-level names. */
 export function VariablesPanel() {
-  const vars = usePlayground(state => state.vars)
-  const binds = usePlayground(state => state.binds)
-  const cursor = usePlayground(cursorSeq)
-  const following = usePlayground(state => state.cursor === null)
+  const { store } = useWorkspace()
+  const vars = useWorkspaceState(state => state.vars)
+  const binds = useWorkspaceState(state => state.binds)
+  const cursor = useWorkspaceState(cursorSeq)
+  const following = useWorkspaceState(state => state.cursor === null)
   const entries = useMemo(() => {
-    const asOf = binds.length > 0 ? varsAt(usePlayground.getState(), cursor) : {}
+    const asOf = binds.length > 0 ? varsAt(store.getState(), cursor) : {}
     return Object.entries(following ? { ...asOf, ...vars } : asOf)
-  }, [binds, cursor, following, vars])
+  }, [binds, cursor, following, store, vars])
 
   if (entries.length === 0)
     return <Empty>Declared names show up here; scrub the timeline to see them at any moment.</Empty>
@@ -76,6 +77,7 @@ function AxRow({ collapsed, depth, node, onToggle, selectedPath }: {
   onToggle: (path: string) => void
   selectedPath: null | string
 }) {
+  const { store } = useWorkspace()
   const ref = useRef<HTMLDivElement>(null)
   const isSelected = node.path === selectedPath
   // Ancestors of the selected node stay open so a canvas pick is always visible.
@@ -90,8 +92,8 @@ function AxRow({ collapsed, depth, node, onToggle, selectedPath }: {
     <>
       <div
         className={`pr-2 flex gap-1 h-6 cursor-default whitespace-nowrap items-center ${isSelected ? 'bg-accent/18' : 'hover:bg-surface-2'}`}
-        onClick={() => usePlayground.setState({ selectedAxPath: node.path })}
-        onMouseEnter={() => usePlayground.setState({ hoveredRect: node.frame ?? null })}
+        onClick={() => store.setState({ selectedAxPath: node.path })}
+        onMouseEnter={() => store.setState({ hoveredRect: node.frame ?? null })}
         ref={ref}
         style={{ paddingLeft: 8 + depth * 14 }}
       >
@@ -117,10 +119,11 @@ function AxRow({ collapsed, depth, node, onToggle, selectedPath }: {
   )
 }
 
-function AxTreePanel() {
-  const tree = usePlayground(state => state.axTree)
-  const backend = usePlayground(state => state.backend)
-  const selectedPath = usePlayground(state => state.selectedAxPath)
+function AxTreePanel({ refreshAxTree }: { refreshAxTree: () => Promise<void> }) {
+  const { store } = useWorkspace()
+  const tree = useWorkspaceState(state => state.axTree)
+  const backend = useWorkspaceState(state => state.backend)
+  const selectedPath = useWorkspaceState(state => state.selectedAxPath)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const selected = tree && selectedPath ? findNode(tree, selectedPath) : undefined
 
@@ -136,9 +139,9 @@ function AxTreePanel() {
     <div className="flex flex-col h-full">
       <div className="text-[11.5px] text-fg-subtle px-2 border-b border-line flex shrink-0 gap-1 h-8 items-center">
         <span className="flex-1">Hover to highlight · click the canvas to pick</span>
-        <IconButton hint="Refresh the accessibility tree" icon="i-ph-arrows-clockwise" onClick={() => void session.refreshAxTree()} />
+        <IconButton hint="Refresh the accessibility tree" icon="i-ph-arrows-clockwise" onClick={() => void refreshAxTree()} />
       </div>
-      <div className="text-[12.5px] font-mono py-1 flex-1 min-h-0 overflow-auto" onMouseLeave={() => usePlayground.setState({ hoveredRect: null })}>
+      <div className="text-[12.5px] font-mono py-1 flex-1 min-h-0 overflow-auto" onMouseLeave={() => store.setState({ hoveredRect: null })}>
         {tree
           ? (
               <AxRow
@@ -169,8 +172,9 @@ function AxTreePanel() {
 
 /** The selected call: arguments, outcome, and every handle it produced (filterable). */
 function CallPanel() {
-  const call = usePlayground(state => state.calls.find(candidate => candidate.id === state.selectedCallId))
-  const resources = usePlayground(state => state.resources)
+  const { actions } = useWorkspace()
+  const call = useWorkspaceState(state => state.calls.find(candidate => candidate.id === state.selectedCallId))
+  const resources = useWorkspaceState(state => state.resources)
   const [query, setQuery] = useState('')
   const refs = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -199,13 +203,19 @@ function CallPanel() {
             title="Move the time cursor to this call"
             type="button"
           >
-            {`${call.line === null ? '' : `L${call.line} `}#${call.hit} · seq ${call.seq}`}
+            {`${call.source ? `S${call.source.id} · ` : ''}${call.line === null ? '' : `L${call.line} `}#${call.hit} · seq ${call.seq}`}
           </button>
         </div>
         <div className="text-[11.5px] text-fg-subtle font-mono">
           {`${call.status}${duration === undefined ? '' : ` · ${duration}ms`} · ${call.effect}`}
         </div>
         <MethodDocs call={call} key={call.id} />
+        {call.source && (
+          <details className="text-[11.5px]">
+            <summary className="text-fg-muted cursor-pointer">{`Script ${call.source.id} source`}</summary>
+            <pre className="font-mono mt-2 max-h-48 whitespace-pre-wrap [overflow-wrap:anywhere] overflow-auto">{call.source.code}</pre>
+          </details>
+        )}
         {call.args.length > 0 && (
           <div className="flex flex-col gap-1">
             <div className="panel-title">Arguments</div>
@@ -303,10 +313,11 @@ function groupByApp(refs: string[], resources: Record<string, Resource>): RefGro
 }
 
 function HandlePanel() {
-  const selectedRef = usePlayground(state => state.selectedRef)
-  const resource = usePlayground(state => (state.selectedRef ? state.resources[state.selectedRef] : undefined))
-  const calls = usePlayground(state => state.calls)
-  const binds = usePlayground(state => state.binds)
+  const { actions } = useWorkspace()
+  const selectedRef = useWorkspaceState(state => state.selectedRef)
+  const resource = useWorkspaceState(state => (state.selectedRef ? state.resources[state.selectedRef] : undefined))
+  const calls = useWorkspaceState(state => state.calls)
+  const binds = useWorkspaceState(state => state.binds)
   const producer = resource?.callId === undefined ? undefined : calls.find(call => call.id === resource.callId)
   const consumers = useMemo(() => (selectedRef ? consumersOf(calls, selectedRef) : []), [selectedRef, calls])
   const bindings = useMemo(() => (selectedRef ? bindingsOf(binds, selectedRef) : []), [selectedRef, binds])
@@ -361,6 +372,7 @@ function HandlePanel() {
 }
 
 function LineageRow({ label, seq, text }: { label: string, seq: number, text: string }) {
+  const { actions } = useWorkspace()
   return (
     <button
       className="px-1.5 py-1 text-left rounded flex gap-2 cursor-pointer items-center hover:bg-surface-2"

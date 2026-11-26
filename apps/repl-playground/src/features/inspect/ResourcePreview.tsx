@@ -7,7 +7,7 @@ import { useEffect, useRef } from 'react'
 import { CopyButton } from '../../components/CopyButton'
 import { confidenceAlpha, confidenceLabel } from '../../ocr'
 import { paintRevealed } from '../../preview'
-import { usePlayground } from '../../store'
+import { useWorkspaceState } from '../workbench/workspace-context'
 import { ClickLoupe } from './ClickLoupe'
 
 interface OverlayBox {
@@ -86,7 +86,7 @@ const OVERLAY = {
 
 /** Visual preview for a resource handle (frame, OCR result, window, input, display). */
 export function ResourcePreview({ compact = false, resource }: { compact?: boolean, resource: Resource }) {
-  const resources = usePlayground(state => state.resources)
+  const resources = useWorkspaceState(state => state.resources)
   const size = compact ? { maxHeight: 150, maxWidth: 260 } : { maxHeight: 260, maxWidth: 420 }
 
   switch (resource.kind) {

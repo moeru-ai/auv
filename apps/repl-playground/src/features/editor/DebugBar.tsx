@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { CopyButton } from '../../components/CopyButton'
 import { IconButton } from '../../components/IconButton'
 import { session } from '../../runtime/session'
-import { usePlayground } from '../../store'
+import { useDeviceTarget } from '../device/device-target'
+import { usePlayground } from './script-workspace'
 
 const POSITION_KEY = 'auv-playground:debugbar'
 
@@ -30,6 +31,7 @@ export function DebugBar() {
   const [offset, setOffset] = useState(loadOffset)
   const barRef = useRef<HTMLDivElement>(null)
   const busy = status === 'running' || status === 'paused' || status === 'compiling'
+  const locked = useDeviceTarget(state => state.locked)
   const paused = status === 'paused'
 
   useEffect(() => {
@@ -77,8 +79,8 @@ export function DebugBar() {
       />
       {!busy && (
         <>
-          <IconButton hint="Run all or the selection" icon="i-ph-play-fill" keys="⌘↩" label="Run" onClick={() => runEditor('run')} tone="primary" />
-          <IconButton hint="Run and pause at the first statement" icon="i-ph-footprints" keys="⌘⇧↩" onClick={() => runEditor('step')} />
+          <IconButton disabled={locked} hint={locked ? 'Another playground execution is running' : 'Run all or the selection'} icon="i-ph-play-fill" keys="⌘↩" label="Run" onClick={() => runEditor('run')} tone="primary" />
+          <IconButton disabled={locked} hint="Run and pause at the first statement" icon="i-ph-footprints" keys="⌘⇧↩" onClick={() => runEditor('step')} />
           <IconButton
             disabled={!hasRecording}
             hint={hasRecording ? 'Replay offline: re-run against the last live run’s recorded device calls' : 'Run live once to record device calls for offline replay'}

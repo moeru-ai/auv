@@ -62,7 +62,7 @@ export interface BridgedCallStart {
 
 export interface BridgeHost {
   /** Called when a forwarded RPC starts; the returned function when it ends. */
-  record?: (call: BridgedCallStart) => ((end: BridgedCallEnd) => void) | Promise<(end: BridgedCallEnd) => void>
+  record?: (call: BridgedCallStart) => ((end: BridgedCallEnd) => void) | Promise<((end: BridgedCallEnd) => void) | undefined>
   /** The active backend's transport, or why the backend cannot serve SDK calls. */
   target: () => BridgeTarget | string
 }
@@ -70,6 +70,7 @@ export interface BridgeHost {
 /** The transport the host forwards to, and the headers it adds (the credential). */
 export interface BridgeTarget {
   headers?: Record<string, string>
+  signal?: AbortSignal
   transport: Transport
 }
 
@@ -150,6 +151,27 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
   }
 }
 
+export async function recordUnaryCall(transport: Transport, call: UnaryCall, entry: BridgedCallEnd): Promise<Uint8Array> {
+  entry.exchange.push({ request: call.body })
+  try {
+    call.signal?.throwIfAborted()
+    const body = await transport.unary({
+      ...call,
+      decodeJson: (text) => {
+        entry.json = text
+        return call.decodeJson(text)
+      },
+    })
+    if (entry.json === undefined)
+      entry.exchange.push({ response: body })
+    return body
+  }
+  catch (error) {
+    entry.error = bridgedError(error)
+    throw error
+  }
+}
+
 /** Rebuilds a bridged error as the SDK error class it was. */
 export function remoteError(error: BridgedError): Error {
   const rebuilt = error.rpcCode !== undefined
@@ -166,7 +188,8 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
   defineInvokeHandler(context, unaryRpc, async (request, options): Promise<UnaryReply> => {
     const finish = await host.record?.({ body: request.body, method: request.method, stepId: request.stepId })
     try {
-      const { headers, transport } = resolveTarget(host)
+      const { headers, signal, transport } = resolveTarget(host)
+      const invocationSignal = options?.abortController?.signal
       // NOTICE(bridge-decode-json): the HTTP transport decodes JSON bindings
       // through `UnaryCall.decodeJson`, which only the worker's SDK can build.
       // Capture the response text here and decode it back in the worker.
@@ -181,7 +204,7 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
         http: request.http,
         jsonBody: request.jsonBody,
         method: request.method,
-        signal: options?.abortController?.signal,
+        signal: signal && invocationSignal ? AbortSignal.any([signal, invocationSignal]) : signal ?? invocationSignal,
       } satisfies UnaryCall)
       finish?.({ exchange: json === undefined ? [{ request: request.body }, { response: body }] : [{ request: request.body }], json })
       return json === undefined ? { body } : { json }
@@ -204,11 +227,12 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
     let finish: ((end: BridgedCallEnd) => void) | undefined
     let call: DuplexCall | undefined
     try {
-      const { headers, transport } = resolveTarget(host)
+      const { headers, signal, transport } = resolveTarget(host)
+      const invocationSignal = options?.abortController?.signal
       call = await transport.duplex({
         headers: withHeaders(opened.headers, headers),
         method: opened.method,
-        signal: options?.abortController?.signal,
+        signal: signal && invocationSignal ? AbortSignal.any([signal, invocationSignal]) : signal ?? invocationSignal,
       })
       const stream = call
       let started = false

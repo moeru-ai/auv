@@ -36,6 +36,7 @@ export interface CallRecord {
   rpc?: { path: string, presentation?: MethodPresentation }
   /** Event-log position when the call started. */
   seq: number
+  source?: { code: string, id: number }
   startedAt: number
   status: 'error' | 'ok' | 'pending'
 }
@@ -190,207 +191,212 @@ export interface StepEvent {
 
 const emptyTimings: TimingSnapshot = { lines: [], statements: [] }
 
-export const usePlayground = create<PlaygroundState>(() => ({
-  axTree: null,
-  backend: null,
-  binds: [],
-  breakpoints: [],
-  calls: [],
-  cursor: null,
-  displays: [],
-  executedLines: [],
-  focuses: [],
-  hasRecording: false,
-  hoveredCallId: null,
-  hoveredRect: null,
-  hoveredRef: null,
-  inspectorTab: 'handle',
-  live: false,
-  liveFrames: {},
-  logs: [],
-  marks: [],
-  pauses: [],
-  pins: [],
-  resources: {},
-  run: { currentLine: null, mode: 'live', status: 'idle' },
-  runIndex: 0,
-  selectedAxPath: null,
-  selectedCallId: null,
-  selectedRef: null,
-  seqAt: [],
-  steps: [],
-  timings: emptyTimings,
-  vars: {},
-}))
+export type Workspace = ReturnType<typeof createWorkspace>
 
-const set = usePlayground.setState
-const get = usePlayground.getState
+export function createWorkspace() {
+  const store = create<PlaygroundState>(() => ({
+    axTree: null,
+    backend: null,
+    binds: [],
+    breakpoints: [],
+    calls: [],
+    cursor: null,
+    displays: [],
+    executedLines: [],
+    focuses: [],
+    hasRecording: false,
+    hoveredCallId: null,
+    hoveredRect: null,
+    hoveredRef: null,
+    inspectorTab: 'handle',
+    live: false,
+    liveFrames: {},
+    logs: [],
+    marks: [],
+    pauses: [],
+    pins: [],
+    resources: {},
+    run: { currentLine: null, mode: 'live', status: 'idle' },
+    runIndex: 0,
+    selectedAxPath: null,
+    selectedCallId: null,
+    selectedRef: null,
+    seqAt: [],
+    steps: [],
+    timings: emptyTimings,
+    vars: {},
+  }))
+  const set = store.setState
+  const get = store.getState
 
-let nextCallId = 1
-let nextLogId = 1
-let nextMarkId = 1
-let nextPinId = 1
+  let nextCallId = 1
+  let nextLogId = 1
+  let nextMarkId = 1
+  let nextPinId = 1
+
+  const actions = {
+    addFocus(focus: Omit<FocusEvent, 'id'>): void {
+      set(state => ({ focuses: [...state.focuses, { ...focus, id: nextMarkId++ }] }))
+    },
+
+    addLog(entry: Omit<LogEntry, 'id'>): void {
+      set(state => ({ logs: [...state.logs.slice(-999), { ...entry, id: nextLogId++ }] }))
+    },
+
+    addMark(mark: Omit<Mark, 'id'>): void {
+      set(state => ({ marks: [...state.marks, { ...mark, id: nextMarkId++ }] }))
+    },
+
+    addPin(pin: Omit<Pin, 'id' | 'x' | 'y'> & Partial<Pick<Pin, 'x' | 'y'>>): void {
+      const offset = (get().pins.length % 6) * 28
+      set(state => ({ pins: [...state.pins, { x: 120 + offset, y: 120 + offset, ...pin, id: `pin-${nextPinId++}` }] }))
+    },
+
+    /** Appends a batch of step/bind events and their timestamps. */
+    appendEvents(steps: StepEvent[], binds: BindEvent[], seqAt: Array<[number, number]>): void {
+      set((state) => {
+        const times = state.seqAt.slice()
+        for (const [seq, at] of seqAt)
+          times[seq] = at
+        return {
+          binds: binds.length > 0 ? [...state.binds, ...binds] : state.binds,
+          seqAt: times,
+          steps: steps.length > 0 ? [...state.steps, ...steps] : state.steps,
+        }
+      })
+    },
+
+    beginCall(call: Omit<CallRecord, 'id' | 'refs' | 'status'>): number {
+      const id = nextCallId++
+      set(state => ({ calls: [...state.calls, { ...call, id, refs: [], status: 'pending' }] }))
+      return id
+    },
+
+    /** Clears per-run records but keeps resources so earlier handles stay inspectable. */
+    beginRun(mode: RunState['mode']): void {
+      set(state => ({
+        binds: [],
+        calls: [],
+        cursor: null,
+        executedLines: [],
+        focuses: [],
+        hoveredCallId: null,
+        marks: [],
+        pauses: [],
+        run: { currentLine: null, mode, startedAt: Date.now(), status: 'compiling' },
+        runIndex: state.runIndex + 1,
+        selectedCallId: null,
+        seqAt: [],
+        steps: [],
+        timings: emptyTimings,
+      }))
+    },
+
+    clearConsole(): void {
+      set({ logs: [] })
+    },
+
+    clearPins(): void {
+      set({ pins: [] })
+    },
+
+    endCall(id: number, patch: Pick<CallRecord, 'endSeq' | 'error' | 'refs' | 'result' | 'status'>): void {
+      set(state => ({ calls: state.calls.map(call => call.id === id ? { ...call, ...patch, endedAt: nowMs() } : call) }))
+    },
+
+    movePin(id: string, x: number, y: number): void {
+      set(state => ({ pins: state.pins.map(pin => pin.id === id ? { ...pin, x, y } : pin) }))
+    },
+
+    patchRun(patch: Partial<RunState>): void {
+      set(state => ({ run: { ...state.run, ...patch } }))
+    },
+
+    pauseAt(at: number): void {
+      set(state => ({ pauses: [...state.pauses, { start: at }] }))
+    },
+
+    putResource(ref: string, resource: Resource): void {
+      set(state => ({ resources: { ...state.resources, [ref]: resource } }))
+    },
+
+    removePin(id: string): void {
+      set(state => ({ pins: state.pins.filter(pin => pin.id !== id) }))
+    },
+
+    resetSession(): void {
+      for (const resource of Object.values(get().resources)) {
+        if (resource.kind === 'frame') {
+          resource.bitmap?.close()
+          resource.preview?.close()
+        }
+      }
+      set({
+        binds: [],
+        calls: [],
+        cursor: null,
+        executedLines: [],
+        focuses: [],
+        logs: [],
+        marks: [],
+        pins: [],
+        resources: {},
+        run: { currentLine: null, mode: 'live', status: 'idle' },
+        selectedCallId: null,
+        selectedRef: null,
+        seqAt: [],
+        steps: [],
+        timings: emptyTimings,
+        vars: {},
+      })
+    },
+
+    resumeAt(at: number): void {
+      set(state => ({ pauses: state.pauses.map((pause, index) => index === state.pauses.length - 1 && pause.end === undefined ? { ...pause, end: at } : pause) }))
+    },
+
+    /** Shows a call in the inspector and focuses its newest handle on the canvas. */
+    selectCall(id: number): void {
+      const call = get().calls.find(candidate => candidate.id === id)
+      set(state => ({ inspectorTab: 'call', selectedCallId: id, selectedRef: call?.refs.at(-1) ?? state.selectedRef }))
+    },
+
+    selectRef(ref: string): void {
+      set({ inspectorTab: 'handle', selectedRef: ref })
+    },
+
+    setCursor(cursor: null | number): void {
+      set({ cursor })
+    },
+
+    setLiveFrame(displayId: string, frame: LiveFrame): void {
+      const previous = get().liveFrames[displayId]
+      set(state => ({ liveFrames: { ...state.liveFrames, [displayId]: frame } }))
+      // A frame can keep its predecessor's preview while its pixels load.
+      if (previous?.bitmap !== frame.bitmap)
+        previous?.bitmap?.close()
+      if (previous?.preview !== frame.preview)
+        previous?.preview?.close()
+    },
+
+    // TODO(breakpoint-anchors): breakpoints are plain line numbers and do not
+    // follow edits; map them through document changes if that becomes annoying.
+    toggleBreakpoint(line: number): number[] {
+      const current = new Set(get().breakpoints)
+      if (current.has(line))
+        current.delete(line)
+      else
+        current.add(line)
+      const breakpoints = [...current].sort((a, b) => a - b)
+      set({ breakpoints })
+      return breakpoints
+    },
+  }
+
+  return { actions, store }
+}
 
 /** Epoch milliseconds with sub-millisecond precision; the worker uses the same basis. */
 export function nowMs(): number {
   return performance.timeOrigin + performance.now()
-}
-
-export const actions = {
-  addFocus(focus: Omit<FocusEvent, 'id'>): void {
-    set(state => ({ focuses: [...state.focuses, { ...focus, id: nextMarkId++ }] }))
-  },
-
-  addLog(entry: Omit<LogEntry, 'id'>): void {
-    set(state => ({ logs: [...state.logs.slice(-999), { ...entry, id: nextLogId++ }] }))
-  },
-
-  addMark(mark: Omit<Mark, 'id'>): void {
-    set(state => ({ marks: [...state.marks, { ...mark, id: nextMarkId++ }] }))
-  },
-
-  addPin(pin: Omit<Pin, 'id' | 'x' | 'y'> & Partial<Pick<Pin, 'x' | 'y'>>): void {
-    const offset = (get().pins.length % 6) * 28
-    set(state => ({ pins: [...state.pins, { x: 120 + offset, y: 120 + offset, ...pin, id: `pin-${nextPinId++}` }] }))
-  },
-
-  /** Appends a batch of step/bind events and their timestamps. */
-  appendEvents(steps: StepEvent[], binds: BindEvent[], seqAt: Array<[number, number]>): void {
-    set((state) => {
-      const times = state.seqAt.slice()
-      for (const [seq, at] of seqAt)
-        times[seq] = at
-      return {
-        binds: binds.length > 0 ? [...state.binds, ...binds] : state.binds,
-        seqAt: times,
-        steps: steps.length > 0 ? [...state.steps, ...steps] : state.steps,
-      }
-    })
-  },
-
-  beginCall(call: Omit<CallRecord, 'id' | 'refs' | 'status'>): number {
-    const id = nextCallId++
-    set(state => ({ calls: [...state.calls, { ...call, id, refs: [], status: 'pending' }] }))
-    return id
-  },
-
-  /** Clears per-run records but keeps resources so earlier handles stay inspectable. */
-  beginRun(mode: RunState['mode']): void {
-    set(state => ({
-      binds: [],
-      calls: [],
-      cursor: null,
-      executedLines: [],
-      focuses: [],
-      hoveredCallId: null,
-      marks: [],
-      pauses: [],
-      run: { currentLine: null, mode, startedAt: Date.now(), status: 'compiling' },
-      runIndex: state.runIndex + 1,
-      selectedCallId: null,
-      seqAt: [],
-      steps: [],
-      timings: emptyTimings,
-    }))
-  },
-
-  clearConsole(): void {
-    set({ logs: [] })
-  },
-
-  clearPins(): void {
-    set({ pins: [] })
-  },
-
-  endCall(id: number, patch: Pick<CallRecord, 'endSeq' | 'error' | 'refs' | 'result' | 'status'>): void {
-    set(state => ({ calls: state.calls.map(call => call.id === id ? { ...call, ...patch, endedAt: nowMs() } : call) }))
-  },
-
-  movePin(id: string, x: number, y: number): void {
-    set(state => ({ pins: state.pins.map(pin => pin.id === id ? { ...pin, x, y } : pin) }))
-  },
-
-  patchRun(patch: Partial<RunState>): void {
-    set(state => ({ run: { ...state.run, ...patch } }))
-  },
-
-  pauseAt(at: number): void {
-    set(state => ({ pauses: [...state.pauses, { start: at }] }))
-  },
-
-  putResource(ref: string, resource: Resource): void {
-    set(state => ({ resources: { ...state.resources, [ref]: resource } }))
-  },
-
-  removePin(id: string): void {
-    set(state => ({ pins: state.pins.filter(pin => pin.id !== id) }))
-  },
-
-  resetSession(): void {
-    for (const resource of Object.values(get().resources)) {
-      if (resource.kind === 'frame') {
-        resource.bitmap?.close()
-        resource.preview?.close()
-      }
-    }
-    set({
-      binds: [],
-      calls: [],
-      cursor: null,
-      executedLines: [],
-      focuses: [],
-      logs: [],
-      marks: [],
-      pins: [],
-      resources: {},
-      run: { currentLine: null, mode: 'live', status: 'idle' },
-      selectedCallId: null,
-      selectedRef: null,
-      seqAt: [],
-      steps: [],
-      timings: emptyTimings,
-      vars: {},
-    })
-  },
-
-  resumeAt(at: number): void {
-    set(state => ({ pauses: state.pauses.map((pause, index) => index === state.pauses.length - 1 && pause.end === undefined ? { ...pause, end: at } : pause) }))
-  },
-
-  /** Shows a call in the inspector and focuses its newest handle on the canvas. */
-  selectCall(id: number): void {
-    const call = get().calls.find(candidate => candidate.id === id)
-    set(state => ({ inspectorTab: 'call', selectedCallId: id, selectedRef: call?.refs.at(-1) ?? state.selectedRef }))
-  },
-
-  selectRef(ref: string): void {
-    set({ inspectorTab: 'handle', selectedRef: ref })
-  },
-
-  setCursor(cursor: null | number): void {
-    set({ cursor })
-  },
-
-  setLiveFrame(displayId: string, frame: LiveFrame): void {
-    const previous = get().liveFrames[displayId]
-    set(state => ({ liveFrames: { ...state.liveFrames, [displayId]: frame } }))
-    // A frame can keep its predecessor's preview while its pixels load.
-    if (previous?.bitmap !== frame.bitmap)
-      previous?.bitmap?.close()
-    if (previous?.preview !== frame.preview)
-      previous?.preview?.close()
-  },
-
-  // TODO(breakpoint-anchors): breakpoints are plain line numbers and do not
-  // follow edits; map them through document changes if that becomes annoying.
-  toggleBreakpoint(line: number): number[] {
-    const current = new Set(get().breakpoints)
-    if (current.has(line))
-      current.delete(line)
-    else
-      current.add(line)
-    const breakpoints = [...current].sort((a, b) => a - b)
-    set({ breakpoints })
-    return breakpoints
-  },
 }

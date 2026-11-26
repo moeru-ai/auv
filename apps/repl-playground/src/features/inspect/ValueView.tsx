@@ -5,7 +5,7 @@ import { PreviewCard } from '@base-ui/react/preview-card'
 import { useState } from 'react'
 
 import { refHint, refOf } from '../../handles'
-import { actions, usePlayground } from '../../store'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 import { ResourcePreview } from './ResourcePreview'
 
 const KIND_STYLE: Record<string, string> = {
@@ -35,9 +35,10 @@ export function RefChip({ children, className, refId }: {
   className?: string
   refId: string
 }) {
+  const { actions, store } = useWorkspace()
   const kind = refId.split(':')[0] ?? ''
-  const selected = usePlayground(state => state.selectedRef === refId)
-  const resource = usePlayground(state => state.resources[refId])
+  const selected = useWorkspaceState(state => state.selectedRef === refId)
+  const resource = useWorkspaceState(state => state.resources[refId])
   const hint = refHint(resource)
   // An empty OCR search is still a handle, but nothing to act on: show it faint.
   const empty = resource?.kind === 'text' && resource.handle.matches.length === 0
@@ -57,8 +58,8 @@ export function RefChip({ children, className, refId }: {
           <button
             className={className === undefined ? `text-[11.5px] font-mono px-1.5 rounded inline-flex gap-1 h-5 max-w-full cursor-pointer transition-shadow items-center ${KIND_STYLE[kind] ?? 'bg-surface-2 text-fg-muted'}  ${empty ? 'opacity-50' : ''} ${selected ? 'ring-1 ring-accent' : ''}` : `${className} ${selected ? 'bg-accent/14' : ''}`}
             onClick={() => actions.selectRef(refId)}
-            onMouseEnter={() => usePlayground.setState({ hoveredRef: refId })}
-            onMouseLeave={() => usePlayground.setState({ hoveredRef: null })}
+            onMouseEnter={() => store.setState({ hoveredRef: refId })}
+            onMouseLeave={() => store.setState({ hoveredRef: null })}
             ref={node => setTooltip(node?.closest<HTMLElement>('.cm-tooltip') ?? null)}
             type="button"
           />
@@ -93,7 +94,7 @@ export function ValueView({ depth = 0, value }: { depth?: number, value: WireVal
   // SDK values (a `Window`, a `WindowClient`, a `CaptureRef`) show as a chip
   // once the playground recorded the resource; otherwise as plain data.
   const ref = refOf(value)
-  const known = usePlayground(state => ref !== undefined && ref in state.resources)
+  const known = useWorkspaceState(state => ref !== undefined && ref in state.resources)
 
   if (value === null)
     return <span className="text-fg-subtle">null</span>
@@ -156,12 +157,13 @@ export function ValueView({ depth = 0, value }: { depth?: number, value: WireVal
 
 /** An `area()` value; hovering outlines it on the desktop canvas. */
 function AreaChip({ area }: { area: AreaValue }) {
+  const { store } = useWorkspace()
   const rect = { height: area.height, width: area.width, x: area.x, y: area.y }
   return (
     <span
       className="text-[11.5px] text-syn-string font-mono px-1.5 rounded bg-syn-string/12 inline-flex gap-1 h-5 max-w-full cursor-default items-center"
-      onMouseEnter={() => usePlayground.setState({ hoveredRect: rect })}
-      onMouseLeave={() => usePlayground.setState({ hoveredRect: null })}
+      onMouseEnter={() => store.setState({ hoveredRect: rect })}
+      onMouseLeave={() => store.setState({ hoveredRect: null })}
       title={area.from ? `area from ${area.from}` : 'area'}
     >
       <span className="opacity-60">▭</span>
@@ -172,7 +174,8 @@ function AreaChip({ area }: { area: AreaValue }) {
 }
 
 function RefPreview({ refId, resource }: { refId: string, resource: Resource }) {
-  const producer = usePlayground(state => state.calls.find(call => call.id === resource.callId))
+  const { actions } = useWorkspace()
+  const producer = useWorkspaceState(state => state.calls.find(call => call.id === resource.callId))
   return (
     <div className="text-[12.5px] flex flex-col gap-2">
       <div className="flex gap-2 items-start">

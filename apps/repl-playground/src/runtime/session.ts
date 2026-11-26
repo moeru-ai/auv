@@ -1,23 +1,21 @@
 import type { BirpcReturn } from 'birpc'
 
 import type { Recording } from '../backend/replay'
-import type { Backend, RunBackend } from '../backend/types'
+import type { RunBackend } from '../backend/types'
 import type { Rect } from '../script-api/api'
 import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
 import type { ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
 
-import { camelCaseName } from '@auv-js/sdk'
-import { fromBinary, fromJsonString } from '@bufbuild/protobuf'
 import { createContext as createWorkerChannel } from '@moeru/eventa/adapters/webworkers'
 import { createBirpc } from 'birpc'
 
 import { RecordingBackend, ReplayBackend } from '../backend/replay'
+import { reserveDevice, useDeviceTarget } from '../features/device/device-target'
+import { actions, scriptDesktop, scriptWorkspace, usePlayground } from '../features/editor/script-workspace'
 import { boundsOf } from '../handles'
-import { decodeThumbHash } from '../preview'
 import { StepTimer } from '../stepper/timing'
-import { actions, nowMs, usePlayground } from '../store'
-import { CallScope, decodeBitmap, recordRpcResources } from './rpc-resources'
+import { recordCall } from './record-call'
 import { SDK_PORT_MESSAGE, serveBridge } from './sdk-bridge'
 
 /** Language service + compiler worker, shared by the editor and the runner. */
@@ -78,9 +76,10 @@ class EventBatch {
  */
 class ExecSession {
   get running(): boolean {
-    return this.#running
+    return this.#active !== undefined
   }
 
+  #active?: { abort: AbortController, completion: Promise<void> }
   #batch: EventBatch
   #bindHits: number[] = []
   #binds: BindSite[] = []
@@ -88,14 +87,13 @@ class ExecSession {
   #exec!: BirpcReturn<ExecWorkerApi, HostApi>
   #lastLine: null | number = null
   #lineHits = new Map<number, number>()
-  #liveTimer?: number
+  #port?: MessagePort
   #recording?: Recording
   #runBackend: null | RunBackend = null
-  #running = false
   #seq = 0
   #steps: StepSite[] = []
-  #timer?: StepTimer
 
+  #timer?: StepTimer
   #worker?: Worker
 
   constructor() {
@@ -114,22 +112,17 @@ class ExecSession {
     this.#spawn()
   }
 
-  /** Reloads the accessibility tree from the active backend, when supported. */
-  async refreshAxTree(): Promise<void> {
-    const backend = usePlayground.getState().backend
-    if (!backend?.accessibilityTree) {
-      usePlayground.setState({ axTree: null })
-      return
-    }
-    usePlayground.setState({ axTree: await backend.accessibilityTree() })
-  }
-
   /** Terminates the worker (also escapes infinite sync loops) and clears REPL state. */
-  reset(): void {
+  reset(): Promise<void> | undefined {
+    const active = this.#active
+    active?.abort.abort()
     this.#worker?.terminate()
-    this.#running = false
+    this.#port?.close()
+    this.#exec.$close()
+    this.#batch.flush()
     actions.resetSession()
     this.#spawn()
+    return active?.completion
   }
 
   // TODO(step-over): `step` pauses at the next hook anywhere, so it steps into
@@ -139,96 +132,26 @@ class ExecSession {
     this.#exec.resume(mode)
   }
 
-  async run(options: RunOptions): Promise<void> {
-    if (this.#running)
+  run(options: RunOptions): Promise<void> | undefined {
+    const savedRecording = options.replay ? this.#recording : undefined
+    if (this.running || (options.replay && !savedRecording))
       return
-    const live = usePlayground.getState().backend
-    if (options.replay && !this.#recording)
+    const release = savedRecording ? undefined : reserveDevice()
+    if (!savedRecording && !release)
       return
-    this.#running = true
-    const recorder = !options.replay && live ? new RecordingBackend(live) : undefined
-    this.#runBackend = options.replay ? new ReplayBackend(this.#recording!) : recorder ?? live
-    this.#seq = 0
-    this.#lineHits = new Map()
-    this.#lastLine = null
-    actions.beginRun(options.replay ? 'replay' : 'live')
-    try {
-      const compiled = await language.compile({ cellId: ++this.#cellId, source: options.source, startLine: options.startLine })
-      if (!compiled.ok) {
-        actions.patchRun({ endedAt: Date.now(), errorLine: compiled.line, errorMessage: compiled.message, status: 'error' })
-        return
-      }
-      this.#steps = compiled.steps
-      this.#binds = compiled.binds
-      this.#bindHits = Array.from<number>({ length: compiled.binds.length }).fill(0)
-      this.#timer = new StepTimer(compiled.steps)
-      const runId = await this.#runBackend?.beginRun()
-      actions.patchRun({ runId, status: 'running' })
-      const outcome = await this.#exec.run({
-        binds: compiled.binds,
-        breakpoints: usePlayground.getState().breakpoints,
-        code: compiled.code,
-        hoisted: compiled.hoisted,
-        mode: options.mode,
-        prelude: compiled.prelude,
-        sdkRoute: this.#runBackend?.sdk().route,
-        steps: compiled.steps,
-      })
-      this.#timer.finish(performance.timeOrigin + performance.now())
-      this.#batch.flush()
-      const timings = this.#timer.snapshot()
-      const ended = { currentLine: null, endedAt: Date.now() }
-      if (outcome.status === 'ok') {
-        actions.patchRun({ ...ended, outcome, status: 'done' })
-        if (outcome.value !== undefined)
-          this.#log('show', [outcome.value], null, 'result')
-      }
-      else if (outcome.status === 'stopped') {
-        actions.patchRun({ ...ended, outcome, status: 'stopped' })
-      }
-      else {
-        actions.patchRun({ ...ended, errorLine: outcome.line, errorMessage: outcome.message, outcome, status: 'error' })
-        this.#log('error', [outcome.message], outcome.line ?? null)
-      }
-      usePlayground.setState({ timings })
-      await this.#runBackend?.endRun(outcome.status === 'ok' ? 'succeeded' : outcome.status === 'stopped' ? 'canceled' : 'failed')
-      if (recorder) {
-        this.#recording = recorder.recording()
-        usePlayground.setState({ hasRecording: true })
-      }
-      void this.refreshAxTree().catch(() => {})
-    }
-    finally {
-      this.#running = false
-    }
+    const abort = new AbortController()
+    const completion = this.#run(options, abort.signal, savedRecording).finally(() => {
+      abort.abort()
+      this.#active = undefined
+      this.#runBackend = null
+      release?.()
+    })
+    this.#active = { abort, completion }
+    return completion
   }
 
   setBreakpoints(lines: number[]): void {
     this.#exec.setBreakpoints(lines)
-  }
-
-  /** Polls display captures into the canvas while live mode is on. */
-  setLive(live: boolean, intervalMs = 900): void {
-    usePlayground.setState({ live })
-    window.clearTimeout(this.#liveTimer)
-    if (!live)
-      return
-    const tick = async () => {
-      const { backend, displays, live: stillLive } = usePlayground.getState()
-      if (!stillLive || !backend)
-        return
-      for (const display of displays) {
-        try {
-          await captureLiveFrame(backend, display.id)
-        }
-        catch (error) {
-          console.warn(`Live capture failed for display ${display.id}`, error)
-        }
-      }
-      if (usePlayground.getState().live)
-        this.#liveTimer = window.setTimeout(() => void tick(), intervalMs)
-    }
-    void tick()
   }
 
   stop(): void {
@@ -246,68 +169,118 @@ class ExecSession {
     return seq
   }
 
+  async #run(options: RunOptions, signal: AbortSignal, savedRecording: Recording | undefined): Promise<void> {
+    let backend: null | RunBackend = null
+    let recorder: RecordingBackend | undefined
+    this.#seq = 0
+    this.#lineHits = new Map()
+    this.#lastLine = null
+    actions.beginRun(savedRecording ? 'replay' : 'live')
+    let runOpened = false
+    try {
+      const compiled = await language.compile({ cellId: ++this.#cellId, source: options.source, startLine: options.startLine })
+      if (signal.aborted)
+        return
+      if (!compiled.ok) {
+        actions.patchRun({ endedAt: Date.now(), errorLine: compiled.line, errorMessage: compiled.message, status: 'error' })
+        return
+      }
+      this.#steps = compiled.steps
+      this.#binds = compiled.binds
+      this.#bindHits = Array.from<number>({ length: compiled.binds.length }).fill(0)
+      this.#timer = new StepTimer(compiled.steps)
+      if (savedRecording) {
+        backend = new ReplayBackend(savedRecording)
+      }
+      else {
+        const live = await useDeviceTarget.getState().backend?.beginRun()
+        if (live)
+          backend = recorder = new RecordingBackend(live)
+      }
+      runOpened = true
+      if (signal.aborted)
+        return
+      this.#runBackend = backend
+      const sdkRoute = backend?.sdk().route
+      actions.patchRun({ runId: sdkRoute?.runId, status: 'running' })
+      const outcome = await this.#exec.run({
+        binds: compiled.binds,
+        breakpoints: usePlayground.getState().breakpoints,
+        code: compiled.code,
+        hoisted: compiled.hoisted,
+        mode: options.mode,
+        prelude: compiled.prelude,
+        sdkRoute,
+        steps: compiled.steps,
+      })
+      if (signal.aborted)
+        return
+      this.#timer.finish(performance.timeOrigin + performance.now())
+      this.#batch.flush()
+      const timings = this.#timer.snapshot()
+      const ended = { currentLine: null, endedAt: Date.now() }
+      if (outcome.status === 'ok') {
+        actions.patchRun({ ...ended, outcome, status: 'done' })
+        if (outcome.value !== undefined)
+          this.#log('show', [outcome.value], null, 'result')
+      }
+      else if (outcome.status === 'stopped') {
+        actions.patchRun({ ...ended, outcome, status: 'stopped' })
+      }
+      else {
+        actions.patchRun({ ...ended, errorLine: outcome.line, errorMessage: outcome.message, outcome, status: 'error' })
+        this.#log('error', [outcome.message], outcome.line ?? null)
+      }
+      usePlayground.setState({ timings })
+      runOpened = false
+      await backend?.endRun(outcome.status === 'ok' ? 'succeeded' : outcome.status === 'stopped' ? 'canceled' : 'failed')
+      if (signal.aborted)
+        return
+      if (recorder) {
+        this.#recording = recorder.recording()
+        usePlayground.setState({ hasRecording: true })
+      }
+      if (!savedRecording)
+        void scriptDesktop.refreshAxTree().catch(() => {})
+    }
+    catch (error) {
+      if (!signal.aborted)
+        throw error
+    }
+    finally {
+      if (signal.aborted && runOpened)
+        await backend?.endRun('canceled')
+    }
+  }
+
   #spawn(): void {
     const worker = new Worker(new URL('../workers/exec.worker.ts', import.meta.url), { type: 'module' })
     this.#worker = worker
     const lineOf = (stepId: null | number) => stepId === null ? null : this.#steps[stepId]?.line ?? null
     // Scripts' `auv` calls (`@auv-js/sdk`) arrive here encoded, on their own port.
     const channel = new MessageChannel()
+    this.#port = channel.port1
     worker.postMessage({ type: SDK_PORT_MESSAGE }, [channel.port2])
     serveBridge(createWorkerChannel(channel.port1 as unknown as Worker).context, {
       record: async (start) => {
         const line = lineOf(start.stepId)
-        const described = await this.#runBackend?.sdk().describe(start.method)
-        const decode = (body: Uint8Array, as: 'request' | 'response') => {
-          try {
-            return as === 'request' ? described?.decodeRequest(body) : described?.decodeResponse(body)
-          }
-          catch {
-            return `${body.byteLength} bytes`
-          }
-        }
-        const seq = this.#nextSeq()
-        this.#batch.flush()
-        const callId = actions.beginCall({
-          args: start.body && described ? [decode(start.body, 'request')] : [],
-          effect: described?.effect === 'input' ? 'input' : 'read',
-          hit: line === null ? 1 : this.#lineHits.get(line) ?? 1,
-          line,
-          // The method's API name as JavaScript spells it (`windows.list`), or
-          // `Service/Method` without the package for a method that has none.
-          method: described?.presentation ? camelCaseName(described.presentation.name) : start.method.slice(start.method.lastIndexOf('.') + 1),
-          rpc: { path: start.method, presentation: described?.presentation },
-          seq,
-          startedAt: nowMs(),
-        })
-        // TODO(playground-sdk-stream-progress): a stream's resources appear
-        // when it ends; show each scroll-until step as it arrives.
-        return (end) => {
-          const responses = end.exchange.flatMap(frame => 'response' in frame ? [frame.response] : [])
-          const results = end.json !== undefined ? [JSON.parse(end.json) as unknown] : responses.map(body => decode(body, 'response'))
-          const scope = new CallScope(callId, seq, this.#runBackend)
-          if (described) {
-            try {
-              const request = start.body && fromBinary(described.input, start.body)
-              const messages = end.json !== undefined
-                ? [fromJsonString(described.output, end.json, { ignoreUnknownFields: true })]
-                : responses.map(body => fromBinary(described.output, body))
-              recordRpcResources(scope, start.method, request || undefined, messages)
-            }
-            catch (error) {
-              console.warn(`Showing ${start.method} on the canvas failed`, error)
-            }
-          }
-          actions.endCall(callId, {
-            endSeq: this.#nextSeq(),
-            error: end.error?.message,
-            refs: scope.refs,
-            result: results.length === 1 ? results[0] : results,
-            status: end.error === undefined ? 'ok' : 'error',
-          })
-        }
+        const signal = this.#active?.abort.signal
+        if (!signal || this.#worker !== worker)
+          return undefined
+        const hit = line === null ? 1 : this.#lineHits.get(line) ?? 1
+        return recordCall(scriptWorkspace, this.#runBackend, start, { hit, line }, () => {
+          const seq = this.#nextSeq()
+          this.#batch.flush()
+          return seq
+        }, signal)
       },
-      target: () => this.#runBackend?.sdk().target
-        ?? '`auv` needs a device, the mock desktop, or a replay of a run that made the same calls',
+      target: () => {
+        const signal = this.#active?.abort.signal
+        if (!signal || signal.aborted || this.#worker !== worker)
+          return 'No Script execution is active'
+        const target = this.#runBackend?.sdk().target
+        return target ? { ...target, signal } : '`auv` needs a device, the mock desktop, or a replay of a run that made the same calls'
+      },
     })
     const host: HostApi = {
       onBind: (bindId, values, at) => {
@@ -365,7 +338,10 @@ class ExecSession {
     this.#exec = createBirpc<ExecWorkerApi, HostApi>(host, {
       // Control messages to the worker are fire-and-forget; only `run` returns.
       eventNames: ['resume', 'setBreakpoints', 'stop'],
-      on: fn => worker.addEventListener('message', event => fn(event.data)),
+      on: fn => worker.addEventListener('message', (event) => {
+        if (this.#worker === worker)
+          fn(event.data)
+      }),
       post: data => worker.postMessage(data),
       timeout: 24 * 60 * 60_000,
     })
@@ -373,42 +349,6 @@ class ExecSession {
 }
 
 export const session = new ExecSession()
-
-/**
- * Switches the backend scripts and the canvas use, and refreshes displays.
- * The device registry (`features/device`) owns backend lifecycles, so the
- * previous backend stays open.
- */
-export async function activateBackend(backend: Backend | null): Promise<void> {
-  session.setLive(false)
-  usePlayground.setState({ axTree: null, backend, displays: [], liveFrames: {} })
-  if (!backend)
-    return
-  const displays = await backend.listDisplays()
-  usePlayground.setState({ displays })
-  // One snapshot per display so the canvas is not empty before live mode.
-  for (const display of displays) {
-    void captureLiveFrame(backend, display.id)
-      .catch(error => console.warn(`Initial capture failed for display ${display.id}`, error))
-  }
-  void session.refreshAxTree().catch(() => {})
-}
-
-/**
- * Captures a display for the canvas. A display with no pixels on screen yet
- * shows the capture's ThumbHash preview first, so a new connection paints at
- * once; later captures replace the previous pixels when they load.
- */
-async function captureLiveFrame(backend: Backend, displayId: string): Promise<void> {
-  const frame = await backend.captureDisplay(displayId, { logical: true })
-  const capturedAt = Date.now()
-  const shown = usePlayground.getState().liveFrames[displayId]
-  const preview = shown?.bitmap ? undefined : await decodeThumbHash(frame.thumbhash)
-  if (preview)
-    actions.setLiveFrame(displayId, { bounds: frame.bounds, capturedAt, preview })
-  const bitmap = await decodeBitmap(backend, frame)
-  actions.setLiveFrame(displayId, { bitmap, bounds: frame.bounds, capturedAt, preview, revealedAt: preview ? performance.now() : undefined })
-}
 
 /** Canvas shape for a `draw()` target: rectangles (and areas) by bounds, otherwise a point. */
 function markShape(value: unknown): Mark['shape'] | undefined {
