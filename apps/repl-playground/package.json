@@ -32,7 +32,6 @@
     "@hafbit/react-acp": "catalog:",
     "@lezer/highlight": "catalog:",
     "@moeru/eventa": "catalog:",
-    "@moeru/std": "catalog:",
     "@typescript/vfs": "catalog:",
     "acorn": "catalog:",
     "birpc": "catalog:",

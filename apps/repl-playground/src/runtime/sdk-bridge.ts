@@ -187,31 +187,30 @@ export function remoteError(error: BridgedError): Error {
 export function serveBridge(context: AnyContext, host: BridgeHost): void {
   defineInvokeHandler(context, unaryRpc, async (request, options): Promise<UnaryReply> => {
     const finish = await host.record?.({ body: request.body, method: request.method, stepId: request.stepId })
+    const end: BridgedCallEnd = { exchange: [] }
     try {
       const { headers, signal, transport } = resolveTarget(host)
       const invocationSignal = options?.abortController?.signal
       // NOTICE(bridge-decode-json): the HTTP transport decodes JSON bindings
       // through `UnaryCall.decodeJson`, which only the worker's SDK can build.
       // Capture the response text here and decode it back in the worker.
-      let json: string | undefined
-      const body = await transport.unary({
+      const body = await recordUnaryCall(transport, {
         body: request.body,
-        decodeJson: (text) => {
-          json = text
-          return new Uint8Array()
-        },
+        decodeJson: () => new Uint8Array(),
         headers: withHeaders(request.headers, headers),
         http: request.http,
         jsonBody: request.jsonBody,
         method: request.method,
         signal: signal && invocationSignal ? AbortSignal.any([signal, invocationSignal]) : signal ?? invocationSignal,
-      } satisfies UnaryCall)
-      finish?.({ exchange: json === undefined ? [{ request: request.body }, { response: body }] : [{ request: request.body }], json })
-      return json === undefined ? { body } : { json }
+      }, end)
+      finish?.(end)
+      return end.json === undefined ? { body } : { json: end.json }
     }
     catch (error) {
-      finish?.({ error: bridgedError(error), exchange: [{ request: request.body }] })
-      return { error: bridgedError(error) }
+      const failure = end.error ?? bridgedError(error)
+      const exchange = end.error ? end.exchange : [{ request: request.body }]
+      finish?.({ error: failure, exchange })
+      return { error: failure }
     }
   })
 
