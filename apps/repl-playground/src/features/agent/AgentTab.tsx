@@ -44,8 +44,6 @@ function ConnectView({ onConnected, session }: {
   const [selection, setSelection] = useState(0)
   const signedIn = session.account.phase === 'signed-in'
   const listDevices = session.listDevices
-  // Remounted on every sign-in phase change (see the `key` in `AgentTab`), so
-  // the initial status matches the current sign-in without syncing in the effect.
   const [status, setStatus] = useState(() => signedIn ? 'Checking the sign-in.' : '')
 
   useEffect(() => {

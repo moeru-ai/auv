@@ -193,7 +193,7 @@ const emptyTimings: TimingSnapshot = { lines: [], statements: [] }
 
 export type Workspace = ReturnType<typeof createWorkspace>
 
-export function createWorkspace() {
+export function createWorkspace(history: 'append' | 'replace' = 'replace') {
   const store = create<PlaygroundState>(() => ({
     axTree: null,
     backend: null,
@@ -272,20 +272,23 @@ export function createWorkspace() {
       return id
     },
 
-    /** Clears per-run records but keeps resources so earlier handles stay inspectable. */
     beginRun(mode: RunState['mode']): void {
+      const run: RunState = { currentLine: null, mode, startedAt: Date.now(), status: 'compiling' }
+      const selection = { cursor: null, hoveredCallId: null, run, selectedCallId: null }
+      if (history === 'append') {
+        set(selection)
+        return
+      }
+      // Clears per-run records but keeps resources so earlier handles stay inspectable.
       set(state => ({
+        ...selection,
         binds: [],
         calls: [],
-        cursor: null,
         executedLines: [],
         focuses: [],
-        hoveredCallId: null,
         marks: [],
         pauses: [],
-        run: { currentLine: null, mode, startedAt: Date.now(), status: 'compiling' },
         runIndex: state.runIndex + 1,
-        selectedCallId: null,
         seqAt: [],
         steps: [],
         timings: emptyTimings,

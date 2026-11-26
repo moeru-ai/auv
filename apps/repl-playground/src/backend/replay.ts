@@ -3,7 +3,7 @@ import type { DuplexCall, DuplexCallOptions, Transport, UnaryCall } from '@auv-j
 import type { BridgedCallEnd } from '../runtime/sdk-bridge'
 import type { CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
 
-import { bridgedError, recordUnaryCall, remoteError } from '../runtime/sdk-bridge'
+import { recordDuplexCall, recordUnaryCall, remoteError } from '../runtime/sdk-bridge'
 
 /** One SDK call of a live run, as encoded messages. */
 export interface RecordedRpc extends BridgedCallEnd {
@@ -217,27 +217,7 @@ function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
     async duplex(call) {
       const entry: RecordedRpc = { exchange: [], method: call.method }
       log.push(entry)
-      const stream = await inner.duplex(call)
-      return {
-        close: options => stream.close(options),
-        halfClose: () => stream.halfClose(),
-        responses: (async function* () {
-          try {
-            for await (const body of stream.responses) {
-              entry.exchange.push({ response: body })
-              yield body
-            }
-          }
-          catch (error) {
-            entry.error = bridgedError(error)
-            throw error
-          }
-        })(),
-        send: async (body) => {
-          entry.exchange.push({ request: body })
-          await stream.send(body)
-        },
-      }
+      return recordDuplexCall(await inner.duplex(call), entry)
     },
     unary(call) {
       const entry: RecordedRpc = { exchange: [], method: call.method }

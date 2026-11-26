@@ -1,4 +1,4 @@
-import type { Backend } from '../../backend/types'
+import type { Backend, RunBackend, RunOutcomeKind } from '../../backend/types'
 
 import { create } from 'zustand'
 
@@ -9,4 +9,17 @@ export function reserveDevice(): (() => void) | undefined {
     return undefined
   useDeviceTarget.setState({ locked: true })
   return () => useDeviceTarget.setState({ locked: false })
+}
+
+export async function withDeviceRun<T>(signal: AbortSignal, execute: (run: null | RunBackend) => Promise<{ outcome: RunOutcomeKind, value: T }>): Promise<T> {
+  const run = await useDeviceTarget.getState().backend?.beginRun() ?? null
+  let outcome: RunOutcomeKind | undefined
+  try {
+    const result = await execute(run)
+    outcome = result.outcome
+    return result.value
+  }
+  finally {
+    await run?.endRun(outcome ?? (signal.aborted ? 'canceled' : 'failed'))
+  }
 }

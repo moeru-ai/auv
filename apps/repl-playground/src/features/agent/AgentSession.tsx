@@ -4,6 +4,7 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import { useAcpControllerRuntime, useAcpThreadState } from '@hafbit/react-acp'
 
 import { Empty } from '../../components/Empty'
+import { agentSessionStatus } from './agent-session'
 import { AgentThread } from './AgentThread'
 
 /** Displays the caller-owned connection without changing its lifetime. */
@@ -55,7 +56,7 @@ function SessionBody({ connection, onRetry }: {
   onRetry: () => void
 }) {
   const thread = useAcpThreadState()
-  const status = thread.connectionStatus
+  const status = agentSessionStatus(thread)
 
   // TODO(agent-auth): interactive ACP authentication requires an approved
   // agent-authentication flow; this panel reports the requirement.
@@ -74,11 +75,11 @@ function SessionBody({ connection, onRetry }: {
       </Empty>
     )
   }
-  if (status !== 'ready')
-    return <Empty>{status === 'connecting' ? 'Opening the agent.' : status}</Empty>
-  if (thread.capabilities?.mcpCapabilities?.http !== true)
+  if (status === 'http-mcp-required')
     return <Empty>This agent does not support HTTP MCP. Choose an agent with HTTP MCP support.</Empty>
-  if (thread.activeSessionId === undefined)
+  if (status === 'starting-session')
     return <Empty>Starting a new session.</Empty>
-  return <AgentThread />
+  if (status === 'ready')
+    return <AgentThread />
+  return <Empty>{status === 'connecting' ? 'Opening the agent.' : status}</Empty>
 }

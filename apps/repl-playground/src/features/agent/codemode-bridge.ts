@@ -1,6 +1,4 @@
-import type { ServedMcp } from '@exterioragentprotocol/sdk/client'
 import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/sdk/client/codemode'
-import type { AcpClientConnection } from '@hafbit/react-acp/core'
 
 // oxlint-disable-next-line import/default -- Vite exposes its worker constructor as the default export.
 import CodeModeWorker from '@exterioragentprotocol/sdk/client/codemode/worker?worker'
@@ -10,7 +8,7 @@ import { createBrowserCodeModeSandbox, registerCodeMode } from '@exterioragentpr
 
 import { version } from '../../../package.json'
 import { useDeviceTarget } from '../device/device-target'
-import { runAgent } from './agent-execution'
+import { cancelSuccessfulResult, runAgent } from './agent-execution'
 
 const description = 'Run JavaScript with the AUV SDK (`auv`) on the selected Device or mock desktop. Read the `auv-playground` skill for SDK usage.'
 
@@ -42,18 +40,17 @@ export class CodeModeHost {
   setSession(sessionId: string | undefined): void {
     if (sessionId === this.#sessionId)
       return
-    this.cancel()
-    this.#stopWatchingDevice?.()
+    this.#resetStore()
     this.#sessionId = sessionId
-    this.#store = {}
-    this.#stopWatchingDevice = sessionId === undefined
-      ? undefined
-      : useDeviceTarget.subscribe((next, previous) => {
-          if (next.backend !== previous.backend) {
-            this.cancel()
-            this.#store = {}
-          }
-        })
+    if (sessionId === undefined) {
+      this.#stopWatchingDevice?.()
+      this.#stopWatchingDevice = undefined
+      return
+    }
+    this.#stopWatchingDevice ??= useDeviceTarget.subscribe((next, previous) => {
+      if (next.backend !== previous.backend)
+        this.#resetStore()
+    })
   }
 
   async #execute(request: CodeModeRequest): Promise<CodemodeResult> {
@@ -65,7 +62,7 @@ export class CodeModeHost {
     this.#active = active
     const signal = AbortSignal.any([active.signal, request.signal])
     try {
-      const result = await runAgent({ ...request, signal }, async ({ globals }, runSignal) => {
+      const completed = await runAgent({ ...request, signal }, async ({ globals }, runSignal) => {
         const { default: sdkSource } = await import('virtual:auv-agent-sdk')
         const sandbox = createBrowserCodeModeSandbox({
           createWorker: () => new CodeModeWorker(),
@@ -85,44 +82,22 @@ export class CodeModeHost {
           sandbox.close()
         }
       })
-      if (result.ok && signal.aborted)
-        return { calls: result.calls, error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: result.output }
-      if (result.ok) {
-        const next = { ...this.#store, ...result.storeWrites.set }
-        for (const key of result.storeWrites.delete)
-          delete next[key]
-        this.#store = next
-      }
+      const result = cancelSuccessfulResult(completed, signal)
+      if (!result.ok)
+        return result
+      const next = { ...this.#store, ...result.storeWrites.set }
+      for (const key of result.storeWrites.delete)
+        delete next[key]
+      this.#store = next
       return result
     }
     finally {
       this.#active = undefined
     }
   }
-}
 
-/**
- * Adds the Playground MCP endpoint to the typed ACP connection.
- * This adapter owns session setup and endpoint cleanup; the SDK owns messages.
- */
-export function codeModeConnection(connection: AcpClientConnection, host: CodeModeHost, endpoint: Pick<ServedMcp, 'close' | 'headers' | 'url'>): AcpClientConnection {
-  const close = () => {
-    host.close()
-    endpoint.close()
-  }
-  if (connection.signal.aborted)
-    close()
-  else connection.signal.addEventListener('abort', close, { once: true })
-  return {
-    ...connection,
-    cancel(sessionId) {
-      host.cancel()
-      return connection.cancel(sessionId)
-    },
-    newSession(request) {
-      host.setSession(undefined)
-      const { headers, url } = endpoint
-      return connection.newSession({ ...request, mcpServers: [...request.mcpServers, { headers, name: 'auv-playground', type: 'http', url }] })
-    },
+  #resetStore(): void {
+    this.cancel()
+    this.#store = {}
   }
 }

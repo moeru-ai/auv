@@ -8,12 +8,13 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { codeModeConnection, CodeModeHost } from './codemode-bridge'
+import { codeModeConnection } from './agent-session'
+import { CodeModeHost } from './codemode-bridge'
 
 const execution = vi.hoisted(() => ({ runAgent: vi.fn() }))
 const success: CodemodeResult = { calls: [], ok: true, output: [], storeWrites: { delete: [], set: {} }, value: undefined }
 const canceled: CodemodeResult = { calls: [], error: { kind: 'aborted', message: 'Script canceled.' }, ok: false, output: [] }
-vi.mock('./agent-execution', () => execution)
+vi.mock(import('./agent-execution'), async importOriginal => ({ ...await importOriginal(), ...execution }))
 
 /** Exercise the same MCP interface used by agents, with an in-memory transport. */
 async function connectTools(host: CodeModeHost): Promise<Client> {

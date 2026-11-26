@@ -5,10 +5,11 @@ import type { SdkAccess } from '../../backend/types'
 import type { recordCall } from '../../runtime/record-call'
 import type { BridgedCallEnd, BridgedCallStart } from '../../runtime/sdk-bridge'
 
+import { runnerHttpBinding, runnerRouteHeaders } from '@auv-js/sdk'
 import { base64Decode, base64Encode } from '@bufbuild/protobuf/wire'
 import { z } from 'zod'
 
-import { bridgedError, recordUnaryCall } from '../../runtime/sdk-bridge'
+import { bridgedError, recordDuplexCall, recordUnaryCall } from '../../runtime/sdk-bridge'
 
 type RecordStart = (start: Pick<BridgedCallStart, 'body' | 'method'>) => ReturnType<typeof recordCall>
 interface Stream {
@@ -27,14 +28,9 @@ export function createRunnerHost(access: SdkAccess | undefined, runSignal: Abort
   const pending = new Set<Promise<unknown>>()
   const streams = new Map<number, Stream>()
   let lastId = 0
-  const headers = new Headers(access?.target.headers)
-  if (access) {
-    headers.set('auv-runner-class', access.route.runnerClass)
-    if (access.route.deviceId)
-      headers.set('auv-device-id', access.route.deviceId)
-    if (access.route.runId)
-      headers.set('auv-run-id', access.route.runId)
-  }
+  const headers = access
+    ? runnerRouteHeaders(access.route, access.target.headers)
+    : new Headers()
 
   function transport() {
     if (!access)
@@ -52,7 +48,7 @@ export function createRunnerHost(access: SdkAccess | undefined, runSignal: Abort
     }
     finally {
       if (error)
-        stream.end.error = bridgedError(error)
+        stream.end.error ??= bridgedError(error)
       const finish = await stream.recorded
       finish?.(stream.end)
     }
@@ -95,12 +91,13 @@ export function createRunnerHost(access: SdkAccess | undefined, runSignal: Abort
       const body = base64Decode(request.body)
       const finish = await record({ body, method: request.method })
       const end: BridgedCallEnd = { exchange: [] }
+      const [, service, operation] = request.method.split('/')
       try {
         const response = await recordUnaryCall(target, {
           body,
           decodeJson: () => new Uint8Array(),
           headers,
-          http: { method: 'POST', path: `/apis/auv/runtime/v1/invoke${request.method}` },
+          http: runnerHttpBinding(service, operation),
           jsonBody: request.jsonBody,
           method: request.method,
           signal,
@@ -112,27 +109,26 @@ export function createRunnerHost(access: SdkAccess | undefined, runSignal: Abort
       }
     }),
     binding('runnerOpen', method, async (method, signal) => {
-      const call = await transport().duplex({ headers, method, signal })
+      const end: BridgedCallEnd = { exchange: [] }
+      const call = recordDuplexCall(await transport().duplex({ headers, method, signal }), end)
       if (signal.aborted) {
         await call.close({})
         signal.throwIfAborted()
       }
       const id = ++lastId
-      streams.set(id, { call, end: { exchange: [] }, method, replies: call.responses[Symbol.asyncIterator]() })
+      streams.set(id, { call, end, method, replies: call.responses[Symbol.asyncIterator]() })
       return id
     }),
     binding('runnerSend', z.strictObject({ body: z.string(), id: streamId }), ({ body, id }) => onStream(id, async (stream) => {
       const request = base64Decode(body)
       stream.recorded ??= record({ body: request, method: stream.method })
       await stream.recorded
-      stream.end.exchange.push({ request })
       await stream.call.send(request)
     })),
     binding('runnerNext', streamId, id => onStream(id, async (stream) => {
       const reply = await stream.replies.next()
       if (reply.done)
         return null
-      stream.end.exchange.push({ response: reply.value })
       return base64Encode(reply.value)
     })),
     binding('runnerHalfClose', streamId, id => onStream(id, stream => stream.call.halfClose())),

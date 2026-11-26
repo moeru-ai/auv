@@ -1,17 +1,17 @@
 import type { BirpcReturn } from 'birpc'
 
 import type { Recording } from '../backend/replay'
-import type { RunBackend } from '../backend/types'
+import type { RunBackend, RunOutcomeKind } from '../backend/types'
 import type { Rect } from '../script-api/api'
 import type { BindSite, StepSite } from '../stepper/compile'
 import type { BindEvent, Mark, StepEvent } from '../store'
-import type { ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
+import type { CompileResult, ExecWorkerApi, HostApi, LanguageWorkerApi, ResumeMode } from './protocol'
 
 import { createContext as createWorkerChannel } from '@moeru/eventa/adapters/webworkers'
 import { createBirpc } from 'birpc'
 
 import { RecordingBackend, ReplayBackend } from '../backend/replay'
-import { reserveDevice, useDeviceTarget } from '../features/device/device-target'
+import { reserveDevice, withDeviceRun } from '../features/device/device-target'
 import { actions, scriptDesktop, scriptWorkspace, usePlayground } from '../features/editor/script-workspace'
 import { boundsOf } from '../handles'
 import { StepTimer } from '../stepper/timing'
@@ -158,6 +158,45 @@ class ExecSession {
     this.#exec.stop()
   }
 
+  async #execute(compiled: Extract<CompileResult, { ok: true }>, mode: RunOptions['mode'], backend: null | RunBackend, signal: AbortSignal): Promise<RunOutcomeKind> {
+    if (signal.aborted)
+      return 'canceled'
+    const timer = this.#timer = new StepTimer(compiled.steps)
+    this.#runBackend = backend
+    const sdkRoute = backend?.sdk().route
+    actions.patchRun({ runId: sdkRoute?.runId, status: 'running' })
+    const outcome = await this.#exec.run({
+      binds: compiled.binds,
+      breakpoints: usePlayground.getState().breakpoints,
+      code: compiled.code,
+      hoisted: compiled.hoisted,
+      mode,
+      prelude: compiled.prelude,
+      sdkRoute,
+      steps: compiled.steps,
+    })
+    if (signal.aborted)
+      return 'canceled'
+    timer.finish(performance.timeOrigin + performance.now())
+    this.#batch.flush()
+    const timings = timer.snapshot()
+    const ended = { currentLine: null, endedAt: Date.now() }
+    if (outcome.status === 'ok') {
+      actions.patchRun({ ...ended, outcome, status: 'done' })
+      if (outcome.value !== undefined)
+        this.#log('show', [outcome.value], null, 'result')
+    }
+    else if (outcome.status === 'stopped') {
+      actions.patchRun({ ...ended, outcome, status: 'stopped' })
+    }
+    else {
+      actions.patchRun({ ...ended, errorLine: outcome.line, errorMessage: outcome.message, outcome, status: 'error' })
+      this.#log('error', [outcome.message], outcome.line ?? null)
+    }
+    usePlayground.setState({ timings })
+    return outcome.status === 'ok' ? 'succeeded' : outcome.status === 'stopped' ? 'canceled' : 'failed'
+  }
+
   #log(level: Parameters<HostApi['onLog']>[0], values: unknown[], line: null | number, label?: string): void {
     actions.addLog({ at: Date.now(), label, level, line, seq: this.#nextSeq(), values })
   }
@@ -170,13 +209,10 @@ class ExecSession {
   }
 
   async #run(options: RunOptions, signal: AbortSignal, savedRecording: Recording | undefined): Promise<void> {
-    let backend: null | RunBackend = null
-    let recorder: RecordingBackend | undefined
     this.#seq = 0
     this.#lineHits = new Map()
     this.#lastLine = null
     actions.beginRun(savedRecording ? 'replay' : 'live')
-    let runOpened = false
     try {
       const compiled = await language.compile({ cellId: ++this.#cellId, source: options.source, startLine: options.startLine })
       if (signal.aborted)
@@ -188,68 +224,28 @@ class ExecSession {
       this.#steps = compiled.steps
       this.#binds = compiled.binds
       this.#bindHits = Array.from<number>({ length: compiled.binds.length }).fill(0)
-      this.#timer = new StepTimer(compiled.steps)
+
       if (savedRecording) {
-        backend = new ReplayBackend(savedRecording)
-      }
-      else {
-        const live = await useDeviceTarget.getState().backend?.beginRun()
-        if (live)
-          backend = recorder = new RecordingBackend(live)
-      }
-      runOpened = true
-      if (signal.aborted)
+        await this.#execute(compiled, options.mode, new ReplayBackend(savedRecording), signal)
         return
-      this.#runBackend = backend
-      const sdkRoute = backend?.sdk().route
-      actions.patchRun({ runId: sdkRoute?.runId, status: 'running' })
-      const outcome = await this.#exec.run({
-        binds: compiled.binds,
-        breakpoints: usePlayground.getState().breakpoints,
-        code: compiled.code,
-        hoisted: compiled.hoisted,
-        mode: options.mode,
-        prelude: compiled.prelude,
-        sdkRoute,
-        steps: compiled.steps,
+      }
+
+      const recorder = await withDeviceRun(signal, async (run) => {
+        const recorder = run ? new RecordingBackend(run) : null
+        const outcome = await this.#execute(compiled, options.mode, recorder, signal)
+        return { outcome, value: recorder }
       })
-      if (signal.aborted)
-        return
-      this.#timer.finish(performance.timeOrigin + performance.now())
-      this.#batch.flush()
-      const timings = this.#timer.snapshot()
-      const ended = { currentLine: null, endedAt: Date.now() }
-      if (outcome.status === 'ok') {
-        actions.patchRun({ ...ended, outcome, status: 'done' })
-        if (outcome.value !== undefined)
-          this.#log('show', [outcome.value], null, 'result')
-      }
-      else if (outcome.status === 'stopped') {
-        actions.patchRun({ ...ended, outcome, status: 'stopped' })
-      }
-      else {
-        actions.patchRun({ ...ended, errorLine: outcome.line, errorMessage: outcome.message, outcome, status: 'error' })
-        this.#log('error', [outcome.message], outcome.line ?? null)
-      }
-      usePlayground.setState({ timings })
-      runOpened = false
-      await backend?.endRun(outcome.status === 'ok' ? 'succeeded' : outcome.status === 'stopped' ? 'canceled' : 'failed')
       if (signal.aborted)
         return
       if (recorder) {
         this.#recording = recorder.recording()
         usePlayground.setState({ hasRecording: true })
       }
-      if (!savedRecording)
-        void scriptDesktop.refreshAxTree().catch(() => {})
+      void scriptDesktop.refreshAxTree().catch(() => {})
     }
     catch (error) {
       if (!signal.aborted)
         throw error
-    }
-    finally {
-      if (signal.aborted && runOpened)
-        await backend?.endRun('canceled')
     }
   }
 
