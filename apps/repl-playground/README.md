@@ -263,7 +263,7 @@ guide or Runner source. Each read addresses an individual resource.
 The page sends user messages unchanged, with no extra briefing message.
 
 The agent device needs an Exterior client and an installed ACP agent.
-Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/5a78681c9bb12091f991b7f8bf4d92770c7ae3f2/docs/manual.md).
+Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/abb4a2a6a649ff67d0c3548c3ff6ac246798e26a/docs/manual.md).
 To register an OpenCode slot on the device:
 
 ```sh
@@ -282,7 +282,7 @@ Keep the client running while you use the agent.
 For the pinned CLI preview, use this prefix for each command above:
 
 ```sh
-npx --yes --package=https://pkg.pr.new/lulu0119/exterior@5a78681c9bb12091f991b7f8bf4d92770c7ae3f2 -- exterior
+npx --yes --package=https://pkg.pr.new/lulu0119/exterior@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a -- exterior
 ```
 
 Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
@@ -298,7 +298,7 @@ The OAuth callback is the Playground entry URL. The document lists the
 deployed entry URL and the local entries for `127.0.0.1` and `localhost`.
 
 To use a client ID issued by one relay, follow Exterior's
-[app setup](https://github.com/lulu0119/exterior/blob/5a78681c9bb12091f991b7f8bf4d92770c7ae3f2/docs/app-setup.md)
+[app setup](https://github.com/lulu0119/exterior/blob/abb4a2a6a649ff67d0c3548c3ff6ac246798e26a/docs/app-setup.md)
 or use **Register app** and **Copy configuration** on the relay dashboard.
 Registration does not grant access to devices. App sign-in requests that access separately.
 
