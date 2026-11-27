@@ -17,7 +17,8 @@
       "default": "./src/web/index.ts"
     },
     "./node": "./src/node/index.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./transport/recording": "./src/transport/recording.ts"
   },
   "files": [
     "dist"

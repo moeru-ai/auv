@@ -345,6 +345,9 @@ importers:
       '@assistant-ui/react-markdown':
         specifier: 'catalog:'
         version: 0.14.24(@assistant-ui/react@0.15.26(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0)))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@auv-js/sandbox-bridge':
+        specifier: workspace:*
+        version: link:../../js/packages/sandbox-bridge
       '@auv-js/sdk':
         specifier: workspace:*
         version: link:../../js/packages/sdk
@@ -558,6 +561,15 @@ importers:
   js/packages/cli/npm/win32-arm64-msvc: {}
 
   js/packages/cli/npm/win32-x64-msvc: {}
+
+  js/packages/sandbox-bridge:
+    dependencies:
+      '@auv-js/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@bufbuild/protobuf':
+        specifier: 'catalog:'
+        version: 2.13.0
 
   js/packages/sdk:
     dependencies:

@@ -1,6 +1,7 @@
+import type { BridgedCallEnd, RpcCallStart } from '@auv-js/sdk/transport/recording'
+
 import type { RunBackend } from '../backend/types'
 import type { CallRecord, Workspace } from '../store'
-import type { BridgedCallEnd, BridgedCallStart } from './sdk-bridge'
 
 import { camelCaseName } from '@auv-js/sdk'
 import { fromBinary, fromJsonString } from '@bufbuild/protobuf'
@@ -11,7 +12,7 @@ import { CallScope, recordRpcResources } from './rpc-resources'
 export async function recordCall(
   workspace: Workspace,
   backend: null | RunBackend,
-  start: Pick<BridgedCallStart, 'body' | 'method'>,
+  start: RpcCallStart,
   { hit, line, source }: Pick<CallRecord, 'hit' | 'line' | 'source'>,
   nextSeq: () => number,
   signal: AbortSignal,

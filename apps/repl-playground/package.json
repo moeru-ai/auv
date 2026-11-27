@@ -17,6 +17,7 @@
     "@agentclientprotocol/sdk": "catalog:",
     "@assistant-ui/react": "catalog:",
     "@assistant-ui/react-markdown": "catalog:",
+    "@auv-js/sandbox-bridge": "workspace:*",
     "@auv-js/sdk": "workspace:*",
     "@base-ui/react": "catalog:",
     "@bufbuild/protobuf": "catalog:",

@@ -1,9 +1,9 @@
 import type { DuplexCall, DuplexCallOptions, Transport, UnaryCall } from '@auv-js/sdk'
+import type { BridgedCallEnd } from '@auv-js/sdk/transport/recording'
 
-import type { BridgedCallEnd } from '../runtime/sdk-bridge'
 import type { CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
 
-import { recordDuplexCall, recordUnaryCall, remoteError } from '../runtime/sdk-bridge'
+import { recordDuplexCall, recordUnaryCall, remoteError } from '@auv-js/sdk/transport/recording'
 
 /** One SDK call of a live run, as encoded messages. */
 export interface RecordedRpc extends BridgedCallEnd {

@@ -2,11 +2,12 @@ import type { CodeModeRequest, CodemodeResult } from '@exterioragentprotocol/sdk
 
 import type { RunOutcomeKind } from '../../backend/types'
 
+import { createSandboxRunnerHost } from '@auv-js/sandbox-bridge'
+
 import { recordCall } from '../../runtime/record-call'
 import { nowMs } from '../../store'
 import { reserveDevice, withDeviceRun } from '../device/device-target'
 import { agentDesktop, agentWorkspace } from './agent-workspace'
-import { createRunnerHost } from './runner-host'
 
 const { actions, store } = agentWorkspace
 const runStatus = { canceled: 'stopped', failed: 'error', succeeded: 'done' } as const
@@ -24,7 +25,7 @@ export function resetAgentExecution(): void {
 
 export async function runAgent(
   { code, signal }: CodeModeRequest,
-  execute: (host: ReturnType<typeof createRunnerHost>, signal: AbortSignal) => Promise<CodemodeResult>,
+  execute: (host: ReturnType<typeof createSandboxRunnerHost>, signal: AbortSignal) => Promise<CodemodeResult>,
 ): Promise<CodemodeResult> {
   signal.throwIfAborted()
   const release = reserveDevice()
@@ -42,7 +43,7 @@ export async function runAgent(
       const access = run?.sdk()
       if (!reset.signal.aborted)
         actions.patchRun({ runId: access?.route.runId, status: 'running' })
-      const host = createRunnerHost(access, cancellation, start =>
+      const host = createSandboxRunnerHost(access, cancellation, start =>
         recordCall(agentWorkspace, run, start, { hit: 1, line: null, source }, nextSeq, reset.signal))
       try {
         const result = cancellation.aborted
