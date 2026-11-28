@@ -1,7 +1,9 @@
-import type { DuplexCall, HttpBinding, Transport, UnaryCall } from '@auv-js/sdk'
+import type { DuplexCall, HttpBinding, Transport } from '@auv-js/sdk'
+import type { BridgedCallEnd, BridgedError, RpcCallStart } from '@auv-js/sdk/transport/recording'
 import type { EventContext } from '@moeru/eventa'
 
-import { AuvRemoteError, AuvRpcError, AuvTransportError } from '@auv-js/sdk'
+import { AuvTransportError } from '@auv-js/sdk'
+import { bridgedError, recordDuplexCall, recordUnaryCall, remoteError } from '@auv-js/sdk/transport/recording'
 import { defineInvoke, defineInvokeEventa, defineInvokeHandler, defineStreamInvoke, defineStreamInvokeHandler } from '@moeru/eventa'
 
 // Carries encoded SDK RPCs between the execution worker and the host, so
@@ -11,13 +13,6 @@ import { defineInvoke, defineInvokeEventa, defineInvokeHandler, defineStreamInvo
 
 /** Message posted to the worker with the port this bridge runs on. */
 export const SDK_PORT_MESSAGE = 'auv:sdk-port'
-
-/** A remote error, rebuilt in the worker as the same SDK error class. */
-export interface BridgedError {
-  message: string
-  name: string
-  rpcCode?: number
-}
 
 /** Where an encoded RPC came from in the script. */
 interface BridgedCall {
@@ -40,29 +35,12 @@ interface UnaryRequest extends BridgedCall {
 const unaryRpc = defineInvokeEventa<UnaryReply, UnaryRequest>('auv:sdk:unary')
 const duplexRpc = defineInvokeEventa<DuplexReply, ReadableStream<DuplexFrame>>('auv:sdk:duplex')
 
-/** How a forwarded RPC ended: its encoded messages, JSON, or an error. */
-export interface BridgedCallEnd {
-  error?: BridgedError
-  /**
-   * Request and response messages in the order they crossed. Replay needs the
-   * order: scroll-until answers each update with a decision.
-   */
-  exchange: Exchanged[]
-  /** A JSON-encoded HTTP binding's response text, in place of a response message. */
-  json?: string
-}
-
 /** One forwarded RPC as the host sees it, for recording. */
-export interface BridgedCallStart {
-  /** Encoded request; the first message of a stream. */
-  body?: Uint8Array
-  method: string
-  stepId: null | number
-}
+export type BridgedCallStart = Pick<BridgedCall, 'stepId'> & RpcCallStart
 
 export interface BridgeHost {
   /** Called when a forwarded RPC starts; the returned function when it ends. */
-  record?: (call: BridgedCallStart) => ((end: BridgedCallEnd) => void) | Promise<(end: BridgedCallEnd) => void>
+  record?: (call: BridgedCallStart) => ((end: BridgedCallEnd) => void) | Promise<((end: BridgedCallEnd) => void) | undefined>
   /** The active backend's transport, or why the backend cannot serve SDK calls. */
   target: () => BridgeTarget | string
 }
@@ -70,21 +48,11 @@ export interface BridgeHost {
 /** The transport the host forwards to, and the headers it adds (the credential). */
 export interface BridgeTarget {
   headers?: Record<string, string>
+  signal?: AbortSignal
   transport: Transport
 }
 
-export type Exchanged = { request: Uint8Array } | { response: Uint8Array }
-
 type AnyContext = EventContext<any, any>
-
-/** An error as it crosses the bridge or is recorded for replay. */
-export function bridgedError(error: unknown): BridgedError {
-  if (error instanceof AuvRpcError)
-    return { message: error.message, name: error.name, rpcCode: error.rpcCode }
-  if (error instanceof Error)
-    return { message: error.message, name: error.name }
-  return { message: String(error), name: 'Error' }
-}
 
 /**
  * The SDK transport inside the worker. `currentStep` attributes each call to
@@ -150,45 +118,31 @@ export function createBridgeTransport(context: AnyContext, currentStep: () => nu
   }
 }
 
-/** Rebuilds a bridged error as the SDK error class it was. */
-export function remoteError(error: BridgedError): Error {
-  const rebuilt = error.rpcCode !== undefined
-    ? new AuvRpcError(error.rpcCode, error.message)
-    : error.name === 'AuvTransportError'
-      ? new AuvTransportError(error.message)
-      : new AuvRemoteError(error.message)
-  rebuilt.name = error.name
-  return rebuilt
-}
-
 /** Serves bridged RPCs on the host by forwarding them to the active backend. */
 export function serveBridge(context: AnyContext, host: BridgeHost): void {
   defineInvokeHandler(context, unaryRpc, async (request, options): Promise<UnaryReply> => {
     const finish = await host.record?.({ body: request.body, method: request.method, stepId: request.stepId })
+    const end: BridgedCallEnd = { exchange: [] }
     try {
-      const { headers, transport } = resolveTarget(host)
+      const { transport, ...call } = forwardedCall(host, request, options?.abortController?.signal)
       // NOTICE(bridge-decode-json): the HTTP transport decodes JSON bindings
       // through `UnaryCall.decodeJson`, which only the worker's SDK can build.
       // Capture the response text here and decode it back in the worker.
-      let json: string | undefined
-      const body = await transport.unary({
+      const body = await recordUnaryCall(transport, {
+        ...call,
         body: request.body,
-        decodeJson: (text) => {
-          json = text
-          return new Uint8Array()
-        },
-        headers: withHeaders(request.headers, headers),
+        decodeJson: () => new Uint8Array(),
         http: request.http,
         jsonBody: request.jsonBody,
-        method: request.method,
-        signal: options?.abortController?.signal,
-      } satisfies UnaryCall)
-      finish?.({ exchange: json === undefined ? [{ request: request.body }, { response: body }] : [{ request: request.body }], json })
-      return json === undefined ? { body } : { json }
+      }, end)
+      finish?.(end)
+      return end.json === undefined ? { body } : { json: end.json }
     }
     catch (error) {
-      finish?.({ error: bridgedError(error), exchange: [{ request: request.body }] })
-      return { error: bridgedError(error) }
+      const failure = end.error ?? bridgedError(error)
+      const exchange = end.error ? end.exchange : [{ request: request.body }]
+      finish?.({ error: failure, exchange })
+      return { error: failure }
     }
   })
 
@@ -200,17 +154,13 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
       return
     }
     const opened = first.value.open
-    const exchange: Exchanged[] = []
+    const end: BridgedCallEnd = { exchange: [] }
     let finish: ((end: BridgedCallEnd) => void) | undefined
     let call: DuplexCall | undefined
     try {
-      const { headers, transport } = resolveTarget(host)
-      call = await transport.duplex({
-        headers: withHeaders(opened.headers, headers),
-        method: opened.method,
-        signal: options?.abortController?.signal,
-      })
-      const stream = call
+      const { transport, ...optionsForCall } = forwardedCall(host, opened, options?.abortController?.signal)
+      const stream = recordDuplexCall(await transport.duplex(optionsForCall), end)
+      call = stream
       let started = false
       // Forward requests concurrently with responses: scroll-until answers
       // updates with decisions on the same stream.
@@ -221,26 +171,40 @@ export function serveBridge(context: AnyContext, host: BridgeHost): void {
               started = true
               finish = await host.record?.({ body: next.value.body, method: opened.method, stepId: opened.stepId })
             }
-            exchange.push({ request: next.value.body })
             await stream.send(next.value.body)
           }
         }
         await stream.halfClose()
       })().catch(() => {})
-      for await (const body of stream.responses) {
-        exchange.push({ response: body })
+      for await (const body of stream.responses)
         yield { body }
-      }
-      finish?.({ exchange })
+      finish?.(end)
     }
     catch (error) {
-      finish?.({ error: bridgedError(error), exchange })
-      yield { error: bridgedError(error) }
+      const failure = end.error ??= bridgedError(error)
+      finish?.(end)
+      yield { error: failure }
     }
     finally {
       await call?.close({})
     }
   })
+}
+
+function forwardedCall(host: BridgeHost, call: BridgedCall, invocationSignal: AbortSignal | undefined) {
+  const target = host.target()
+  if (typeof target === 'string')
+    throw new AuvTransportError(target)
+  const headers = new Headers(call.headers)
+  for (const [name, value] of Object.entries(target.headers ?? {}))
+    headers.set(name, value)
+  const { signal, transport } = target
+  return {
+    headers,
+    method: call.method,
+    signal: signal && invocationSignal ? AbortSignal.any([signal, invocationSignal]) : signal ?? invocationSignal,
+    transport,
+  }
 }
 
 /** eventa hands a stream handler a `ReadableStream`; read it without relying on its async iterator. */
@@ -257,18 +221,4 @@ async function* iterateStream<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
   finally {
     reader.releaseLock()
   }
-}
-
-function resolveTarget(host: BridgeHost): BridgeTarget {
-  const target = host.target()
-  if (typeof target === 'string')
-    throw new AuvTransportError(target)
-  return target
-}
-
-function withHeaders(entries: [string, string][], extra: Record<string, string> | undefined): Headers {
-  const headers = new Headers(entries)
-  for (const [name, value] of Object.entries(extra ?? {}))
-    headers.set(name, value)
-  return headers
 }

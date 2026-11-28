@@ -1,6 +1,7 @@
 import type { DuplexCall, Transport, UnaryCall } from '@auv-js/sdk'
+import type { BridgedCallEnd } from '@auv-js/sdk/transport/recording'
 
-import type { BridgedCallEnd, BridgedCallStart } from './sdk-bridge'
+import type { BridgedCallStart } from './sdk-bridge'
 
 import { AuvRpcError, connect, createAuv } from '@auv-js/sdk'
 import { createContext as createHostContext } from '@moeru/eventa/adapters/webworkers'

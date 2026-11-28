@@ -1,7 +1,8 @@
 import type { DescMessage, MessageInitShape, MessageShape } from '@bufbuild/protobuf'
 
 import type { AuvConnection, RpcDefinition, TypedDuplexCall } from '../../transport/connection'
-import type { OperationOptions } from '../../transport/types'
+import type { HttpBinding, OperationOptions } from '../../transport/types'
+import type { RunnerRouteOptions } from './driver'
 
 import { AuvConfigurationError } from '../../transport/errors'
 import { selectedDevice } from './routing'
@@ -29,9 +30,11 @@ export interface InvokeUnaryOptions<I extends DescMessage, O extends DescMessage
   service: string
 }
 
+export type RunnerConnection = Pick<AuvConnection, 'duplex' | 'local' | 'route' | 'unary'>
+
 /** Opens one generated bidirectional capability operation. */
 export async function invokeDuplex<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeDuplexOptions<I, O>,
 ): Promise<TypedDuplexCall<I, O>> {
   return await connection.duplex(definition(options), {
@@ -42,7 +45,7 @@ export async function invokeDuplex<I extends DescMessage, O extends DescMessage>
 
 /** Invokes one generated server-streaming capability operation. */
 export async function invokeServerStream<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeServerStreamOptions<I, O>,
 ): Promise<AsyncIterable<MessageShape<O>>> {
   const stream = await invokeDuplex(connection, options)
@@ -53,7 +56,7 @@ export async function invokeServerStream<I extends DescMessage, O extends DescMe
 
 /** Invokes one generated unary capability operation through a routed Runner. */
 export async function invokeUnary<I extends DescMessage, O extends DescMessage>(
-  connection: AuvConnection,
+  connection: RunnerConnection,
   options: InvokeUnaryOptions<I, O>,
 ): Promise<MessageShape<O>> {
   return await connection.unary(definition(options), options.request, {
@@ -62,14 +65,26 @@ export async function invokeUnary<I extends DescMessage, O extends DescMessage>(
   })
 }
 
+export function runnerHttpBinding(service: string, method: string): HttpBinding {
+  return { method: 'POST', path: `/apis/auv/runtime/v1/invoke/${encodeURIComponent(service)}/${encodeURIComponent(method)}` }
+}
+
+export function runnerRouteHeaders({ deviceId, runId, runnerClass }: RunnerRouteOptions, extra?: HeadersInit): Headers {
+  const headers = new Headers(extra)
+  headers.set('auv-runner-class', runnerClass)
+  if (deviceId !== undefined)
+    headers.set('auv-device-id', deviceId)
+  if (runId !== undefined)
+    headers.set('auv-run-id', runId)
+
+  return headers
+}
+
 function definition<I extends DescMessage, O extends DescMessage>(
   options: InvokeDuplexOptions<I, O>,
 ): RpcDefinition<I, O> {
   return {
-    http: () => ({
-      method: 'POST',
-      path: `/apis/auv/runtime/v1/invoke/${encodeURIComponent(options.service)}/${encodeURIComponent(options.method)}`,
-    }),
+    http: () => runnerHttpBinding(options.service, options.method),
     input: options.input,
     method: `/${options.service}/${options.method}`,
     output: options.output,
@@ -85,19 +100,12 @@ function inheritedRouteValue(kind: 'Device' | 'Run', explicit?: string, inherite
   return explicit ?? inherited
 }
 
-function routeHeaders(connection: AuvConnection, options: { deviceId?: string, runId?: string, runnerClass: string }): Headers {
-  const headers = new Headers({ 'auv-runner-class': options.runnerClass })
+function routeHeaders(connection: RunnerConnection, options: RunnerRouteOptions): Headers {
   const deviceId = selectedDevice(connection.local, inheritedRouteValue(
     'Device',
     options.deviceId,
     connection.route.deviceId,
   ))
   const runId = inheritedRouteValue('Run', options.runId, connection.route.runId)
-
-  if (deviceId !== undefined)
-    headers.set('auv-device-id', deviceId)
-  if (runId !== undefined)
-    headers.set('auv-run-id', runId)
-
-  return headers
+  return runnerRouteHeaders({ deviceId, runId, runnerClass: options.runnerClass })
 }

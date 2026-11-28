@@ -1,17 +1,12 @@
 import type { DuplexCall, DuplexCallOptions, Transport, UnaryCall } from '@auv-js/sdk'
+import type { BridgedCallEnd } from '@auv-js/sdk/transport/recording'
 
-import type { BridgedError, Exchanged } from '../runtime/sdk-bridge'
-import type { Backend, CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
+import type { CapturedFrame, RunBackend, RunOutcomeKind, SdkAccess } from './types'
 
-import { bridgedError, remoteError } from '../runtime/sdk-bridge'
+import { recordDuplexCall, recordUnaryCall, remoteError } from '@auv-js/sdk/transport/recording'
 
 /** One SDK call of a live run, as encoded messages. */
-export interface RecordedRpc {
-  error?: BridgedError
-  /** Request and response messages in the order they crossed. */
-  exchange: Exchanged[]
-  /** A JSON-encoded HTTP binding's response text, in place of a response message. */
-  json?: string
+export interface RecordedRpc extends BridgedCallEnd {
   /** gRPC path, `/package.Service/Method`. */
   method: string
 }
@@ -37,18 +32,15 @@ export interface Recording {
  */
 export class RecordingBackend implements RunBackend {
   readonly images = new Map<string, Blob>()
-  readonly kind: Backend['kind']
+  readonly kind: RunBackend['kind']
   readonly label: string
   readonly rpc: RecordedRpc[] = []
+
   readonly #transports = new WeakMap<Transport, Transport>()
 
-  constructor(private readonly inner: Backend) {
+  constructor(private readonly inner: RunBackend) {
     this.kind = inner.kind
     this.label = inner.label
-  }
-
-  beginRun(): Promise<string | undefined> {
-    return this.inner.beginRun()
   }
 
   async captureImage(frame: CapturedFrame, maxSize: { height: number, width: number }): Promise<Blob> {
@@ -64,7 +56,7 @@ export class RecordingBackend implements RunBackend {
   /** The recording of this run so far. */
   recording(): Recording {
     const { describe, route } = this.inner.sdk()
-    return { images: this.images, label: this.label, rpc: this.rpc, sdk: { describe, route } }
+    return { images: this.images, label: this.label, rpc: this.rpc, sdk: { describe, route: { ...route, runId: undefined } } }
   }
 
   sdk(): SdkAccess {
@@ -95,10 +87,6 @@ export class ReplayBackend implements RunBackend {
   constructor(private readonly recording: Recording) {
     this.label = `Replay of ${recording.label}`
     this.#access = { ...recording.sdk, target: { transport: new ReplayTransport(recording.rpc) } }
-  }
-
-  async beginRun(): Promise<string | undefined> {
-    return undefined
   }
 
   async captureImage(frame: CapturedFrame): Promise<Blob> {
@@ -229,47 +217,12 @@ function recordingTransport(inner: Transport, log: RecordedRpc[]): Transport {
     async duplex(call) {
       const entry: RecordedRpc = { exchange: [], method: call.method }
       log.push(entry)
-      const stream = await inner.duplex(call)
-      return {
-        close: options => stream.close(options),
-        halfClose: () => stream.halfClose(),
-        responses: (async function* () {
-          try {
-            for await (const body of stream.responses) {
-              entry.exchange.push({ response: body })
-              yield body
-            }
-          }
-          catch (error) {
-            entry.error = bridgedError(error)
-            throw error
-          }
-        })(),
-        send: async (body) => {
-          entry.exchange.push({ request: body })
-          await stream.send(body)
-        },
-      }
+      return recordDuplexCall(await inner.duplex(call), entry)
     },
-    async unary(call) {
-      const entry: RecordedRpc = { exchange: [{ request: call.body }], method: call.method }
+    unary(call) {
+      const entry: RecordedRpc = { exchange: [], method: call.method }
       log.push(entry)
-      try {
-        const body = await inner.unary({
-          ...call,
-          decodeJson: (text) => {
-            entry.json = text
-            return call.decodeJson(text)
-          },
-        })
-        if (entry.json === undefined)
-          entry.exchange.push({ response: body })
-        return body
-      }
-      catch (error) {
-        entry.error = bridgedError(error)
-        throw error
-      }
+      return recordUnaryCall(inner, call, entry)
     },
   }
 }

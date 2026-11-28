@@ -12,7 +12,8 @@ controlled desktop.
 
 - **REPL editor** (CodeMirror 6): `⌘↩` runs all or the selection, `⇧↩` runs the
   current line and moves down, `⌘⇧↩` runs and pauses at the first statement.
-  Top-level declarations persist across runs until **Reset**.
+  Top-level declarations persist across runs until **Reset**. Use **Reset mock
+  desktop** in the device picker to restore the mock scene.
 - **Debug bar** floating over the editor (drag it anywhere): run, step in,
   offline replay, continue (`F8`), step (`F10`), stop (`⇧F5`). Click the gutter
   to toggle breakpoints.
@@ -43,6 +44,19 @@ controlled desktop.
   changes on input, so everything works without a device. It is a mock Runner
   (`createMockTransport` from `@auv-js/sdk`): it answers the same Runner RPCs
   as a device, so scripts, the timeline and replay behave the same on it.
+- **Agent / Script tabs**: switch workspaces at the top of the Playground.
+  Each workspace keeps its own run history. Sign in with Exterior and connect
+  an ACP agent. Switching tabs retains the connection and editor.
+  Through Exterior's HTTP MCP endpoint, the agent calls `execute` to execute code
+  against the selected Device or mock desktop. Explicit output returns to the
+  agent; SDK calls appear in the timeline. Connections require HTTP MCP 2026-07-28.
+  A new connection starts a fresh agent process; disconnect ends it.
+  The chat is not persisted. For a remote relay, set `VITE_EXTERIOR_URL`
+  at build time.
+  Adjacent tool calls share a compact activity summary. Returned errors and
+  screenshot previews stay visible while details are folded. Open a screenshot
+  to enlarge it. Expand an activity to inspect results, the original script,
+  raw protocol data, and the wrapper's status.
 
 ## Quick start
 
@@ -233,6 +247,119 @@ the pixels in when they load.
 Playground helper types (`Area`, `AreaEdges`, `Rect`, `Point`, …) can be used
 by name in cells, e.g. `function toolbar(win: Area): Area`.
 
+## Agent execution
+
+The Playground connects an ACP agent to its browser sandbox and skills
+through one MCP 2026-07-28 endpoint. The agent receives its URL and authorization
+headers in `session/new.mcpServers`.
+Exterior forwards MCP messages to the page, where the code runs.
+The agent must advertise `agentCapabilities.mcpCapabilities.http` and negotiate MCP 2026-07-28.
+The Playground remains a static site.
+
+The Agent gets one MCP tool, `execute({ code, timeoutMs? })`. The same
+endpoint offers the `auv-playground` skill to supporting clients.
+The harness can list the metadata, read the skill, and then request the SDK
+guide or Runner source. Each read addresses an individual resource.
+The page sends user messages unchanged, with no extra briefing message.
+
+The agent device needs an Exterior client and an installed ACP agent.
+Use the [desktop app or CLI daemon](https://github.com/lulu0119/exterior/blob/abb4a2a6a649ff67d0c3548c3ff6ac246798e26a/docs/manual.md).
+To register an OpenCode slot on the device:
+
+```sh
+exterior agent add opencode
+```
+
+Slot registration proves ACP availability. The harness needs modern HTTP MCP to call the Playground.
+Sign in and start the Exterior daemon against the same relay:
+
+```sh
+exterior login --relay <relay-origin>
+exterior daemon --relay <relay-origin>
+```
+
+Keep the client running while you use the agent.
+For the pinned CLI preview, use this prefix for each command above:
+
+```sh
+npx --yes --package=https://pkg.pr.new/lulu0119/exterior@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a -- exterior
+```
+
+Set `VITE_EXTERIOR_URL` to that relay origin before the Playground starts or
+builds. Use the Relay from the same Exterior preview as the SDK. The default origin is `http://127.0.0.1:8787`.
+
+The Agent tab uses `@exterioragentprotocol/sdk` for EAP v1, MCP Skills, and Pi
+Code Mode. The sandbox comes from the SDK's `/client/codemode` entry.
+The default client identity is
+`https://auv.moeru.ai/playground/oauth-client.json`.
+The build copies `public/oauth-client.json` to that address.
+The relay must receive JSON from this HTTPS address before sign-in can work.
+The OAuth callback is the Playground entry URL. The document lists the
+deployed entry URL and the local entries for `127.0.0.1` and `localhost`.
+
+To use a client ID issued by one relay, follow Exterior's
+[app setup](https://github.com/lulu0119/exterior/blob/abb4a2a6a649ff67d0c3548c3ff6ac246798e26a/docs/app-setup.md)
+or use **Register app** and **Copy configuration** on the relay dashboard.
+Registration does not grant access to devices. App sign-in requests that access separately.
+
+For this development server, register this callback:
+
+```text
+http://127.0.0.1:5180/playground/
+```
+
+Put `relayUrl` and `clientId` from the returned configuration in `apps/repl-playground/.env.development.local`:
+
+```dotenv
+VITE_EXTERIOR_URL=<relay-url>
+VITE_EXTERIOR_CLIENT_ID=<registered-client-id>
+```
+
+Restart the development server after you change this configuration.
+Open `http://127.0.0.1:5180/playground/` so the callback matches registration.
+The browser client needs no secret.
+The registered identity belongs to your account and works only on that relay.
+The development configuration does not affect production builds.
+
+In the Agent tab, select the agent and click **Connect**.
+Agents without HTTP MCP support show a setup message and cannot start a chat.
+The connection belongs to the page. React views subscribe to it.
+Connect and Disconnect control its lifetime. View remounts do not reconnect it.
+The agent device and the selected AUV device can be different computers.
+
+The external Agent gets one MCP tool, `execute({ code, timeoutMs? })`.
+Its sandbox provides `auv`, the native SDK Runner client for this Run, and
+`sdk`, the Runner enums and geometry helpers.
+
+```js
+const win = await auv.windows.resolve({ appName: 'Counter' })
+const { matches } = await win.findText('Increment')
+if (matches.length !== 1)
+  throw new Error('Expected one button')
+text(matches[0])
+store('counterId', win.id)
+```
+
+Each call starts a fresh Pi JavaScript VM in a browser worker. Use `store/load`
+for small JSON data across calls. AUV scopes that data to the current
+conversation and selected device and commits it after successful execution.
+Window clients, callback functions and stream iterators live in this VM.
+Use `auv.windows.from(load('counterId'))` to bind a saved ID to the current Run.
+
+The Playground records the script and AUV operation results together with their
+Run. The editor's separate TypeScript REPL provides stepping and variable
+inspection. Live runs and device changes reserve the selected device. While it
+is busy, Script disables live execution and a new Agent `execute` call returns
+a busy error. Script can still replay a local recording.
+
+A capture returns a reference and metadata. Request an image explicitly to
+show a PNG or JPEG, specifying `maxSize` in `auv.captures.image`. Stop, timeout, disconnect, and a
+change of session or device abort the active script and its pending calls.
+An action already delivered remains effective. Read app state to verify the
+requested result.
+
+See the [execution contract and evidence](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md).
+
 ## Architecture
 
 ```
@@ -257,6 +384,9 @@ store (zustand) ─▶ canvas, timeline, inspector, editor decorations
   host-resolved promise (birpc). Its `auv` client sends encoded RPCs to the
   page on their own port (`runtime/sdk-bridge.ts`); the page adds the device
   credential, forwards them to the backend's transport and records them.
+- Agent Code Mode uses the Exterior Client SDK's Pi worker. The page binds
+  selected operations to the AUV SDK and records their calls and resources
+  in the Playground timeline.
 - `runtime/rpc-resources.ts` turns recorded SDK messages into host-side
   resources (frames, text, receipts, windows, displays) by protobuf type.
 - `src/components` holds store-agnostic UI building blocks (icon buttons, tab
@@ -266,6 +396,9 @@ store (zustand) ─▶ canvas, timeline, inspector, editor decorations
   time strip) and `workbench` (activity and status bars).
 - Icons are UnoCSS `presetIcons` classes from Iconify Phosphor
   (`i-ph-*`, regular weight).
+- Component styles use UnoCSS utilities, the existing theme, and shared UI
+  components. Repeated styles use shortcuts in `uno.config.ts`. The Agent's
+  `markdown.css` styles generated Markdown descendants.
 
 ## Deliberate gaps
 
@@ -297,6 +430,16 @@ These are known and intentionally deferred; each is marked in code.
 - **Not a sandbox.** The exec worker shares the page origin, and the paired
   Device credentials are stored in `localStorage`. Run only your own scripts and
   keep the REPL on a local origin.
+- **Agent tab**: `exterior.ts` adapts sign-in, devices, and tickets from
+  `@exterioragentprotocol/sdk`. The SDK uses an immutable preview revision.
+  See the [Exterior connection contract](../../docs/ai/references/inspect/2026-10-25-playground-http-mcp-design.md#exterior-connection)
+  for client identities, local development, and live verification limits.
+  The thread uses `@hafbit/react-acp` hooks. Sessions are ephemeral.
+  There is no directory picker or session list; the device supplies the directory.
+  Old sessions linger in the host agent process until disconnect.
+  Agent browser-auth (`auth-required`) has no UI yet.
+  The agent must advertise HTTP MCP support before session creation.
+  An explicit reconnect obtains a fresh ticket after a failed connection.
 - `const` at the top level becomes reassignable across cells (same as
   `node:repl`), and a line starting with `(` or `[` continues the previous
   statement unless it ends with `;`.
@@ -306,7 +449,7 @@ These are known and intentionally deferred; each is marked in code.
 ```sh
 pnpm -F @auv-js/repl-playground lint      # oxlint + eslint via moeru-lint
 pnpm -F @auv-js/repl-playground typecheck
-pnpm -F @auv-js/repl-playground test:run  # stepper, area, camera, replay, resource and store tests
+pnpm -F @auv-js/repl-playground test:run  # Node unit tests
 pnpm -F @auv-js/repl-playground build
 ```
 

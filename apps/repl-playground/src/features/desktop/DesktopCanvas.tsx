@@ -8,8 +8,9 @@ import { useEffect, useRef, useState } from 'react'
 
 import { confidenceAlpha } from '../../ocr'
 import { paintRevealed } from '../../preview'
-import { nowMs, usePlayground } from '../../store'
+import { nowMs } from '../../store'
 import { callAt, callsUpTo, cursorSeq, latestFramesAt, pickAxNode } from '../../timeline'
+import { useWorkspace, useWorkspaceState } from '../workbench/workspace-context'
 import { flight, flightDuration, viewFor } from './camera'
 
 const COLORS = {
@@ -38,6 +39,7 @@ interface Scene {
  * store, the view or the size changes, or while a click ripple animates.
  */
 export function DesktopCanvas() {
+  const { store } = useWorkspace()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewRef = useRef<View>({ k: 0.3, tx: 20, ty: 20 })
   const fittedRef = useRef(false)
@@ -46,7 +48,7 @@ export function DesktopCanvas() {
   const autoFitRef = useRef(true)
   const invalidateRef = useRef<() => void>(undefined)
   const [cursor, setCursor] = useState<null | Point>(null)
-  const displays = usePlayground(state => state.displays)
+  const displays = useWorkspaceState(state => state.displays)
 
   useEffect(() => {
     fittedRef.current = false
@@ -72,11 +74,13 @@ export function DesktopCanvas() {
       raf = 0
       const dpr = window.devicePixelRatio || 1
       const { clientHeight: ch, clientWidth: cw } = canvas
+      if (cw === 0 || ch === 0)
+        return
       if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
         canvas.width = cw * dpr
         canvas.height = ch * dpr
       }
-      const state = usePlayground.getState()
+      const state = store.getState()
       if (!fittedRef.current && state.displays.length > 0 && cw > 0) {
         fit(viewRef.current, state.displays.map(display => display.frame), cw, ch)
         fittedRef.current = true
@@ -126,7 +130,7 @@ export function DesktopCanvas() {
     }
     invalidateRef.current = invalidate
     invalidate()
-    const unsubscribe = usePlayground.subscribe(invalidate)
+    const unsubscribe = store.subscribe(invalidate)
     const resize = new ResizeObserver(() => {
       if (autoFitRef.current)
         fittedRef.current = false
@@ -168,10 +172,10 @@ export function DesktopCanvas() {
       // A click without dragging picks the element under the pointer (AX tree).
       if (downAt && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) < 4) {
         const v = viewRef.current
-        const tree = usePlayground.getState().axTree
+        const tree = store.getState().axTree
         const node = tree ? pickAxNode(tree, { x: (event.offsetX - v.tx) / v.k, y: (event.offsetY - v.ty) / v.k }) : undefined
         if (node)
-          usePlayground.setState({ selectedAxPath: node.path })
+          store.setState({ selectedAxPath: node.path })
       }
       drag = null
       downAt = null
@@ -193,7 +197,7 @@ export function DesktopCanvas() {
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointerleave', onLeave)
     }
-  }, [])
+  }, [store])
 
   return (
     <div className="bg-surface-0 h-full w-full relative overflow-hidden" style={{ backgroundImage: 'radial-gradient(circle, var(--c-line) 1px, transparent 1px)', backgroundSize: '22px 22px' }}>

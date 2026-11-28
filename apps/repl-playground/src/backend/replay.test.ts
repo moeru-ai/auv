@@ -1,6 +1,6 @@
 import type { DuplexCall, Transport, UnaryCall } from '@auv-js/sdk'
 
-import type { Backend } from './types'
+import type { RunBackend } from './types'
 
 import { AuvRpcError } from '@auv-js/sdk'
 import { describe, expect, it } from 'vitest'
@@ -17,23 +17,33 @@ async function collect(responses: AsyncIterable<Uint8Array>): Promise<number[]> 
 }
 
 /** A live backend whose SDK transport answers with `transport`. */
-function liveBackend(transport: Partial<Transport>): Backend {
+function liveBackend(transport: Partial<Transport>): RunBackend {
   return {
+    async captureImage() { throw new Error('Unexpected image fetch') },
+    async endRun() {},
     kind: 'auv',
     label: 'Device',
     sdk: () => ({
       describe: async () => undefined,
       route: { runnerClass: 'auv.core.local' },
-      target: { transport: { close() {}, async connect() {}, ...transport } as Transport },
+      target: {
+        transport: {
+          close() {},
+          async connect() {},
+          async duplex() { throw new Error('Unexpected duplex call') },
+          async unary() { throw new Error('Unexpected unary call') },
+          ...transport,
+        },
+      },
     }),
-  } as unknown as Backend
+  }
 }
 
 /** Records `run` against a live transport, then returns the replay transport. */
 async function recordThenReplay(live: Partial<Transport>, run: (transport: Transport) => Promise<void>): Promise<Transport> {
   const recorder = new RecordingBackend(liveBackend(live))
-  await run(recorder.sdk!().target.transport)
-  return new ReplayBackend(recorder.recording()).sdk!().target.transport
+  await run(recorder.sdk().target.transport)
+  return new ReplayBackend(recorder.recording()).sdk().target.transport
 }
 
 function unaryCall(method: string, body: Uint8Array, decodeJson: UnaryCall['decodeJson'] = () => bytes()): UnaryCall {

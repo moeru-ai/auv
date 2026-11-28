@@ -2,8 +2,11 @@ import type { InputHandle, TextHandle } from '../handles'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { usePlayground } from '../store'
+import { createWorkspace } from '../store'
 import { CallScope, recordRpcResources } from './rpc-resources'
+
+const workspace = createWorkspace()
+const { store: usePlayground } = workspace
 
 const V1 = 'auv.api.driver.v1'
 
@@ -42,7 +45,7 @@ describe('recordRpcResources', () => {
   })
 
   it('shows a window text search as the window, its frame and the matches in it', () => {
-    const scope = new CallScope(1, 0, null)
+    const scope = new CallScope(workspace, 1, 0, null)
     recordRpcResources(scope, `/${V1}.WindowService/FindWindowText`, message('FindWindowTextRequest', { query: 'Reply', window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('FindWindowTextResponse', {
         capture: capture('cap-1'),
@@ -62,7 +65,7 @@ describe('recordRpcResources', () => {
   })
 
   it('shows a click as a receipt at its delivered screen point', () => {
-    const scope = new CallScope(2, 0, null)
+    const scope = new CallScope(workspace, 2, 0, null)
     recordRpcResources(scope, `/${V1}.InputService/ClickPoint`, undefined, [
       message('ClickPointResponse', { action, screenPoint: message('ScreenPoint', { x: 640, y: 400 }), window }),
     ])
@@ -72,7 +75,7 @@ describe('recordRpcResources', () => {
   })
 
   it('places a window scroll at the window point plus the window origin', () => {
-    const scope = new CallScope(3, 0, null)
+    const scope = new CallScope(workspace, 3, 0, null)
     recordRpcResources(scope, `/${V1}.WindowService/ScrollWindow`, undefined, [
       message('ScrollWindowResponse', { action, point: message('WindowPoint', { x: 10, y: 20 }), scroll: message('Scroll', { deltaX: 0, deltaY: 300 }), window }),
     ])
@@ -82,7 +85,7 @@ describe('recordRpcResources', () => {
   })
 
   it('shows every scroll-until step, inside its stream event', () => {
-    const scope = new CallScope(4, 0, null)
+    const scope = new CallScope(workspace, 4, 0, null)
     const update = (id: string) => message('ScrollWindowUntilResponse', { event: { case: 'update', value: message('ScrollUntilUpdate', { capture: capture(id), steps: 1 }) } })
     recordRpcResources(scope, `/${V1}.WindowService/ScrollWindowUntil`, message('ScrollWindowUntilRequest', { event: { case: 'begin', value: message('ScrollUntilBegin', { window: message('WindowRef', { windowId: 'w-1' }) }) } }), [update('cap-1'), update('cap-2')])
 
@@ -91,11 +94,11 @@ describe('recordRpcResources', () => {
   })
 
   it('keeps a capture seen again in the same run as one resource with its first producer', () => {
-    const first = new CallScope(1, 0, null)
+    const first = new CallScope(workspace, 1, 0, null)
     recordRpcResources(first, `/${V1}.WindowService/CaptureWindow`, message('CaptureWindowRequest', { window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('CaptureWindowResponse', { capture: capture('cap-7'), window }),
     ])
-    const again = new CallScope(2, 5, null)
+    const again = new CallScope(workspace, 2, 5, null)
     recordRpcResources(again, `/${V1}.WindowService/FindWindowText`, message('FindWindowTextRequest', { query: 'x', window: message('WindowRef', { windowId: 'w-1' }) }), [
       message('FindWindowTextResponse', { capture: capture('cap-7'), matches: [], window }),
     ])

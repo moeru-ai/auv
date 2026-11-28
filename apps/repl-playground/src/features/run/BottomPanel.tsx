@@ -1,15 +1,15 @@
 import { Tabs } from '@base-ui/react/tabs'
 
 import { TabBar } from '../../components/TabBar'
-import { usePlayground } from '../../store'
 import { VariablesPanel } from '../inspect/Inspector'
+import { useWorkspaceState } from '../workbench/workspace-context'
 import { CallList } from './CallList'
 import { ConsolePanel } from './ConsolePanel'
 
 /** Run output under the editor: binding calls, console and variables. */
 export function BottomPanel() {
-  const calls = usePlayground(state => state.calls.length)
-  const logs = usePlayground(state => state.logs.length)
+  const calls = useWorkspaceState(state => state.calls.length)
+  const logs = useWorkspaceState(state => state.logs.length)
   return (
     <Tabs.Root className="bg-surface-1 flex flex-col h-full" defaultValue="calls">
       <TabBar
