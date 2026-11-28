@@ -79,8 +79,8 @@ catalogs:
       specifier: ^3.0.0
       version: 3.0.0
     '@exterioragentprotocol/sdk':
-      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a
-      version: 0.0.0-preview-abb4a2a
+      specifier: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@ad5e16135ef4dcddbeff9d29e49c6afde3c0b2e4
+      version: 0.0.0-preview-ad5e161
     '@grpc/grpc-js':
       specifier: 1.14.4
       version: 1.14.4
@@ -383,7 +383,7 @@ importers:
         version: 6.43.13
       '@exterioragentprotocol/sdk':
         specifier: 'catalog:'
-        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a(electron@44.4.4)(h3@2.0.1(crossws@0.4.12(srvx@1.0.5)))(hono@4.13.13)(react@19.3.0)(typescript@6.0.3)
+        version: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@ad5e16135ef4dcddbeff9d29e49c6afde3c0b2e4(electron@44.4.4)(h3@2.0.1(crossws@0.4.12(srvx@1.0.5)))(hono@4.13.13)(react@19.3.0)(typescript@6.0.3)
       '@hafbit/react-acp':
         specifier: 'catalog:'
         version: 0.1.9(patch_hash=8c968bf116588205e5673f6fd8d9c48fe70db503b82d4bcf1ba7c143bd8e410f)(@assistant-ui/react@0.15.26(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0)))(@assistant-ui/store@0.3.18(@assistant-ui/tap@0.9.22(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(react@19.3.0))(@assistant-ui/tap@0.9.22(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(assistant-cloud@0.2.6)(react@19.3.0)
@@ -1321,9 +1321,9 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a':
-    resolution: {integrity: sha512-gThBEOQtAjeMjIzAPbVkR+9b1rGDHW5qA4wodHn5bXaJDVE5qbErwBTjZxHkzklCFdQLQNHx4iFHGcuuZu7CGg==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a}
-    version: 0.0.0-preview-abb4a2a
+  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@ad5e16135ef4dcddbeff9d29e49c6afde3c0b2e4':
+    resolution: {integrity: sha512-24grB72IOGmbyP3bGlOwqliPwLxHY3X1CpzNyfhaHV2Vo9/2kKnuIbnv/eZVa7r5yWcLcfEzwYJ2RgOvTXwS3g==, tarball: https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@ad5e16135ef4dcddbeff9d29e49c6afde3c0b2e4}
+    version: 0.0.0-preview-ad5e161
     peerDependencies:
       react: ^19
     peerDependenciesMeta:
@@ -7578,7 +7578,7 @@ snapshots:
 
   '@exodus/bytes@1.15.1': {}
 
-  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@abb4a2a6a649ff67d0c3548c3ff6ac246798e26a(electron@44.4.4)(h3@2.0.1(crossws@0.4.12(srvx@1.0.5)))(hono@4.13.13)(react@19.3.0)(typescript@6.0.3)':
+  '@exterioragentprotocol/sdk@https://pkg.pr.new/lulu0119/exterior/@exterioragentprotocol/sdk@ad5e16135ef4dcddbeff9d29e49c6afde3c0b2e4(electron@44.4.4)(h3@2.0.1(crossws@0.4.12(srvx@1.0.5)))(hono@4.13.13)(react@19.3.0)(typescript@6.0.3)':
     dependencies:
       '@earendil-works/pi-codemode': 1.5.2
       '@modelcontextprotocol/server': 2.4.0
